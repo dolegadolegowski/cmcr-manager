@@ -1,0 +1,88 @@
+import CMCRCore
+import SwiftUI
+
+struct PowerView: View {
+    @EnvironmentObject var model: AppModel
+    @State private var title = "Wiadomość od administratora"
+    @State private var text = ""
+    @State private var asDialog = true
+    @State private var confirm: ConfirmRequest?
+
+    var body: some View {
+        Page {
+            TargetHeader(section: .power,
+                         subtitle: "Komunikaty dla użytkowników, wylogowanie, usypianie, restart, wyłączanie i budzenie przez sieć.")
+
+            SectionBox(title: "Wiadomość dla zalogowanych użytkowników", icon: "text.bubble") {
+                TextField("Tytuł", text: $title)
+                TextEditor(text: $text)
+                    .frame(minHeight: 70)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
+                HStack {
+                    Picker("Forma", selection: $asDialog) {
+                        Text("Okno dialogowe").tag(true)
+                        Text("Powiadomienie").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 300)
+                    Spacer()
+                    TargetButton(title: "Wyślij", icon: "paperplane.fill") {
+                        let t = title, m = text, d = asDialog
+                        model.runScript("Wiadomość: \(m.prefix(40))", on: model.selectedMachines) { _ in
+                            Scripts.message(title: t, text: m, asDialog: d)
+                        }
+                    }
+                    .disabled(text.isEmpty)
+                }
+            }
+
+            SectionBox(title: "Sesja użytkownika", icon: "person.crop.circle") {
+                HStack {
+                    TargetButton(title: "Uśpij ekran", icon: "moon", prominent: false) {
+                        model.power(.displaySleep, on: model.selectedMachines)
+                    }
+                    TargetButton(title: "Wyloguj użytkownika", icon: "rectangle.portrait.and.arrow.right", role: .destructive, prominent: false) {
+                        confirm = ConfirmRequest(
+                            title: "Wylogować użytkowników?",
+                            message: "Zalogowani użytkownicy na \(model.selection.count) komputerach zostaną natychmiast wylogowani – niezapisane dane przepadną.",
+                            button: "Wyloguj") {
+                            model.runScript("Wylogowanie użytkownika", on: model.selectedMachines) { _ in Scripts.logoutUser() }
+                        }
+                    }
+                }
+            }
+
+            SectionBox(title: "Zasilanie", icon: "power") {
+                HStack {
+                    TargetButton(title: "Obudź (Wake-on-LAN)", icon: "sunrise", prominent: false) {
+                        model.wake(model.selectedMachines)
+                    }
+                    TargetButton(title: "Uśpij", icon: "moon.zzz", prominent: false) {
+                        ask(.sleep)
+                    }
+                    TargetButton(title: "Uruchom ponownie", icon: "arrow.clockwise.circle", role: .destructive, prominent: false) {
+                        ask(.restart)
+                    }
+                    TargetButton(title: "Wyłącz", icon: "power.circle", role: .destructive, prominent: false) {
+                        ask(.shutdown)
+                    }
+                }
+                Text("Wake-on-LAN wymaga adresu MAC (zbierany automatycznie przy odświeżaniu stanu), połączenia Ethernet i opcji „Budź przy dostępie do sieci” (Konfiguracja › Przygotowanie).")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            LastBatchView(section: .power)
+        }
+        .confirmation($confirm)
+    }
+
+    func ask(_ action: PowerAction) {
+        confirm = ConfirmRequest(
+            title: "\(action.label) – \(model.selection.count) komputerów?",
+            message: "Zalogowani użytkownicy mogą stracić niezapisane dane.",
+            button: action.label) {
+            model.power(action, on: model.selectedMachines)
+        }
+    }
+}
