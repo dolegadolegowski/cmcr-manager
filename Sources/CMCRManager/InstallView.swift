@@ -4,13 +4,13 @@ import UniformTypeIdentifiers
 
 struct InstallView: View {
     @EnvironmentObject var model: AppModel
-    @State private var downloadURL = ""
-    @State private var brewName = ""
-    @State private var brewCask = true
-    @State private var unityVersion = "6000.3.7f1"
-    @State private var unityModules: Set<String> = ["android"]
-    @State private var androidAPIs = "32, 34"
-    @State private var confirm: ConfirmRequest?
+    @ViewState private var downloadURL = ""
+    @ViewState private var brewName = ""
+    @ViewState private var brewCask = true
+    @ViewState private var unityVersion = "6000.3.7f1"
+    @ViewState private var unityModules: Set<String> = ["android"]
+    @ViewState private var androidAPIs = "32, 34"
+    @ViewState private var confirm: ConfirmRequest?
 
     static let modules = ["android", "ios", "webgl", "windows-mono", "mac-il2cpp", "linux-mono", "visionos"]
 

@@ -3,9 +3,9 @@ import SwiftUI
 
 struct CommandsView: View {
     @EnvironmentObject var model: AppModel
-    @State private var savingSnippet = false
-    @State private var snippetName = ""
-    @State private var snippetCategory = "Moje"
+    @ViewState private var savingSnippet = false
+    @ViewState private var snippetName = ""
+    @ViewState private var snippetCategory = "Moje"
 
     var body: some View {
         Page {

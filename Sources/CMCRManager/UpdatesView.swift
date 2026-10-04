@@ -3,9 +3,9 @@ import SwiftUI
 
 struct UpdatesView: View {
     @EnvironmentObject var model: AppModel
-    @State private var restart = false
-    @State private var recommendedOnly = false
-    @State private var confirm: ConfirmRequest?
+    @ViewState private var restart = false
+    @ViewState private var recommendedOnly = false
+    @ViewState private var confirm: ConfirmRequest?
 
     var body: some View {
         Page {

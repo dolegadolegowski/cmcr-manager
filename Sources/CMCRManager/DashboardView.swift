@@ -3,7 +3,7 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject var model: AppModel
-    @State private var sortOrder = [KeyPathComparator(\Machine.name)]
+    @ViewState private var sortOrder = [KeyPathComparator(\Machine.name)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

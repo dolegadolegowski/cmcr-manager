@@ -3,7 +3,7 @@ import CMCRCore
 import SwiftUI
 
 struct SetupView: View {
-    @State private var tab = 0
+    @ViewState private var tab = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -30,13 +30,13 @@ struct SetupView: View {
 
 struct HostsEditor: View {
     @EnvironmentObject var model: AppModel
-    @State private var prefix = "imac"
-    @State private var start = 1
-    @State private var count = 15
-    @State private var digits = 2
-    @State private var domain = "local"
-    @State private var confirm: ConfirmRequest?
-    @State private var passwordFor: Machine?
+    @ViewState private var prefix = "imac"
+    @ViewState private var start = 1
+    @ViewState private var count = 15
+    @ViewState private var digits = 2
+    @ViewState private var domain = "local"
+    @ViewState private var confirm: ConfirmRequest?
+    @ViewState private var passwordFor: Machine?
 
     var body: some View {
         Page {
@@ -137,8 +137,8 @@ struct HostPasswordSheet: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let machine: Machine
-    @State private var useShared = true
-    @State private var password = ""
+    @ViewState private var useShared = true
+    @ViewState private var password = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -176,9 +176,9 @@ struct HostPasswordSheet: View {
 
 struct AccessSettings: View {
     @EnvironmentObject var model: AppModel
-    @State private var password = ""
-    @State private var keyInfo = ""
-    @State private var keygenOutput = ""
+    @ViewState private var password = ""
+    @ViewState private var keyInfo = ""
+    @ViewState private var keygenOutput = ""
 
     var body: some View {
         Page {

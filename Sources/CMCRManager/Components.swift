@@ -140,7 +140,7 @@ extension View {
 
 struct BatchResultsView: View {
     @ObservedObject var batch: Batch
-    @State private var expanded: Set<UUID> = []
+    @ViewState private var expanded: Set<UUID> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -311,7 +311,7 @@ struct FileListEditor: View {
     @Binding var items: [URL]
     var placeholder = "Przeciągnij tutaj pliki lub foldery albo użyj „Dodaj…”."
     var types: [UTType]?
-    @State private var targeted = false
+    @ViewState private var targeted = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

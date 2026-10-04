@@ -3,10 +3,10 @@ import SwiftUI
 
 struct PowerView: View {
     @EnvironmentObject var model: AppModel
-    @State private var title = "Wiadomość od administratora"
-    @State private var text = ""
-    @State private var asDialog = true
-    @State private var confirm: ConfirmRequest?
+    @ViewState private var title = "Wiadomość od administratora"
+    @ViewState private var text = ""
+    @ViewState private var asDialog = true
+    @ViewState private var confirm: ConfirmRequest?
 
     var body: some View {
         Page {

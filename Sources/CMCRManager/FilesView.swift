@@ -23,17 +23,17 @@ struct DestinationPreset: Identifiable, Hashable {
 
 struct FilesView: View {
     @EnvironmentObject var model: AppModel
-    @State private var presetID = "shared"
-    @State private var destination = ""
-    @State private var owner: OwnerChoice = .student
-    @State private var customOwner = ""
-    @State private var mode = "777"
-    @State private var pushAsRoot = true
+    @ViewState private var presetID = "shared"
+    @ViewState private var destination = ""
+    @ViewState private var owner: OwnerChoice = .student
+    @ViewState private var customOwner = ""
+    @ViewState private var mode = "777"
+    @ViewState private var pushAsRoot = true
 
-    @State private var pullSource = ""
-    @State private var pullAsRoot = false
-    @State private var cleanPath = ""
-    @State private var confirm: ConfirmRequest?
+    @ViewState private var pullSource = ""
+    @ViewState private var pullAsRoot = false
+    @ViewState private var cleanPath = ""
+    @ViewState private var confirm: ConfirmRequest?
 
     var body: some View {
         Page {

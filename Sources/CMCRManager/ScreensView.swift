@@ -4,9 +4,9 @@ import SwiftUI
 
 struct ScreensView: View {
     @EnvironmentObject var model: AppModel
-    @State private var autoRefresh = true
-    @State private var tileWidth: Double = 320
-    @State private var focused: Machine?
+    @ViewState private var autoRefresh = true
+    @ViewState private var tileWidth: Double = 320
+    @ViewState private var focused: Machine?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -167,7 +167,7 @@ struct ScreenDetail: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let machine: Machine
-    @State private var message = ""
+    @ViewState private var message = ""
 
     var body: some View {
         let state = model.screenState(for: machine.id)

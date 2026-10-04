@@ -3,11 +3,11 @@ import SwiftUI
 
 struct AppsView: View {
     @EnvironmentObject var model: AppModel
-    @State private var appName = ""
-    @State private var appArguments = ""
-    @State private var urlToOpen = ""
-    @State private var showSystem = false
-    @State private var confirm: ConfirmRequest?
+    @ViewState private var appName = ""
+    @ViewState private var appArguments = ""
+    @ViewState private var urlToOpen = ""
+    @ViewState private var showSystem = false
+    @ViewState private var confirm: ConfirmRequest?
 
     var body: some View {
         Page {

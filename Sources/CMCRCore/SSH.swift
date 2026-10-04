@@ -75,7 +75,7 @@ public struct RemoteScript: Sendable {
             if [ "$(id -u)" -ne 0 ] && [ -z "$CMCR_PW" ] && ! sudo -n true 2>/dev/null; then
               echo "Brak hasła administratora – zapisz je w Konfiguracji (wymagane do sudo)." >&2; exit 91
             fi
-            printf '%s\n' "$CMCR_PW" | asroot /bin/bash -c 'IFS= read -r CMCR_PW; CMCR_TMP="$1"; export CMCR_TMP; source "$CMCR_TMP/lib.sh"; source "$CMCR_TMP/body.sh"' cmcr "$CMCR_TMP"
+            printf '%s\n' "$CMCR_PW" | asroot /bin/bash --noprofile --norc -c 'IFS= read -r CMCR_PW; CMCR_TMP="$1"; export CMCR_TMP; source "$CMCR_TMP/lib.sh"; source "$CMCR_TMP/body.sh"' cmcr "$CMCR_TMP"
 
             """#
         } else {
@@ -85,9 +85,12 @@ public struct RemoteScript: Sendable {
     }
 
     /// Command line handed to ssh (interpreted by the remote login shell).
+    ///
+    /// `--noprofile --norc` matters: bash started by sshd otherwise sources /etc/bashrc and the admin's
+    /// ~/.bashrc, whose output or aliases could corrupt results (e.g. the tar stream of a pull).
     public func remoteCommand() -> String {
         let b64 = Data(render().utf8).base64EncodedString()
-        return "/bin/bash -c \"$(echo \(b64) | base64 -D)\""
+        return "/bin/bash --noprofile --norc -c \"$(echo \(b64) | base64 -D)\""
     }
 }
 
