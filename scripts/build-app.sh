@@ -12,34 +12,6 @@ VERSION="${VERSION:-1.0.0}"
 BUILD_DIR="build"
 APP="$BUILD_DIR/$APP_NAME.app"
 
-# With Command Line Tools only (no Xcode) the newest macOS SDK may declare SwiftUI's @State as a macro whose
-# plugin ships only with Xcode. In that case fall back to the newest SDK that still compiles SwiftUI.
-pick_sdk() {
-  [ -n "${SDKROOT:-}" ] && return
-  xcodebuild -version >/dev/null 2>&1 && return
-  local sdk_dir=/Library/Developer/CommandLineTools/SDKs
-  local plugins=/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins
-  needs_plugin() {
-    grep -q '"SwiftUIMacros", type: "StateMacro"' \
-      "$1/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/arm64e-apple-macos.swiftinterface" 2>/dev/null
-  }
-  local default
-  default="$(xcrun --show-sdk-path 2>/dev/null || true)"
-  if [ -n "$default" ] && needs_plugin "$default" && [ ! -e "$plugins/libSwiftUIMacros.dylib" ]; then
-    local sdk
-    for sdk in $(ls -d "$sdk_dir"/MacOSX[0-9]*.sdk | sed -E 's/.*MacOSX([0-9.]+)\.sdk/\1 &/' | sort -rV | cut -d' ' -f2); do
-      if ! needs_plugin "$sdk"; then
-        export SDKROOT="$sdk"
-        echo "• SDK: $SDKROOT (domyślne SDK wymaga Xcode do makr SwiftUI)"
-        return
-      fi
-    done
-    echo "Brak zgodnego SDK – zainstaluj Xcode." >&2
-    exit 1
-  fi
-}
-
-pick_sdk
 echo "• Kompilacja (release)…"
 swift build -c release --product "$EXECUTABLE"
 swift build -c release --product cmcrctl
