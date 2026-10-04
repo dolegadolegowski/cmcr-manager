@@ -24,7 +24,7 @@ if let w = best { print(w[kCGWindowNumber as String]!) }
 SWIFT
 )"
 if [ -z "$WID" ]; then echo "Nie znaleziono okna (PID $PID)" >&2; kill "$PID" 2>/dev/null; exit 1; fi
-TMP="$(mktemp /tmp/cmcr-snap.XXXXXX).png"
+TMP="$(dirname "$OUT")/.snap-$$-raw.png"
 screencapture -x -o -l "$WID" "$TMP"
 sips -Z "${MAXSIZE:-1400}" "$TMP" --out "$OUT" >/dev/null
 rm -f "$TMP"
