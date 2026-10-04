@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "CMCRManager",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     products: [
         .executable(name: "CMCRManager", targets: ["CMCRManager"]),
         .executable(name: "cmcrctl", targets: ["cmcrctl"]),

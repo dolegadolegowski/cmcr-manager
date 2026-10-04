@@ -65,7 +65,7 @@ struct FilesView: View {
                         ForEach(DestinationPreset.all(model.settings)) { p in Text(p.title).tag(p.id) }
                     }
                     .labelsHidden()
-                    .onChange(of: presetID) { applyPreset($0) }
+                    .onChange(of: presetID) { _, id in applyPreset(id) }
                 }
                 GridRow {
                     Text("Ścieżka na iMacu")
