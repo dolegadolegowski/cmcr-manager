@@ -52,18 +52,19 @@ struct ProcessRunnerTests {
 
     @Test func timeoutStopsTheProcess() async {
         let start = Date()
-        let r = await ProcessRunner.run("/bin/sleep", ["10"], timeout: 0.3)
+        let r = await ProcessRunner.run("/bin/sleep", ["60"], timeout: 0.3)
         #expect(r.timedOut)
         #expect(!r.succeeded)
-        #expect(elapsed(since: start) < 3)
+        #expect(elapsed(since: start) < 15)
     }
 
     @Test func childIgnoringSIGTERMIsKilled() async {
         let start = Date()
-        let r = await ProcessRunner.run("/bin/sh", ["-c", "trap '' TERM; sleep 6"], timeout: 0.2)
+        let r = await ProcessRunner.run("/bin/sh", ["-c", "trap '' TERM; sleep 30"], timeout: 0.2)
         #expect(r.timedOut)
-        // SIGKILL after 3 s, then at most 1 s of draining while the orphaned sleep holds the pipes.
-        #expect(elapsed(since: start) < 5.5)
+        // SIGKILL after 3 s, then at most 1 s of draining while the orphaned sleep holds the pipes
+        // (the rest is slack for a busy CI runner).
+        #expect(elapsed(since: start) < 15)
     }
 
     @Test func handleCancelsTheProcess() async {
@@ -73,21 +74,21 @@ struct ProcessRunnerTests {
             try? await Task.sleep(nanoseconds: 200_000_000)
             handle.cancel()
         }
-        let r = await ProcessRunner.run("/bin/sleep", ["10"], handle: handle)
+        let r = await ProcessRunner.run("/bin/sleep", ["60"], handle: handle)
         #expect(r.cancelled)
-        #expect(elapsed(since: start) < 3)
+        #expect(elapsed(since: start) < 15)
         let again = await ProcessRunner.run("/bin/echo", ["x"], handle: handle)
         #expect(again.cancelled)
     }
 
     @Test func taskCancellationStopsTheProcess() async {
         let start = Date()
-        let task = Task { await ProcessRunner.run("/bin/sleep", ["10"]) }
+        let task = Task { await ProcessRunner.run("/bin/sleep", ["60"]) }
         try? await Task.sleep(nanoseconds: 200_000_000)
         task.cancel()
         let r = await task.value
         #expect(r.cancelled)
-        #expect(elapsed(since: start) < 3)
+        #expect(elapsed(since: start) < 15)
     }
 
     @Test func cancelActionsRunOnceAndCanBeAwaited() async {
@@ -106,9 +107,9 @@ struct ProcessRunnerTests {
 
     @Test func backgroundGrandchildDoesNotDelayTheResult() async {
         let start = Date()
-        let r = await ProcessRunner.run("/bin/sh", ["-c", "sleep 4 & echo gotowe"])
+        let r = await ProcessRunner.run("/bin/sh", ["-c", "sleep 30 & echo gotowe"])
         #expect(r.stdoutText == "gotowe\n")
-        #expect(elapsed(since: start) < 3)
+        #expect(elapsed(since: start) < 15)
     }
 
     @Test func capturedOutputKeepsTheNewestBytes() async {

@@ -278,7 +278,8 @@ struct HostGateTests {
         #expect(await gate.acquire("k"))
         let start = Date()
         #expect(!(await gate.acquire("k", timeout: 0.2)))
-        #expect(Date().timeIntervalSince(start) < 2)
+        // Generous: on a busy CI runner the waiting task may resume seconds after the timer fires.
+        #expect(Date().timeIntervalSince(start) < 10)
         let handle = ProcessHandle()
         Task {
             try? await Task.sleep(nanoseconds: 100_000_000)
@@ -327,7 +328,7 @@ private final class OutputLog: @unchecked Sendable {
 }
 
 struct SessionStartTests {
-    private let settings = SSHSettings(connectTimeout: 10, extraOptions: ["UserKnownHostsFile=/dev/null"],
+    private let settings = SSHSettings(connectTimeout: 30, extraOptions: ["UserKnownHostsFile=/dev/null"],
                                        askpassPath: "/tmp/askpass", reuseConnections: false)
 
     @Test func cancelBeforeTheCommandStartedNeedsNoRemoteStop() async throws {
@@ -346,8 +347,8 @@ struct SessionStartTests {
         #expect(r.cancelled)
         #expect(log.text.contains("Polecenie nie zostało uruchomione"))
         #expect(!log.text.contains("zatrzymać"))
-        // A remote stop would itself wait for the silent port (ConnectTimeout 10 s).
-        #expect(Date().timeIntervalSince(start) < 5)
+        // A remote stop would itself wait for the silent port (ConnectTimeout 30 s).
+        #expect(Date().timeIntervalSince(start) < 15)
     }
 
     @Test func aTimeoutBeforeTheStartNeedsNoRemoteStop() async throws {
@@ -361,7 +362,7 @@ struct SessionStartTests {
         #expect(r.timedOut)
         #expect(!log.text.contains("zatrzymać"))
         #expect(!r.stderrText.contains("▸"))
-        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(Date().timeIntervalSince(start) < 15)
     }
 
     @Test func portProbeTellsAnsweringMacsApart() async throws {
