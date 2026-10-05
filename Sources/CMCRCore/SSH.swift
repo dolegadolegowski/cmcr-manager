@@ -122,7 +122,7 @@ public struct RemoteScript: Sendable {
     # empty), 1 when a component is missing, not a folder, not accessible or cannot be created. On failure the
     # shell is back in /.
     cmcr_walk() {
-      local todo="$1" mode="${2:-}" owner="${3:-}" c t made hops=0
+      local todo="$1" mode="${2:-}" owner="${3:-}" c t made hops=0 IFS=$' \t\n'
       CMCR_LINK=""
       case "$todo" in /*) cd / || return 1 ;; esac
       while :; do
