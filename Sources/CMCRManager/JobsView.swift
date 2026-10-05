@@ -521,19 +521,17 @@ struct HistoryDetailView: View {
                         .width(min: 70, ideal: 85)
                     TableColumn("Stan") { r in
                         let state = Job.State(historyName: r.state)
+                        // A non-zero exit code is shown with the state (the same columns as for a live batch).
+                        let code = r.exitCode.flatMap { $0 == 0 ? nil : $0 }
                         HStack(spacing: 6) {
                             JobStateIcon(state: state)
-                            Text(state.label).lineLimit(1)
+                            Text(code.map { "\(state.label) (kod \($0))" } ?? state.label)
+                                .lineLimit(1)
+                                .help(code.map { "Polecenie zakończyło się kodem \($0) (0 oznacza, że wszystko się udało)" }
+                                      ?? state.label)
                         }
                     }
-                    .width(min: 90, ideal: 100)
-                    TableColumn("Kod") { r in
-                        Text(r.exitCode.map(String.init) ?? "—")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                            .help("Kod zakończenia polecenia: 0 oznacza, że wszystko się udało")
-                    }
-                    .width(min: 35, ideal: 40)
+                    .width(min: 90, ideal: 110)
                     TableColumn("Czas") { r in
                         Text(r.durationMs.map { JobDurationText.format(Double($0) / 1000) } ?? "—")
                             .monospacedDigit()
