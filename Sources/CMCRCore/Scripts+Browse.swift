@@ -210,13 +210,23 @@ public extension Scripts {
         case "$NEWNAME" in ""|.|..|*/*) cmcr_refuse "niepoprawna nowa nazwa: $NEWNAME"; exit $? ;; esac
         cmcr_resolve \#(shQuote(path)) || exit $?
         cmcr_guard_item "$CMCR_PATH" || exit $?
-        SRC="./$CMCR_BASE"; DST="./$NEWNAME"
-        if [ ! -e "$SRC" ] && [ ! -L "$SRC" ]; then echo "CMCR:NOT_FOUND" >&2; echo "Nie znaleziono: $CMCR_REAL" >&2; exit 61; fi
-        if { [ -e "$DST" ] || [ -L "$DST" ]; } && ! [ "$SRC" -ef "$DST" ]; then
-          echo "CMCR:EXISTS" >&2; echo "Element o nazwie „$NEWNAME” już istnieje." >&2; exit 66
+        OLDNAME="$CMCR_BASE"; OLDREAL="$CMCR_REAL"
+        cmcr_guard_item "${CMCR_REAL%/*}/$NEWNAME" || exit $?
+        SRC="./$OLDNAME"; DST="./$NEWNAME"
+        if [ ! -e "$SRC" ] && [ ! -L "$SRC" ]; then echo "CMCR:NOT_FOUND" >&2; echo "Nie znaleziono: $OLDREAL" >&2; exit 61; fi
+        if [ "$(stat -f '%d:%i' "$SRC")" = "$(stat -f '%d:%i' "$DST" 2>/dev/null)" ]; then
+          # The same directory entry: only the letter case changes (mv -n would silently do nothing).
+          mv "$SRC" "$DST" || { echo "✘ Nie udało się zmienić nazwy $OLDREAL" >&2; exit 1; }
+        else
+          if [ -e "$DST" ] || [ -L "$DST" ]; then
+            echo "CMCR:EXISTS" >&2; echo "Element o nazwie „$NEWNAME” już istnieje." >&2; exit 66
+          fi
+          mv -n "$SRC" "$DST" || { echo "✘ Nie udało się zmienić nazwy $OLDREAL" >&2; exit 1; }
+          if [ -e "$SRC" ] || [ -L "$SRC" ]; then
+            echo "CMCR:EXISTS" >&2; echo "Element o nazwie „$NEWNAME” już istnieje." >&2; exit 66
+          fi
         fi
-        mv -n "$SRC" "$DST" || { echo "✘ Nie udało się zmienić nazwy $CMCR_REAL" >&2; exit 1; }
-        echo "✔ Zmieniono nazwę: $CMCR_BASE → $NEWNAME"
+        echo "✔ Zmieniono nazwę: $OLDNAME → $NEWNAME"
         """#, asRoot: asRoot)
     }
 

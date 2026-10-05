@@ -104,6 +104,12 @@ linia.txt" "bez nowej linii.txt")"; code=$?
 expect_code "rename: kod 0" "$code" 0 "$out"
 [ -f "$B/bez nowej linii.txt" ] && [ ! -e "$B/nowa
 linia.txt" ] && pass "rename: nazwa zmieniona" || fail "rename" "$(ls -la "$B")"
+out="$(ctl rename 1 "$B/bez nowej linii.txt" "Bez Nowej Linii.txt")"; code=$?
+expect_code "rename: tylko wielkość liter – kod 0" "$code" 0 "$out"
+ls "$B" | grep -qx "Bez Nowej Linii.txt" && pass "rename: zmieniona wielkość liter" || fail "rename: wielkość liter" "$(ls "$B")"
+ctl rename 1 "$B/Bez Nowej Linii.txt" "bez nowej linii.txt" >/dev/null
+out="$(ctl rename 1 "$B/a" ".ukryty folder")"; code=$?
+expect_code "rename: na istniejący folder – kod 66" "$code" 66 "$out"
 out="$(ctl rename 1 "$B/bez nowej linii.txt" "rozmiar.bin")"; code=$?
 expect_code "rename: istniejąca nazwa – kod 66" "$code" 66 "$out"
 out="$(ctl rename 1 "$B/bez nowej linii.txt" "a/b")"; code=$?
