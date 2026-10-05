@@ -4,6 +4,7 @@ import SwiftUI
 
 enum AppSection: String, CaseIterable, Identifiable, Hashable {
     case dashboard, commands, files, browser, apps, install, updates, screens, power, jobs, setup
+    case classroom
 
     var id: String { rawValue }
 
@@ -20,6 +21,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .power: return "Sesja i zasilanie"
         case .jobs: return "Zadania"
         case .setup: return "Konfiguracja"
+        case .classroom: return "Zajęcia"
         }
     }
 
@@ -36,6 +38,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .power: return "power"
         case .jobs: return "list.bullet.rectangle"
         case .setup: return "gearshape"
+        case .classroom: return "graduationcap"
         }
     }
 }
@@ -340,8 +343,10 @@ final class AppModel: ObservableObject {
     /// Hosts known to be unreachable are skipped (unless `includeUnreachable`, e.g. Wake-on-LAN) when
     /// `skipUnreachable` is on; they stay in the batch as skipped jobs, so "Powtórz" can pick them up later.
     /// A retry is an explicit request and always tries every host it is given.
+    /// `maxParallel` overrides the setting for jobs that mostly wait (questions, waking up).
     @discardableResult
-    func runBatch(_ title: String, on targets: [Machine], section: AppSection? = nil, includeUnreachable: Bool = false,
+    func runBatch(_ title: String, on targets: [Machine], section: AppSection? = nil, maxParallel: Int? = nil,
+                  includeUnreachable: Bool = false,
                   operation: @escaping @MainActor (Machine, Job) async -> CommandResult,
                   completion: (@MainActor (Batch) -> Void)? = nil) -> Batch? {
         guard !targets.isEmpty else { return nil }
@@ -359,7 +364,7 @@ final class AppModel: ObservableObject {
         batch.confirmation = pendingConfirmation
         batch.rerun = { [weak self] hosts in
             guard let self else { return }
-            let retry = self.runBatch(Self.retryTitle(title), on: hosts, section: owner,
+            let retry = self.runBatch(Self.retryTitle(title), on: hosts, section: owner, maxParallel: maxParallel,
                                       includeUnreachable: true, operation: operation, completion: completion)
             if self.section == .jobs, let retry { self.focusedBatchID = retry.id }
         }
@@ -372,7 +377,7 @@ final class AppModel: ObservableObject {
                         + (batch.skipped > 0 ? " (pominięto: \(jobs.filter { $0.state == .skipped }.map(\.machine.name).joined(separator: ", ")))" : ""))
         jobs.filter { $0.state == .skipped }.forEach { archive($0, in: batch) }
         announce(batch)
-        let limit = max(1, settings.maxParallel)
+        let limit = max(1, maxParallel ?? settings.maxParallel)
 
         Task { @MainActor in
             await withTaskGroup(of: Void.self) { group in
@@ -864,21 +869,7 @@ final class AppModel: ObservableObject {
     }
 
     func wake(_ targets: [Machine]) {
-        runBatch("Wake-on-LAN", on: targets, includeUnreachable: true, operation: { m, job in
-            let mac = m.macAddress.isEmpty ? (self.status(m).mac ?? "") : m.macAddress
-            guard !mac.isEmpty else {
-                return .failure("Brak adresu MAC – odśwież stan, gdy komputer jest włączony, lub wpisz MAC w Konfiguracji.")
-            }
-            do {
-                for _ in 0..<3 { try WakeOnLAN.wake(mac: mac) }
-                job.note("Wysłano pakiet Wake-on-LAN do \(mac). Działa przy połączeniu Ethernet i włączonym „Budź przy dostępie do sieci”.")
-                return CommandResult(exitCode: 0)
-            } catch {
-                return .failure(error.localizedDescription)
-            }
-        }, completion: { [weak self] batch in
-            self?.recheckWhileWaking(batch.jobs.filter { $0.state == .succeeded }.map(\.machine))
-        })
+        ClassroomModel.shared.wake(self, targets)
     }
 
     // MARK: - Setup

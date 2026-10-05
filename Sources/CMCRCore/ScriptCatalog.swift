@@ -103,6 +103,25 @@ public enum ScriptCatalog {
                                                                                     CollectedFile(path: "b c/d", modified: 1, size: 0, isLink: true)],
                                                                             folders: [a, "b c"], asRoot: true)),
             Sample(name: "removeCollected(empty)", script: Scripts.removeCollected(in: "~/Public", files: [], folders: [], asRoot: false)),
+            // U8 classroom & power (Scripts+Classroom.swift)
+            Sample(name: "lockScreen", script: Scripts.lockScreen(message: a, mode: .automatic, autoUnlockMinutes: 5)),
+            Sample(name: "lockScreen(overlay)", script: Scripts.lockScreen(message: a, mode: .overlay, autoUnlockMinutes: 0)),
+            Sample(name: "lockScreen(system)", script: Scripts.lockScreen(message: "", mode: .lockScreen, autoUnlockMinutes: 0)),
+            Sample(name: "unlockScreen", script: Scripts.unlockScreen()),
+            Sample(name: "ask", script: Scripts.ask(title: a, prompt: a, buttons: ["Tak", a], timeoutSeconds: 60)),
+            Sample(name: "delayedPower", script: Scripts.delayedPower(.shutdown, minutes: 5, warning: a)),
+            Sample(name: "delayedPower(restart)", script: Scripts.delayedPower(.restart, minutes: 0, warning: nil)),
+            Sample(name: "cancelDelayedPower", script: Scripts.cancelDelayedPower()),
+            Sample(name: "fileVaultStatus", script: Scripts.fileVaultStatus()),
+            Sample(name: "applyEnergySchedule", script: Scripts.applyEnergySchedule(EnergySchedule(), autoRestart: true, wakeOnLAN: true)),
+            Sample(name: "cancelEnergySchedule", script: Scripts.cancelEnergySchedule()),
+            Sample(name: "energyScheduleStatus", script: Scripts.energyScheduleStatus()),
+            Sample(name: "computerNames", script: Scripts.computerNames()),
+            Sample(name: "renameComputer", script: Scripts.renameComputer(computerName: a, localHostName: "imac04")),
+            Sample(name: "appVersion", script: Scripts.appVersion(a)),
+            Sample(name: "quitAllApps", script: Scripts.quitAllApps()),
+            Sample(name: "ping", script: Scripts.ping()),
+
         ]
         for restart in [false, true] {
             for recommended in [false, true] {

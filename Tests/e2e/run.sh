@@ -112,10 +112,11 @@ ctlpw() { CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }
 
 # ---------------------------------------------------------------- safety guard
 # Every remote bash must see the fake sudo. If not, stop before anything could reach the real sudo.
-guard="$("$CTL" exec 'type sudo launchctl shutdown pmset softwareupdate installer 2>&1 | grep -c "is a function"' 1 2>&1 | tail -1)"
+guard_out="$("$CTL" exec 'type sudo launchctl shutdown pmset softwareupdate installer 2>&1 | grep -c "is a function"' 1 2>&1)"
+guard="$(printf '%s\n' "$guard_out" | tail -1)"
 if [ "$guard" != 6 ]; then
   echo "PRZERWANO: atrapy (fakes.sh) nie są aktywne w zdalnej sesji – testy mogłyby wywołać prawdziwe sudo."
-  echo "$guard"
+  echo "$guard_out"
   exit 2
 fi
 guard_root="$(CMCR_PASSWORD="$PASSWORD" "$CTL" exec 'type sudo launchctl shutdown 2>&1 | grep -c "is a function"' 1 --root 2>&1 | tail -1)"

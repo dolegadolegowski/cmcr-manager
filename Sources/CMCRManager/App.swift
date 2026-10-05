@@ -106,6 +106,7 @@ struct ContentView: View {
         }
         .updaterUI(model: model)
         .task {
+            ClassroomModel.shared.attach(model)
             model.refreshStatus()
             // Keep the overview fresh in the background.
             while !Task.isCancelled {
@@ -132,6 +133,7 @@ struct SidebarView: View {
                 row(.updates)
             }
             Section("Nadzór") {
+                row(.classroom)
                 row(.screens)
                 row(.power)
             }
@@ -656,6 +658,7 @@ struct DetailView: View {
             case .power: PowerView()
             case .jobs: JobsView()
             case .setup: SetupView()
+            case .classroom: ClassroomView()
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
