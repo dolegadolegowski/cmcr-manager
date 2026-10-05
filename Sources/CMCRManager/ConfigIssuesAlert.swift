@@ -20,7 +20,7 @@ struct ConfigIssuesAlert: ViewModifier {
         } message: {
             Text(model.configIssues.joined(separator: "\n\n"))
         }
-        .alert("Pęk kluczy", isPresented: Binding(
+        .alert("Problem z Pękiem kluczy", isPresented: Binding(
             get: { model.keychainError != nil },
             set: { if !$0 { model.keychainError = nil } }
         )) {
