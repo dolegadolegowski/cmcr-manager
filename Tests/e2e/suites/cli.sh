@@ -37,8 +37,28 @@ expect_not "wybór: polecenie nie zostało wykonane" "$out" "nie-powinno"
 out="$(ctl exec 'echo x' 1,7)"; code=$?
 expect "wybór: lista z nieznanym elementem odrzucona w całości" "$out" "Nie znaleziono komputera: 7"
 expect_not "wybór: lista – nic nie wykonano" "$out" "Running command"
-out="$(ctl exec 'echo pozycja-ok' '#1')"
-expect "wybór: pozycja na liście (#1)" "$out" "pozycja-ok"
+out="$(ctl exec 'echo pozycja-ok' @1)"
+expect "wybór: pozycja na liście (@1)" "$out" "pozycja-ok"
+out="$(ctl exec 'echo nie-powinno' '#1')"; code=$?
+expect_code "wybór: #1 to nie pozycja – kod 2" "$code" 2 "$out"
+expect "wybór: #1 – wskazówka @2" "$out" "Pozycję na liście podaj jako @2"
+expect_not "wybór: #1 – nic nie wykonano" "$out" "nie-powinno"
+# In a script an unquoted #3 is a comment: exec then gets no host list and must not fall back to every Mac.
+out="$(CMCR_CONFIG_DIR="$MULTI" bash -c '"$0" exec "echo nie-powinno" #3' "$CTL" </dev/null 2>&1)"; code=$?
+expect_code "wybór: exec bez komputerów w skrypcie (#3 = komentarz) – kod 2" "$code" 2 "$out"
+expect "wybór: exec bez komputerów w skrypcie – wskazówka" "$out" "Podaj komputery dla polecenia exec" "bez terminala"
+expect_not "wybór: exec bez komputerów w skrypcie – nic nie wykonano" "$out" "nie-powinno"
+for cmd in open-app quit-app; do
+  out="$(mctl $cmd CMCRDummy </dev/null)"; code=$?
+  expect_code "wybór: $cmd bez komputerów w skrypcie – kod 2" "$code" 2 "$out"
+done
+# At a terminal the cmcr-exec default (all Macs) stays, announced on stderr.
+out="$(CMCR_CONFIG_DIR="$MULTI" script -q /dev/null "$CTL" exec 'echo "wszystkie-$((40 + 2))"' </dev/null 2>&1)"; code=$?
+expect_code "wybór: exec bez komputerów w terminalu – kod 0" "$code" 0 "$out"
+expect "wybór: exec bez komputerów w terminalu – informacja i wszystkie komputery" "$out" \
+  "Nie podano komputerów – exec na wszystkich: imac01, imac02, imac03 (3 komputery)" "wszystkie-42"
+if [ "$(printf '%s\n' "$out" | grep -c 'wszystkie-42')" = 3 ]; then pass "wybór: exec w terminalu – trzy komputery"
+else fail "wybór: exec w terminalu – liczba wyników" "$out"; fi
 out="$(ctl exec 'echo nazwa-ok' imac01)"
 expect "wybór: nazwa komputera" "$out" "nazwa-ok"
 out="$(ctl --help)"; code=$?
@@ -99,6 +119,9 @@ expect_code "-j: najwyższy kod zdalnego polecenia" "$code" 4 "$out"
 out="$(mctl status)"; code=$?
 order="$(printf '%s\n' "$out" | sed -n 's/^● \(imac0[0-9]\):.*/\1/p' | tr '\n' ' ')"
 if [ "$order" = "imac01 imac02 imac03 " ]; then pass "status: równolegle, w kolejności listy"; else fail "status: kolejność: $order" "$out"; fi
+out="$(mctl status 1-2 --prefix -j 2)"; code=$?
+expect_code "status --prefix (jak w innych poleceniach): kod 0" "$code" 0 "$out"
+expect "status --prefix: wiersze zaczynają się od nazwy" "$out" "● imac01:" "● imac02:"
 
 section "cmcrctl status --json"
 json="$("$CTL" status 1,99 --json 2>/dev/null)"; code=$?
@@ -260,6 +283,29 @@ out="$(hctl hosts add pracownia)"; code=$?
 expect_code "hosts add: duplikat – kod 2" "$code" 2 "$out"
 out="$(hctl hosts add zly --mac xyz)"; code=$?
 expect_code "hosts add: zły MAC – kod 2" "$code" 2 "$out"
+cp "$HCFG/hosts.json" "$WORK/hosts-before-bad-add"
+out="$(hctl hosts add x '')"; code=$?
+expect_code "hosts add: pusty adres – kod 2" "$code" 2 "$out"
+expect "hosts add: pusty adres – komunikat" "$out" "Niepoprawny adres „”: pusta wartość"
+for bad in "x| |admin" "a b" "x|10.0.0.8|ad min" "x|-oProxyCommand=x" "x|10.0.0.8|-l" "x|10.0.0.8|a@b" "a,b|10.0.0.8|admin"; do
+  IFS='|' read -r -a parts <<<"$bad"
+  out="$(hctl hosts add -- "${parts[@]}")"; code=$?
+  expect_code "hosts add: niepoprawny wpis ($bad) – kod 2" "$code" 2 "$out"
+done
+expect "hosts add: czytelny błąd" "$out" "Niepoprawna nazwa „a,b”: zawiera przecinek"
+out="$(hctl hosts add "a b")"
+expect "hosts add: nazwa ze spacją bez adresu – wskazówka" "$out" "Nazwa „a b” zawiera spację – podaj też adres i konto"
+out="$(hctl hosts add x -- -oProxyCommand=x)"
+expect "hosts add: adres zaczynający się od „-”" "$out" "Niepoprawny adres „-oProxyCommand=x”: zaczyna się od „-”"
+cmp -s "$HCFG/hosts.json" "$WORK/hosts-before-bad-add" && pass "hosts add: niepoprawne wpisy niczego nie zapisały" \
+  || fail "hosts add: zapisano niepoprawny wpis" "$(cat "$HCFG/hosts.json")"
+out="$(hctl hosts generate "lab x")"; code=$?
+expect_code "hosts generate: prefiks ze spacją – kod 2" "$code" 2 "$out"
+out="$(hctl hosts generate lab --domain "szkola lan")"; code=$?
+expect_code "hosts generate: domena ze spacją – kod 2" "$code" 2 "$out"
+out="$(hctl hosts add "iMac nauczyciela" 10.0.0.7 admin --mac 0:1b:63:84:45:e6)"; code=$?
+expect_code "hosts add: nazwa ze spacją z adresem i kontem – kod 0" "$code" 0 "$out"
+expect "hosts add: MAC w zapisie arp (bez zer wiodących) uzupełniony" "$(hctl hosts)" "admin@10.0.0.7" "00:1b:63:84:45:e6"
 out="$(hctl hosts set lab007 --mac 00:11:22:33:44:55)"
 expect "hosts set: MAC" "$(hctl hosts)" "00:11:22:33:44:55"
 out="$(hctl wake lab007,pracownia --dry-run)"; code=$?
@@ -272,8 +318,10 @@ out="$(hctl hosts remove 8-9 --yes)"
 expect "hosts remove: komunikat" "$out" "lab008, lab009"
 out="$(hctl exec 'echo x' 8)"; code=$?
 expect "hosts remove: komputer usunięty z listy" "$out" "Nie znaleziono komputera: 8"
-out="$(hctl hosts remove 1 </dev/null)"; code=$?
+out="$(hctl hosts remove 7 </dev/null)"; code=$?
 expect_code "hosts remove: bez --yes – kod 2" "$code" 2 "$out"
+expect "hosts remove: prośba o potwierdzenie" "$out" "Usunąć z listy: lab007" "dodaj --yes"
+expect "hosts remove: bez potwierdzenia nic nie usunięto" "$(hctl list)" "lab007"
 
 # An unreadable hosts.json must never be replaced by the default list (loadHosts() falls back to imac01–imac15).
 BAD="$WORK/cfg-bad"
