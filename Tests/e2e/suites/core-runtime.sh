@@ -42,6 +42,26 @@ allpar="$(cat "$WORK"/par-*.log)"
 [ "$okpar" = 12 ] && pass "mux: 12 równoległych sesji zakończonych powodzeniem" || fail "mux: równoległe sesje ($okpar/12)" "$allpar"
 expect_not "mux: brak komunikatów ssh o limicie sesji w wynikach" "$allpar" "mux_client"
 
+# Retiring a shared connection (key or settings changed, "Zapomnij klucz hosta") must not break the
+# sessions still running on it: they finish, and the next command logs in again.
+mux_count() { pgrep -u "$(id -u)" -f "^ssh: $MUXDIR/.*\[mux\]" | wc -l | tr -d ' '; }
+"$CTL" __run-job 'sleep 2; echo dlugie-ok' 1 > "$WORK/inflight.log" 2>&1 &
+bgpid=$!
+sleep 0.8
+ctl __close-master 1 >/dev/null
+expect_not "zamknięcie połączenia: nie przyjmuje nowych sesji" "$(mux_ssh -O check)" "Master running"
+wait "$bgpid"; code=$?
+expect "zamknięcie połączenia: trwające polecenie dokończone" "$(cat "$WORK/inflight.log")" "dlugie-ok" "exit=0"
+expect_code "zamknięcie połączenia: kod 0 trwającego polecenia" "$code" 0 "$(cat "$WORK/inflight.log")"
+n1="$(logins)"
+out="$(ctl exec 'echo po-zamknieciu' 1)"
+expect "zamknięcie połączenia: następne polecenie działa" "$out" "po-zamknieciu"
+[ "$(logins)" -gt "$n1" ] && pass "zamknięcie połączenia: nowe połączenie główne" || fail "zamknięcie połączenia: brak nowego logowania"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ "$(mux_count)" -le 1 ] && break; sleep 0.3; done
+[ "$(mux_count)" -le 1 ] && pass "zamknięcie połączenia: stare połączenie zakończone po ostatniej sesji" \
+  || fail "zamknięcie połączenia: stare połączenie nadal działa" "$(pgrep -lf '\[mux\]')"
+expect_not "znacznik startu usunięty z wyniku" "$out$(cat "$WORK/inflight.log")" "CMCR:SESSION-STARTED"
+
 set_setting reuseConnections false
 mux_ssh -O exit >/dev/null
 out="$(ctl exec 'echo bez-mux' 1)"

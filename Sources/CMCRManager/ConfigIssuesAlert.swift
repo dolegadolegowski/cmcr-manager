@@ -2,7 +2,8 @@ import AppKit
 import CMCRCore
 import SwiftUI
 
-/// Tells the user at start that hosts.json or settings.json was damaged and where the original was kept.
+/// Tells the user at start that hosts.json or settings.json was damaged and where the original was kept,
+/// and that a password could not be saved in the Keychain.
 struct ConfigIssuesAlert: ViewModifier {
     @EnvironmentObject var model: AppModel
 
@@ -18,6 +19,14 @@ struct ConfigIssuesAlert: ViewModifier {
             Button("OK", role: .cancel) { model.configIssues = [] }
         } message: {
             Text(model.configIssues.joined(separator: "\n\n"))
+        }
+        .alert("Problem z Pękiem kluczy", isPresented: Binding(
+            get: { model.keychainError != nil },
+            set: { if !$0 { model.keychainError = nil } }
+        )) {
+            Button("OK", role: .cancel) { model.keychainError = nil }
+        } message: {
+            Text(model.keychainError ?? "")
         }
     }
 }
