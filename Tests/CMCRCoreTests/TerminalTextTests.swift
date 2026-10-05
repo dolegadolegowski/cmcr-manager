@@ -65,4 +65,55 @@ import Testing
         #expect(filtered([[0xC2], [0xA7]]) == "§")
         #expect(filtered([bytes("ś")]) == "ś")
     }
+
+    @Test func filterBidiOverrides() {
+        #expect(filtered([bytes("bidi\u{202E}txt.exe\n")]) == "bidi<U+202E>txt.exe\n")
+        let all: [UInt32] = [0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069]
+        for v in all {
+            let scalar = Unicode.Scalar(v)!
+            #expect(filtered([bytes("a\(scalar)b")]) == "a" + String(format: "<U+%04X>", v) + "b")
+        }
+        // Neighbours of the ranges and other three-byte E2 characters pass unchanged.
+        for s in ["\u{2029}", "\u{202F}", "\u{2065}", "\u{206A}", "…", "–", "„", "”", "‘", "€", "™", "─"] {
+            #expect(filtered([bytes("x\(s)y")]) == "x\(s)y")
+        }
+    }
+
+    @Test func filterBidiOverrideSplitAtEveryByte() {
+        let text = bytes("ab\u{202E}cd\u{2066}ef")
+        let expected = "ab<U+202E>cd<U+2066>ef"
+        for cut in 0...text.count {
+            #expect(filtered([Array(text[..<cut]), Array(text[cut...])]) == expected, "cut at \(cut)")
+        }
+        for cut1 in 0...text.count {
+            for cut2 in cut1...text.count {
+                #expect(filtered([Array(text[..<cut1]), Array(text[cut1..<cut2]), Array(text[cut2...])]) == expected)
+            }
+        }
+        #expect(filtered(text.map { [$0] }) == expected)
+    }
+
+    @Test func filterPolishAndPunctuationSplitAtEveryByte() {
+        let text = bytes("zażółć – „cytat” … gęślą jaźń\n")
+        for cut in 0...text.count {
+            #expect(filtered([Array(text[..<cut]), Array(text[cut...])]) == String(decoding: text, as: UTF8.self))
+        }
+        #expect(filtered(text.map { [$0] }) == String(decoding: text, as: UTF8.self))
+    }
+
+    @Test func filterIncompleteBidiPrefixAtEnd() {
+        // A stream that ends in the middle of a sequence gets the held bytes back as they were.
+        var f = TerminalText.StreamFilter()
+        #expect(f.filter(Data([0x61, 0xE2])) == Data([0x61]))
+        #expect(f.finish() == Data([0xE2]))
+        #expect(f.filter(Data([0x61, 0xE2, 0x80])) == Data([0x61]))
+        #expect(f.finish() == Data([0xE2, 0x80]))
+        #expect(f.filter(Data([0xE2, 0x81])) == Data())
+        #expect(f.filter(Data([0x41])) == Data([0xE2, 0x81, 0x41]))
+        // E2 followed by a byte that cannot start a bidi override is not held.
+        #expect(f.filter(Data([0x61, 0xE2, 0x94])) == Data([0x61, 0xE2, 0x94]))
+        // A C1 control or ESC right after a held prefix is still made visible.
+        #expect(filtered([[0xE2], [0xC2, 0x9B]]) == "\u{FFFD}M-^[")
+        #expect(filtered([[0xE2, 0x80], [0x1B]]) == "\u{FFFD}^[")
+    }
 }
