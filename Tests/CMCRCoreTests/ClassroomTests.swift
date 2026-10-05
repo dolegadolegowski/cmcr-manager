@@ -239,7 +239,8 @@ import Testing
     plan.steps = [.cleanShared]
     let host = LessonRunner.Host(machine: Machine(name: "x", address: "192.0.2.1", user: "admin"), password: nil, macs: [])
     let states = StepRecorder()
-    let r = await LessonRunner.run(plan, on: host, ssh: SSHSettings(askpassPath: "/usr/bin/false"), materials: nil) { i, st in states.add(i, st) }
+    let r = await LessonRunner.run(plan, on: host, ssh: SSHSettings(askpassPath: "/usr/bin/false"), materials: nil,
+                                   onStep: { i, st in states.add(i, st) })
     #expect(r.succeeded)
     #expect(states.all == [StepRecord(index: 0, state: .skipped("nie zebrano prac – folder pozostawiono"))])
 }
@@ -272,6 +273,12 @@ private final class StepRecorder: @unchecked Sendable {
     }
     #expect(await counter.peak == 3)
     #expect(await counter.done == 12)
+
+    let one = ConcurrencyLimiter(limit: 1)
+    #expect(await one.tryAcquire())
+    #expect(await !one.tryAcquire())
+    await one.release()
+    #expect(await one.tryAcquire())
 }
 
 private actor PeakCounter {

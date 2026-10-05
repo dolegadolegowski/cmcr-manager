@@ -165,7 +165,10 @@ public enum LessonRunner {
         for i in indices {
             let step = plan.steps[i]
             if step != .wake, let limiter, !holdsSlot, !unreachable, handle?.isCancelled != true {
-                await limiter.acquire()
+                if await !limiter.tryAcquire() {
+                    say("Czekam na swoją kolej (najwyżej \(limiter.limit) komputerów naraz)…")
+                    await limiter.acquire()
+                }
                 holdsSlot = true
             }
             if handle?.isCancelled == true {
@@ -342,11 +345,18 @@ public enum LessonRunner {
 
 /// Counting semaphore for async code: at most `limit` holders at a time, the others wait in FIFO order.
 public actor ConcurrencyLimiter {
-    private let limit: Int
+    public nonisolated let limit: Int
     private var active = 0
     private var waiting: [CheckedContinuation<Void, Never>] = []
 
     public init(limit: Int) { self.limit = max(1, limit) }
+
+    /// Takes a free slot without waiting; false when all slots are taken.
+    public func tryAcquire() -> Bool {
+        guard active < limit else { return false }
+        active += 1
+        return true
+    }
 
     public func acquire() async {
         if active < limit {

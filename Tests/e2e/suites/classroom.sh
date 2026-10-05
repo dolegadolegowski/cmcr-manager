@@ -55,6 +55,13 @@ expect "ask: odpowiedź przyciskiem" "$out" "imac01 ($ME): Tak"
 out="$(ctlpw ask "Jest tam ktoś?" 1 --timeout 10)"
 expect "ask: brak odpowiedzi w czasie" "$out" "brak odpowiedzi (minął czas)"
 rm -f "$WORK/ask.timeout" "$WORK/ask.answer"
+out="$(ctlpw ask "Gotowe?" all --buttons "Tak, Nie" --timeout 30)"; code=$?
+expect "ask: wszystkie komputery naraz, niedostępny bez odpowiedzi" "$out" "imac01 ($ME): Tak" "imac99: —"
+[ "$code" -ne 0 ] && pass "ask: kod błędu, gdy któryś komputer nie odpowiedział" \
+  || fail "ask: kod 0 mimo niedostępnego komputera" "$out"
+out="$(ctlpw ask "Gotowe?" 1 --buttons "A, B, C, D")"; code=$?
+expect_code "ask: więcej niż 3 przyciski odrzucone" "$code" 2 "$out"
+expect "ask: komunikat o limicie przycisków" "$out" "najwyżej 3 przyciski"
 
 section "Harmonogram zasilania (pmset repeat)"
 clear_fakelog
@@ -115,6 +122,9 @@ out="$(ctlpw rename 1 --name "!!!")"; code=$?
 expect "rename: niepoprawna nazwa odrzucona" "$out" "niepoprawna nazwa"
 out="$(ctl rename 1 --dry-run)"
 expect "rename: podgląd z nazwy na liście" "$out" "„imac01” → imac01.local"
+out="$(ctl rename all --name "Ta sama" --dry-run)"; code=$?
+expect_code "rename: jedna nazwa dla wielu komputerów odrzucona" "$code" 2 "$out"
+expect "rename: wyjaśnienie" "$out" "tylko dla jednego komputera"
 
 section "Wersje aplikacji"
 mkdir -p "$WORK/Applications/CMCR Test.app/Contents"
@@ -182,6 +192,24 @@ out="$(ctlpw lesson end 1 --no-wait)"; code=$?
 expect_code "lesson end bez folderu ucznia: błąd zbierania" "$code" 1 "$out"
 expect "lesson end: bez zebranych prac folder nie jest czyszczony" "$out" "pominięto, bo zbieranie prac się nie udało"
 mkdir -p "$WORK/remote/Public/cmcr"
+
+# Cleaning switched on but collecting off: the student's folder must stay untouched.
+echo "praca bez zbierania" > "$WORK/remote/Public/cmcr/praca2.txt"
+python3 - "$WORK/config/classroom.json" <<'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+# (cleanDownloads stays off: in this harness the student is the user running the tests.)
+cfg["end"].update({"warn": False, "collect": False, "quitApps": False, "cleanShared": True, "cleanDownloads": False,
+                   "logout": True, "power": "none"})
+json.dump(cfg, open(sys.argv[1], "w"), ensure_ascii=False)
+PY
+out="$(ctlpw lesson end 1 --no-wait)"; code=$?
+expect_code "lesson end bez zbierania: kod 0" "$code" 0 "$out"
+expect "lesson end bez zbierania: pozostałe kroki wykonane" "$out" "użytkownik wylogowany"
+[ -f "$WORK/remote/Public/cmcr/praca2.txt" ] && pass "lesson end bez zbierania: folder ucznia nietknięty" \
+  || fail "lesson end bez zbierania: usunięto prace ucznia" "$out"
+expect_not "lesson end bez zbierania: brak kroku czyszczenia" "$out" "Wyczyść folder ucznia"
+rm -f "$WORK/remote/Public/cmcr/praca2.txt"
 rm -f "$WORK/config/classroom.json"
 
 section "Raport CSV"
