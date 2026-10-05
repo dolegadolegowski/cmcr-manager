@@ -9,6 +9,33 @@ UPD_APP="$U/apps/CMCR Manager.app"
 UPD_SERVER=""
 mkdir -p "$U/keys" "$U/apps" "$U/build" "$U/www/files" "$U/state" "$U/tools"
 
+# Help and usage errors run nothing; if they did, the missing app and the closed port would stop them anyway.
+upd_closed() {
+  env CMCR_UPDATE_API_BASE=http://127.0.0.1:9 CMCR_UPDATE_WEB_BASE=http://127.0.0.1:9 CMCR_UPDATE_STATE_DIR="$U/state" \
+    "$CTL" app-update "$@" 2>&1
+}
+upd_offline() { upd_closed "$@" --app "$U/nie-ma.app"; }
+for h in --help -h "install --help" "check -h"; do
+  out="$(upd_offline $h)"; code=$?
+  if [ "$code" = 0 ] && contains "" "$out" "Użycie:" && contains "" "$out" "cmcrctl app-update install" \
+     && contains "" "$out" "Kody wyjścia"; then pass "app-update $h: pomoc, kod 0"
+  else fail "app-update $h: zamiast pomocy (kod $code)" "$out"; fi
+done
+out="$(upd_closed help)"; code=$?
+expect_code "app-update help: kod 0" "$code" 0 "$out"
+expect "app-update help: pomoc" "$out" "Użycie:" "cmcrctl app-update [check]"
+out="$(upd_offline --bogus)"; code=$?
+expect_code "app-update --bogus: kod 2" "$code" 2 "$out"
+expect "app-update --bogus: komunikat" "$out" "Nieznana opcja: --bogus" "Pomoc: cmcrctl app-update --help"
+out="$(upd_offline check nadmiar)"; code=$?
+expect_code "app-update check nadmiar: kod 2" "$code" 2 "$out"
+out="$(upd_offline check --relaunch)"; code=$?
+expect_code "app-update check --relaunch: kod 2" "$code" 2 "$out"
+out="$(upd_offline install --confirm-timeout dużo)"; code=$?
+expect_code "app-update install --confirm-timeout dużo: kod 2" "$code" 2 "$out"
+out="$(upd_offline check)"; code=$?
+expect_code "app-update check bez aplikacji: kod 1" "$code" 1 "$out"
+
 upd_run() {
   if [ "$(id -u)" = 0 ]; then echo "  (pominięto: testy uaktualnień nie mogą działać jako root)"; return; fi
   case "$UPD_APP" in "$WORK"/*) ;; *) echo "  (pominięto: pakiet testowy poza $WORK)"; return ;; esac
@@ -155,7 +182,7 @@ EOF
   # ---- rollback: 1.0.2 never confirms its start
   : > "$U/launches.log"
   out="$(upd api-bad install --relaunch --confirm-timeout 2)"; code=$?
-  expect_code "rollback: kod 2" "$code" 2 "$out"
+  expect_code "rollback: kod 1" "$code" 1 "$out"
   expect "rollback: komunikat z powodem" "$out" "przywrócono wersję 1.0.1" "nie potwierdziła uruchomienia w ciągu 2 s"
   [ "$(upd_version)" = 1.0.1 ] && codesign --verify --deep --strict "$UPD_APP" 2>/dev/null && [ "$(upd_leftovers)" = 0 ] \
     && pass "rollback: przywrócono 1.0.1 (podpis poprawny, bez kopii roboczych)" || fail "rollback: stan" "$(upd_version); $(ls -A "$U/apps")"
@@ -164,7 +191,7 @@ EOF
   # ---- crash after the first confirmation step (process gone before it finished launching)
   : > "$U/launches.log"
   out="$(upd api-crash install --relaunch --confirm-timeout 10)"; code=$?
-  expect_code "awaria w trakcie startu: kod 2" "$code" 2 "$out"
+  expect_code "awaria w trakcie startu: kod 1" "$code" 1 "$out"
   expect "awaria w trakcie startu: przywrócono poprzednią wersję" "$out" "przywrócono wersję 1.0.1" "zakończyła działanie w trakcie uruchamiania"
   [ "$(upd_version)" = 1.0.1 ] && [ "$(upd_leftovers)" = 0 ] \
     && pass "awaria w trakcie startu: 1.0.1 na miejscu, bez kopii roboczych" || fail "awaria w trakcie startu: stan" "$(upd_version); $(ls -A "$U/apps")"
@@ -209,4 +236,4 @@ EOF
 }
 upd_run
 [ -n "$UPD_SERVER" ] && { kill "$UPD_SERVER"; wait "$UPD_SERVER"; } 2>/dev/null
-unset -f upd_run upd_tool upd_bundle upd_release upd upd_version upd_leftovers 2>/dev/null
+unset -f upd_closed upd_offline upd_run upd_tool upd_bundle upd_release upd upd_version upd_leftovers 2>/dev/null

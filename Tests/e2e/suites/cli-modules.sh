@@ -22,7 +22,8 @@ mm() { CMCR_CONFIG_DIR="$MM" CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }
 # At a terminal (stdin, stdout and stderr on a pty).
 mm_tty() { CMCR_CONFIG_DIR="$MM" CMCR_PASSWORD="$PASSWORD" script -q /dev/null "$CTL" "$@" </dev/null 2>&1; }
 delayed_power() { pgrep -U "$(id -u)" -f cmcr-delayed-power 2>/dev/null; }
-# Bytes a terminal would interpret: C0 controls other than tab/LF (CR LF from the pty is fine), DEL, C1 (C2 80–9F).
+# Bytes a terminal would interpret: C0 controls other than tab/LF (CR LF from the pty is fine), DEL, C1 (C2 80–9F),
+# and bidi overrides (U+202A–U+202E, U+2066–U+2069) that reorder what is shown.
 # script(1) itself echoes the EOF of its /dev/null stdin as "^D" + two backspaces, and $(…) drops the LF of the
 # last CR LF: neither comes from cmcrctl.
 term_unsafe() {
@@ -33,7 +34,8 @@ d = d.replace(b"\r\n", b"\n")
 if d.endswith(b"\r"): d = d[:-1]
 bad = sorted({c for c in d if (c < 32 and c not in (9, 10)) or c == 127})
 c1 = [i for i in range(len(d) - 1) if d[i] == 0xC2 and 0x80 <= d[i + 1] <= 0x9F]
-print(" ".join("%02x" % c for c in bad) + (" C1" if c1 else ""))'
+bidi = [ch for ch in d.decode("utf-8", "replace") if 0x202A <= ord(ch) <= 0x202E or 0x2066 <= ord(ch) <= 0x2069]
+print(" ".join("%02x" % c for c in bad) + (" C1" if c1 else "") + (" BIDI" if bidi else ""))'
 }
 
 # A regression could start delayed power actions (power-later): they run in a detached bash, which must see
@@ -225,17 +227,17 @@ section "cmcrctl – znaki sterujące z iMaców w terminalu"
 TD="$WORK/remote/mm-znaki"
 mkdir -p "$TD"
 touch "$TD/$(printf 'a\033]0;OWNED\007\033[2Jz')" "$TD/$(printf 'cr\rSPOOF')" "$TD/$(printf 'c1\302\23331mred')" \
-  "$TD/zwykły plik ą.txt"
+  "$TD/$(printf 'bidi\342\200\256txt.exe')" "$TD/zwykły plik ą.txt" "$TD/„cytat” – notatki….txt"
 # Structured listing: names are escaped always (also in a pipe or file).
 out="$(ctl ls 1 "$TD")"
 expect "ls nr ścieżka: znaki sterujące w nazwach jako \\x.." "$out" 'a\x1B]0;OWNED\x07\x1B[2Jz' 'cr\rSPOOF' \
-  'c1\x9B31mred' "zwykły plik ą.txt"
+  'c1\x9B31mred' 'bidi\u{202E}txt.exe' "zwykły plik ą.txt" "„cytat” – notatki….txt"
 bad="$(term_unsafe "$out")"
 [ -z "$bad" ] && pass "ls nr ścieżka: brak surowych znaków sterujących" || fail "ls nr ścieżka: surowe bajty $bad" "$out"
 # Raw remote output (ls -la, exec) at a terminal: shown like cat -v.
 out="$(script -q /dev/null "$CTL" ls "$TD" 1 </dev/null 2>&1)"
-expect "ls ŚCIEŻKA KOMP (terminal): nazwy widoczne jako ^[ ^M M-^[" "$out" "a^[]0;OWNED^G^[[2Jz" "cr^MSPOOF" "c1M-^[31mred" \
-  "zwykły plik ą.txt"
+expect "ls ŚCIEŻKA KOMP (terminal): nazwy widoczne jako ^[ ^M M-^[ <U+202E>" "$out" "a^[]0;OWNED^G^[[2Jz" "cr^MSPOOF" \
+  "c1M-^[31mred" "bidi<U+202E>txt.exe" "zwykły plik ą.txt" "„cytat” – notatki….txt"
 bad="$(term_unsafe "$out")"
 [ -z "$bad" ] && pass "ls ŚCIEŻKA KOMP (terminal): brak surowych znaków sterujących" \
   || fail "ls ŚCIEŻKA KOMP (terminal): surowe bajty $bad" "$out"

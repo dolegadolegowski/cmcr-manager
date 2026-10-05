@@ -13,6 +13,10 @@ enum SelfUpdateCommand {
                                                 (aplikacja musi być zamknięta)
     """
 
+    static let help = "Użycie:\n\(usage)\n\n"
+        + "Kody wyjścia: 0 – sukces (także gdy nie ma nowej wersji), 1 – błąd (wersja zainstalowana pozostaje bez zmian "
+        + "albo zostaje przywrócona), 2 – błędne użycie (nic nie wykonano).\nWszystkie polecenia: cmcrctl --help"
+
     /// Exit code when the command was handled, nil for every other command.
     static func handle(_ argv: [String]) async -> Int32? {
         let args = Array(argv.dropFirst())
@@ -22,20 +26,56 @@ enum SelfUpdateCommand {
             return rc == 0 ? 0 : 1
         }
         guard args.first == "app-update" else { return nil }
-        var rest = Array(args.dropFirst())
-        let beta = take("--beta", from: &rest)
-        let relaunch = take("--relaunch", from: &rest)
-        let app = value("--app", from: &rest).map { URL(fileURLWithPath: expandTilde($0)).standardizedFileURL } ?? defaultApp
-        let confirmTimeout = value("--confirm-timeout", from: &rest).flatMap(Int.init) ?? 45
-        switch rest.first ?? "check" {
-        case "check" where rest.count <= 1:
-            return await check(app: app, beta: beta)
-        case "install" where rest.count == 1:
-            return await install(app: app, beta: beta, relaunch: relaunch, confirmTimeout: confirmTimeout)
-        default:
-            printError("Użycie:\n\(usage)")
-            return 64
+        let rest = Array(args.dropFirst())
+        if ModuleArguments.wantsHelp(rest) {
+            print(help)
+            return ExitCode.success
         }
+        var beta = false, relaunch = false
+        var app = defaultApp
+        var confirmTimeout: Int?
+        var positional: [String] = []
+        var i = 0
+        while i < rest.count {
+            let arg = rest[i]
+            i += 1
+            switch arg {
+            case "--beta": beta = true
+            case "--relaunch": relaunch = true
+            case "--app", "--confirm-timeout":
+                guard i < rest.count else { return misuse("Opcja \(arg) wymaga wartości.") }
+                let v = rest[i]
+                i += 1
+                if arg == "--app" {
+                    app = URL(fileURLWithPath: expandTilde(v)).standardizedFileURL
+                } else {
+                    guard let n = Int(v), n > 0 else { return misuse("--confirm-timeout: oczekiwano liczby sekund, podano „\(v)”.") }
+                    confirmTimeout = n
+                }
+            case _ where arg.hasPrefix("-"):
+                return misuse("Nieznana opcja: \(arg)")
+            default:
+                positional.append(arg)
+            }
+        }
+        switch positional.first ?? "check" {
+        case "check":
+            guard positional.count <= 1 else { return misuse("Nadmiarowy argument „\(positional[1])”.") }
+            if relaunch { return misuse("Opcja --relaunch dotyczy tylko polecenia app-update install.") }
+            if confirmTimeout != nil { return misuse("Opcja --confirm-timeout dotyczy tylko polecenia app-update install.") }
+            return await check(app: app, beta: beta)
+        case "install":
+            guard positional.count == 1 else { return misuse("Nadmiarowy argument „\(positional[1])”.") }
+            return await install(app: app, beta: beta, relaunch: relaunch, confirmTimeout: confirmTimeout ?? 45)
+        case let other:
+            return misuse("Nieznane polecenie: app-update \(other)")
+        }
+    }
+
+    /// Prints the problem and where to find help; nothing is run.
+    static func misuse(_ message: String) -> Int32 {
+        printError("\(message)\nPomoc: cmcrctl app-update --help")
+        return ExitCode.usage
     }
 
     /// The app this cmcrctl ships in (…/CMCR Manager.app/Contents/Resources/bin/cmcrctl), else /Applications.
@@ -139,7 +179,7 @@ enum SelfUpdateCommand {
             return 0
         case 2:
             printError("✘ Nowa wersja nie uruchomiła się poprawnie – przywrócono wersję \(installed)\(reason).")
-            return 2
+            return 1
         default:
             printError("✘ Instalacja nie powiodła się – wersja \(installed) pozostała bez zmian\(reason).")
             return 1
@@ -190,19 +230,6 @@ enum SelfUpdateCommand {
     }
 
     static func userAgent(_ version: SemanticVersion) -> String { "CMCR-Manager/\(version) (cmcrctl; macOS)" }
-
-    static func take(_ flag: String, from args: inout [String]) -> Bool {
-        guard let i = args.firstIndex(of: flag) else { return false }
-        args.remove(at: i)
-        return true
-    }
-
-    static func value(_ option: String, from args: inout [String]) -> String? {
-        guard let i = args.firstIndex(of: option), i + 1 < args.count else { return nil }
-        let v = args[i + 1]
-        args.removeSubrange(i...(i + 1))
-        return v
-    }
 
     static func printError(_ message: String) {
         FileHandle.standardError.write(Data((message + "\n").utf8))

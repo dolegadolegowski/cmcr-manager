@@ -42,11 +42,14 @@ public enum TerminalText {
 
     /// Filter for a byte stream (remote stdout/stderr) written to a terminal, like `cat -v`: line feeds,
     /// tabs and CR LF pairs pass, every other C0 control byte becomes `^X` (ESC → `^[`, BEL → `^G`, a lone
-    /// carriage return → `^M`), DEL becomes `^?` and a UTF-8 encoded C1 control (U+0080–U+009F, e.g. the
-    /// one-character CSI U+009B) becomes `M-^X`. Everything else – UTF-8 text included – is passed unchanged.
+    /// carriage return → `^M`), DEL becomes `^?`, a UTF-8 encoded C1 control (U+0080–U+009F, e.g. the
+    /// one-character CSI U+009B) becomes `M-^X` and a bidirectional override (U+202A–U+202E, U+2066–U+2069,
+    /// which would show `bidi\u{202E}txt.exe` as `bidiexe.txt`) becomes `<U+202E>`. Everything else – UTF-8
+    /// text included – is passed unchanged.
     ///
-    /// Output arrives in arbitrary chunks, so a trailing CR (maybe the start of CR LF) or 0xC2 (maybe the
-    /// start of a C1 control) is held back until the next chunk; `finish()` returns what is still held.
+    /// Output arrives in arbitrary chunks, so a trailing CR (maybe the start of CR LF), 0xC2 (maybe the
+    /// start of a C1 control) or E2, E2 80, E2 81 (maybe the start of a bidi override) is held back until the
+    /// next chunk; `finish()` returns what is still held.
     public struct StreamFilter: Sendable {
         private var pending: [UInt8] = []
 
@@ -83,6 +86,24 @@ public enum TerminalText {
                     if (0x80...0x9F).contains(next) {
                         out += [0x4D, 0x2D, 0x5E, next - 0x80 + 0x40]  // M-^X
                         i += 2
+                        continue
+                    }
+                    out.append(byte)
+                case 0xE2:
+                    // U+202A–U+202E = E2 80 AA–AE, U+2066–U+2069 = E2 81 A6–A9.
+                    guard i + 2 < input.count else {
+                        if input[(i + 1)...].allSatisfy({ $0 == 0x80 || $0 == 0x81 }) {
+                            pending = Array(input[i...])
+                            return Data(out)
+                        }
+                        out.append(byte)
+                        break
+                    }
+                    let second = input[i + 1], third = input[i + 2]
+                    if (second == 0x80 && (0xAA...0xAE).contains(third)) || (second == 0x81 && (0xA6...0xA9).contains(third)) {
+                        let scalar = 0x2000 | UInt32(second & 0x3F) << 6 | UInt32(third & 0x3F)
+                        out += Array(String(format: "<U+%04X>", scalar).utf8)
+                        i += 3
                         continue
                     }
                     out.append(byte)
