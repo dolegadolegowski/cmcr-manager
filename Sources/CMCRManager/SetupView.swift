@@ -23,6 +23,9 @@ struct SetupView: View {
             default: ReadinessView()
             }
         }
+        .onSnapshotSubpage { sub in
+            if let i = ["hosts", "access", "general", "readiness"].firstIndex(of: sub) { tab = i }
+        }
     }
 }
 
