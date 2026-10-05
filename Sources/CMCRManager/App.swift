@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         Updater.shared.applicationDidLaunch()
+        SnapshotRenderer.runIfRequested()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
