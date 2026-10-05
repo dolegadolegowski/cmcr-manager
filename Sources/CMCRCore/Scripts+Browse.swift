@@ -85,17 +85,25 @@ public extension Scripts {
       [ "$real" = "/" ] && real=""
       CMCR_REAL="$real/$base"
       CMCR_BASE="$base"
+      # The disk ignores letter case (/Users/x/LIBRARY is ~/Library), and so must the checks.
+      local verdict=""
+      shopt -s nocasematch
       case "$CMCR_REAL" in
         /Users/*/?*|/private/tmp/?*|/Volumes/*/?*) ;;
-        *) cmcr_refuse "usuwać i zmieniać nazwy można tylko w folderach kont (/Users/…), w /tmp i na dyskach zewnętrznych – $CMCR_REAL"; return ;;
+        *) verdict=outside ;;
       esac
-      case "$CMCR_REAL" in /Users/*)
-        sub="${CMCR_REAL#/Users/*/}"
+      case "$verdict$CMCR_REAL" in /Users/*)
+        sub="${CMCR_REAL#/*/*/}"
         case "$sub" in
-          Library|Library/*|.*) cmcr_refuse "folder chroniony (Library lub plik ukryty w katalogu domowym) – $CMCR_REAL"; return ;;
-          Desktop|Documents|Downloads|Movies|Music|Pictures|Public|Applications|Sites)
-            cmcr_refuse "nie można usunąć ani przemianować standardowego folderu konta – $CMCR_REAL"; return ;;
+          Library|Library/*|.*) verdict=library ;;
+          Desktop|Documents|Downloads|Movies|Music|Pictures|Public|Applications|Sites) verdict=standard ;;
         esac ;;
+      esac
+      shopt -u nocasematch
+      case "$verdict" in
+        outside) cmcr_refuse "usuwać i zmieniać nazwy można tylko w folderach kont (/Users/…), w /tmp i na dyskach zewnętrznych – $CMCR_REAL"; return ;;
+        library) cmcr_refuse "folder chroniony (Library lub plik ukryty w katalogu domowym) – $CMCR_REAL"; return ;;
+        standard) cmcr_refuse "nie można usunąć ani przemianować standardowego folderu konta – $CMCR_REAL"; return ;;
       esac
       return 0
     }

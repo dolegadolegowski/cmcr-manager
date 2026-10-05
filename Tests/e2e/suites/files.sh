@@ -128,7 +128,8 @@ out="$(ctl rm 1 "$B/folder ze spacją" --dry-run)"; code=$?
 expect "rm --dry-run: dozwolony folder" "$out" "Zostałoby usunięte: /private$B/folder ze spacją"
 [ -d "$B/folder ze spacją" ] && pass "rm --dry-run: nic nie usunięto" || fail "rm --dry-run usunął folder"
 for p in "/Users/$ME" "/Users/$ME/Desktop" "/Users/$ME/Documents" "/Users/$ME/Public" "/Users/$ME/.ssh" \
-         "/Users/$ME/Library/Caches" "/Applications/Safari.app" "/etc/hosts" "/tmp/../etc/hosts" \
+         "/Users/$ME/Library/Caches" "/Users/$ME/library" "/Users/$ME/LIBRARY/Caches" "/Users/$ME/DESKTOP" \
+         "/users/$ME/documents" "/Applications/Safari.app" "/etc/hosts" "/tmp/../etc/hosts" \
          "/Volumes/Macintosh HD/etc/hosts" "$B/link-poza/cmcr-e2e-brak" "/" "względna"; do
   out="$(ctl rm 1 "$p" --dry-run)"; code=$?
   if [ "$code" = 65 ] && contains "" "$out" "Odmowa" && ! contains "" "$out" "Zostałoby"; then
