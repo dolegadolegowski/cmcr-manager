@@ -37,98 +37,269 @@ struct HostsEditor: View {
     @ViewState private var domain = "local"
     @ViewState private var confirm: ConfirmRequest?
     @ViewState private var passwordFor: Machine?
+    @ViewState private var rows: Set<UUID> = []
+    @ViewState private var newGroupFor: Set<UUID>?
+    @ViewState private var importError: String?
 
     var body: some View {
-        Page {
-            SectionBox(title: "Lista komputerów", icon: "desktopcomputer") {
-                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
-                    GridRow {
-                        Text("Nazwa").font(.caption.weight(.semibold))
-                        Text("Adres (host)").font(.caption.weight(.semibold))
-                        Text("Konto admin.").font(.caption.weight(.semibold))
-                        Text("Port").font(.caption.weight(.semibold))
-                        Text("MAC (Wake-on-LAN)").font(.caption.weight(.semibold))
-                        Text("Hasło").font(.caption.weight(.semibold))
-                        Text("")
-                    }
-                    ForEach($model.machines) { $m in
-                        GridRow {
-                            TextField("imac01", text: $m.name).frame(width: 90)
-                            TextField("imac01.local", text: $m.address).frame(minWidth: 120, maxWidth: 180)
-                            TextField("imac01", text: $m.user).frame(width: 100)
-                            TextField("22", value: $m.port, format: .number.grouping(.never)).frame(width: 50)
-                            TextField("aa:bb:cc:dd:ee:ff", text: $m.macAddress).frame(width: 140).font(.body.monospaced())
-                            Button(m.usesSharedPassword ? "wspólne" : "własne") { passwordFor = m }
-                                .controlSize(.small)
-                            Button {
-                                let target = m
-                                confirm = ConfirmRequest(title: "Usunąć \(target.name)?", message: "Komputer zniknie z listy (nic nie jest zmieniane na samym iMacu).", button: "Usuń") {
-                                    model.machines.removeAll { $0.id == target.id }
-                                    model.selection.remove(target.id)
-                                }
-                            } label: {
-                                Image(systemName: "minus.circle")
-                            }
-                            .buttonStyle(.borderless)
-                        }
-                    }
-                }
-                HStack {
-                    Button("Dodaj komputer") {
-                        let n = model.machines.count + 1
-                        let name = String(format: "imac%02d", n)
-                        model.machines.append(Machine(name: name, address: "\(name).local", user: name))
-                    }
-                    Button("Importuj…") {
-                        if let url = Pickers.files(allowFolders: false, types: [.json]).first,
-                           let hosts = try? ConfigStore.importHosts(from: url) {
-                            model.machines = hosts
-                        } else {
-                            NSSound.beep()
-                        }
-                    }
-                    Button("Eksportuj…") {
-                        if let url = Pickers.save(name: "cmcr-komputery.json") {
-                            try? ConfigStore.exportHosts(model.machines, to: url)
-                        }
-                    }
+        let issues = HostValidation.issues(in: model.machines)
+        VStack(alignment: .leading, spacing: 12) {
+            table(issues)
+                .frame(minHeight: 220, maxHeight: .infinity)
+            listButtons
+            if !issues.isEmpty { issueSummary(issues) }
+            generator
+        }
+        .padding(20)
+        .confirmation($confirm)
+        .sheet(item: $passwordFor) { m in
+            HostPasswordSheet(machine: m).environmentObject(model)
+        }
+        .sheet(item: Binding(get: { newGroupFor.map(IDSet.init) }, set: { newGroupFor = $0?.ids })) { target in
+            GroupNameSheet(title: "Nowa grupa (\(Polish.computers(target.ids.count)))") { name in
+                HostGroups.add(name, to: target.ids, in: &model.machines)
+            }
+        }
+        .alert("Nie można zaimportować listy", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importError ?? "")
+        }
+    }
+
+    private struct IDSet: Identifiable {
+        let ids: Set<UUID>
+        var id: Int { ids.hashValue }
+    }
+
+    // MARK: Table
+
+    func table(_ issues: [UUID: [HostIssue]]) -> some View {
+        Table(model.machines, selection: $rows) {
+            TableColumn("") { m in
+                if let list = issues[m.id] {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .help(list.map(\.message).joined(separator: "\n"))
+                        .accessibilityLabel("Problem: \(list.map(\.message).joined(separator: " "))")
                 }
             }
+            .width(18)
+            TableColumn("Nazwa") { m in
+                TextField("Nazwa", text: field(m.id, \.name), prompt: Text("imac01"))
+                    .labelsHidden()
+            }
+            .width(min: 80, ideal: 100)
+            TableColumn("Adres (host)") { m in
+                TextField("Adres", text: field(m.id, \.address), prompt: Text("imac01.local"))
+                    .labelsHidden()
+            }
+            .width(min: 120, ideal: 160)
+            TableColumn("Konto administratora") { m in
+                TextField("Konto", text: field(m.id, \.user), prompt: Text("imac01"))
+                    .labelsHidden()
+            }
+            .width(min: 90, ideal: 120)
+            TableColumn("Port") { m in
+                TextField("Port", value: portField(m.id), format: .number.grouping(.never))
+                    .labelsHidden()
+                    .monospacedDigit()
+                    .help("Port SSH (zwykle 22), od 1 do 65535")
+            }
+            .width(min: 50, ideal: 56)
+            TableColumn("MAC (Wake-on-LAN)") { m in
+                TextField("MAC", text: field(m.id, \.macAddress), prompt: Text("uzupełni się sam"))
+                    .labelsHidden()
+                    .font(.body.monospaced())
+                    .help("Uzupełniany automatycznie przy odświeżaniu stanu włączonego komputera")
+            }
+            .width(min: 120, ideal: 150)
+            TableColumn("Grupy") { m in
+                Menu {
+                    GroupMembershipMenu(ids: [m.id]) { newGroupFor = [m.id] }
+                } label: {
+                    Text(m.groups.isEmpty ? "Brak" : m.groups.joined(separator: ", "))
+                        .foregroundStyle(m.groups.isEmpty ? .secondary : .primary)
+                }
+                .menuStyle(.borderlessButton)
+                .help("Grupy pozwalają szybko zaznaczać i filtrować komputery (np. rząd ławek)")
+            }
+            .width(min: 90, ideal: 130)
+            TableColumn("Hasło") { m in
+                Button(m.usesSharedPassword ? "Wspólne" : "Własne") { passwordFor = m }
+                    .controlSize(.small)
+                    .help(m.usesSharedPassword ? "Używa wspólnego hasła administratora. Kliknij, aby ustawić własne."
+                                               : "Ma własne hasło w Pęku kluczy. Kliknij, aby zmienić.")
+            }
+            .width(min: 70, ideal: 80)
+        }
+        .contextMenu(forSelectionType: UUID.self) { ids in
+            if !ids.isEmpty {
+                Menu("Grupy") {
+                    GroupMembershipMenu(ids: ids) { newGroupFor = ids }
+                }
+                Divider()
+                Button("Usuń z listy…", role: .destructive) { askDelete(ids) }
+            }
+        }
+        .onDeleteCommand { askDelete(rows) }
+    }
 
-            SectionBox(title: "Generator (jak pętla w cmcr-helpers.sh)", icon: "wand.and.stars") {
-                HStack {
-                    TextField("prefiks", text: $prefix).frame(width: 80)
-                    Stepper("od \(start)", value: $start, in: 0...999).frame(width: 90)
-                    Stepper("liczba \(count)", value: $count, in: 1...250).frame(width: 110)
-                    Stepper("cyfr \(digits)", value: $digits, in: 1...4).frame(width: 90)
-                    Text("domena")
-                    TextField("local", text: $domain).frame(width: 80)
+    var listButtons: some View {
+        HStack(spacing: 8) {
+            Button {
+                let m = HostValidation.nextMachine(after: model.machines)
+                model.machines.append(m)
+                rows = [m.id]
+            } label: {
+                Label("Dodaj komputer", systemImage: "plus")
+            }
+            .help("Dodaje kolejny komputer (pierwszy wolny numer, np. imac16)")
+            Button(role: .destructive) {
+                askDelete(rows)
+            } label: {
+                Label("Usuń", systemImage: "minus")
+            }
+            .disabled(rows.isEmpty)
+            .help("Usuwa zaznaczone wiersze z listy (na samych iMacach nic się nie zmienia)")
+            Menu {
+                GroupMembershipMenu(ids: rows) { newGroupFor = rows }
+            } label: {
+                Label("Grupy", systemImage: "tag")
+            }
+            .fixedSize()
+            .disabled(rows.isEmpty)
+            .help("Dodaje zaznaczone wiersze do grupy lub je z niej usuwa")
+            Spacer()
+            Button {
+                importHosts()
+            } label: {
+                Label("Importuj…", systemImage: "square.and.arrow.down")
+            }
+            .help("Zastępuje listę komputerami z pliku JSON")
+            Button {
+                if let url = Pickers.save(name: "cmcr-komputery.json") {
+                    try? ConfigStore.exportHosts(model.machines, to: url)
+                }
+            } label: {
+                Label("Eksportuj…", systemImage: "square.and.arrow.up")
+            }
+            .help("Zapisuje listę komputerów (z grupami) do pliku JSON")
+        }
+    }
+
+    func issueSummary(_ issues: [UUID: [HostIssue]]) -> some View {
+        let lines = model.machines.compactMap { m in
+            issues[m.id].map { "\(m.name.isEmpty ? "(bez nazwy)" : m.name): \($0.map(\.message).joined(separator: " "))" }
+        }
+        return Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Do poprawienia: \(Polish.computers(lines.count))").fontWeight(.semibold)
+                ForEach(lines.prefix(4), id: \.self) { Text($0).lineLimit(2) }
+                if lines.count > 4 { Text("… i \(lines.count - 4) więcej") }
+            }
+            .font(.callout)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+        }
+    }
+
+    var generator: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    LabeledContent("Prefiks") {
+                        TextField("Prefiks", text: $prefix).labelsHidden().frame(width: 80)
+                    }
+                    Stepper("Od numeru \(start)", value: $start, in: 0...999).fixedSize()
+                    Stepper("Liczba: \(count)", value: $count, in: 1...250).fixedSize()
+                    Stepper("Cyfr: \(digits)", value: $digits, in: 1...4).fixedSize()
+                    LabeledContent("Domena") {
+                        TextField("Domena", text: $domain).labelsHidden().frame(width: 80)
+                    }
                 }
                 let preview = Machine.generate(prefix: prefix, start: start, count: count, digits: digits, domain: domain)
                 Text("Np.: \(preview.prefix(3).map(\.destination).joined(separator: ", "))\(preview.count > 3 ? " … \(preview.last!.destination)" : "")")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 HStack {
-                    Button("Zastąp listę") {
+                    Button(role: .destructive) {
                         confirm = ConfirmRequest(title: "Zastąpić listę komputerów?",
-                                                 message: "Obecna lista (\(model.machines.count)) zostanie zastąpiona \(preview.count) wygenerowanymi wpisami.",
-                                                 button: "Zastąp") {
+                                                 message: "Obecna lista (\(Polish.computers(model.machines.count))) zostanie zastąpiona \(preview.count) wygenerowanymi wpisami. Grupy i własne hasła obecnych wpisów przepadną.",
+                                                 button: "Zastąp", targets: []) {
                             model.machines = preview
                             model.selection = []
                             model.refreshStatus()
                         }
+                    } label: {
+                        Label("Zastąp listę", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    Button("Dopisz do listy") {
-                        let existing = Set(model.machines.map(\.address))
-                        model.machines += preview.filter { !existing.contains($0.address) }
+                    Button {
+                        let existing = Set(model.machines.map { $0.address.lowercased() })
+                        model.machines += preview.filter { !existing.contains($0.address.lowercased()) }
                         model.refreshStatus()
+                    } label: {
+                        Label("Dopisz brakujące", systemImage: "plus.rectangle.on.rectangle")
                     }
+                    .help("Dodaje tylko komputery, których adresu jeszcze nie ma na liście")
                 }
             }
+            .padding(6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Label("Generator listy (jak pętla w cmcr-helpers.sh)", systemImage: "wand.and.stars")
         }
-        .confirmation($confirm)
-        .sheet(item: $passwordFor) { m in
-            HostPasswordSheet(machine: m).environmentObject(model)
+    }
+
+    // MARK: Editing helpers
+
+    /// Binds a field by host id (index bindings crash when a row is deleted while one of its fields is edited).
+    func field(_ id: UUID, _ key: WritableKeyPath<Machine, String>) -> Binding<String> {
+        Binding(get: { model.machine(id)?[keyPath: key] ?? "" },
+                set: { value in
+                    if let i = model.machines.firstIndex(where: { $0.id == id }) { model.machines[i][keyPath: key] = value }
+                })
+    }
+
+    func portField(_ id: UUID) -> Binding<Int> {
+        Binding(get: { model.machine(id)?.port ?? 22 },
+                set: { value in
+                    guard HostValidation.portRange.contains(value) else {
+                        NSSound.beep()
+                        return
+                    }
+                    if let i = model.machines.firstIndex(where: { $0.id == id }) { model.machines[i].port = value }
+                })
+    }
+
+    func askDelete(_ ids: Set<UUID>) {
+        let doomed = model.machines.filter { ids.contains($0.id) }
+        guard !doomed.isEmpty else { return }
+        let names = doomed.prefix(5).map(\.name).joined(separator: ", ") + (doomed.count > 5 ? "…" : "")
+        confirm = ConfirmRequest(
+            title: doomed.count == 1 ? "Usunąć \(doomed[0].name) z listy?" : "Usunąć \(Polish.computers(doomed.count)) z listy?",
+            message: "\(names) – \(doomed.count == 1 ? "zniknie" : "znikną") z listy. Na samych iMacach nic się nie zmienia.",
+            button: "Usuń", targets: []) {
+            for m in doomed where !m.usesSharedPassword { model.setPassword("", for: m) }
+            model.machines.removeAll { ids.contains($0.id) }
+            rows.subtract(ids)
+        }
+    }
+
+    func importHosts() {
+        guard let url = Pickers.files(allowFolders: false, types: [.json]).first else { return }
+        do {
+            let hosts = try ConfigStore.importHosts(from: url)
+            guard !hosts.isEmpty else {
+                importError = "Plik nie zawiera żadnego komputera."
+                return
+            }
+            model.machines = hosts
+            rows = []
+            model.refreshStatus()
+        } catch {
+            importError = "\(url.lastPathComponent): \(error.localizedDescription)"
         }
     }
 }
@@ -177,6 +348,7 @@ struct HostPasswordSheet: View {
 struct AccessSettings: View {
     @EnvironmentObject var model: AppModel
     @ViewState private var password = ""
+    @ViewState private var confirm: ConfirmRequest?
     @ViewState private var keyInfo = ""
     @ViewState private var keygenOutput = ""
 
@@ -191,8 +363,13 @@ struct AccessSettings: View {
                         password = ""
                     }
                     .disabled(password.isEmpty)
-                    Button("Usuń") { model.setSharedPassword("") }
-                        .disabled(!model.hasSharedPassword)
+                    Button("Usuń", role: .destructive) {
+                        confirm = ConfirmRequest(
+                            title: "Usunąć hasło administratora z Pęku kluczy?",
+                            message: "Bez hasła instalacje, aktualizacje i inne operacje wymagające uprawnień (sudo) przestaną działać, dopóki nie zapiszesz go ponownie.",
+                            button: "Usuń hasło", targets: []) { model.setSharedPassword("") }
+                    }
+                    .disabled(!model.hasSharedPassword)
                 }
                 Text("Hasło służy do sudo (instalacje, aktualizacje, uruchamianie aplikacji u użytkownika, podgląd ekranu) oraz do logowania SSH, dopóki klucz nie zostanie rozesłany. Jest przekazywane wyłącznie przez szyfrowane połączenie SSH (stdin), nigdy w linii poleceń.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -230,6 +407,7 @@ struct AccessSettings: View {
             }
             LastBatchView(section: .setup)
         }
+        .confirmation($confirm)
         .onAppear(perform: reloadKey)
     }
 

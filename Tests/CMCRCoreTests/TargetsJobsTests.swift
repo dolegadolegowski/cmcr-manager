@@ -231,3 +231,33 @@ private func record(_ host: String, batch: UUID, start: Date, state: String = "s
     #expect(left.count == 3)
     #expect(!left.contains { $0.host == "imac04" })
 }
+
+// MARK: - Host list validation
+
+@Test func hostValidationFindsDuplicatesPortsAndMACs() {
+    var hosts = Machine.generate(count: 4)
+    hosts[1].name = "IMAC01"
+    hosts[2].address = "imac01.local"
+    hosts[3].port = 70_000
+    hosts[3].macAddress = "zz:00:11:22:33:44"
+    hosts[0].macAddress = "a4:83:e7:1:2:3"
+    let issues = HostValidation.issues(in: hosts)
+    #expect(issues[hosts[0].id] == [.duplicateName, .duplicateAddress])
+    #expect(issues[hosts[1].id] == [.duplicateName])
+    #expect(issues[hosts[2].id] == [.duplicateAddress])
+    #expect(issues[hosts[3].id] == [.invalidPort, .invalidMAC])
+    let blank = Machine(name: " ", address: "", user: "")
+    #expect(HostValidation.issues(in: [blank])[blank.id] == [.emptyName, .emptyAddress, .emptyUser])
+    #expect(HostValidation.isValidMAC("A4-83-E7-12-34-56"))
+    #expect(!HostValidation.isValidMAC("a4:83:e7:12:34"))
+}
+
+@Test func nextMachineFillsTheFirstGap() {
+    var hosts = Machine.generate(count: 15)
+    hosts.removeAll { $0.name == "imac03" }
+    let next = HostValidation.nextMachine(after: hosts)
+    #expect(next.name == "imac03")
+    #expect(next.destination == "imac03@imac03.local")
+    #expect(HostValidation.nextMachine(after: Machine.generate(count: 15)).name == "imac16")
+    #expect(HostValidation.nextMachine(after: []).name == "imac01")
+}
