@@ -299,10 +299,12 @@ final class AppModel: ObservableObject {
     func setSharedPassword(_ pw: String) {
         Keychain.set(pw, for: Keychain.sharedAccount)
         hasSharedPassword = !pw.isEmpty
+        if !pw.isEmpty { recheckAfterCredentialChange(machines) }
     }
 
     func setPassword(_ pw: String, for m: Machine) {
         Keychain.set(pw, for: Keychain.account(for: m))
+        if !pw.isEmpty { recheckAfterCredentialChange([m]) }
     }
 
     // MARK: - Batch execution
@@ -310,6 +312,7 @@ final class AppModel: ObservableObject {
     /// Runs `operation` on every target with limited parallelism and records the results as a batch.
     /// Hosts known to be unreachable are skipped (unless `includeUnreachable`, e.g. Wake-on-LAN) when
     /// `skipUnreachable` is on; they stay in the batch as skipped jobs, so "Powtórz" can pick them up later.
+    /// A retry is an explicit request and always tries every host it is given.
     @discardableResult
     func runBatch(_ title: String, on targets: [Machine], section: AppSection? = nil, includeUnreachable: Bool = false,
                   operation: @escaping @MainActor (Machine, Job) async -> CommandResult,
@@ -329,7 +332,7 @@ final class AppModel: ObservableObject {
         batch.rerun = { [weak self] hosts in
             guard let self else { return }
             let retry = self.runBatch(Self.retryTitle(title), on: hosts, section: owner,
-                                      includeUnreachable: includeUnreachable, operation: operation, completion: completion)
+                                      includeUnreachable: true, operation: operation, completion: completion)
             if self.section == .jobs, let retry { self.focusedBatchID = retry.id }
         }
         batches.insert(batch, at: 0)
@@ -415,10 +418,10 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    func runScript(_ title: String, on targets: [Machine], section: AppSection? = nil,
+    func runScript(_ title: String, on targets: [Machine], section: AppSection? = nil, includeUnreachable: Bool = false,
                    script: @escaping (Machine) -> RemoteScript,
                    onResult: (@MainActor (Machine, CommandResult) -> Void)? = nil) -> Batch? {
-        runBatch(title, on: targets, section: section) { m, job in
+        runBatch(title, on: targets, section: section, includeUnreachable: includeUnreachable) { m, job in
             let r = await self.ssh(script(m), on: m, job: job)
             onResult?(m, r)
             return r
@@ -704,7 +707,7 @@ final class AppModel: ObservableObject {
     }
 
     func wake(_ targets: [Machine]) {
-        runBatch("Wake-on-LAN", on: targets, includeUnreachable: true) { m, job in
+        runBatch("Wake-on-LAN", on: targets, includeUnreachable: true, operation: { m, job in
             let mac = m.macAddress.isEmpty ? (self.status(m).mac ?? "") : m.macAddress
             guard !mac.isEmpty else {
                 return .failure("Brak adresu MAC – odśwież stan, gdy komputer jest włączony, lub wpisz MAC w Konfiguracji.")
@@ -716,7 +719,9 @@ final class AppModel: ObservableObject {
             } catch {
                 return .failure(error.localizedDescription)
             }
-        }
+        }, completion: { [weak self] batch in
+            self?.recheckWhileWaking(batch.jobs.filter { $0.state == .succeeded }.map(\.machine))
+        })
     }
 
     // MARK: - Setup
@@ -726,7 +731,9 @@ final class AppModel: ObservableObject {
             NSSound.beep()
             return
         }
-        runScript("Dystrybucja klucza SSH (\(key.lastPathComponent).pub)", on: targets) { _ in Scripts.distributeKey(pub) }
+        runScript("Dystrybucja klucza SSH (\(key.lastPathComponent).pub)", on: targets, includeUnreachable: true,
+                  script: { _ in Scripts.distributeKey(pub) },
+                  onResult: { [weak self] m, r in self?.recheckAfterLogin(m, r) })
     }
 
     func forgetHostKeys(_ targets: [Machine]) {

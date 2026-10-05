@@ -185,7 +185,10 @@ struct TargetButton: View {
 
     func help(selected: Int, count: Int) -> String {
         if selected == 0 { return "Najpierw zaznacz komputery na liście." }
-        if count == 0 { return "Wszystkie zaznaczone komputery są niedostępne." }
+        if count == 0 {
+            return "Wszystkie zaznaczone komputery były niedostępne przy ostatnim sprawdzeniu. "
+                + "Odśwież stan komputerów albo wyłącz „Pomiń niedostępne”."
+        }
         if count == selected { return "\(title) – \(Polish.onComputers(count))." }
         return "\(title) – \(Polish.onComputers(count)) z \(selected) zaznaczonych (niedostępne zostaną pominięte)."
     }

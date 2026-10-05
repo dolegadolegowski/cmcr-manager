@@ -157,8 +157,8 @@ private func lab() -> [Machine] {
     #expect(HostQuery(text: "imac05.local").apply(to: hosts, status: status).map(\.name) == ["imac05"])
     #expect(HostQuery(text: "rzad 2").apply(to: hosts, status: status).map(\.name) == ["imac05"])
     #expect(HostQuery(text: "imac0", status: .offline, group: "Rząd 1").apply(to: hosts, status: status).map(\.name) == ["imac02"])
-    #expect(Reachability.offline.isUnreachable && Reachability.authFailed.isUnreachable)
-    #expect(!Reachability.unknown.isUnreachable && !Reachability.error.isUnreachable)
+    #expect(Reachability.offline.isUnreachable)
+    #expect(!Reachability.authFailed.isUnreachable && !Reachability.unknown.isUnreachable && !Reachability.error.isUnreachable)
 }
 
 @Test func machineGroupsDecodeBackwardCompatibly() throws {

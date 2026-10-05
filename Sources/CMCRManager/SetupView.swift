@@ -374,8 +374,9 @@ struct AccessSettings: View {
                 Text("Hasło służy do sudo (instalacje, aktualizacje, uruchamianie aplikacji u użytkownika, podgląd ekranu) oraz do logowania SSH, dopóki klucz nie zostanie rozesłany. Jest przekazywane wyłącznie przez szyfrowane połączenie SSH (stdin), nigdy w linii poleceń.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                TargetButton(title: "Sprawdź sudo na zaznaczonych", icon: "checkmark.shield", prominent: false) {
-                    model.runScript("Test sudo", on: model.selectedMachines) { _ in Scripts.sudoTest() }
+                TargetButton(title: "Sprawdź sudo na zaznaczonych", icon: "checkmark.shield", prominent: false,
+                             includeUnreachable: true) {
+                    model.runScript("Test sudo", on: model.selectedMachines, includeUnreachable: true) { _ in Scripts.sudoTest() }
                 }
             }
 
@@ -389,14 +390,18 @@ struct AccessSettings: View {
                             reloadKey()
                         }
                     }
-                    TargetButton(title: "Roześlij klucz na zaznaczone", icon: "paperplane", prominent: true) {
+                    TargetButton(title: "Roześlij klucz na zaznaczone", icon: "paperplane", prominent: true,
+                                 includeUnreachable: true) {
                         model.distributeKey(model.selectedMachines)
                     }
                     .disabled(SSHKeys.currentPrivateKey(settings: model.settings) == nil)
-                    TargetButton(title: "Testuj logowanie", icon: "bolt.horizontal", prominent: false) {
-                        model.runScript("Test połączenia", on: model.selectedMachines) { _ in
-                            RemoteScript("echo \"Połączono z $(scutil --get ComputerName) jako $(id -un)\"")
-                        }
+                    TargetButton(title: "Testuj logowanie", icon: "bolt.horizontal", prominent: false,
+                                 includeUnreachable: true) {
+                        model.runScript("Test połączenia", on: model.selectedMachines, includeUnreachable: true,
+                                        script: { _ in
+                                            RemoteScript("echo \"Połączono z $(scutil --get ComputerName) jako $(id -un)\"")
+                                        },
+                                        onResult: { m, r in model.recheckAfterLogin(m, r) })
                     }
                 }
                 if !keygenOutput.isEmpty {

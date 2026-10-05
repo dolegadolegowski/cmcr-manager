@@ -118,6 +118,7 @@ public struct HostQuery: Equatable, Sendable {
 }
 
 public extension Reachability {
-    /// Known to be unreachable right now: actions would only wait for a timeout or fail to log in.
-    var isUnreachable: Bool { self == .offline || self == .authFailed }
+    /// Known not to answer on the network: actions would only wait for the connect timeout. Login failures are
+    /// not included – they fail fast, and the actions that fix them (password, key, login test) must still run.
+    var isUnreachable: Bool { self == .offline }
 }

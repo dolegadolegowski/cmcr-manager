@@ -90,6 +90,36 @@ extension AppModel {
         action()
     }
 
+    // MARK: - Status re-checks
+
+    /// After a password change, hosts that failed to log in (or were never checked) are checked again right away,
+    /// so their state does not wait for the periodic refresh.
+    func recheckAfterCredentialChange(_ hosts: [Machine]) {
+        let stale = hosts.filter { [.unknown, .authFailed, .error].contains(status($0).reachability) }
+        if !stale.isEmpty { refreshStatus(stale) }
+    }
+
+    /// A remote command just logged in to a host the status still shows as not online: refresh that host.
+    func recheckAfterLogin(_ m: Machine, _ r: CommandResult) {
+        if r.succeeded, ![.online, .checking].contains(status(m).reachability) { refreshStatus([m]) }
+    }
+
+    /// Woken Macs need a while to boot: check them again after ~40 s and ~90 s, so that they stop being
+    /// skipped as offline as soon as they answer.
+    func recheckWhileWaking(_ hosts: [Machine]) {
+        let ids = Set(hosts.map(\.id))
+        guard !ids.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            for pause in [40, 50] as [UInt64] {
+                try? await Task.sleep(nanoseconds: pause * 1_000_000_000)
+                guard let self else { return }
+                let pending = self.machines.filter { ids.contains($0.id) && self.status($0).reachability != .online }
+                if pending.isEmpty { return }
+                self.refreshStatus(pending)
+            }
+        }
+    }
+
     // MARK: - Batches
 
     static func retryTitle(_ title: String) -> String {
