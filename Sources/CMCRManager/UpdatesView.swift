@@ -112,7 +112,7 @@ struct UpdatesView: View {
         } header: {
             Label("Instalacja aktualizacji macOS", systemImage: "arrow.down.app")
         } footer: {
-            FormFooter("Komputery z procesorem Apple wymagają do instalacji hasła administratora – aplikacja poda je sama.")
+            FormSectionNote("Komputery z procesorem Apple wymagają do instalacji hasła administratora – aplikacja poda je sama.")
                 .help("softwareupdate --user/--stdinpass")
         }
     }
@@ -161,7 +161,7 @@ struct UpdatesView: View {
         } header: {
             Label("Aktualizacje aplikacji", systemImage: "app.badge.checkmark")
         } footer: {
-            FormFooter("Unity i Android SDK aktualizuje się w dziale Instalacja.")
+            FormSectionNote("Unity i Android SDK aktualizuje się w dziale Instalacja.")
         }
     }
 }

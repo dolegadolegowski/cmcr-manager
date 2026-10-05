@@ -132,7 +132,7 @@ private struct FilesPage: View {
                  : "Potrzebne, gdy folder należy do innego konta (sudo).")
         }
         .disabled(state.owner != .keep)
-        FormFooter("W ścieżce można użyć {student} (konto ucznia: \(model.settings.studentUser)), {console} (osoba zalogowana na komputerze) i ~ (katalog administratora).")
+        FormSectionNote("W ścieżce można użyć {student} (konto ucznia: \(model.settings.studentUser)), {console} (osoba zalogowana na komputerze) i ~ (katalog administratora).")
     }
 
     /// A remote folder with what it is for ("Dokąd wysłać") and the buttons that change it.
@@ -238,17 +238,20 @@ private struct FilesPage: View {
                 Button {
                     state.revealLastCollection()
                 } label: {
-                    Label("Pokaż w Finderze", systemImage: "folder")
+                    Label("Pokaż zebrane prace", systemImage: "folder")
                 }
-                .help("Otwórz w Finderze folder z ostatnio zebranymi pracami")
+                .help("Otwiera w Finderze folder z ostatnio zebranymi pracami")
                 Spacer(minLength: 12)
                 Button(role: state.collectClean ? .destructive : nil) {
                     collect()
                 } label: {
-                    Label(reachable.isEmpty ? "Zbierz prace" : "Zbierz z \(Polish.ofComputers(reachable.count))",
+                    // The ellipsis: with cleaning on, a confirmation comes first.
+                    Label((reachable.isEmpty ? "Zbierz prace" : "Zbierz z \(Polish.ofComputers(reachable.count))")
+                          + (state.collectClean ? "…" : ""),
                           systemImage: "tray.and.arrow.down.fill")
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(state.collectClean ? .red : nil)
                 .disabled(reachable.isEmpty || state.collectSource.isEmpty)
                 .help(targetHelp(state.collectClean ? "Zbierz prace i wyczyść folder (z potwierdzeniem)" : "Zbierz prace"))
             }
@@ -293,9 +296,9 @@ private struct FilesPage: View {
                 Button {
                     state.browse(state.cleanPath)
                 } label: {
-                    Label("Otwórz w przeglądarce", systemImage: "externaldrive.connected.to.line.below")
+                    Label("Otwórz w Przeglądarce plików", systemImage: AppSection.browser.icon)
                 }
-                .help("Pokaż ten folder w dziale Przeglądarka plików (na pierwszym zaznaczonym komputerze)")
+                .help("Pokazuje ten folder w dziale Przeglądarka plików (na pierwszym zaznaczonym komputerze)")
                 TargetButton(title: "Pokaż listę plików", icon: "list.bullet", prominent: false) {
                     let path = model.settings.resolve(state.cleanPath)
                     model.runScript("Zawartość \(path)", on: targets, section: .files) { _ in
@@ -306,13 +309,13 @@ private struct FilesPage: View {
                 TargetButton(title: "Wyczyść folder…", icon: "trash", role: .destructive, prominent: false) {
                     confirmClean()
                 }
-                .tint(.red)
-                .disabled(state.cleanPath.isEmpty)
+                .destructiveLabel()
+                .disabled(state.cleanPath.isEmpty || reachable.isEmpty)
             }
         } header: {
             Label("Przeglądanie i porządki", systemImage: "folder.badge.minus")
         } footer: {
-            FormFooter("„Pokaż listę plików” wypisze zawartość folderu z każdego komputera w wyniku poniżej. „Wyczyść folder” usuwa całą jego zawartość – z potwierdzeniem.")
+            FormSectionNote("„Pokaż listę plików” wypisze zawartość folderu z każdego komputera w wyniku poniżej. „Wyczyść folder” usuwa całą jego zawartość – z potwierdzeniem.")
         }
     }
 
@@ -369,7 +372,7 @@ private struct FilesPage: View {
         } header: {
             Label("Foldery „all” i komputerów (jak w cmcr-helpers)", systemImage: "folder.badge.gearshape")
         } footer: {
-            FormFooter("Do zbierania prac lepiej użyć „Zbierz prace uczniów” – niczego nie nadpisuje.")
+            FormSectionNote("Do zbierania prac lepiej użyć „Zbierz prace uczniów” – niczego nie nadpisuje.")
         }
     }
 }

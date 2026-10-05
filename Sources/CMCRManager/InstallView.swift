@@ -117,8 +117,8 @@ struct InstallView: View {
                         model.runScript("brew \(args)", on: model.selectedMachines) { _ in Scripts.brew(args) }
                     }
                 }
-                .tint(.red)
-                .disabled(brewName.trimmingCharacters(in: .whitespaces).isEmpty)
+                .destructiveLabel()
+                .disabled(brewName.trimmingCharacters(in: .whitespaces).isEmpty || model.actionTargets.isEmpty)
                 Spacer(minLength: 12)
                 TargetButton(title: "Zainstaluj pakiet", icon: "plus.circle") {
                     let args = "install \(brewCask ? "--cask " : "")\(brewArguments)"
@@ -162,34 +162,13 @@ struct InstallView: View {
                 Text("Moduły")
                 Text("Platformy, na które uczniowie będą budować gry.")
             }
-            TextField(text: $androidAPIs, prompt: Text("32, 34")) {
-                Text("Wersje Android API")
-                Text("Numery oddzielone przecinkami – dla Android SDK.")
-            }
-            .font(.body.monospacedDigit())
-            HStack(spacing: 10) {
-                TargetButton(title: "Pokaż edytory", icon: "list.bullet", prominent: false) {
+            FormActionRow("Edytor Unity",
+                          caption: "Instaluje edytor w podanej wersji razem z zaznaczonymi modułami.") {
+                TargetButton(title: "Pokaż zainstalowane", icon: "list.bullet", prominent: false) {
                     model.runScript("Unity Hub: editors --all", on: model.selectedMachines) { _ in
                         Scripts.unityHub(["editors", "--all"])
                     }
                 }
-                Spacer(minLength: 12)
-                TargetButton(title: "Android SDK", icon: "iphone.gen2", prominent: false) {
-                    let v = unityVersion
-                    let apis = androidAPIs.split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
-                    model.runScript("sdkmanager API \(apis.joined(separator: ","))", on: model.selectedMachines) { _ in
-                        Scripts.androidSDK(unityVersion: v, apiLevels: apis)
-                    }
-                }
-                .disabled(androidAPIs.isEmpty)
-                TargetButton(title: "Dodaj moduły", icon: "plus.square", prominent: false) {
-                    let v = unityVersion
-                    let mods = Array(unityModules).sorted()
-                    model.runScript("Unity \(v): moduły \(mods.joined(separator: ","))", on: model.selectedMachines) { _ in
-                        Scripts.unityInstallModules(version: v, modules: mods)
-                    }
-                }
-                .disabled(unityModules.isEmpty || unityVersion.isEmpty)
                 TargetButton(title: "Zainstaluj edytor", icon: "square.and.arrow.down") {
                     let v = unityVersion
                     let mods = Array(unityModules).sorted()
@@ -199,10 +178,37 @@ struct InstallView: View {
                 }
                 .disabled(unityVersion.isEmpty)
             }
+            FormActionRow("Moduły do zainstalowanego edytora",
+                          caption: "Dodaje zaznaczone moduły, gdy edytor w tej wersji już jest na komputerach.") {
+                TargetButton(title: "Dodaj moduły", icon: "plus.square", prominent: false) {
+                    let v = unityVersion
+                    let mods = Array(unityModules).sorted()
+                    model.runScript("Unity \(v): moduły \(mods.joined(separator: ","))", on: model.selectedMachines) { _ in
+                        Scripts.unityInstallModules(version: v, modules: mods)
+                    }
+                }
+                .disabled(unityModules.isEmpty || unityVersion.isEmpty)
+            }
+            TextField(text: $androidAPIs, prompt: Text("32, 34")) {
+                Text("Wersje Android API")
+                Text("Numery oddzielone przecinkami.")
+            }
+            .font(.body.monospacedDigit())
+            FormActionRow("Android SDK",
+                          caption: "Narzędzia do budowania gier na Androida – w podanych wersjach API, dla edytora Unity z modułem Android.") {
+                TargetButton(title: "Zainstaluj Android SDK", icon: "iphone.gen2", prominent: false) {
+                    let v = unityVersion
+                    let apis = androidAPIs.split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
+                    model.runScript("sdkmanager API \(apis.joined(separator: ","))", on: model.selectedMachines) { _ in
+                        Scripts.androidSDK(unityVersion: v, apiLevels: apis)
+                    }
+                }
+                .disabled(androidAPIs.isEmpty)
+            }
         } header: {
             Label("Unity Hub i Android SDK", systemImage: "cube")
         } footer: {
-            FormFooter("Instalacje Unity trwają długo – postęp widać w dziale Zadania. Wcześniej zainstaluj Unity Hub (Homebrew: pakiet unity-hub).")
+            FormSectionNote("Instalacje Unity trwają długo – postęp widać w dziale Zadania. Wcześniej zainstaluj Unity Hub (Homebrew: pakiet unity-hub).")
         }
     }
 }

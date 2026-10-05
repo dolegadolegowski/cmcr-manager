@@ -58,7 +58,7 @@ struct AppsView: View {
             }
             .help("Argumenty jak w Terminalu – cudzysłowy grupują słowa. Z argumentami uruchamiana jest nowa instancja aplikacji.")
             HStack(spacing: 10) {
-                TargetButton(title: "Wymuś zamknięcie", icon: "bolt.circle", role: .destructive, prominent: false) {
+                TargetButton(title: "Wymuś zamknięcie…", icon: "bolt.circle", role: .destructive, prominent: false) {
                     let name = appName
                     confirm = ConfirmRequest(
                         title: "Wymusić zamknięcie „\(name)”?",
@@ -67,8 +67,8 @@ struct AppsView: View {
                         model.quitApp(name, force: true, on: model.selectedMachines)
                     }
                 }
-                .tint(.red)
-                .disabled(appName.isEmpty)
+                .destructiveLabel()
+                .disabled(appName.isEmpty || model.actionTargets.isEmpty)
                 Spacer(minLength: 12)
                 TargetButton(title: "Zamknij", icon: "xmark.circle", prominent: false) {
                     model.quitApp(appName, force: false, on: model.selectedMachines)
@@ -83,7 +83,7 @@ struct AppsView: View {
         } header: {
             Label("Aplikacja na zaznaczonych komputerach", systemImage: "macwindow.on.rectangle")
         } footer: {
-            FormFooter("„Zamknij” działa jak polecenie Zakończ – aplikacja może zapytać o zapisanie zmian. „Wymuś zamknięcie” kończy ją od razu.")
+            FormSectionNote("„Zamknij” działa jak polecenie Zakończ – aplikacja może zapytać o zapisanie zmian. „Wymuś zamknięcie” kończy ją od razu.")
         }
     }
 
@@ -346,6 +346,7 @@ struct AppsView: View {
                     Label("Odinstaluj…", systemImage: "trash")
                 }
                 .controlSize(.small)
+                .destructiveLabel()
                 .help("Usuń \(name) z folderu Programy na zaznaczonych komputerach (z potwierdzeniem)")
             }
         }
@@ -394,9 +395,10 @@ struct RunningAppRow: View {
             Button(role: .destructive) {
                 onQuit(true)
             } label: {
-                Label("Wymuś", systemImage: "bolt.circle")
+                Label("Wymuś zamknięcie…", systemImage: "bolt.circle")
             }
             .controlSize(.small)
+            .destructiveLabel()
             .help("Wymuś zamknięcie \(app.name) od razu (z potwierdzeniem) – niezapisane zmiany przepadną")
         }
         .accessibilityElement(children: .contain)

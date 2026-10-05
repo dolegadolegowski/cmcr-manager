@@ -49,8 +49,9 @@ struct CommandsView: View {
                 .accessibilityLabel("Treść polecenia")
             Toggle(isOn: $model.commandAsRoot) {
                 Text("Z uprawnieniami administratora")
-                Text("Potrzebne do zmian w systemie: polecenie zostanie wykonane jako root (sudo) z hasłem administratora z Pęku kluczy.")
+                Text("Potrzebne do zmian w systemie. Aplikacja sama poda hasło administratora zapisane w Pęku kluczy.")
             }
+            .help("Polecenie zostanie wykonane jako root (sudo).")
             HStack(spacing: 10) {
                 Button {
                     savingSnippet = true
@@ -184,6 +185,7 @@ struct CommandsView: View {
                     }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
+                    .destructiveLabel()
                     .help("Usuń zapisany fragment")
                 }
             }

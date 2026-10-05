@@ -107,6 +107,7 @@ private struct RemoteBrowserPage: View {
                 } label: {
                     Label("Usuń…", systemImage: "trash")
                 }
+                .destructiveLabel()
                 .disabled(browser.selection.isEmpty)
                 .help("Usuń zaznaczone elementy z komputera – nie trafią do Kosza (z potwierdzeniem; także klawisz Delete)")
                 .fixedSize()
@@ -121,8 +122,8 @@ private struct RemoteBrowserPage: View {
                 .fixedSize()
                 Spacer(minLength: 12)
                 ViewThatFits(in: .horizontal) {
-                    viewToggles(iconOnly: false)
-                    viewToggles(iconOnly: true)
+                    viewToggles
+                    viewMenu
                 }
             }
             .labelStyle(.titleAndIcon)
@@ -131,22 +132,52 @@ private struct RemoteBrowserPage: View {
         .padding(.vertical, 8)
     }
 
-    func viewToggles(iconOnly: Bool) -> some View {
+    /// "Ukryte pliki" and "Jako administrator" as toggle buttons that show their state.
+    var viewToggles: some View {
         HStack(spacing: 8) {
             Toggle(isOn: $browser.showHidden) {
                 Label("Ukryte pliki", systemImage: browser.showHidden ? "eye" : "eye.slash")
-                    .labelStyle(TitleOrIconLabelStyle(iconOnly: iconOnly))
             }
             .toggleStyle(.button)
-            .help(browser.showHidden ? "Ukryj ukryte pliki i foldery" : "Pokaż ukryte pliki i foldery")
-            Toggle(isOn: Binding(get: { browser.asRoot }, set: { browser.asRoot = $0; browser.reload() })) {
+            .help(hiddenHelp)
+            Toggle(isOn: asRoot) {
                 Label("Jako administrator", systemImage: "lock.shield")
-                    .labelStyle(TitleOrIconLabelStyle(iconOnly: iconOnly))
             }
             .toggleStyle(.button)
-            .help("Przeglądaj z uprawnieniami administratora (sudo) – także prywatne foldery użytkowników")
+            .help(asRootHelp)
         }
         .fixedSize()
+    }
+
+    /// The same two switches in a "Widok" menu when the window is too narrow for both buttons.
+    var viewMenu: some View {
+        Menu {
+            Toggle(isOn: $browser.showHidden) {
+                Label("Pokaż ukryte pliki", systemImage: "eye")
+            }
+            .help(hiddenHelp)
+            Toggle(isOn: asRoot) {
+                Label("Przeglądaj jako administrator", systemImage: "lock.shield")
+            }
+            .help(asRootHelp)
+        } label: {
+            Label("Widok", systemImage: browser.showHidden || browser.asRoot ? "eye.fill" : "eye")
+        }
+        .fixedSize()
+        .help("Pokazywanie ukrytych plików i przeglądanie z uprawnieniami administratora")
+    }
+
+    var asRoot: Binding<Bool> {
+        Binding(get: { browser.asRoot }, set: { browser.asRoot = $0; browser.reload() })
+    }
+
+    var hiddenHelp: String {
+        browser.showHidden ? "Ukryj pliki i foldery systemowe (zaczynające się od kropki)"
+            : "Pokaż także ukryte pliki i foldery (zaczynające się od kropki)"
+    }
+
+    var asRootHelp: String {
+        "Przeglądaj z uprawnieniami administratora (sudo) – widać wtedy także prywatne foldery innych kont"
     }
 
     var favoritesMenu: some View {
@@ -192,6 +223,11 @@ private struct RemoteBrowserPage: View {
                 Text(summary)
             }
             Spacer(minLength: 8)
+            if browser.asRoot {
+                Label("Jako administrator", systemImage: "lock.shield.fill")
+                    .foregroundStyle(.orange)
+                    .help("Folder jest przeglądany z uprawnieniami administratora (sudo) – zmiany też są wykonywane z tymi uprawnieniami.")
+            }
             if let l = browser.listing {
                 if !l.writable && !browser.asRoot {
                     Label("Tylko do odczytu", systemImage: "lock")
@@ -339,19 +375,6 @@ private struct RemoteBrowserPage: View {
         }
         confirm = ConfirmRequest(title: title, message: message, button: "Usuń") {
             browser.delete(entries)
-        }
-    }
-}
-
-/// Title and icon, or only the icon when space is short (the title stays as the accessibility label).
-struct TitleOrIconLabelStyle: LabelStyle {
-    var iconOnly: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        if iconOnly {
-            Label(configuration).labelStyle(.iconOnly)
-        } else {
-            Label(configuration).labelStyle(.titleAndIcon)
         }
     }
 }

@@ -79,9 +79,10 @@ struct RemoteFolderPicker: View {
     }
 
     var subtitle: String {
-        let count = model.selectedMachines.count
-        let targets = count > 1 ? "na wszystkich zaznaczonych komputerach (\(count))" : "na zaznaczonym komputerze"
-        return "Wybrany folder zostanie użyty \(targets). Lista pokazuje zawartość jednego z nich – komputer możesz zmienić obok."
+        guard model.selectedMachines.count > 1 else {
+            return "Lista pokazuje foldery zaznaczonego komputera – inny komputer możesz wybrać obok."
+        }
+        return "Wybrany folder zostanie użyty na każdym zaznaczonym komputerze. Lista pokazuje zawartość jednego z nich – komputer możesz zmienić obok."
     }
 
     var sidebar: some View {
