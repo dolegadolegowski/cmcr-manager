@@ -450,8 +450,10 @@ struct GeneralSettings: View {
                 }
                 Stepper("Limit czasu połączenia: \(model.settings.connectTimeout) s", value: $model.settings.connectTimeout, in: 2...60)
                 Stepper("Równoległe operacje: \(model.settings.maxParallel)", value: $model.settings.maxParallel, in: 1...32)
+                Toggle("Współdzielone połączenia SSH (szybsze)", isOn: $model.settings.reuseConnections)
+                    .help("Kolejne operacje na tym samym iMacu korzystają z jednego połączenia, więc podgląd ekranów i polecenia startują szybciej.")
                 VStack(alignment: .leading) {
-                    Text("Dodatkowe opcje ssh (-o), po jednej w linii, np. ProxyJump=brama")
+                    Text("Dodatkowe opcje ssh (-o), po jednej w linii, np. ProxyJump=brama – mają pierwszeństwo przed ustawieniami aplikacji")
                         .font(.caption).foregroundStyle(.secondary)
                     CodeEditor(text: $model.settings.extraSSHOptions)
                         .frame(height: 60)

@@ -135,6 +135,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Comma separated list of accounts that may be observed; empty means any (subject to the rule above).
     public var observeAllowedUsers = ""
     public var snippets: [Snippet] = []
+    /// Share one SSH connection per Mac between operations (OpenSSH ControlMaster).
+    public var reuseConnections = true
 
     public init() {}
 
@@ -155,6 +157,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         observeOnlyStandardAccounts = try c.decodeIfPresent(Bool.self, forKey: .observeOnlyStandardAccounts) ?? d.observeOnlyStandardAccounts
         observeAllowedUsers = try c.decodeIfPresent(String.self, forKey: .observeAllowedUsers) ?? d.observeAllowedUsers
         snippets = try c.decodeIfPresent([Snippet].self, forKey: .snippets) ?? d.snippets
+        reuseConnections = (try? c.decodeIfPresent(Bool.self, forKey: .reuseConnections)) ?? d.reuseConnections
     }
 
     public var extraSSHOptionList: [String] {

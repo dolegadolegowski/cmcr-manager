@@ -93,6 +93,9 @@ cmcrctl message "Przerwa" "Za 5 minut koniec zajęć" all
 - Pliki są pakowane do jednego archiwum `tar` (zachowuje pakiety `.app`, dowiązania i uprawnienia), wysyłane `scp` do `/tmp` i rozpakowywane na miejscu.
 - W skryptach dostępne są: `asroot`, `as_console_user`, `with_askpass`, `$CONSOLE_USER`, `$CONSOLE_UID`, `$CMCR_ADMIN_USER`, `$CMCR_TMP`.
 - Konfiguracja: `~/Library/Application Support/CMCRManager/` (`hosts.json`, `settings.json`; katalog można zmienić zmienną `CMCR_CONFIG_DIR`).
+- Połączenia: kolejne operacje na tym samym iMacu korzystają z jednego współdzielonego połączenia SSH (OpenSSH ControlMaster, gniazda w prywatnym katalogu `/tmp/cmcr-<uid>`, zamykane po 2 min bezczynności; można to wyłączyć w ustawieniach). Na jednym komputerze działa naraz najwyżej 6 sesji, a błędy sprzed uruchomienia polecenia (chwilowe odrzucenie połączenia, budzący się komputer) są ponawiane automatycznie — polecenie nigdy nie wykona się dwa razy.
+- Zadania są odporne na utratę połączenia (uśpienie Maca nauczyciela, zamknięcie aplikacji, zerwane Wi‑Fi): polecenie na iMacu kończy pracę i sprząta po sobie. **Anuluj** zatrzymuje polecenie także na iMacu (rejestr zadań w `/tmp/cmcr-jobs`, procesy roota przez sudo).
+- Uszkodzony `hosts.json` lub `settings.json` nie jest po cichu zastępowany wartościami domyślnymi: oryginał zostaje obok jako `*.bak`, a aplikacja wyświetla ostrzeżenie.
 
 ## Struktura projektu
 

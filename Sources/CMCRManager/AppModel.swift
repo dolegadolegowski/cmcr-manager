@@ -231,11 +231,19 @@ final class AppModel: ObservableObject {
         didSet {
             ConfigStore.saveHosts(machines)
             pruneSelection()
+            closeStaleConnections(oldMachines: oldValue)
         }
     }
     @Published var settings: AppSettings {
-        didSet { if settings != oldValue { ConfigStore.saveSettings(settings) } }
+        didSet {
+            if settings != oldValue {
+                ConfigStore.saveSettings(settings)
+                closeStaleConnections(oldSettings: oldValue)
+            }
+        }
     }
+    /// Problems found while loading hosts.json/settings.json (shown once at start).
+    @Published var configIssues: [String] = []
     @Published var statuses: [UUID: HostStatus] = [:]
     @Published var selection: Set<UUID> = [] {
         didSet { if selection != oldValue { TargetUIState.selection = selection } }
@@ -274,10 +282,12 @@ final class AppModel: ObservableObject {
     init() {
         machines = ConfigStore.loadHosts()
         settings = ConfigStore.loadSettings()
-        hasSharedPassword = Keychain.get(Keychain.sharedAccount) != nil
+        configIssues = ConfigStore.loadIssues
+        hasSharedPassword = Keychain.exists(Keychain.sharedAccount)
         selection = TargetUIState.selection.intersection(machines.map(\.id))
         AppModel.shared = self
         JobHistory.purgeInBackground()
+        observeAppActivation()
         // Start-up hooks for scripted UI checks: CMCR_SECTION=<section>, CMCR_SELECT_ALL=1.
         let env = ProcessInfo.processInfo.environment
         if let s = env["CMCR_SECTION"].flatMap(AppSection.init(rawValue:)) { section = s }
@@ -297,9 +307,10 @@ final class AppModel: ObservableObject {
     func machine(_ id: UUID) -> Machine? { machines.first { $0.id == id } }
 
     func setSharedPassword(_ pw: String) {
-        Keychain.set(pw, for: Keychain.sharedAccount)
-        hasSharedPassword = !pw.isEmpty
-        if !pw.isEmpty { recheckAfterCredentialChange(machines) }
+        let saved = Keychain.set(pw, for: Keychain.sharedAccount)
+        hasSharedPassword = saved ? !pw.isEmpty : Keychain.exists(Keychain.sharedAccount)
+        if !saved { NSSound.beep() }
+        if saved && !pw.isEmpty { recheckAfterCredentialChange(machines) }
     }
 
     func setPassword(_ pw: String, for m: Machine) {
@@ -410,19 +421,25 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Runs a remote script on one Mac, streaming its output into the job.
+    /// Output kept per job result; the job log itself is capped separately (Job.maxOutput).
+    static let jobCapture = 4 << 20
+
+    /// Runs a remote script on one Mac, streaming its output into the job. Cancelling the job also stops
+    /// the command on the Mac; a lost connection does not.
     func ssh(_ script: RemoteScript, on m: Machine, job: Job, timeout: TimeInterval? = nil,
              stdoutFile: URL? = nil) async -> CommandResult {
         await SSH.run(script, on: m, password: password(for: m), settings: sshSettings, stdoutFile: stdoutFile,
-                      timeout: timeout, handle: job.handle, onOutput: OutputSink(job).callback)
+                      timeout: timeout, handle: job.handle, retry: .job, maxCapture: Self.jobCapture,
+                      onOutput: OutputSink(job).callback)
     }
 
     @discardableResult
     func runScript(_ title: String, on targets: [Machine], section: AppSection? = nil, includeUnreachable: Bool = false,
+                   timeout: TimeInterval? = nil,
                    script: @escaping (Machine) -> RemoteScript,
                    onResult: (@MainActor (Machine, CommandResult) -> Void)? = nil) -> Batch? {
         runBatch(title, on: targets, section: section, includeUnreachable: includeUnreachable) { m, job in
-            let r = await self.ssh(script(m), on: m, job: job)
+            let r = await self.ssh(script(m), on: m, job: job, timeout: timeout)
             onResult?(m, r)
             return r
         }
@@ -436,15 +453,35 @@ final class AppModel: ObservableObject {
 
     // MARK: - Status
 
+    /// Macs whose check is running: a new refresh skips them (no duplicate probes, no out-of-order results).
+    private var statusInFlight = Set<UUID>()
+    /// Failed background checks in a row of Macs that are off, and when to check them again.
+    private var offlineStreak: [UUID: Int] = [:]
+    private var nextQuietProbe: [UUID: Date] = [:]
+    private var lastQuietRefresh = Date.distantPast
+    private var activationObserver: NSObjectProtocol?
+
+    /// `quietly` is the background refresh: it pauses while no window can be seen and checks Macs that are
+    /// off less and less often (up to every 30 min). An explicit refresh always checks every target.
     func refreshStatus(_ targets: [Machine]? = nil, quietly: Bool = false) {
-        let list = targets ?? machines
+        let now = Date()
+        if quietly {
+            // Every window runs its own refresh loop; one background round per minute is enough.
+            guard isWindowVisible, now.timeIntervalSince(lastQuietRefresh) >= 60 else { return }
+            lastQuietRefresh = now
+        }
+        let list = (targets ?? machines).filter { m in
+            !statusInFlight.contains(m.id) && (!quietly || (nextQuietProbe[m.id] ?? .distantPast) <= now)
+        }
+        guard !list.isEmpty else { return }
+        statusInFlight.formUnion(list.map(\.id))
         for m in list where !quietly || statuses[m.id] == nil {
             var st = statuses[m.id] ?? HostStatus()
             st.reachability = .checking
             statuses[m.id] = st
         }
         let ss = sshSettings
-        let timeout = TimeInterval(settings.connectTimeout + 25)
+        let timeout = OperationTimeout.status(connectTimeout: settings.connectTimeout)
         let jobs = list.map { ($0, password(for: $0)) }
         Task {
             await withTaskGroup(of: Void.self) { group in
@@ -465,6 +502,7 @@ final class AppModel: ObservableObject {
     }
 
     private func applyStatus(_ m: Machine, _ r: CommandResult) {
+        statusInFlight.remove(m.id)
         var st = HostStatus()
         st.updatedAt = Date()
         if r.succeeded {
@@ -473,13 +511,61 @@ final class AppModel: ObservableObject {
             if let mac = st.mac, let i = machines.firstIndex(where: { $0.id == m.id }), machines[i].macAddress.isEmpty {
                 machines[i].macAddress = mac
             }
+            offlineStreak[m.id] = nil
+            nextQuietProbe[m.id] = nil
         } else {
             let (reach, message) = SSH.diagnose(r)
             st.reachability = reach == .online ? .error : reach
             st.message = message
             st.info = statuses[m.id]?.info ?? [:]
+            if reach == .offline {
+                // Background checks every 2, 4, 8, 16 and then 30 min (minus slack for the 2 min timer).
+                let n = (offlineStreak[m.id] ?? 0) + 1
+                offlineStreak[m.id] = n
+                let delay = min(120 * pow(2, Double(n - 1)), 1800) - 30
+                nextQuietProbe[m.id] = Date().addingTimeInterval(delay)
+            }
         }
         statuses[m.id] = st
+    }
+
+    private var isWindowVisible: Bool {
+        NSApp.isActive || NSApp.windows.contains { $0.isVisible && $0.occlusionState.contains(.visible) }
+    }
+
+    /// Catches up on the background refresh that was skipped while the app was hidden.
+    private func observeAppActivation() {
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, Date().timeIntervalSince(self.lastQuietRefresh) > 120 else { return }
+                self.refreshStatus(quietly: true)
+            }
+        }
+    }
+
+    // MARK: - Shared SSH connections
+
+    /// A shared connection keeps the key, options and address it was opened with; close it when they change.
+    private func closeStaleConnections(oldSettings: AppSettings) {
+        let old = SSHSettings(oldSettings, askpassPath: askpassPath)
+        let new = sshSettings
+        guard old.identityFile != new.identityFile || old.extraOptions != new.extraOptions
+                || old.reuseConnections != new.reuseConnections else { return }
+        let hosts = machines
+        Task.detached { await SSH.closeMasters(hosts, settings: old) }
+    }
+
+    private func closeStaleConnections(oldMachines: [Machine]) {
+        let current = Dictionary(machines.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let stale = oldMachines.filter { old in
+            guard let now = current[old.id] else { return true }
+            return now.destination != old.destination || now.port != old.port
+        }
+        guard !stale.isEmpty else { return }
+        let ss = sshSettings
+        Task.detached { await SSH.closeMasters(stale, settings: ss) }
     }
 
     // MARK: - Commands
@@ -606,7 +692,8 @@ final class AppModel: ObservableObject {
             await withTaskGroup(of: Void.self) { group in
                 for (m, pw) in jobs {
                     group.addTask {
-                        let r = await SSH.run(Scripts.runningApps(), on: m, password: pw, settings: ss, timeout: 40)
+                        let r = await SSH.run(Scripts.runningApps(), on: m, password: pw, settings: ss,
+                                              timeout: OperationTimeout.list)
                         await MainActor.run {
                             if r.succeeded {
                                 let parsed = Parsers.runningApps(r.stdoutText)
@@ -628,7 +715,8 @@ final class AppModel: ObservableObject {
             await withTaskGroup(of: Void.self) { group in
                 for (m, pw) in jobs {
                     group.addTask {
-                        let r = await SSH.run(Scripts.installedApps(), on: m, password: pw, settings: ss, timeout: 40)
+                        let r = await SSH.run(Scripts.installedApps(), on: m, password: pw, settings: ss,
+                                              timeout: OperationTimeout.list)
                         await MainActor.run {
                             if r.succeeded { self.installedApps[m.id] = Parsers.lines(r.stdoutText) }
                         }
@@ -693,7 +781,8 @@ final class AppModel: ObservableObject {
     // MARK: - Updates
 
     func checkUpdates(_ targets: [Machine]) {
-        runScript("Sprawdzanie aktualizacji macOS", on: targets, script: { _ in Scripts.listUpdates() }) { m, r in
+        runScript("Sprawdzanie aktualizacji macOS", on: targets, timeout: OperationTimeout.updateList,
+                  script: { _ in Scripts.listUpdates() }) { m, r in
             if r.succeeded || !r.stdout.isEmpty {
                 self.updates[m.id] = UpdateInfo(titles: Parsers.softwareUpdates(r.stdoutText), raw: r.stdoutText)
             }
@@ -738,7 +827,7 @@ final class AppModel: ObservableObject {
 
     func forgetHostKeys(_ targets: [Machine]) {
         runBatch("Zapomnij klucz hosta (known_hosts)", on: targets, includeUnreachable: true) { m, job in
-            let r = await SSHKeys.forgetHostKey(m)
+            let r = await SSHKeys.forgetHostKey(m, settings: self.sshSettings)
             job.append(r.stdoutText + r.stderrText)
             return r
         }

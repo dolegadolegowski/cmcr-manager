@@ -103,6 +103,9 @@ EOF
 export CMCR_CONFIG_DIR="$WORK/config"
 # A throw-away Keychain service: cmcrctl must never read or change the app's own pl.cmcr.manager items here.
 export CMCR_KEYCHAIN_SERVICE="pl.cmcr.manager.e2e-$$"
+# Shared ssh connections of this run only (a master left from an earlier run would still talk to that
+# run's sshd); the cleanup's pkill finds them by this path.
+export CMCR_SSH_CONTROL_DIR="$WORK/mux"
 unset CMCR_PASSWORD
 ctl() { "$CTL" "$@" 2>&1; }
 ctlpw() { CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }
