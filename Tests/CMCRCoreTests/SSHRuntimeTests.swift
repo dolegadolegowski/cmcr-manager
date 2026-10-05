@@ -96,6 +96,7 @@ struct SSHFailureTests {
             (result(255, stderr: "Connection reset by 10.0.0.4 port 22\n"), .transient),
             (result(255, stderr: "Connection timed out during banner exchange\n"), .transient),
             (result(255, stderr: "mux_client_request_session: session request failed: Session open refused by peer\n"), .sharedConnection),
+            (result(255, stderr: "mux_client_hello_exchange: read packet failed\n"), .brokenSharedConnection),
             (result(255, stderr: "ssh: Could not resolve hostname imac99.local: nodename nor servname provided\n"), .unreachable),
             (result(255, stderr: "ssh: connect to host imac04.local port 22: Operation timed out\n"), .unreachable),
             // After the command started: never repeat it.
@@ -119,6 +120,56 @@ struct SSHFailureTests {
         #expect(String(decoding: SSHNoise.filter(noisy), as: UTF8.self) == "prawdziwy błąd\n")
         let binary = Data([0xFF, 0xD8, 0x00, 0x0A, 0x80])
         #expect(SSHNoise.filter(binary) == binary)
+    }
+
+    @Test func startMarkerIsDetectedAndRemoved() {
+        let data = Data("\(RemoteScript.startMarker)\nbłąd polecenia\n".utf8)
+        #expect(SSHNoise.containsStartMarker(data))
+        #expect(String(decoding: SSHNoise.filter(data), as: UTF8.self) == "błąd polecenia\n")
+        #expect(!SSHNoise.containsStartMarker(Data("Connection reset by 10.0.0.4 port 22\n".utf8)))
+        #expect(RemoteScript("echo x").render().hasPrefix("echo \(RemoteScript.startMarker) >&2\n"))
+    }
+
+    private final class Attempts: @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        func next() -> Int { lock.lock(); defer { lock.unlock() }; n += 1; return n }
+        var count: Int { lock.lock(); defer { lock.unlock() }; return n }
+    }
+
+    private static let machine = Machine(name: "imac99", address: "imac99.invalid", user: "imac99")
+    private static let settings = SSHSettings(askpassPath: "/tmp/askpass", reuseConnections: false)
+
+    @Test func aStartedCommandIsNeverRetried() async {
+        // Without connection sharing ssh reports a connection lost mid-session like a refused one.
+        let attempts = Attempts()
+        let started = OutputFlag()
+        let reset = "\(RemoteScript.startMarker)\nConnection reset by 10.0.0.4 port 22\n"
+        let r = await SSH.runWithRetry(on: Self.machine, settings: Self.settings, retry: .job, handle: nil,
+                                       stdoutFile: nil, started: started, onOutput: nil) { _, output in
+            _ = attempts.next()
+            output(.stderr, Data(reset.utf8))
+            return result(255, stderr: reset)
+        }
+        #expect(attempts.count == 1)
+        #expect(started.isSet)
+        #expect(!r.stderrText.contains(RemoteScript.startMarker))
+        #expect(r.stderrText.contains("Connection reset"))
+    }
+
+    @Test func aFailureBeforeTheStartIsRetried() async {
+        let attempts = Attempts()
+        let started = OutputFlag()
+        let r = await SSH.runWithRetry(on: Self.machine, settings: Self.settings, retry: .transient, handle: nil,
+                                       stdoutFile: nil, started: started, onOutput: nil) { _, output in
+            if attempts.next() == 1 { return result(255, stderr: "Connection reset by 10.0.0.4 port 22\n") }
+            output(.stderr, Data("\(RemoteScript.startMarker)\n".utf8))
+            return result(0, stderr: "\(RemoteScript.startMarker)\n", stdout: "ok\n")
+        }
+        #expect(attempts.count == 2)
+        #expect(started.isSet)
+        #expect(r.succeeded)
+        #expect(r.stderr.isEmpty)
     }
 
     @Test func newFailureKindsHaveClearMessages() {
@@ -156,6 +207,8 @@ struct RemoteJobTests {
 
     @Test func rootShellReturnsItsFilesSoCleanupNeedsNoSecondSudo() {
         let s = RemoteScript("id", asRoot: true, jobID: "j1").render()
+        // What root created is deleted by root (not walked twice), the rest is handed back.
+        #expect(s.contains(#"-mindepth 1 -maxdepth 1 ! -user $2 -exec rm -rf {} +"#))
         #expect(s.contains(#"chown -hR $2"#))
         #expect(s.contains(#"cmcr "$CMCR_TMP" "$UID" "$CMCR_JOB_FILE""#))
     }
@@ -236,5 +289,91 @@ struct HostGateTests {
         #expect(gate.sessions("k") == 0)
         #expect(await gate.acquire("k", timeout: 0.1))
         gate.release("k")
+    }
+}
+
+/// A TCP port that accepts connections but never sends an SSH banner: ssh hangs before the session starts.
+private final class SilentListener {
+    let fd: Int32
+    let port: Int
+
+    init?() {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return nil }
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, len) }
+        }
+        guard bound == 0, listen(fd, 16) == 0 else { close(fd); return nil }
+        _ = withUnsafeMutablePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) }
+        }
+        self.fd = fd
+        port = Int(UInt16(bigEndian: addr.sin_port))
+    }
+
+    deinit { close(fd) }
+}
+
+private final class OutputLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+    func append(_ d: Data) { lock.lock(); data.append(d); lock.unlock() }
+    var text: String { lock.lock(); defer { lock.unlock() }; return String(decoding: data, as: UTF8.self) }
+}
+
+struct SessionStartTests {
+    private let settings = SSHSettings(connectTimeout: 10, extraOptions: ["UserKnownHostsFile=/dev/null"],
+                                       askpassPath: "/tmp/askpass", reuseConnections: false)
+
+    @Test func cancelBeforeTheCommandStartedNeedsNoRemoteStop() async throws {
+        let listener = try #require(SilentListener())
+        let host = Machine(name: "cisza", address: "127.0.0.1", user: "nikt", port: listener.port)
+        let handle = ProcessHandle()
+        let log = OutputLog()
+        Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            handle.cancel()
+        }
+        let start = Date()
+        let r = await SSH.run(RemoteScript("echo x"), on: host, password: nil, settings: settings, handle: handle,
+                              onOutput: { _, d in log.append(d) })
+        await handle.cancellationFinished()
+        #expect(r.cancelled)
+        #expect(log.text.contains("Polecenie nie zostało uruchomione"))
+        #expect(!log.text.contains("zatrzymać"))
+        // A remote stop would itself wait for the silent port (ConnectTimeout 10 s).
+        #expect(Date().timeIntervalSince(start) < 5)
+    }
+
+    @Test func aTimeoutBeforeTheStartNeedsNoRemoteStop() async throws {
+        let listener = try #require(SilentListener())
+        let host = Machine(name: "cisza", address: "127.0.0.1", user: "nikt", port: listener.port)
+        let handle = ProcessHandle()
+        let log = OutputLog()
+        let start = Date()
+        let r = await SSH.run(RemoteScript("echo x"), on: host, password: nil, settings: settings, timeout: 1,
+                              handle: handle, onOutput: { _, d in log.append(d) })
+        #expect(r.timedOut)
+        #expect(!log.text.contains("zatrzymać"))
+        #expect(!r.stderrText.contains("▸"))
+        #expect(Date().timeIntervalSince(start) < 5)
+    }
+
+    @Test func portProbeTellsAnsweringMacsApart() async throws {
+        let listener = try #require(SilentListener())
+        let s = SSHSettings(askpassPath: "/tmp/askpass")
+        #expect(await SSH.portAnswers(Machine(name: "a", address: "127.0.0.1", user: "x", port: listener.port), settings: s) == true)
+        // Refused: the Mac is on, only Remote Login is off.
+        let closedPort = try #require(SilentListener()).port
+        #expect(await SSH.portAnswers(Machine(name: "b", address: "127.0.0.1", user: "x", port: closedPort), settings: s) == true)
+        #expect(await SSH.portAnswers(Machine(name: "c", address: "cmcr-brak.invalid", user: "x"), settings: s) == false)
+        var routed = s
+        routed.extraOptions = ["ProxyJump=brama"]
+        #expect(await SSH.portAnswers(Machine(name: "d", address: "127.0.0.1", user: "x", port: listener.port), settings: routed) == nil)
     }
 }
