@@ -104,7 +104,8 @@ public enum ConfigStore {
 
 /// Stores admin passwords in the login Keychain.
 public enum Keychain {
-    static let service = "pl.cmcr.manager"
+    /// `CMCR_KEYCHAIN_SERVICE` keeps tests away from the real items.
+    static let service = ProcessInfo.processInfo.environment["CMCR_KEYCHAIN_SERVICE"].flatMap { $0.isEmpty ? nil : $0 } ?? "pl.cmcr.manager"
     public static let sharedAccount = "admin-shared"
 
     public static func account(for host: Machine) -> String { "admin-\(host.id.uuidString)" }

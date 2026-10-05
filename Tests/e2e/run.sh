@@ -16,6 +16,9 @@ SSHD_PID=""
 
 cleanup() {
   [ -n "$SSHD_PID" ] && kill "$SSHD_PID" 2>/dev/null
+  case "${CMCR_KEYCHAIN_SERVICE:-}" in
+    pl.cmcr.manager.e2e-*) while security delete-generic-password -s "$CMCR_KEYCHAIN_SERVICE" >/dev/null 2>&1; do :; done ;;
+  esac
   if [ "${CMCR_E2E_KEEP:-0}" = 1 ]; then echo "Zachowano: $WORK"; return; fi
   pkill -f "$WORK/" 2>/dev/null
   rm -rf "$WORK"
@@ -98,6 +101,8 @@ cat > "$WORK/config/settings.json" <<EOF
  "screenshotMaxSize":640}
 EOF
 export CMCR_CONFIG_DIR="$WORK/config"
+# A throw-away Keychain service: cmcrctl must never read or change the app's own pl.cmcr.manager items here.
+export CMCR_KEYCHAIN_SERVICE="pl.cmcr.manager.e2e-$$"
 unset CMCR_PASSWORD
 ctl() { "$CTL" "$@" 2>&1; }
 ctlpw() { CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }
@@ -120,7 +125,7 @@ fi
 # ---------------------------------------------------------------- tests
 section "Połączenie i stan"
 out="$(ctl status 1)"; expect "status: komputer online" "$out" "● imac01" "macOS"
-out="$(ctl status 2)"; code=$?
+out="$(ctl status 99)"; code=$?
 expect "status: nieistniejący host – czytelny błąd" "$out" "Nie można odnaleźć nazwy hosta"
 expect_code "status: kod błędu dla offline" "$code" 1 "$out"
 
@@ -133,8 +138,10 @@ out="$(ctl exec 'exit 7' 1)"; code=$?
 expect_code "exec: kod wyjścia przekazany" "$code" 7 "$out"
 out="$(ctl exec 'ls -d "$CMCR_TMP" && echo ok' 1)"
 expect "exec: prywatny katalog tymczasowy" "$out" "/tmp/cmcr." "ok"
-left="$(ls -d /tmp/cmcr.?????? 2>/dev/null | while read -r d; do [ -O "$d" ] && echo "$d"; done | wc -l | tr -d ' ')"
-[ "$left" = 0 ] && pass "exec: katalog tymczasowy usunięty po zakończeniu" || fail "exec: zostały katalogi tymczasowe ($left)" "$(ls -ld /tmp/cmcr.?????? 2>/dev/null)"
+# Checks this run's directory only: other test runs on the same Mac may be creating their own right now.
+tmpdir="$(printf '%s\n' "$out" | grep -o '/tmp/cmcr\.[A-Za-z0-9]*' | head -n 1)"
+[ -n "$tmpdir" ] && [ ! -e "$tmpdir" ] && pass "exec: katalog tymczasowy usunięty po zakończeniu" \
+  || fail "exec: został katalog tymczasowy ${tmpdir:-?}" "$(ls -la "$tmpdir" 2>&1)"
 
 section "Uprawnienia administratora (sudo przez askpass)"
 clear_fakelog
