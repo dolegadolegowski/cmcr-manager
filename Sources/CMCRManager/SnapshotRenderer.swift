@@ -5,6 +5,7 @@ import SwiftUI
 /// Renders every section into PNG files without a visible window (works while the screen is locked), for UI
 /// review and documentation: CMCR_SNAPSHOT_DIR=<dir> [CMCR_SNAPSHOT_SECTIONS=files,apps] [CMCR_SNAPSHOT_WAIT=2]
 /// [CMCR_SNAPSHOT_SIZE=1440x900] [CMCR_SNAPSHOT_TEXT=1]. The app quits when done. Use together with CMCR_CONFIG_DIR.
+/// Optional state and sheets for the Files/Apps/Updates pages: see SnapshotSheets.
 @MainActor
 enum SnapshotRenderer {
     static func runIfRequested() {
@@ -25,6 +26,7 @@ enum SnapshotRenderer {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard let model = AppModel.shared else { exit(3) }
             prepare(model, env: env)
+            SnapshotSheets.prepare(model, env: env)
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                   backing: .buffered, defer: false)
@@ -64,6 +66,7 @@ enum SnapshotRenderer {
                                               to: output.appendingPathComponent("confirm-\(name).png"))
                 }
             }
+            await SnapshotSheets.renderRequested(model, env: env, into: output, wait: wait)
             exit(0)
         }
     }
