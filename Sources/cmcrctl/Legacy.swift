@@ -28,7 +28,7 @@ extension Console {
 /// Commands contributed by feature modules, dispatched before the main argument parser.
 enum ExtraCommands {
     static var usage: String {
-        [ScriptCommands.usage, SetupCommands.usage, SelfUpdateCommand.usage].joined(separator: "\n")
+        [ScriptCommands.usage, SetupCommands.usage, screenWatchUsage, SelfUpdateCommand.usage].joined(separator: "\n")
     }
 
     /// Exit status, or nil when the command is not handled here. `argv` starts with the command word.
@@ -37,6 +37,7 @@ enum ExtraCommands {
         guard let command = argv.first else { return nil }
         let args = argv.filter { $0 != "--root" && $0 != "--force" }
         if let code = await ScriptCommands.run(command, args) { return code }
+        if command == "screen-watch" { return await screenWatchCommand(Array(args.dropFirst())) }
         if SetupCommands.names.contains(command) {
             return await SetupCommands.run(command, Array(args.dropFirst()), select: selectHosts,
                                            settings: settings, ssh: sshSettings)
@@ -46,3 +47,8 @@ enum ExtraCommands {
 }
 
 var fullUsage: String { usage + "\nInstalacja i inne\n" + ExtraCommands.usage }
+
+let screenWatchUsage = """
+  cmcrctl screen-watch nr katalog [--frames N] [--interval S] [--display main|all|N]
+                                            podgląd ekranu na żywo: kolejne klatki JPEG w katalogu
+"""

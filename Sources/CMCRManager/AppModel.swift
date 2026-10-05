@@ -176,16 +176,6 @@ final class Batch: ObservableObject, Identifiable, @unchecked Sendable {
     func cancel() { jobs.forEach { $0.handle.cancel() } }
 }
 
-/// Live screen preview of one Mac.
-final class ScreenState: ObservableObject, @unchecked Sendable {
-    @Published var image: NSImage?
-    @Published var user: String?
-    @Published var message: String?
-    @Published var updatedAt: Date?
-    @Published var loading = false
-    var notified = false
-}
-
 struct HostApps {
     var user: String?
     var apps: [RunningApp] = []
@@ -290,7 +280,8 @@ final class AppModel: ObservableObject {
     @Published var pushItems: [URL] = []
     @Published var installItems: [URL] = []
 
-    private var screenStates: [UUID: ScreenState] = [:]
+    /// Screen preview engine (ScreenCenter.swift).
+    lazy var screens = ScreenCenter(model: self)
     let askpassPath = ConfigStore.ensureAskpass()
 
     init() {
@@ -904,41 +895,6 @@ final class AppModel: ObservableObject {
             let r = await SSHKeys.forgetHostKey(m, settings: self.sshSettings)
             job.append(r.stdoutText + r.stderrText)
             return r
-        }
-    }
-
-    // MARK: - Screen preview
-
-    func screenState(for id: UUID) -> ScreenState {
-        if let s = screenStates[id] { return s }
-        let s = ScreenState()
-        screenStates[id] = s
-        return s
-    }
-
-    /// Ends an observation session: the next preview notifies the user again.
-    func endObservation() {
-        screenStates.values.forEach { $0.notified = false }
-    }
-
-    func captureScreen(_ m: Machine, maxSize: Int) async {
-        let st = screenState(for: m.id)
-        guard !st.loading else { return }
-        st.loading = true
-        let notify = settings.notifyOnObserve && !st.notified
-        let shot = await Operations.screenshot(of: m, maxSize: maxSize, settings: settings, notify: notify,
-                                               password: password(for: m), sshSettings: sshSettings)
-        st.loading = false
-        st.updatedAt = Date()
-        if let data = shot.imageData, let image = NSImage(data: data) {
-            if !st.notified { ConfigStore.log("Podgląd ekranu → \(m.name) (użytkownik \(shot.user ?? "?"))") }
-            st.notified = true
-            st.image = image
-            st.user = shot.user
-            st.message = nil
-        } else {
-            st.image = nil
-            st.message = shot.message ?? "Brak obrazu."
         }
     }
 }

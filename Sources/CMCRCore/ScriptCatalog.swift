@@ -81,6 +81,14 @@ public enum ScriptCatalog {
             Sample(name: "remote(verify)", script: SetupScript.remote(SetupOptions(), host: Machine(name: a, address: a, user: a),
                                                                       settings: AppSettings(), publicKey: nil, mode: .verify)),
             Sample(name: "createStudentFolder", script: Scripts.createStudentFolder("/Users/student/\(a)", owner: a)),
+            // U5 screens (ScreenCapture.swift; Scripts.screenshot moved there – keep the existing two samples)
+            Sample(name: "screenCapture", script: Scripts.screenCapture(ScreenCaptureOptions(maxSize: 1280, notify: true,
+                                                                                             alreadyNotifiedUser: a,
+                                                                                             allowedUsers: ["student", a],
+                                                                                             display: .all, frames: 0))),
+            Sample(name: "screenCapture(display)", script: Scripts.screenCapture(ScreenCaptureOptions(maxSize: 0, quality: 0, interval: 1,
+                                                                                                      notify: false, onlyStandardAccounts: false,
+                                                                                                      display: .number(2)))),
         ]
         for restart in [false, true] {
             for recommended in [false, true] {

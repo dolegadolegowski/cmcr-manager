@@ -46,11 +46,34 @@ _e2e_fake_png() {
     --out "$1" >/dev/null 2>&1
 }
 
+# screencapture: writes a fake image per output file (format from -t). Control files in $CMCR_E2E_WORK:
+# displays (number of displays, default 1), screencapture_fail (no Screen Recording permission),
+# screen_variant (a different picture, to test change detection).
 screencapture() {
-  local out=""
-  for a in "$@"; do out="$a"; done
+  local fmt=png i=0 n f src
+  local -a files=()
   _e2e_log "screencapture $*"
-  _e2e_fake_png "$out"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -t) fmt="$2"; shift 2 ;;
+      -D|-R|-T|-l) shift 2 ;;
+      -*) shift ;;
+      *) files[${#files[@]}]="$1"; shift ;;
+    esac
+  done
+  if [ -e "${CMCR_E2E_WORK:-/nonexistent}/screencapture_fail" ]; then
+    echo "could not create image from display" >&2; return 1
+  fi
+  n="$(cat "${CMCR_E2E_WORK:-/nonexistent}/displays" 2>/dev/null || echo 1)"
+  src=/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns
+  [ -e "${CMCR_E2E_WORK:-/nonexistent}/screen_variant" ] && src=/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericFolderIcon.icns
+  for f in "${files[@]}"; do
+    i=$((i + 1)); [ "$i" -le "$n" ] || break
+    case "$fmt" in
+      jpg|jpeg) sips -s format jpeg "$src" --out "$f" >/dev/null 2>&1 ;;
+      *) sips -s format png "$src" --out "$f" >/dev/null 2>&1 ;;
+    esac
+  done
 }
 
 # launchctl: `asuser UID cmd…` runs cmd "in the GUI session" – here: logs it and executes only safe tools.
@@ -68,6 +91,7 @@ launchctl() {
       fi
       case "${1:-}" in
         /usr/sbin/screencapture|screencapture) shift; screencapture "$@" ;;
+        /usr/bin/lsappinfo|lsappinfo) shift; lsappinfo "$@" ;;
         *)
           local input=""
           if [ ! -t 0 ]; then input="$(cat)"; fi
@@ -198,6 +222,11 @@ fdesetup() {
 # Nobody at the login window when $CMCR_E2E_WORK/fake-no-console exists.
 stat() {
   if [ "$*" = "-f%Su /dev/console" ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/fake-no-console" ]; then echo root; return 0; fi
+  # Console user override for screen-preview tests: $CMCR_E2E_WORK/console_user replaces the owner of
+  # /dev/console (e.g. "daemon" for a student session that needs root, "root" for the login window).
+  if [ "$*" = "-f%Su /dev/console" ] && [ -s "${CMCR_E2E_WORK:-/nonexistent}/console_user" ]; then
+    cat "$CMCR_E2E_WORK/console_user"; return 0
+  fi
   command stat "$@"
 }
 # fake-no-volume-owner: the current user is listed as a crypto user that is not a volume owner.
@@ -423,3 +452,14 @@ for _e2e_f in launchctl pmset osascript fdesetup dscl dseditgroup; do
   declare -F "_e2e_base_$_e2e_f" >/dev/null && export -f "_e2e_base_$_e2e_f"
 done
 unset _e2e_f
+
+# lsappinfo: a fixed frontmost application ($CMCR_E2E_WORK/front_app overrides its name).
+lsappinfo() {
+  _e2e_log "lsappinfo $*"
+  case "${1:-}" in
+    front) echo "ASN:0x0-0xe2e0e2:" ;;
+    info) printf '"%s" ASN:0x0-0xe2e0e2: (in front) \n    bundleID=[ NULL ] \n' \
+            "$(cat "${CMCR_E2E_WORK:-/nonexistent}/front_app" 2>/dev/null || echo 'Przeglądarka Testowa')" ;;
+  esac
+}
+export -f lsappinfo 2>/dev/null

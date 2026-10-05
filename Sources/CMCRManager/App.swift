@@ -37,9 +37,10 @@ struct CMCRManagerApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("CMCR Manager") {
+        WindowGroup("CMCR Manager", id: MainWindow.id) {
             ContentView()
                 .environmentObject(model)
+                .environmentObject(model.screens)
                 .frame(minWidth: 1180, minHeight: 720)
         }
         .defaultSize(width: 1440, height: 900)
@@ -61,7 +62,25 @@ struct CMCRManagerApp: App {
                         .keyboardShortcut(KeyEquivalent(Character(String((index + 1) % 10))), modifiers: [.command])
                 }
             }
+            ScreenCommands(center: model.screens)
         }
+
+        Window("Ściana ekranów", id: ScreenWallView.windowID) {
+            ScreenWallView()
+                .environmentObject(model)
+                .environmentObject(model.screens)
+        }
+        .defaultSize(width: 1600, height: 1000)
+        // Opened from ScreenCommands (with ⇧⌘E) instead of SwiftUI's own Window-menu item.
+        .commandsRemoved()
+
+        WindowGroup("Podgląd ekranu", id: ScreenWindowView.windowID, for: UUID.self) { $id in
+            ScreenWindowView(machineID: id)
+                .environmentObject(model)
+                .environmentObject(model.screens)
+        }
+        .defaultSize(width: 1100, height: 720)
+        .commandsRemoved()
     }
 }
 
@@ -82,6 +101,7 @@ struct ContentView: View {
         .overlay(alignment: .bottom) { ActionToastOverlay() }
         .confirmation($model.retryConfirmation)
         .toolbar {
+            ToolbarItem(placement: .primaryAction) { OpenScreenWallButton() }
             ToolbarItem(placement: .primaryAction) { ActivityToolbarButton() }
         }
         .updaterUI(model: model)
@@ -592,6 +612,9 @@ struct MachineContextMenu: View {
                 model.section = .screens
             } label: {
                 Label("Podgląd ekranu", systemImage: "eye")
+            }
+            if targets.count == 1 {
+                OpenScreenWindowMenuItem(machine: targets[0])
             }
             Divider()
             Button {
