@@ -61,6 +61,7 @@ public extension Operations {
         let items = ((try? fm.contentsOfDirectory(atPath: staging.path)) ?? []).sorted()
         if items.isEmpty {
             try? fm.removeItem(at: staging)
+            rmdir(folder.path)  // only when no other Mac has written into it
             onOutput?(.stdout, Data("Folder \(source) jest pusty – nic do zebrania.\n".utf8))
             return (CommandResult(exitCode: 0), nil)
         }

@@ -45,7 +45,7 @@ public extension Scripts {
       [ -n "$CMCR_PATH" ] || CMCR_PATH="/"
       case "$CMCR_PATH" in
         /*) ;;
-        *) echo "CMCR:REFUSED" >&2; echo "Ścieżka musi zaczynać się od / (podano: $CMCR_PATH)" >&2; return 65 ;;
+        *) echo "CMCR:REFUSED" >&2; echo "Odmowa: ścieżka musi zaczynać się od / (podano: $CMCR_PATH)" >&2; return 65 ;;
       esac
     }
     cmcr_refuse() { echo "CMCR:REFUSED" >&2; echo "Odmowa: $1" >&2; return 65; }
@@ -197,7 +197,8 @@ public extension Scripts {
     }
 
     /// Permanently deletes items (files, folders, links – never the target of a link).
-    static func deleteItems(_ paths: [String], asRoot: Bool) -> RemoteScript {
+    /// `dryRun` only reports what the safety rules would allow.
+    static func deleteItems(_ paths: [String], asRoot: Bool, dryRun: Bool = false) -> RemoteScript {
         browseScript(#"""
         ITEMS=\#(shArray(paths))
         RC=0
@@ -205,6 +206,7 @@ public extension Scripts {
           cmcr_resolve "$it" || { RC=$?; continue; }
           cmcr_guard_item "$CMCR_PATH" || { RC=$?; continue; }
           if [ ! -e "$CMCR_REAL" ] && [ ! -L "$CMCR_REAL" ]; then echo "Brak (już usunięto?): $CMCR_REAL"; continue; fi
+          if [ \#(dryRun ? 1 : 0) = 1 ]; then echo "Zostałoby usunięte: $CMCR_REAL"; continue; fi
           if rm -rf "$CMCR_REAL"; then echo "✔ Usunięto $CMCR_REAL"; else echo "✘ Nie udało się usunąć $CMCR_REAL" >&2; RC=1; fi
         done
         exit $RC

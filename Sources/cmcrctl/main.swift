@@ -21,6 +21,7 @@ Użycie:
   cmcrctl open-app "Nazwa" [all|nr]         uruchom aplikację u zalogowanego użytkownika
   cmcrctl quit-app "Nazwa" [all|nr] [--force]  zamknij aplikację
   cmcrctl render "polecenie" [--root]       pokaż skrypt wykonywany zdalnie
+\(BrowseCLI.usage)
 
 Konfiguracja: \(ConfigStore.directory.path)
 Hasło administratora: Pęk kluczy (ustawiane w aplikacji) lub zmienna CMCR_PASSWORD.
@@ -169,6 +170,8 @@ case "open-app", "quit-app":
     }
 
 default:
+    let browse = BrowseCLI.Context(settings: settings, sshSettings: sshSettings, root: root, select: selectHosts)
+    if let s = await BrowseCLI.run(command, args, browse) { status = s; break }
     print(usage)
     status = 2
 }
