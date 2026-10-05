@@ -157,7 +157,7 @@ private struct FilesPage: View {
                 Spacer(minLength: 12)
                 Button {
                     picker = RemoteFolderRequest(purpose: .collectSource, initialPath: state.collectSource) {
-                        state.collectSource = $0
+                        state.useCollectSource($0)
                     }
                 } label: {
                     Label("Zmień folder…", systemImage: "folder")
@@ -193,7 +193,7 @@ private struct FilesPage: View {
             Toggle("Z uprawnieniami administratora (prywatne foldery ucznia)", isOn: $state.collectAsRoot)
             Toggle(isOn: $state.collectClean) {
                 Text("Po zebraniu wyczyść folder ucznia")
-                Text("Usuwane są tylko pliki, które dotarły na ten Mac – praca zapisana w międzyczasie zostaje.")
+                Text("Usuwane są tylko pliki skopiowane na ten Mac i niezmienione od tej chwili – praca zapisana w międzyczasie zostaje.")
             }
             HStack(spacing: 12) {
                 Spacer()

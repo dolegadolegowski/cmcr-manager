@@ -99,6 +99,14 @@ final class FilesState: ObservableObject {
 
     func rememberFolder(_ path: String) { prefs.remember(path) }
 
+    /// Sets the "Zbierz prace" source; private folders of an account (Desktop, Documents…) need sudo to be read.
+    func useCollectSource(_ path: String) {
+        let p = RemotePaths.tokenize(path, studentUser: app.settings.studentUser)
+        collectSource = p
+        let shared = RemotePaths.tokenize(app.settings.sharedFolder, studentUser: app.settings.studentUser)
+        collectAsRoot = !(p == shared || p.hasPrefix("~") || p == "/Users/Shared" || p.hasPrefix("/Users/Shared/"))
+    }
+
     static func pushDefaults(for path: String, settings s: AppSettings) -> (owner: OwnerChoice, mode: PushMode) {
         let shared = RemotePaths.tokenize(s.sharedFolder, studentUser: s.studentUser)
         if path == shared { return (.student, .everyone) }

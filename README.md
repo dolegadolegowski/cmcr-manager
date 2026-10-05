@@ -8,7 +8,7 @@ Natywna aplikacja okienkowa macOS (SwiftUI) do zdalnego zarządzania pracownią 
 |---|---|
 | **Komputery** | Stan pracowni (online, zalogowany użytkownik, macOS, model, IP/MAC, czas pracy, dysk), odświeżanie co 2 min, sesja SSH w Terminalu (`cmcr-go`), Udostępnianie ekranu (VNC) |
 | **Polecenia** | Skrypt bash na wielu iMacach naraz (`cmcr-exec`), opcjonalnie jako root, gotowe polecenia z README/notes.md, własne zapisane fragmenty |
-| **Pliki** | Wysyłanie plików i folderów na iMaki – folder docelowy wybiera się w okienku jak w Finderze (ulubione: folder cmcr ucznia, Biurko, Dokumenty, Pobrane, `/Users/Shared`, Programy, Biurko zalogowanego użytkownika, katalog administratora; ostatnio używane; nowy folder), ścieżka działa na wszystkich zaznaczonych komputerach (`{student}`, `{console}`, `~`); właściciel i uprawnienia dobierane automatycznie; **Zbierz prace** do `~/Public/cmcr/zebrane/<data godzina>/<host>` (nic nie jest nadpisywane, opcjonalnie z wyczyszczeniem zebranych plików u ucznia); konwencja `all` + `<host>` (`cmcr-push`/`cmcr-pull`); czyszczenie folderów |
+| **Pliki** | Wysyłanie plików i folderów na iMaki – folder docelowy wybiera się w okienku jak w Finderze (ulubione: folder cmcr ucznia, Biurko, Dokumenty, Pobrane, `/Users/Shared`, Programy, Biurko zalogowanego użytkownika, katalog administratora; ostatnio używane; nowy folder), ścieżka działa na wszystkich zaznaczonych komputerach (`{student}`, `{console}`, `~`), a okienko sprawdza, na których z nich folder już jest; właściciel i uprawnienia dobierane automatycznie; **Zbierz prace** do `~/Public/cmcr/zebrane/<data godzina>/<host>` (nic nie jest nadpisywane, opcjonalnie z wyczyszczeniem u ucznia tylko tych plików, które zostały zebrane i od tej pory się nie zmieniły); konwencja `all` + `<host>` (`cmcr-push`/`cmcr-pull`); czyszczenie folderów |
 | **Przeglądarka plików** | Przeglądanie jednego iMaca jak w Finderze (ikony, sortowanie, szukanie, ukryte pliki, tryb administratora): pobieranie zaznaczonych elementów, wysyłanie przeciągnięciem z Findera, nowy folder, zmiana nazwy, usuwanie z potwierdzeniem; kliknięcie innego komputera na liście pokazuje ten sam folder na nim |
 | **Aplikacje** | Lista uruchomionych aplikacji zalogowanego użytkownika; uruchamianie (z argumentami), zamykanie i wymuszanie zamknięcia na jednym lub wszystkich iMacach; otwieranie URL/plików; lista zainstalowanych i odinstalowywanie |
 | **Instalacja** | `.pkg`, `.dmg`, `.zip`, `.app` z tego Maca lub pobierane z URL bezpośrednio na iMacach; Homebrew (formuły i `--cask`), instalacja Homebrew i Oracle JDK; Unity Hub headless (edytor + moduły) i Android SDK (`sdkmanager`) — wg notes.md |
@@ -68,7 +68,7 @@ Zaznaczenie komputerów na liście (środkowa kolumna) jest wspólne dla wszystk
 | `cmcr-push all\|nr` | Pliki › Konwencja cmcr-helpers | `cmcrctl push all\|nr [--root]` |
 | `cmcr-pull all\|nr` | Pliki › Konwencja cmcr-helpers › Pobierz | `cmcrctl pull all\|nr [--root]` |
 | — | Pliki › Zbierz prace uczniów | `cmcrctl collect all\|nr [--from folder] [--to katalog] [--clean]` |
-| — | Przeglądarka plików | `cmcrctl ls`, `mkdir`, `rename`, `rm`, `get` |
+| — | Przeglądarka plików, wybór folderu | `cmcrctl ls`, `exists`, `mkdir`, `rename`, `rm`, `get` |
 | dystrybucja klucza (README) | Konfiguracja › Dostęp i hasła | — |
 | Unity Hub / sdkmanager / Homebrew (notes.md) | Instalacja, Polecenia › Gotowe polecenia | `cmcrctl exec` |
 
