@@ -7,6 +7,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Allows running the bare executable (swift run) as a regular windowed app.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        Updater.shared.applicationDidLaunch()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        Updater.shared.applicationWillTerminate()
     }
 
     /// Closing the window while jobs run keeps the app (and the jobs) going; a notification reports the end.
@@ -21,6 +26,12 @@ struct CMCRManagerApp: App {
     @StateObject private var model = AppModel()
 
     init() {
+        // The update helper runs a freshly downloaded build with this flag to check that it starts at all.
+        if CommandLine.arguments.contains("--cmcr-self-test") {
+            print(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
+            exit(0)
+        }
+        Updater.confirmStart()       // before the model touches the Keychain (may wait in a dialog after an update)
         // Writing a password to an ssh that already exited must not kill the app.
         signal(SIGPIPE, SIG_IGN)
     }
@@ -33,6 +44,7 @@ struct CMCRManagerApp: App {
         }
         .defaultSize(width: 1440, height: 900)
         .commands {
+            UpdateCommands()
             CommandGroup(after: .newItem) {
                 Button("Odśwież stan komputerów") { model.refreshStatus() }
                     .keyboardShortcut("r", modifiers: [.command])
@@ -59,6 +71,7 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             SidebarView()
+                .safeAreaInset(edge: .bottom, spacing: 0) { UpdateBanner() }
                 .navigationSplitViewColumnWidth(min: 190, ideal: 210)
         } content: {
             MachineListView()
@@ -71,6 +84,7 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) { ActivityToolbarButton() }
         }
+        .updaterUI(model: model)
         .task {
             model.refreshStatus()
             // Keep the overview fresh in the background.

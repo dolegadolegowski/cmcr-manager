@@ -467,6 +467,7 @@ struct GeneralSettings: View {
                 Stepper("Maks. rozdzielczość: \(model.settings.screenshotMaxSize) px", value: $model.settings.screenshotMaxSize, in: 480...2560, step: 160)
                 Stepper("Jakość JPEG: \(model.settings.screenshotQuality)%", value: $model.settings.screenshotQuality, in: 20...95, step: 5)
             }
+            UpdateSettingsSection()
             Section("Pliki aplikacji") {
                 LabeledContent("Konfiguracja", value: ConfigStore.directory.path)
                 LabeledContent("Dziennik działań", value: ConfigStore.logURL.path)

@@ -4,3 +4,16 @@ build/
 .swiftpm/
 .DS_Store
 .claude/
+
+# Release artifacts and secrets. The update signing key lives in the Keychain or ~/.config/cmcr-manager, never here.
+dist/
+*.key
+*.pem
+*.p12
+*.p8
+*.keychain
+*.keychain-db
+.env
+hosts.json
+settings.json
+askpass.sh

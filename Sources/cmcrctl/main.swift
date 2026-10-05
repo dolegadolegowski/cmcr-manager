@@ -6,6 +6,9 @@ import Foundation
 signal(SIGPIPE, SIG_IGN)
 setvbuf(stdout, nil, _IONBF, 0)
 
+// Self-update helpers (also the hidden __swap-bundles used by the app's updater) come first.
+if let code = await SelfUpdateCommand.handle(CommandLine.arguments) { exit(code) }
+
 let argv = Array(CommandLine.arguments.dropFirst())
 
 // Hidden test commands (Tests/e2e/suites/core-runtime.sh) parse their own options.

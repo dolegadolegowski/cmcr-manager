@@ -28,7 +28,7 @@ extension Console {
 /// Commands contributed by feature modules, dispatched before the main argument parser.
 enum ExtraCommands {
     static var usage: String {
-        [ScriptCommands.usage].joined(separator: "\n")
+        [ScriptCommands.usage, SelfUpdateCommand.usage].joined(separator: "\n")
     }
 
     /// Exit status, or nil when the command is not handled here. `argv` starts with the command word.

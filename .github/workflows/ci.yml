@@ -1,0 +1,36 @@
+# Builds CMCR Manager and runs the unit tests on every push and pull request.
+# No secrets: releases are built and signed locally with scripts/release.sh (the Ed25519 key never leaves
+# the maintainer's Mac).
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: macos-26              # Apple Silicon, Xcode 26 (macOS 26 SDK: glassEffect & co.)
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: swift --version
+      - name: Build (debug)
+        run: swift build
+      - name: Unit tests
+        run: scripts/test.sh --unit
+      - name: App bundle (release, ad-hoc signature)
+        run: |
+          scripts/build-app.sh
+          test "$("build/CMCR Manager.app/Contents/MacOS/CMCRManager" --cmcr-self-test)" = "$(tr -d '[:space:]' < VERSION)"
+      - name: Shell scripts syntax
+        run: for f in scripts/*.sh Tests/e2e/*.sh Tests/e2e/suites/*.sh; do bash -n "$f"; done
