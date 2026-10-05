@@ -39,11 +39,13 @@ struct HostTrustSheet: View {
                          + "Urządzenie, które w sieci podszyje się pod iMaca (np. pod nazwę imac07.local), nie dostanie hasła.")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Odcisk możesz porównać przy iMacu – w Terminalu: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub")
+                    Text("Odcisk możesz porównać przy iMacu – w Terminalu:")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                    Text("ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub")
+                        .font(.system(.callout, design: .monospaced))
+                        .foregroundStyle(.secondary)
                         .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             List(review.entries) { entry in row(entry) }
