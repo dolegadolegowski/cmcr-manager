@@ -353,6 +353,8 @@ final class ScreenCenter: ObservableObject {
                 trace(host, "wznowienie")
                 stream.send(.resume)
                 s.remotePaused = false
+                // A paused remote loop sends nothing: the watchdog starts counting again from now.
+                s.lastMessage = now
             }
             if s.sent.pixels != merged.pixels {
                 trace(host, "rozmiar \(merged.pixels) px")
