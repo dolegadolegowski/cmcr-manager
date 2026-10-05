@@ -46,9 +46,9 @@ struct JobsView: View {
             } else {
                 HSplitView {
                     batchList
-                        .frame(minWidth: 230, idealWidth: 270, maxWidth: 360)
+                        .frame(minWidth: 200, idealWidth: 250, maxWidth: 340)
                     detail
-                        .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(minWidth: 440, maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
@@ -91,7 +91,8 @@ struct JobsView: View {
         let live = liveIDs
         let older = history.batches.filter { !live.contains($0.id) && matches($0) }
         return VStack(spacing: 0) {
-            NativeSearchField(prompt: "Szukaj: działanie, komputer, wynik", text: $search)
+            NativeSearchField(prompt: "Szukaj w zadaniach", text: $search)
+                .help("Szukaj po nazwie działania, komputerze albo treści wyniku")
                 .padding(8)
             List(selection: $model.focusedBatchID) {
                 if !running.isEmpty {
@@ -151,7 +152,8 @@ struct JobsView: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("Historia i dziennik działań")
+                .labelStyle(.iconOnly)
+                .help("Więcej: historia zadań i dziennik działań")
             }
             .controlSize(.small)
             .padding(8)
@@ -286,6 +288,13 @@ struct BatchDetailView: View {
                         exportMenu
                     }
                 }
+                VStack(alignment: .leading, spacing: 8) {
+                    BatchActions(batch: batch).fixedSize()
+                    HStack(spacing: 8) {
+                        viewPicker
+                        exportMenu
+                    }
+                }
             }
         }
     }
@@ -328,7 +337,7 @@ struct BatchDetailView: View {
             TableColumn("Komputer") { job in
                 JobCell(job: job, kind: .name)
             }
-            .width(min: 100, ideal: 130)
+            .width(min: 80, ideal: 100)
             TableColumn("Stan") { job in
                 JobCell(job: job, kind: .state)
             }
@@ -336,7 +345,7 @@ struct BatchDetailView: View {
             TableColumn("Czas") { job in
                 JobCell(job: job, kind: .duration)
             }
-            .width(min: 55, ideal: 70)
+            .width(min: 45, ideal: 60)
             TableColumn("Wynik") { job in
                 JobCell(job: job, kind: .summary)
             }
@@ -502,7 +511,7 @@ struct HistoryDetailView: View {
             VSplitView {
                 Table(batch.records, selection: $recordID) {
                     TableColumn("Komputer") { r in Text(r.host).fontWeight(.medium) }
-                        .width(min: 100, ideal: 130)
+                        .width(min: 80, ideal: 100)
                     TableColumn("Stan") { r in
                         let state = Job.State(historyName: r.state)
                         HStack(spacing: 6) {
@@ -520,7 +529,7 @@ struct HistoryDetailView: View {
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
-                    .width(min: 55, ideal: 70)
+                    .width(min: 45, ideal: 60)
                     TableColumn("Wynik") { r in
                         Text(r.summary).lineLimit(1).help(r.summary)
                     }
