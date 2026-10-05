@@ -162,6 +162,7 @@ expect "lesson start: aplikacja i powitanie w sesji ucznia" "$(fakelog)" "gui-ex
 echo "praca ucznia" > "$WORK/remote/Public/cmcr/praca.txt"
 "$WORK/CMCRDummy.app/Contents/MacOS/CMCRDummy" 300 &
 DUMMY2=$!
+disown "$DUMMY2" 2>/dev/null
 sleep 0.5
 clear_fakelog
 out="$(ctlpw lesson end 1 --no-wait)"; code=$?
