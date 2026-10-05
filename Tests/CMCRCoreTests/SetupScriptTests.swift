@@ -85,6 +85,33 @@ private let testKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDdtiSxiX/5C8QZGgQhHV
     #expect(!a.contains("--pubkey"))
 }
 
+@Test func hostnameFollowsAddressNotListName() {
+    // The list name is free text; renaming must keep the address the app connects to.
+    let renamed = Machine(name: "iMac 7 (okno)", address: "imac07.local", user: "imac07")
+    #expect(SetupScript.hostname(for: renamed) == "imac07")
+    #expect(SetupScript.hostname(for: Machine(name: "imac7", address: "iMac07.LOCAL", user: "imac07")) == "iMac07")
+    #expect(SetupScript.hostname(for: Machine(name: "imac07", address: "192.168.1.27", user: "imac07")) == nil)
+    #expect(SetupScript.hostname(for: Machine(name: "imac07", address: "imac07.szkola.pl", user: "imac07")) == nil)
+    #expect(SetupScript.hostname(for: Machine(name: "imac07", address: "imac_07.local", user: "imac07")) == nil)
+    #expect(SetupScript.hostname(for: Machine(name: "imac07", address: "-imac.local", user: "imac07")) == nil)
+    #expect(SetupScript.hostname(for: Machine(name: "imac07", address: ".local", user: "imac07")) == nil)
+
+    var o = SetupOptions()
+    o.setHostname = true
+    var a = SetupScript.arguments(o, host: renamed, settings: AppSettings(), publicKey: nil, mode: .apply)
+    #expect(a.firstIndex(of: "--hostname").map { a[$0 + 1] } == "imac07")
+    let byIP = Machine(name: "Sala 12", address: "10.0.0.12", user: "imac12")
+    a = SetupScript.arguments(o, host: byIP, settings: AppSettings(), publicKey: nil, mode: .apply)
+    #expect(!a.contains("--hostname"))
+}
+
+@Test func versionsCompareNumerically() {
+    #expect(SetupScript.compareVersions("1.10.0", "1.9.2") == .orderedDescending)
+    #expect(SetupScript.compareVersions("0.9.0", "1.0.0") == .orderedAscending)
+    #expect(SetupScript.compareVersions("1.0", "1.0.0") == .orderedSame)
+    #expect(SetupScript.compareVersions("2.0.0-beta", "2.0.0") == .orderedSame)
+}
+
 @Test func remoteScriptRunsEmbeddedCopyAsRoot() throws {
     let host = Machine(name: "imac07", address: "imac07.local", user: "imac07")
     let script = SetupScript.remote(SetupOptions(), host: host, settings: AppSettings(), publicKey: testKey, mode: .dryRun)
@@ -201,11 +228,50 @@ private let testKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDdtiSxiX/5C8QZGgQhHV
     #expect(off[.wol].state == .unknown)
 }
 
+@Test func readinessSetupVersionNewerThanAppIsNotOutdated() {
+    let base = "admin=imac07\nkey=ok\nfolder=ok\nsudo=ok\n"
+    let newer = ReadinessReport.parse(base + "setup=1.10.0\n", student: "student", sharedFolder: "/Users/student/Public/cmcr",
+                                      expectedVersion: "1.9.0")
+    #expect(newer[.setup].state == .ok)
+    #expect(newer[.setup].detail.contains("nowszą") && !newer[.setup].detail.contains("starszą"))
+    #expect(!newer.fixableBySetup.contains(.setup))
+    let older = ReadinessReport.parse(base + "setup=1.9.0\n", student: "student", sharedFolder: "/Users/student/Public/cmcr",
+                                      expectedVersion: "1.10.0")
+    #expect(older[.setup].state == .warning && older[.setup].detail.contains("starszą"))
+}
+
+@Test func unreachableReportClassifiesConnectionFailure() {
+    func result(_ stderr: String, timedOut: Bool = false) -> CommandResult {
+        CommandResult(exitCode: 255, stderr: Data(stderr.utf8), timedOut: timedOut)
+    }
+    let changed = ReadinessReport.unreachable(result("""
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+        Host key verification failed.
+        """))
+    #expect(changed.connectionFailure == .hostKeyChanged && changed[.ssh].state == .problem)
+    #expect(ReadinessReport.unreachable(result("imac07@imac07.local: Permission denied (publickey,password).")).connectionFailure == .authFailed)
+    #expect(ReadinessReport.unreachable(result("ssh: connect to host imac07.local port 22: Operation timed out")).connectionFailure == .offline)
+    #expect(ReadinessReport.unreachable(result("", timedOut: true)).connectionFailure == .offline)
+    #expect(ReadinessReport.unreachable(result("ssh: connect to host imac07.local port 22: Connection refused")).connectionFailure == .other)
+    #expect(ReadinessReport.parse("key=ok\n", student: "student", sharedFolder: "/Users/student/Public/cmcr").connectionFailure == nil)
+}
+
 @Test func readinessScriptIsValidBash() throws {
     let s = Scripts.readiness(student: "student", sharedFolder: "/Users/student/Public/cmcr", publicKey: testKey)
     #expect(!s.asRoot)
     #expect(s.body.contains("KEYBLOB='AAAAC3NzaC1lZDI1NTE5AAAAIDdtiSxiX/5C8QZGgQhHVN+qsuG6QgBNdbXqFQMUqFft'"))
     #expect(try bashSyntaxCheck(s.render()))
+}
+
+@Test func studentWithoutHomeNeedsVisitNotRootFolder() throws {
+    let r = ReadinessReport.parse("admin=imac07\nfolder=nohome\nsudo=ok\n", student: "student",
+                                  sharedFolder: "/Users/student/Public/cmcr")
+    #expect(r[.folder].state == .manual && r[.folder].detail.contains("zalogował"))
+    #expect(!r.fixableBySetup.contains(.folder) && r.needsVisit.contains(.folder))
+    let fix = Scripts.createStudentFolder("/Users/student/Public/cmcr", owner: "student")
+    #expect(fix.asRoot && fix.body.contains("DIR=\"$R\"'/Users/student/Public/cmcr'"))
+    #expect(try bashSyntaxCheck(fix.render()))
 }
 
 @Test func sharedFolderOutsideHomesIsReported() {

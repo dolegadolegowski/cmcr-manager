@@ -35,7 +35,7 @@ final class ReadinessStore: ObservableObject {
                         let r = await SSH.run(script, on: m, password: pw, settings: ss, timeout: timeout)
                         let report = r.succeeded
                             ? ReadinessReport.parse(r.stdoutText, student: student, sharedFolder: folder)
-                            : ReadinessReport.unreachable(SSH.diagnose(r).1)
+                            : ReadinessReport.unreachable(r)
                         await self.finish(m.id, report)
                     }
                     active += 1
@@ -126,7 +126,7 @@ extension AppModel {
         case .folder:
             let path = settings.resolve(settings.sharedFolder), owner = settings.studentUser
             runScript("Folder ucznia \(path)", on: targets, section: .setup,
-                      script: { _ in Scripts.prepareSharedFolder(path, owner: owner) }, onResult: recheck)
+                      script: { _ in Scripts.createStudentFolder(path, owner: owner) }, onResult: recheck)
         case .wol:
             runScript("Włącz Wake-on-LAN", on: targets, section: .setup,
                       script: { _ in Scripts.enableWakeOnLAN() }, onResult: recheck)
@@ -574,7 +574,7 @@ struct ReadinessMatrix: View {
             .accessibilityLabel("\(m.name), \(c.title): \(item.short)")
             .popover(isPresented: Binding(get: { popover == ref }, set: { if !$0 { popover = nil } }),
                      arrowEdge: .bottom) {
-                ReadinessCellDetail(machine: m, check: c, item: item,
+                ReadinessCellDetail(machine: m, check: c, item: item, connectionFailure: r.connectionFailure,
                                     onConfigure: { popover = nil; onConfigure(m) },
                                     onPassword: { popover = nil; onPassword(m) },
                                     onDone: { popover = nil })
@@ -594,6 +594,7 @@ struct ReadinessCellDetail: View {
     let machine: Machine
     let check: ReadinessCheck
     let item: ReadinessItem
+    var connectionFailure: ReadinessReport.ConnectionFailure?
     var onConfigure: () -> Void
     var onPassword: () -> Void
     var onDone: () -> Void
@@ -643,14 +644,20 @@ struct ReadinessCellDetail: View {
             EmptyView()
         case (.ssh, .warning):
             fix("Zainstaluj klucz SSH", "key.horizontal", .key)
-        case (.ssh, .problem):
-            Button {
+        case (.ssh, .problem) where connectionFailure == .hostKeyChanged:
+            // Re-trusting a changed host key is only offered when ssh actually reported a mismatch.
+            Button(role: .destructive) {
                 model.forgetHostKeys([machine])
                 onDone()
             } label: {
                 Label("Zapomnij klucz hosta", systemImage: "key.slash")
             }
-            .help("Pomaga, gdy iMac był reinstalowany i zmienił się jego klucz SSH.")
+            .help("Tylko jeśli ten iMac był reinstalowany lub wymieniony – inaczej zmieniony klucz może oznaczać, że w sieci podszywa się pod niego inne urządzenie.")
+        case (.ssh, .problem) where connectionFailure == .authFailed:
+            Button(action: onPassword) {
+                Label("Hasło tego komputera…", systemImage: "key.fill")
+            }
+            .help("Odmowa dostępu: zapisz hasło administratora tego iMaca albo roześlij klucz SSH aplikacji.")
         case (.sudo, .problem), (.sudo, .unknown):
             Button(action: onPassword) {
                 Label("Hasło tego komputera…", systemImage: "key.fill")

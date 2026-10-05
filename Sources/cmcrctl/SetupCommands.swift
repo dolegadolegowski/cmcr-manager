@@ -60,6 +60,9 @@ enum SetupCommands {
             for h in select(target) {
                 let what = cl.mode == .apply ? "konfiguracja jako root" : "sprawdzanie konfiguracji (bez zmian)"
                 print("══ \(h.name) (\(h.destination)): \(what)…")
+                if cl.options.setHostname && SetupScript.hostname(for: h) == nil {
+                    err("Uwaga: adres \(h.address) nie ma postaci nazwa.local – nazwa komputera \(h.name) zostanie bez zmian.")
+                }
                 let script = SetupScript.remote(cl.options, host: h, settings: settings, publicKey: key, mode: cl.mode)
                 let r = await SSH.run(script, on: h, password: Keychain.password(for: h), settings: ssh, onOutput: printer)
                 if let report = SetupReport.parse(r.stdoutText) {
@@ -81,7 +84,7 @@ enum SetupCommands {
                                       on: h, password: Keychain.password(for: h), settings: ssh, timeout: 60)
                 let report = r.succeeded
                     ? ReadinessReport.parse(r.stdoutText, student: student, sharedFolder: folder)
-                    : ReadinessReport.unreachable(SSH.diagnose(r).1)
+                    : ReadinessReport.unreachable(r)
                 if !r.succeeded || !report.isReady { status = 1 }
                 print("\(report.isReady ? "●" : "○") \(h.name)\(report.isReady ? " – gotowy" : "")")
                 for c in ReadinessCheck.allCases {

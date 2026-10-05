@@ -86,9 +86,16 @@ public struct ReadinessItem: Sendable, Hashable {
 
 /// Result of `Scripts.readiness` for one Mac.
 public struct ReadinessReport: Sendable {
+    /// Why a Mac could not be checked; decides which fix the SSH cell offers.
+    public enum ConnectionFailure: String, Sendable {
+        case hostKeyChanged, authFailed, offline, other
+    }
+
     public var items: [ReadinessCheck: ReadinessItem]
     public var values: [String: String]
     public var checkedAt: Date
+    /// Set only for a Mac that could not be reached.
+    public var connectionFailure: ConnectionFailure?
 
     public var consoleUser: String? { values["console"].flatMap { $0.isEmpty ? nil : $0 } }
     public var setupVersion: String? { values["setup"].flatMap { $0.isEmpty || $0 == "none" ? nil : $0 } }
@@ -117,7 +124,29 @@ public struct ReadinessReport: Sendable {
             items[c] = ReadinessItem(.unknown, "–", "Nie sprawdzono – brak połączenia z komputerem.")
         }
         items[.ssh] = ReadinessItem(.problem, "brak połączenia", message)
-        return ReadinessReport(items: items, values: [:], checkedAt: date)
+        return ReadinessReport(items: items, values: [:], checkedAt: date, connectionFailure: .other)
+    }
+
+    /// Report for a failed readiness run, classified from ssh's error output.
+    public static func unreachable(_ result: CommandResult, date: Date = Date()) -> ReadinessReport {
+        let (reachability, message) = SSH.diagnose(result)
+        let err = result.stderrText.lowercased()
+        let failure: ConnectionFailure
+        let short: String
+        if err.contains("host key verification failed") || err.contains("remote host identification has changed") {
+            failure = .hostKeyChanged
+            short = "zmieniony klucz"
+        } else {
+            switch reachability {
+            case .authFailed: failure = .authFailed; short = "odmowa dostępu"
+            case .offline: failure = .offline; short = "nie odpowiada"
+            default: failure = .other; short = "brak połączenia"
+            }
+        }
+        var report = unreachable(message, date: date)
+        report.items[.ssh]?.short = short
+        report.connectionFailure = failure
+        return report
     }
 
     public static func parse(_ text: String, student: String, sharedFolder: String,
@@ -151,6 +180,9 @@ public struct ReadinessReport: Sendable {
             items[.folder] = ReadinessItem(.ok, "OK", "\(sharedFolder) należy do \(student) i jest zapisywalny.")
         } else if folder == "missing" {
             items[.folder] = ReadinessItem(.problem, "brak", "Brak folderu \(sharedFolder). Napraw: „Skonfiguruj zaznaczone”.")
+        } else if folder == "nohome" {
+            items[.folder] = ReadinessItem(.manual, "ręcznie",
+                "Uczeń „\(student)” jeszcze nigdy nie zalogował się na tym iMacu, więc nie ma folderu domowego (tworzy go macOS przy pierwszym logowaniu). Zaloguj się raz na konto ucznia przy komputerze, a potem użyj „Skonfiguruj zaznaczone”.")
         } else if folder == "nostudent" {
             items[.folder] = ReadinessItem(.problem, "brak konta",
                 "Na tym iMacu nie ma konta ucznia „\(student)”. Utwórz je w Ustawieniach (Użytkownicy i grupy) albo popraw nazwę w Konfiguracja › Ustawienia.")
@@ -215,12 +247,16 @@ public struct ReadinessReport: Sendable {
 
         if let ver = v["setup"], !ver.isEmpty, ver != "none" {
             let when = v["setup_time"].flatMap { $0.isEmpty ? nil : " (\($0))" } ?? ""
-            if ver != expectedVersion {
+            let order = SetupScript.compareVersions(ver, expectedVersion)
+            if order == .orderedAscending {
                 items[.setup] = ReadinessItem(.warning, "v\(ver)",
                     "Skonfigurowano starszą wersją skryptu (\(ver))\(when); aktualna to \(expectedVersion). Uruchom „Skonfiguruj zaznaczone” ponownie.")
             } else if v["setup_result"] == "fail" {
                 items[.setup] = ReadinessItem(.warning, "błędy",
                     "Ostatnie uruchomienie skryptu \(ver)\(when) zgłosiło błędy – zobacz raport i uruchom ponownie.")
+            } else if order == .orderedDescending {
+                items[.setup] = ReadinessItem(.ok, "v\(ver)",
+                    "Skonfigurowano nowszą wersją skryptu (\(ver))\(when) niż ta aplikacja (\(expectedVersion)) – zaktualizuj CMCR Manager, zanim uruchomisz konfigurację ponownie.")
             } else {
                 items[.setup] = ReadinessItem(.ok, "v\(ver)", "Skonfigurowano skryptem CMCR \(ver)\(when).")
             }
@@ -233,6 +269,36 @@ public struct ReadinessReport: Sendable {
 }
 
 public extension Scripts {
+    /// Root quick fix for the student folder. Unlike a plain `mkdir -p` it never creates a missing home folder
+    /// (it would belong to root and the student could not log in) and lets the student create missing folders
+    /// inside their own home.
+    static func createStudentFolder(_ path: String, owner: String) -> RemoteScript {
+        RemoteScript(#"""
+        R="${CMCR_SETUP_ROOT_PREFIX:-}"
+        DIR="$R"\#(shQuote(path)); OWNER=\#(shQuote(owner))
+        dscl . -read "/Users/$OWNER" UniqueID >/dev/null 2>&1 || { echo "Na tym iMacu nie ma konta ucznia „$OWNER”." >&2; exit 1; }
+        case "$DIR" in
+          "$R"/Users/?*/*) TOP="${DIR#"$R"/Users/}"; TOP="$R/Users/${TOP%%/*}" ;;
+          *) echo "Folder ucznia musi leżeć w /Users/<konto>/…" >&2; exit 2 ;;
+        esac
+        if [ ! -d "$TOP" ]; then
+          echo "Folder ${TOP#"$R"} nie istnieje – zaloguj się raz na konto ucznia przy komputerze i spróbuj ponownie." >&2
+          exit 1
+        fi
+        if [ ! -d "$DIR" ]; then
+          A="$(dirname "$DIR")"
+          while [ ! -d "$A" ] && [ "$A" != / ]; do A="$(dirname "$A")"; done
+          if [ "$(stat -f %Su "$A" 2>/dev/null)" = "$OWNER" ] && [ "$(id -un)" != "$OWNER" ]; then
+            sudo -u "$OWNER" /bin/mkdir -p "$DIR"
+          else
+            /bin/mkdir -p "$DIR"
+          fi || exit 1
+        fi
+        [ -L "$DIR" ] && { echo "${DIR#"$R"} jest dowiązaniem – przerwano." >&2; exit 1; }
+        chown "$OWNER" "$DIR" && chmod 777 "$DIR" && ls -ld "$DIR"
+        """#, asRoot: true)
+    }
+
     /// Cheap read-only readiness check (key=value lines for `ReadinessReport.parse`).
     ///
     /// Runs as the admin user; a single sudo call (only when a password or NOPASSWD rule exists) adds the
@@ -266,7 +332,11 @@ public extension Scripts {
 
         folder_state() { # folder_state STUDENT FOLDER
           if ! dscl . -read "/Users/$1" UniqueID >/dev/null 2>&1; then echo nostudent; return; fi
-          [ -d "$2" ] || { echo missing; return; }
+          if [ ! -d "$2" ]; then
+            local h; h="$(dscl . -read "/Users/$1" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p' | head -n 1)"
+            case "$2" in "$R$h"/*) [ -n "$h" ] && [ ! -d "$R$h" ] && { echo nohome; return; } ;; esac
+            echo missing; return
+          fi
           local o m
           o="$(stat -f %Su "$2" 2>/dev/null)"; m="$(stat -f %Lp "$2" 2>/dev/null)"
           if [ "$o" = "$1" ] && { [ "$m" = 777 ] || ls -led "$2" 2>/dev/null | grep -q "user:$1 allow"; }; then

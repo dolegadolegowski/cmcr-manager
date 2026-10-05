@@ -113,6 +113,44 @@ out="$(sctl setup 1 --no-ssh-acl --fix-firewall)"; code=$?
 expect_code "setup --fix-firewall: kod 0" "$code" 0 "$out"
 [ ! -e "$SS/blockall" ] && pass "setup --fix-firewall: blokada wyłączona" || fail "setup --fix-firewall" "$out"
 
+section "Konfiguracja iMaców – SSH tylko dla administratorów"
+if dseditgroup -o checkmember -m "$ME" admin >/dev/null 2>&1; then
+  mkdir -p "$SS/groups"                                # simulated access lists: none exists yet
+  G="$SS/groups/com.apple.access_ssh"
+  clear_fakelog
+  out="$(sctl setup 1 --dry-run)"; code=$?
+  expect_code "SSH ACL --dry-run: kod 0" "$code" 0 "$out"
+  expect "SSH ACL --dry-run: plan" "$out" "[próba] dseditgroup -o create -r Remote Login ACL" \
+    "[próba] dseditgroup -o edit -a admin -t group com.apple.access_ssh" \
+    "Wymaga zmiany: SSH – utworzyć listę dostępu, dodać grupę Administratorzy (dostęp tylko dla administratorów)."
+  expect_not "SSH ACL --dry-run: bez zmian w katalogu użytkowników" "$(fakelog)" "dseditgroup -o"
+  [ ! -e "$G" ] && pass "SSH ACL --dry-run: lista dostępu nie utworzona" || fail "SSH ACL --dry-run: utworzono listę"
+  out="$(sctl setup 1 --verify)"
+  expect "SSH ACL --verify: plan" "$out" '"mode": "verify"' '"pending_count": 1,' \
+    "Wymaga zmiany: SSH – utworzyć listę dostępu, dodać grupę Administratorzy"
+  clear_fakelog
+  out="$(sctl setup 1)"; code=$?
+  expect_code "SSH ACL: zastosowanie – kod 0" "$code" 0 "$out"
+  expect "SSH ACL: raport" "$out" \
+    "SSH: dostęp tylko dla administratorów (utworzono listę dostępu, dodano grupę Administratorzy)."
+  expect "SSH ACL: polecenia dseditgroup" "$(fakelog)" "dseditgroup -o create -r Remote Login ACL" \
+    "dseditgroup -o edit -a admin -t group com.apple.access_ssh"
+  expect "SSH ACL: grupa Administratorzy zagnieżdżona" "$(cat "$G" 2>&1)" "nested $(dsmemberutil getuuid -G admin)"
+  out="$(sctl setup 1 --verify)"
+  expect "SSH ACL: drugie sprawdzenie – bez zmian" "$out" "✔ SSH: dostęp tylko dla administratorów." '"pending_count": 0,'
+  mv "$G" "$G-disabled"; echo "member nobody" >> "$G-disabled"
+  clear_fakelog
+  out="$(sctl setup 1)"; code=$?
+  expect_code "SSH ACL: wyłączona lista – kod 0" "$code" 0 "$out"
+  expect "SSH ACL: wyłączona lista przywrócona" "$out" "SSH: dostęp tylko dla administratorów (przywrócono listę dostępu)." \
+    "Uwaga: w com.apple.access_ssh są też konta bez uprawnień administratora: nobody"
+  expect "SSH ACL: zmiana nazwy przez dscl" "$(fakelog)" \
+    "dscl . -change /Groups/com.apple.access_ssh-disabled RecordName com.apple.access_ssh-disabled com.apple.access_ssh"
+  rm -rf "$SS/groups"
+else
+  pass "SSH ACL: pominięto (konto $ME nie jest administratorem tego Maca)"
+fi
+
 section "Gotowość iMaców (readiness)"
 out="$(sctl readiness 1)"
 expect "readiness: stan po konfiguracji" "$out" "SSH i klucz" "klucz" "sudo" "Folder ucznia" "Wake-on-LAN" "włączony" \
@@ -139,5 +177,22 @@ expect "readiness: brak folderu ucznia" "$out" "✘ Folder ucznia" "brak"
 out="$(ctlpw exec "/bin/bash $WORK/standalone.sh --verify --no-guide --no-ssh-acl" 1 --root)"; code=$?
 expect "skrypt zapisany z aplikacji: wbudowany klucz rozpoznany" "$out" "Klucz SSH menedżera jest już zainstalowany"
 expect "skrypt zapisany z aplikacji: folder z ustawień" "$out" "Wymaga zmiany" "$SHOME/Public/cmcr"
+
+section "Folder ucznia – brakujące foldery"
+rm -rf "$SHOME/Public"
+out="$(sctl setup 1 --no-ssh-acl --dry-run)"
+expect "folder ucznia: brakujące foldery tworzy uczeń" "$out" "[próba] as_user $ME /bin/mkdir -p $SHOME/Public/cmcr"
+mv "$SHOME" "$SHOME.away"
+out="$(sctl setup 1 --no-ssh-acl)"
+expect "folder ucznia: brak folderu domowego – ostrzeżenie" "$out" \
+  "Folder domowy ucznia ($ME) jeszcze nie istnieje – zaloguj się raz na konto ucznia"
+[ ! -e "$SHOME" ] && pass "folder ucznia: root nie tworzy folderu domowego" || fail "folder ucznia: utworzono $SHOME" "$(ls -la "$SHOME" 2>&1)"
+out="$(sctl readiness 1)"
+expect "readiness: uczeń bez folderu domowego – krok przy komputerze" "$out" "☐ Folder ucznia" "nigdy nie zalogował"
+mv "$SHOME.away" "$SHOME"
+out="$(sctl setup 1 --no-ssh-acl)"
+D="$SHOME/Public/cmcr"
+if [ "$(stat -f %Lp "$D" 2>/dev/null)" = 777 ] && [ -d "$SHOME/Public" ]; then pass "folder ucznia: utworzony z folderami pośrednimi"
+else fail "folder ucznia: nie utworzono $D" "$out"; fi
 
 rm -rf "$SS"

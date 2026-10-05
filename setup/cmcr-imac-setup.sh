@@ -509,7 +509,7 @@ step_sshd_tuning() {
 
 step_shared_folder() {
   section "Folder współdzielony ucznia"
-  local shome dir parent mode_now owner_now acl_ok=1 did="" plan=""
+  local shome dir top anc mode_now owner_now acl_ok=1 did="" plan=""
   if ! dscl . -read "/Users/$STUDENT" UniqueID >/dev/null 2>&1; then
     record shared warn "Konto ucznia „$STUDENT” nie istnieje – pomijam folder (utwórz konto i uruchom skrypt ponownie)."
     return
@@ -518,8 +518,24 @@ step_shared_folder() {
   dir="${OPT_SHARED:+$R$OPT_SHARED}"; dir="${dir:-$shome/Public/cmcr}"
   while [ "${dir%/}" != "$dir" ]; do dir="${dir%/}"; done
   if [ ! -d "$dir" ]; then
-    parent="$(dirname "$dir")"
-    if [ -d "$parent" ] && [ "$(stat -f %Su "$parent")" = "$STUDENT" ]; then
+    # Folder domowy tworzy macOS przy pierwszym logowaniu – utworzony przez roota należałby do roota
+    # i uczeń nie mógłby się zalogować do własnego folderu.
+    case "$dir" in
+      "$R"/Users/?*/*) top="${dir#"$R"/Users/}"; top="$R/Users/${top%%/*}" ;;
+      *) record shared warn "Nie znaleziono folderu domowego ucznia ($STUDENT) w /Users – pomijam folder współdzielony."; return ;;
+    esac
+    if [ ! -d "$top" ]; then
+      if [ "$top" = "$shome" ] || [ "$top" = "$R/Users/$STUDENT" ]; then
+        record shared warn "Folder domowy ucznia ($STUDENT) jeszcze nie istnieje – zaloguj się raz na konto ucznia przy komputerze i uruchom skrypt ponownie."
+      else
+        record shared warn "Folder $top nie istnieje – pomijam folder współdzielony $dir."
+      fi
+      return
+    fi
+    # Brakujące foldery pośrednie tworzy właściciel najbliższego istniejącego folderu (np. Public ucznia).
+    anc="$(dirname "$dir")"
+    while [ ! -d "$anc" ] && [ "$anc" != / ]; do anc="$(dirname "$anc")"; done
+    if [ "$(stat -f %Su "$anc" 2>/dev/null)" = "$STUDENT" ]; then
       run as_user "$STUDENT" /bin/mkdir -p "$dir"
     else
       run /bin/mkdir -p "$dir"

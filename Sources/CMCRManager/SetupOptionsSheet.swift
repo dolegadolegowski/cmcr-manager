@@ -210,8 +210,20 @@ struct SetupOptionsSheet: View {
         Section("System") {
             OptionToggle(title: "Ustaw nazwę komputera", icon: "textformat",
                          detail: isSave ? "Nazwa jak konto administratora, np. imac07 (adres imac07.local)."
-                                        : "Nazwa jak na liście komputerów, np. imac07 (adres imac07.local).",
+                                        : "Nazwa według adresu z listy komputerów, np. imac07.local → imac07, więc adres się nie zmienia.",
                          isOn: $o.setHostname)
+            if o.setHostname, !isSave, let note = hostnameNote {
+                Label {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22)
+                }
+            }
             Picker(selection: $o.updates) {
                 Text("Bez zmian").tag(SetupOptions.UpdatePolicy.unchanged)
                 Text("Tylko sprawdzaj").tag(SetupOptions.UpdatePolicy.check)
@@ -227,6 +239,15 @@ struct SetupOptionsSheet: View {
                          detail: "Wyłącza „Blokuj wszystkie połączenia przychodzące”, które uniemożliwia połączenie z aplikacji.",
                          isOn: $o.fixFirewall)
         }
+    }
+
+    /// Targets whose address is not `name.local` keep their computer name (see `SetupScript.hostname(for:)`).
+    var hostnameNote: String? {
+        let kept = targets.filter { SetupScript.hostname(for: $0) == nil }
+        guard !kept.isEmpty else { return nil }
+        let list = kept.prefix(6).map { "\($0.name) (\($0.address))" }.joined(separator: ", ")
+        let more = kept.count > 6 ? " i \(kept.count - 6) innych" : ""
+        return "Nazwa zostanie bez zmian na: \(list)\(more) – adres nie ma postaci nazwa.local (np. imac07.local)."
     }
 
     var advancedSection: some View {

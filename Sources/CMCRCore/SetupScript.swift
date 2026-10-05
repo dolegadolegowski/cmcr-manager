@@ -18,7 +18,8 @@ public struct SetupOptions: Codable, Equatable, Sendable {
     public var sharedACL = true
     public var enableVNC = false
     public var sudo: SudoPolicy = .unchanged
-    /// Sets ComputerName/LocalHostName to the name from the host list ("auto" in a standalone copy).
+    /// Sets ComputerName/LocalHostName to the Bonjour name of the host's address (imac07.local → imac07),
+    /// or to the admin account's name in a standalone copy ("auto").
     public var setHostname = false
     public var wakeOnLAN = true
     public var noSleep = false
@@ -166,6 +167,36 @@ public enum SetupScript {
         return nil
     }
 
+    /// Computer name to set on a host: the Bonjour name from its address (imac07.local → imac07), so renaming
+    /// never changes the address the app connects to. `nil` when the address is not a valid `name.local`
+    /// (an IP address, a DNS name, underscores…) – the computer name is then left unchanged.
+    public static func hostname(for host: Machine) -> String? {
+        let address = host.address.trimmingCharacters(in: .whitespaces)
+        guard address.lowercased().hasSuffix(".local") else { return nil }
+        let name = String(address.dropLast(".local".count))
+        return isValidHostname(name) ? name : nil
+    }
+
+    /// Same rule as the script: letters, digits and inner hyphens, at most 63 characters.
+    public static func isValidHostname(_ name: String) -> Bool {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+        return !name.isEmpty && name.count <= 63 && !name.hasPrefix("-") && !name.hasSuffix("-")
+            && name.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+
+    /// Numeric comparison of dotted versions („1.10.0” is newer than „1.9.2”; missing parts count as 0).
+    public static func compareVersions(_ a: String, _ b: String) -> ComparisonResult {
+        func parts(_ v: String) -> [Int] {
+            v.split(separator: ".").map { Int($0.prefix(while: { ("0"..."9").contains($0) })) ?? 0 }
+        }
+        let x = parts(a), y = parts(b)
+        for i in 0..<max(x.count, y.count) {
+            let l = i < x.count ? x[i] : 0, r = i < y.count ? y[i] : 0
+            if l != r { return l < r ? .orderedAscending : .orderedDescending }
+        }
+        return .orderedSame
+    }
+
     /// Command-line flags for one host. Host-specific values (admin account, host name) come from the host list.
     public static func arguments(_ o: SetupOptions, host: Machine, settings: AppSettings,
                                  publicKey: String?, mode: Mode) -> [String] {
@@ -185,7 +216,7 @@ public enum SetupScript {
         case .passwordless: a.append("--sudo-nopasswd")
         case .requirePassword: a.append("--no-sudo-nopasswd")
         }
-        if o.setHostname { a += ["--hostname", host.name] }
+        if o.setHostname, let name = hostname(for: host) { a += ["--hostname", name] }
         if !o.wakeOnLAN { a.append("--no-wol") }
         if o.noSleep { a.append("--no-sleep") }
         if let m = o.displaySleepMinutes { a += ["--display-sleep", String(m)] }
@@ -368,7 +399,8 @@ public struct SetupCommandLine: Sendable {
       --no-shared-acl           folder ucznia bez dziedziczonych uprawnień ACL
       --enable-vnc              włącz Udostępnianie ekranu dla administratorów
       --sudo-nopasswd           sudo bez hasła (niezalecane); --no-sudo-nopasswd usuwa
-      --hostname                ustaw nazwę komputera jak na liście (w pliku: nazwa konta admin.)
+      --hostname                ustaw nazwę komputera według adresu (imac07.local → imac07;
+                                w pliku: nazwa konta administratora)
       --no-wol                  nie zmieniaj Wake-on-LAN
       --no-sleep                komputer nie usypia się
       --display-sleep MIN       uśpienie ekranu po MIN minutach

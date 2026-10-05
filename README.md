@@ -42,11 +42,11 @@ Skrypt [`setup/cmcr-imac-setup.sh`](setup/cmcr-imac-setup.sh) przygotowuje iMaca
 - włącza **Zdalne logowanie** (SSH) i ogranicza je do administratorów,
 - instaluje klucz SSH aplikacji na koncie administratora (`imacNN`) i poprawia uprawnienia `~/.ssh`,
 - dodaje ustawienia sshd zamykające zawieszone połączenia (`/etc/ssh/sshd_config.d/050-cmcr-manager.conf`, sprawdzane `sshd -t`, przy błędzie przywracane),
-- tworzy folder ucznia `/Users/student/Public/cmcr` (właściciel `student`, `777`, dziedziczone ACL dla ucznia i administratorów),
+- tworzy folder ucznia `/Users/student/Public/cmcr` (właściciel `student`, `777`, dziedziczone ACL dla ucznia i administratorów); jeśli uczeń jeszcze nigdy się nie zalogował i nie ma folderu domowego, skrypt pomija ten krok — zaloguj się raz na konto ucznia i uruchom go ponownie,
 - włącza Wake-on-LAN (`pmset womp 1`),
 - sprawdza zaporę („Blokuj wszystkie połączenia przychodzące” blokuje SSH), FileVault i uprawnienia prywatności sesji SSH.
 
-**Opcjonalnie** (przełączniki w aplikacji lub opcje skryptu): Udostępnianie ekranu dla administratorów (`--enable-vnc`), nazwa komputera (`--hostname`), brak usypiania (`--no-sleep`), harmonogram włączania i wyłączania (`--power-schedule "MTWRF 07:30 17:00"`), Rosetta 2 (`--rosetta`), automatyczne aktualizacje (`--updates check|download|auto`), sudo bez hasła (`--sudo-nopasswd`, niezalecane), SSH wyłącznie z kluczem (`--ssh-key-only`). Pełna lista: `bash cmcr-imac-setup.sh --help`. Kody wyjścia: 0 — gotowe (mogą zostać kroki ręczne), 1 — nieudany krok, 2 — błędne opcje, 3 — brak uprawnień roota.
+**Opcjonalnie** (przełączniki w aplikacji lub opcje skryptu): Udostępnianie ekranu dla administratorów (`--enable-vnc`), nazwa komputera (`--hostname`; z aplikacji według adresu z listy, np. `imac07.local` → `imac07`, więc adres się nie zmienia; w zapisanym pliku — nazwa konta administratora), brak usypiania (`--no-sleep`), harmonogram włączania i wyłączania (`--power-schedule "MTWRF 07:30 17:00"`), Rosetta 2 (`--rosetta`), automatyczne aktualizacje (`--updates check|download|auto`), sudo bez hasła (`--sudo-nopasswd`, niezalecane), SSH wyłącznie z kluczem (`--ssh-key-only`). Pełna lista: `bash cmcr-imac-setup.sh --help`. Kody wyjścia: 0 — gotowe (mogą zostać kroki ręczne), 1 — nieudany krok, 2 — błędne opcje, 3 — brak uprawnień roota.
 
 ### Zdalnie z aplikacji (gdy SSH już działa)
 

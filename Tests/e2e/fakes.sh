@@ -174,8 +174,11 @@ _e2e_next_fake() {
   local n=$1; shift
   if declare -F "_e2e_base_$n" >/dev/null; then "_e2e_base_$n" "$@"; else _e2e_log "$n $*"; fi
 }
-for _e2e_f in launchctl pmset osascript fdesetup dscl; do _e2e_wrap "$_e2e_f"; done
+for _e2e_f in launchctl pmset osascript fdesetup dscl dseditgroup; do _e2e_wrap "$_e2e_f"; done
 unset _e2e_f
+# Service access lists (com.apple.access_ssh, …) are simulated while setup-sys/groups exists: one file per
+# group, with lines "nested GUID" (nested group, e.g. admin) and "member NAME" (direct member).
+_e2e_groups() { _e2e_sys && [ -d "$CMCR_E2E_WORK/setup-sys/groups" ]; }
 
 launchctl() {
   : e2e-setup-wrapper
@@ -284,15 +287,60 @@ ssh-keygen() {
 
 dscl() {
   : e2e-setup-wrapper
+  if _e2e_groups; then
+    local gdir="$CMCR_E2E_WORK/setup-sys/groups"
+    case "${2:-} ${3:-}" in
+      "-read /Groups/com.apple.access_"*)
+        [ -f "$gdir/${3#/Groups/}" ] || { echo "<dscl_cmd> DS Error: -14136 (eDSRecordNotFound)" >&2; return 56; }
+        case "${4:-}" in
+          RecordName) echo "RecordName: ${3#/Groups/}" ;;
+          NestedGroups|GroupMembership)
+            local key=nested; [ "$4" = GroupMembership ] && key=member
+            grep -q "^$key " "$gdir/${3#/Groups/}" || { echo "No such key: $4" >&2; return 181; }
+            echo "$4: $(sed -n "s/^$key //p" "$gdir/${3#/Groups/}" | tr '\n' ' ')" ;;
+        esac
+        return 0 ;;
+      "-change /Groups/com.apple.access_"*)
+        _e2e_log "dscl $*"
+        mv "$gdir/${3#/Groups/}" "$gdir/${6:-renamed}"
+        return 0 ;;
+    esac
+  fi
   case " $* " in
     *" -create "*|*" -change "*|*" -append "*|*" -delete "*|*" -merge "*|*" -passwd "*|*" -createpl "*|*" -deletepl "*)
       _e2e_log "dscl $*"; return 0 ;;
   esac
   _e2e_next dscl "$@"
 }
-export -f _e2e_sys _e2e_wrap _e2e_next _e2e_next_fake launchctl pmset osascript socketfilterfw fdesetup sshd \
-  dscl 2>/dev/null
-for _e2e_f in launchctl pmset osascript fdesetup dscl; do
+dseditgroup() {
+  : e2e-setup-wrapper
+  local g a u="" prev=""
+  for g in "$@"; do :; done
+  if _e2e_groups; then
+    case "$g" in com.apple.access_*)
+      local f="$CMCR_E2E_WORK/setup-sys/groups/$g"
+      case " $* " in
+        *" checkmember "*)
+          for a in "$@"; do [ "$prev" = -m ] && u=$a; prev=$a; done
+          if [ -f "$f" ] && { grep -qx "member $u" "$f" \
+               || { grep -q '^nested ' "$f" && _e2e_next dseditgroup -o checkmember -m "$u" admin >/dev/null 2>&1; }; }; then
+            echo "yes $u is a member of $g"; return 0
+          fi
+          echo "no $u is NOT a member of $g"; return 1 ;;
+        *" -o create "*) _e2e_log "dseditgroup $*"; : > "$f"; return 0 ;;
+        *" -o edit -a admin -t group "*)
+          _e2e_log "dseditgroup $*"; echo "nested $(dsmemberutil getuuid -G admin)" >> "$f"; return 0 ;;
+      esac ;;
+    esac
+  fi
+  case " $* " in
+    *" checkmember "*) _e2e_next dseditgroup "$@" ;;
+    *) _e2e_next_fake dseditgroup "$@" ;;
+  esac
+}
+export -f _e2e_sys _e2e_groups _e2e_wrap _e2e_next _e2e_next_fake launchctl pmset osascript socketfilterfw fdesetup \
+  sshd dscl dseditgroup 2>/dev/null
+for _e2e_f in launchctl pmset osascript fdesetup dscl dseditgroup; do
   declare -F "_e2e_base_$_e2e_f" >/dev/null && export -f "_e2e_base_$_e2e_f"
 done
 unset _e2e_f
