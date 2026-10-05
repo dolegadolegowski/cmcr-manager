@@ -542,6 +542,11 @@ final class ScreenCenter: ObservableObject {
                 s.exitIssue = nil
                 if feed.phase != .paused { feed.set(\.phase, .live) }
             case .state(let issue):
+                // The script retries every cycle; the log gets one line per failure, not one per attempt.
+                if case .notifyFailed(let user, let detail) = issue, feed.issue != issue,
+                   let name = model?.machine(host)?.name {
+                    ConfigStore.log("Podgląd ekranu → \(name): nie udało się powiadomić użytkownika \(user) (\(detail)) – obraz nie jest pobierany")
+                }
                 feed.set(\.issue, issue)
                 if issue.hidesImage {
                     feed.image = nil

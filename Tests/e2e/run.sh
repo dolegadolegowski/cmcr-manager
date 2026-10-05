@@ -80,6 +80,8 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
 Subsystem sftp /usr/libexec/sftp-server
+# As macOS ships it (sshd_config.d/100-macos.conf): a client's LANG/LC_* (ssh SendEnv) reach the scripts.
+AcceptEnv LANG LC_*
 EOF
 # sshd honours only the first SetEnv line, so all variables go into one.
 printf 'SetEnv BASH_ENV=%s CMCR_E2E_LOG=%s CMCR_APPS_DIR=%s CMCR_E2E_WORK=%s CMCR_E2E_PASSWORD="%s"\n' \
@@ -208,7 +210,7 @@ clear_fakelog
 out="$(ctlpw screenshot 1 "$WORK/shot.jpg")"; code=$?
 expect_code "screenshot: kod 0" "$code" 0 "$out"
 if file "$WORK/shot.jpg" 2>/dev/null | grep -q JPEG; then pass "screenshot: obraz JPEG"; else fail "screenshot: brak JPEG" "$out"; fi
-expect "screenshot: powiadomienie użytkownika o podglądzie" "$(fakelog)" "display notification"
+expect "screenshot: powiadomienie użytkownika o podglądzie" "$(fakelog)" "observe-notice:"
 python3 - "$WORK/config/settings.json" <<'PY'
 import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["observeAllowedUsers"]="ktos-inny"; json.dump(s,open(p,"w"))
 PY

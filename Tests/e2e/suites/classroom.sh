@@ -39,6 +39,20 @@ expect "lock (tylko LockScreen): czytelny komunikat" "$out" "nie uruchomiła si�
 out="$(ctlpw lock 1 --mode overlay --minutes 0)"
 expect "lock (tryb komunikatu): bez LockScreen" "$out" "CMCR:LOCK:overlay"
 expect_not "lock (tryb komunikatu): bez ostrzeżenia o LockScreen" "$out" "LockScreen niedostępny"
+expect_not "lock (komunikat przejął klawiaturę): bez ostrzeżenia" "$out" "CMCR:LOCKWARN"
+# macOS 14+ cooperative activation: the overlay covers the screen but may not get the keyboard.
+: > "$WORK/overlay.inactive"
+out="$(ctlpw lock 1 --mode overlay --minutes 0)"; code=$?
+expect_code "lock (komunikat bez klawiatury): kod 0" "$code" 0 "$out"
+expect "lock (komunikat bez klawiatury): ostrzeżenie dla nauczyciela" "$out" "CMCR:LOCKWARN:inactive" \
+  "macOS nie oddał mu klawiatury" "Ekran użytkownika $ME zablokowany"
+first_lock="$(printf '%s\n' "$out" | grep -m1 '^CMCR:LOCK')"
+expect_code "lock (komunikat bez klawiatury): blokada nadal zapisywana (pierwsza linia CMCR:LOCK)" "$first_lock" "CMCR:LOCK:overlay" "$out"
+rm -f "$WORK/overlay.inactive"; : > "$WORK/overlay.silent"
+out="$(ctlpw lock 1 --mode overlay --minutes 0)"
+expect "lock (komunikat bez potwierdzenia): ostrzeżenie" "$out" "CMCR:LOCK:overlay" "CMCR:LOCKWARN:inactive" \
+  "nie udało się potwierdzić"
+rm -f "$WORK/overlay.silent"
 out="$(ctlpw unlock 1)"
 expect "unlock: komunikat zdjęty" "$out" "Ekran odblokowany"
 rm -f "$WORK/lockscreen.fail"
@@ -110,6 +124,46 @@ if [ "$U8_BG_OK" = 1 ]; then
   expect "power-cancel: także shutdown +N" "$(fakelog)" "killall shutdown"
   out="$(ctlpw power-cancel 1)"
   expect "power-cancel: nic nie było zaplanowane" "$out" "Nic nie było zaplanowane"
+
+  # FileVault: the delayed restart arms the one-time unlock while it still has the password.
+  touch "$WORK/fake-filevault"
+  clear_fakelog
+  out="$(ctlpw power-later restart 5 1)"; code=$?
+  expect_code "power-later restart z FileVault: kod 0" "$code" 0 "$out"
+  expect "power-later restart z FileVault: odblokowanie uzbrojone od razu" "$(fakelog)" \
+    "fdesetup authrestart -delayminutes -1 -inputplist password ok"
+  expect "power-later restart z FileVault: komunikat" "$out" "jednorazowo odblokowany przy zaplanowanym restarcie" \
+    "pozostaje uzbrojone do najbliższego restartu" "Uruchom ponownie: za 5 min"
+  waiting="$(pgrep -U "$(id -u)" -fl cmcr-delayed-power 2>/dev/null)"
+  expect "power-later restart: czeka proces z restartem" "$waiting" "cmcr-delayed-power 300 restart"
+  expect_not "power-later restart: nic nie zrestartowano od razu" "$(fakelog)" "shutdown -r"
+  out="$(ctlpw power-cancel 1)"
+  # Other test runs on this Mac (same account) cancel delayed actions too; schedule again if one got there first.
+  for _ in 1 2 3; do
+    contains "" "$out" "Anulowano zaplanowane" && break
+    ctlpw power-later restart 5 1 >/dev/null
+    out="$(ctlpw power-cancel 1)"
+  done
+  expect "power-cancel po restarcie z FileVault: uprzedza o uzbrojonym odblokowaniu" "$out" "Anulowano zaplanowane" \
+    "uzbrojone do najbliższego restartu" "nie pozwala go cofnąć"
+  touch "$WORK/fake-fde-refuse"
+  out="$(ctlpw power-later restart 5 1)"
+  expect "power-later restart: odmowa authrestart zgłoszona nauczycielowi" "$out" "fdesetup authrestart odmówił" \
+    "ekranie odblokowania"
+  ctlpw power-cancel 1 >/dev/null
+  rm -f "$WORK/fake-fde-refuse"
+  clear_fakelog
+  out="$(ctlpw power-later restart 0 1)"
+  for _ in $(seq 1 50); do grep -q "shutdown -r now" "$WORK/fake.log" 2>/dev/null && break; sleep 0.1; done
+  fv_order="$(grep -e "fdesetup authrestart" -e "shutdown -r now" "$WORK/fake.log" | cut -c1-20 | tr '\n' '|')"
+  case "$fv_order" in "fdesetup authrestart|shutdown -r now|") pass "power-later restart 0: odblokowanie przed restartem" ;;
+    *) fail "power-later restart 0: kolejność odblokowania i restartu ($fv_order)" "$(fakelog)" ;; esac
+  rm -f "$WORK/fake-filevault"
+  clear_fakelog
+  out="$(ctlpw power-later restart 5 1)"
+  expect_not "power-later restart bez FileVault: nic nie uzbrojono" "$(fakelog)" "fdesetup authrestart"
+  out="$(ctlpw power-cancel 1)"
+  expect_not "power-cancel bez FileVault: bez ostrzeżenia o odblokowaniu" "$out" "FileVault"
 fi
 
 section "Nazwy komputerów"
@@ -221,4 +275,4 @@ csv="$(cat "$WORK/raport.csv" 2>/dev/null)"
 expect "report: nagłówek i komputery" "$csv" "Nazwa;Adres;Konto SSH;Stan" "imac01;127.0.0.1;$ME;online" "imac99;"
 [ "$(head -c 3 "$WORK/raport.csv" | od -An -tx1 | tr -d ' ')" = efbbbf ] && pass "report: UTF-8 z BOM (Excel)" \
   || fail "report: brak BOM"
-rm -f "$WORK"/lockscreen.* "$WORK"/attention.* "$WORK"/pmset.*
+rm -f "$WORK"/lockscreen.* "$WORK"/attention.* "$WORK"/pmset.* "$WORK"/overlay.*

@@ -321,6 +321,33 @@ fi
 clear_fakelog
 out="$(ctlpw _builder install-updates 1 --major --restart)"
 expect "softwareupdate --major: także nowa wersja macOS i restart" "$(fakelog)" "macOS Testowy 99.1-99A123" "--restart"
+expect_not "softwareupdate z restartem bez FileVault: nic nie uzbrojono" "$(fakelog)" "fdesetup authrestart"
+
+# FileVault: an update that restarts the Mac arms the one-time unlock first – and only then.
+touch "$WORK/fake-filevault"
+clear_fakelog
+out="$(ctlpw _builder install-updates 1 --major --restart)"; code=$?
+expect_code "softwareupdate z restartem i FileVault: kod 0" "$code" 0 "$out"
+expect "softwareupdate z restartem i FileVault: odblokowanie uzbrojone" "$(fakelog)" \
+  "fdesetup authrestart -delayminutes -1 -inputplist password ok"
+expect "softwareupdate z restartem i FileVault: komunikat" "$out" "jednorazowo odblokowany przy restarcie po aktualizacji"
+su_order="$(grep -e "fdesetup authrestart" -e "softwareupdate --install" "$WORK/fake.log" | cut -c1-20 | tr '\n' '|')"
+case "$su_order" in "fdesetup authrestart|softwareupdate --ins|"*) pass "softwareupdate z FileVault: odblokowanie przed instalacją z restartem" ;;
+  *) fail "softwareupdate z FileVault: kolejność ($su_order)" "$(fakelog)" ;; esac
+clear_fakelog
+out="$(ctlpw _builder install-updates 1 --restart)"
+expect "softwareupdate bez aktualizacji wymagającej restartu: instalacja" "$(fakelog)" "softwareupdate --install Safari99.1-99.1"
+expect_not "softwareupdate bez aktualizacji wymagającej restartu: nic nie uzbrojono" "$(fakelog)" "fdesetup authrestart"
+clear_fakelog
+out="$(ctlpw _builder install-updates 1 --major)"
+expect_not "softwareupdate bez --restart: nic nie uzbrojono" "$(fakelog)" "fdesetup authrestart"
+clear_fakelog
+out="$(ctlpw _builder install-updates 1 --major --restart --download)"
+expect_not "softwareupdate --download: nic nie uzbrojono" "$(fakelog)" "fdesetup authrestart"
+touch "$WORK/fake-fde-refuse"
+out="$(ctlpw _builder install-updates 1 --major --restart)"
+expect "softwareupdate z FileVault: odmowa authrestart zgłoszona" "$out" "fdesetup authrestart odmówił" "ekranie odblokowania"
+rm -f "$WORK/fake-filevault" "$WORK/fake-fde-refuse"
 clear_fakelog
 out="$(ctlpw _builder install-updates 1 --download)"
 expect "softwareupdate --download: tylko pobieranie" "$(fakelog)" "softwareupdate --download Safari99.1-99.1"
@@ -332,6 +359,23 @@ expect "status: rozszerzone pola" "$out" "serial=" "lhn=" "macs=" "mac_ethernet=
 expect_not "status: bez sudo -n przy zwykłym odświeżaniu" "$out" "sudo_nopass"
 out="$(ctlpw _builder status 1 --sudo)"
 expect "status --sudo: sprawdzenie sudo na żądanie" "$out" "sudo_nopass=no"
+
+section "Skrypty – polskie locale przekazane przez ssh (SendEnv LANG LC_*)"
+# cmcrctl started from a Polish Terminal: macOS ssh forwards LANG/LC_*, the test sshd accepts them like macOS.
+out="$(LANG=pl_PL.UTF-8 LC_ALL=pl_PL.UTF-8 ctl exec 'echo "LANG=$LANG LC_ALL=$LC_ALL"; date -j -f %Y-%m-%d 2026-10-03 +%a; echo "zażółć gęślą jaźń"' 1)"
+expect "locale: LANG z terminala dotarł do iMaca" "$out" "LANG=pl_PL.UTF-8"
+expect "locale: skrypty działają w stałym locale C (angielskie daty), polski tekst bez zmian" "$out" "LC_ALL=C" "Sat" "zażółć gęślą jaźń"
+out="$(LANG=pl_PL.UTF-8 LC_ALL=pl_PL.UTF-8 ctlpw _builder status 1)"
+load="$(printf '%s\n' "$out" | grep '^load=')"
+[ -n "$load" ] && pass "locale: status podaje obciążenie" || fail "locale: brak load=" "$out"
+expect_not "locale: obciążenie z kropką dziesiętną, nie z przecinkiem" "$load" ","
+login="$(printf '%s\n' "$out" | grep '^last_login=')"
+case "$login" in
+  "") pass "locale: brak logowania przy konsoli w historii – pominięto datę" ;;
+  last_login=[0-9][0-9][0-9][0-9]-0[1-9]-[0-3][0-9]\ *|last_login=[0-9][0-9][0-9][0-9]-1[0-2]-[0-3][0-9]\ *)
+    pass "locale: data ostatniego logowania z poprawnym miesiącem ($login)" ;;
+  *) fail "locale: zła data ostatniego logowania ($login)" "$out" ;;
+esac
 
 section "Skrypty – folder wspólny ucznia"
 out="$(ctlpw _builder prepare-shared 1 "$WORK/shared/cmcr" "$ME")"; code=$?

@@ -104,7 +104,10 @@ private final class WatchState: @unchecked Sendable {
             return "Klatka \(d >= n ? cycles : cycles + 1): bez zmian (ekran \(d)/\(n))"
         case .state(let i):
             if !i.isIdle || issue == nil { issue = i }
-            if case .captureFailed = i { cycles += 1 } else if i.isIdle { cycles += 1 }
+            switch i {
+            case .captureFailed, .notifyFailed: cycles += 1
+            default: if i.isIdle { cycles += 1 }
+            }
             return "⚠︎ \(i.message)"
         case .notified(let user):
             return "Powiadomiono użytkownika \(user) o podglądzie."

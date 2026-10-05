@@ -160,7 +160,7 @@ if [ -n "$OPT_HOSTNAME" ] && [ "$OPT_HOSTNAME" != auto ]; then
   case "$OPT_HOSTNAME" in -*|*-|*[!A-Za-z0-9-]*) die_usage "nazwa komputera: litery, cyfry i myślniki (np. imac01)" ;; esac
   [ ${#OPT_HOSTNAME} -le 63 ] || die_usage "nazwa komputera może mieć najwyżej 63 znaki"
 fi
-SCHED_DAYS=""; SCHED_ON=""; SCHED_OFF=""; SCHED_OFF_ACTION="shutdown"; SCHED_DESC=""
+SCHED_DAYS=""; SCHED_ON=""; SCHED_OFF=""; SCHED_OFF_ACTION="shutdown"; SCHED_DESC=""; SCHED_ACTUAL=""
 valid_time() {
   case "$1" in [0-2][0-9]:[0-5][0-9]) [ "${1%%:*}" -le 23 ] 2>/dev/null ;; *) return 1 ;; esac
 }
@@ -299,6 +299,12 @@ open_pane() {   # otwiera Ustawienia systemowe w sesji osoby przy komputerze
 tcc_value() {
   sqlite3 -readonly "$TCC_DB" \
     "SELECT IFNULL(MAX(auth_value),-1) FROM access WHERE service='$1' AND client LIKE '$2';" 2>/dev/null
+}
+# To samo dla sesji SSH: uprawnienie ma sshd-keygen-wrapper albo (od OpenSSH 9.8, macOS 15+) sshd-session –
+# zapisane ścieżką lub identyfikatorem com.apple.sshd-session.
+tcc_ssh_value() {
+  sqlite3 -readonly "$TCC_DB" \
+    "SELECT IFNULL(MAX(auth_value),-1) FROM access WHERE service='$1' AND (client LIKE '%sshd-keygen-wrapper' OR client LIKE '%sshd-session');" 2>/dev/null
 }
 
 printf 'CMCR Manager – przygotowanie iMaca (skrypt %s, tryb: %s)\n' "$CMCR_SETUP_VERSION" "$MODE"
@@ -622,6 +628,11 @@ sched_text() {
 }
 
 pm_get() { pmset -g 2>/dev/null | awk -v k="$1" '$1==k {print $2; exit}'; }
+# Zdarzenia z bloku „Repeating power events” (pmset -g sched) w jednej linii – odcisk faktycznego harmonogramu.
+# Harmonogram zmieniony później w aplikacji (Zajęcia › Harmonogram zasilania) albo ręcznie ma inny odcisk.
+sched_block() {
+  pmset -g sched 2>/dev/null | awk '/^Repeating power events/{r=1; next} /^[^ \t]/{r=0} r{sub(/^[ \t]+/, ""); printf "%s%s", (n++ ? "; " : ""), $0}'
+}
 pm_cap() { pmset -g cap 2>/dev/null | awk '{print $1}' | grep -qx "$1"; }
 pm_set() {   # pm_set KLUCZ WARTOŚĆ OPIS
   local cur; cur="$(pm_get "$1")"
@@ -654,18 +665,23 @@ step_power() {
     fi
   elif [ -n "$SCHED_DAYS" ]; then
     SCHED_DESC="$SCHED_DAYS $SCHED_ON${SCHED_OFF:+ $SCHED_OFF $SCHED_OFF_ACTION}"
-    if [ "$(plutil -extract power_schedule raw -o - "$MARKER" 2>/dev/null)" = "$SCHED_DESC" ] \
-       && pmset -g sched 2>/dev/null | grep -q "Repeating power events"; then
+    # Bez zmian tylko wtedy, gdy znacznik opisuje ten sam harmonogram I faktyczne zdarzenia pmset są wciąż te,
+    # które ustawił skrypt (sam znacznik nie wie o zmianach z aplikacji ani ręcznych).
+    SCHED_ACTUAL="$(sched_block)"
+    if [ "$(plutil -extract power_schedule raw -o - "$MARKER" 2>/dev/null)" = "$SCHED_DESC" ] && [ -n "$SCHED_ACTUAL" ] \
+       && [ "$(plutil -extract power_schedule_sched raw -o - "$MARKER" 2>/dev/null)" = "$SCHED_ACTUAL" ]; then
       record schedule ok "Harmonogram: $(sched_text)."
       return
     fi
+    [ -n "$SCHED_ACTUAL" ] && detail "Obecny harmonogram (pmset): $SCHED_ACTUAL"
     # pmset repeat zastępuje cały harmonogram, więc ustawiamy oba zdarzenia jednym poleceniem.
     if [ -n "$SCHED_OFF" ]; then
       run pmset repeat wakeorpoweron "$SCHED_DAYS" "$SCHED_ON:00" "$SCHED_OFF_ACTION" "$SCHED_DAYS" "$SCHED_OFF:00"
     else
       run pmset repeat wakeorpoweron "$SCHED_DAYS" "$SCHED_ON:00"
     fi
-    if [ $CHANGE -eq 1 ] && ! pmset -g sched 2>/dev/null | grep -q "Repeating power events"; then
+    [ $CHANGE -eq 1 ] && SCHED_ACTUAL="$(sched_block)"
+    if [ $CHANGE -eq 1 ] && [ -z "$SCHED_ACTUAL" ]; then
       record schedule fail "pmset nie przyjął harmonogramu."
     else
       changed_or_planned schedule "Harmonogram ustawiony: $(sched_text)." "ustawić harmonogram ($(sched_text))."
@@ -790,10 +806,10 @@ step_filevault() {
 step_tcc() {
   section "Uprawnienia prywatności (TCC) dla sesji SSH"
   local fda sc readable=0
-  fda="$(tcc_value kTCCServiceSystemPolicyAllFiles '%sshd-keygen-wrapper')"
+  fda="$(tcc_ssh_value kTCCServiceSystemPolicyAllFiles)"
   [ -n "$fda" ] && readable=1
   if [ $readable -eq 1 ]; then
-    sc="$(tcc_value kTCCServiceScreenCapture '%sshd-keygen-wrapper')"
+    sc="$(tcc_ssh_value kTCCServiceScreenCapture)"
     [ "$fda" = 2 ] && FDA_REMOTE=yes || FDA_REMOTE=no
     [ "$sc" = 2 ] && SC_REMOTE=yes || SC_REMOTE=no
   elif [ $VIA_SSH -eq 1 ]; then
@@ -809,18 +825,23 @@ step_tcc() {
          fi ;;
   esac
   case "$SC_REMOTE" in
-    yes) record tcc_screen ok "Nagrywanie ekranu dla sshd-keygen-wrapper: zezwolono (podgląd ekranów działa)." ;;
-    *)   record tcc_screen todo "Ustawienia › Prywatność i ochrona › Nagrywanie ekranu$([ "$OS_MAJOR" -ge 15 ] && echo ' i dźwięku systemowego') › „+” › ⌘⇧G › /usr/libexec/sshd-keygen-wrapper › włącz$([ "$SC_REMOTE" = unknown ] && echo ' (stan pokaże CMCR Manager: Konfiguracja › Przygotowanie iMaców › Sprawdź)')."
+    yes) record tcc_screen ok "Nagrywanie ekranu dla sesji SSH: zezwolono (podgląd ekranów działa)." ;;
+    *)   record tcc_screen todo "Ustawienia › Prywatność i ochrona › Nagrywanie ekranu$([ "$OS_MAJOR" -ge 15 ] && echo ' i dźwięku systemowego') › „+” › ⌘⇧G › /usr/libexec/sshd-keygen-wrapper › włącz$([ "$OS_MAJOR" -ge 15 ] && echo '; jeśli podgląd nadal pokazuje tylko tapetę, dodaj tak samo /usr/libexec/sshd-session')$([ "$SC_REMOTE" = unknown ] && echo ' (stan pokaże CMCR Manager: Konfiguracja › Przygotowanie iMaców › Sprawdź)')."
          if open_pane "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"; then
            detail "Otworzyłem Nagrywanie ekranu: „+”, ⌘⇧G, wpisz /usr/libexec/sshd-keygen-wrapper, Otwórz, włącz przełącznik."
            detail "Jeśli „+” nie przyjmuje narzędzia (macOS 26.1–26.2): przeciągnij plik z Findera (⌘⇧G /usr/libexec/)."
            wait_enter
          fi ;;
   esac
+  if [ "$OS_MAJOR" -ge 15 ]; then
+    detail "macOS $OS_MAJOR co jakiś czas (zwykle raz w miesiącu, czasem przy każdym nowym połączeniu) pyta osobę przy komputerze,"
+    detail "czy „sshd-session” może dalej mieć dostęp do ekranu. Podgląd działa po zezwoleniu (po angielsku „Allow For One Month”);"
+    detail "po odmowie pokazuje tylko tapetę, dopóki ktoś nie zezwoli przy komputerze."
+  fi
 }
 
 write_marker() {
-  local result="ok" i ts host json
+  local result="ok" i ts host json sched_fp
   [ $N_TODO -gt 0 ] && result="todo"
   [ $N_PENDING -gt 0 ] && result="pending"
   [ $N_FAIL -gt 0 ] && result="fail"
@@ -834,6 +855,11 @@ write_marker() {
     printf '  "os": "%s",\n  "build": "%s",\n  "arch": "%s",\n' "$OS_VER" "$OS_BUILD" "$ARCH"
     printf '  "admin": "%s",\n  "student": "%s",\n' "$(json_esc "$ADMIN")" "$(json_esc "$STUDENT")"
     printf '  "power_schedule": "%s",\n' "$(json_esc "${SCHED_DESC:-$( [ "$OPT_POWER_SCHEDULE" = off ] || plutil -extract power_schedule raw -o - "$MARKER" 2>/dev/null)}")"
+    # Odcisk zdarzeń pmset ustawionych przez skrypt (sched_block); „bez zmian” przenosi poprzedni.
+    if [ -n "$SCHED_DESC" ]; then sched_fp="$SCHED_ACTUAL"
+    elif [ "$OPT_POWER_SCHEDULE" = off ]; then sched_fp=""
+    else sched_fp="$(plutil -extract power_schedule_sched raw -o - "$MARKER" 2>/dev/null)"; fi
+    printf '  "power_schedule_sched": "%s",\n' "$(json_esc "$sched_fp")"
     printf '  "key_fingerprints": "%s",\n  "ethernet_mac": "%s",\n' "$(json_esc "$KEY_FPS")" "$(json_esc "$ETH_MACS")"
     printf '  "via_ssh": %s,\n  "fda_remote": "%s",\n  "screen_capture_remote": "%s",\n  "filevault": "%s",\n' \
       "$([ $VIA_SSH -eq 1 ] && echo true || echo false)" "$FDA_REMOTE" "$SC_REMOTE" "$FILEVAULT"

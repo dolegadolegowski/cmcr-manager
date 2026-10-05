@@ -626,14 +626,17 @@ public enum Scripts {
 
     /// Installs (or downloads) the updates offered by `softwareupdate --list`, label by label. Upgrades to a
     /// new major macOS version are skipped unless `allowMajorUpgrade` is set – `--all` would install them too.
+    /// With `restart`, when a selected update needs one (`Action: restart`), the FileVault unlock is armed
+    /// first (`cmcr_arm_authrestart`), so the Mac does not stop at the unlock screen after updating.
     public static func installUpdates(restart: Bool, recommendedOnly: Bool, downloadOnly: Bool,
                                       allowMajorUpgrade: Bool = false) -> RemoteScript {
         RemoteScript(#"""
+        \#(fileVaultArmFunction)
         RESTART=\#(restart ? 1 : 0); REC=\#(recommendedOnly ? 1 : 0); DL=\#(downloadOnly ? 1 : 0); MAJOR=\#(allowMajorUpgrade ? 1 : 0)
         CUR="$(sw_vers -productVersion 2>/dev/null)"; CUR="${CUR%%.*}"
         echo "→ softwareupdate --list"
         softwareupdate --list > "$CMCR_TMP/updates" 2>&1
-        LABELS=(); SKIPPED=""; LABEL=""
+        LABELS=(); SKIPPED=""; LABEL=""; NEEDS_RESTART=0
         while IFS= read -r line; do
           case "$line" in
             "* Label: "*) LABEL="${line#\* Label: }" ;;
@@ -648,7 +651,10 @@ public enum Scripts {
                           OK=0; SKIPPED="$SKIPPED${SKIPPED:+, }$TITLE"
                         fi ;;
               esac
-              [ $OK = 1 ] && LABELS+=("$LABEL")
+              if [ $OK = 1 ]; then
+                LABELS+=("$LABEL")
+                case "$line" in *"Action: restart"*) NEEDS_RESTART=1 ;; esac
+              fi
               LABEL="" ;;
           esac
         done < "$CMCR_TMP/updates"
@@ -660,6 +666,11 @@ public enum Scripts {
         ARGS+=("${LABELS[@]}")
         if [ $DL = 0 ]; then ARGS+=(--agree-to-license); [ $RESTART = 1 ] && ARGS+=(--restart); fi
         printf '→ %s\n' "${LABELS[@]}"
+        # Armed only when a restart really follows: fdesetup cannot disarm, the key would wait for any later restart.
+        ARMED=0
+        if [ $DL = 0 ] && [ $RESTART = 1 ] && [ $NEEDS_RESTART = 1 ]; then
+          cmcr_arm_authrestart "przy restarcie po aktualizacji" && [ "$(fdesetup isactive 2>/dev/null)" = "true" ] && ARMED=1
+        fi
         if [ "$(uname -m)" = "arm64" ] && [ -n "$CMCR_PW" ]; then
           # Apple Silicon requires the credentials of a volume owner (Secure Token) for OS updates.
           GUID="$(dscl . -read "/Users/$CMCR_ADMIN_USER" GeneratedUID 2>/dev/null | awk '{print $2}')"
@@ -673,6 +684,11 @@ public enum Scripts {
         else
           softwareupdate "${ARGS[@]}" 2>&1
         fi
+        RC=$?
+        if [ $RC -ne 0 ] && [ $ARMED = 1 ]; then
+          echo "⚠︎ Aktualizacja się nie powiodła, więc restartu nie było – jednorazowe odblokowanie FileVault zostaje uzbrojone do najbliższego restartu (fdesetup nie pozwala go cofnąć)." >&2
+        fi
+        exit $RC
         """#, asRoot: true)
     }
 
@@ -1021,40 +1037,50 @@ public enum Scripts {
         """#)
     }
 
-    /// Power actions run detached (the SSH session ends first). A FileVault Mac restarted with `shutdown`
-    /// stops at the unlock screen – unreachable over SSH until someone types a password – so when the stored
-    /// password belongs to a FileVault-enabled admin, `fdesetup authrestart -delayminutes -1` first arms a
-    /// one-time unlock for the next restart. It runs before detaching, so a refusal (e.g. a FileVault password
-    /// that differs from the login password) is reported to the teacher instead of disappearing.
+    /// Shell function `cmcr_arm_authrestart [kiedy]` for root scripts that restart a Mac (now, later or after
+    /// updates). A FileVault Mac restarted with `shutdown` or `softwareupdate --restart` stops at the unlock
+    /// screen – unreachable over SSH until someone types a password – so when the stored password belongs to a
+    /// FileVault-enabled admin, `fdesetup authrestart -delayminutes -1` arms a one-time unlock that the NEXT
+    /// restart uses, however it is started. It must run while the script still has the password (before any
+    /// detaching), so a refusal (e.g. a FileVault password that differs from the login password) is reported
+    /// to the teacher instead of disappearing. fdesetup has no way to disarm it: callers arm only when a
+    /// restart really follows. Returns 0 when armed or FileVault is off, 1 when the Mac will stop at the
+    /// unlock screen.
+    static let fileVaultArmFunction = #"""
+    cmcr_arm_authrestart() {
+      local when="${1:-przy tym restarcie}"
+      [ "$(fdesetup isactive 2>/dev/null)" = "true" ] || return 0
+      if [ -n "$CMCR_PW" ] && [ "$(fdesetup supportsauthrestart 2>/dev/null)" = "true" ] \
+        && fdesetup list 2>/dev/null | grep -q "^$CMCR_ADMIN_USER,"; then
+        cmcr_xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+        if printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Username</key><string>%s</string><key>Password</key><string>%s</string></dict></plist>\n' \
+             "$(cmcr_xml "$CMCR_ADMIN_USER")" "$(cmcr_xml "$CMCR_PW")" \
+             | fdesetup authrestart -delayminutes -1 -inputplist >"$CMCR_TMP/fde.out" 2>&1; then
+          echo "FileVault: dysk zostanie jednorazowo odblokowany $when (fdesetup authrestart)."
+          return 0
+        fi
+        echo "✘ fdesetup authrestart odmówił: $(grep -v '^ *$' "$CMCR_TMP/fde.out" | head -2 | tr '\n' ' ')" >&2
+      fi
+      echo "⚠︎ FileVault jest włączony: po restarcie iMac zatrzyma się na ekranie odblokowania – ktoś musi wpisać hasło przy komputerze (do tego czasu SSH i Wake-on-LAN nie działają)." >&2
+      if [ -z "$CMCR_PW" ]; then
+        echo "  Zapisz hasło administratora w Konfiguracji, aby restartować z odblokowaniem (fdesetup authrestart)." >&2
+      elif ! fdesetup list 2>/dev/null | grep -q "^$CMCR_ADMIN_USER,"; then
+        echo "  Konto $CMCR_ADMIN_USER nie może odblokować FileVault (brak na liście fdesetup list)." >&2
+      elif [ "$(fdesetup supportsauthrestart 2>/dev/null)" != "true" ]; then
+        echo "  Ten Mac nie obsługuje restartu z odblokowaniem (fdesetup supportsauthrestart)." >&2
+      fi
+      return 1
+    }
+    """#
+
+    /// Power actions run detached (the SSH session ends first). A restart first arms the FileVault unlock
+    /// (`cmcr_arm_authrestart`, see `fileVaultArmFunction`).
     public static func power(_ action: PowerAction) -> RemoteScript {
         switch action {
         case .restart:
             return RemoteScript(#"""
-            if [ "$(fdesetup isactive 2>/dev/null)" = "true" ]; then
-              ARMED=0
-              if [ -n "$CMCR_PW" ] && [ "$(fdesetup supportsauthrestart 2>/dev/null)" = "true" ] \
-                && fdesetup list 2>/dev/null | grep -q "^$CMCR_ADMIN_USER,"; then
-                xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
-                if printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Username</key><string>%s</string><key>Password</key><string>%s</string></dict></plist>\n' \
-                     "$(xml "$CMCR_ADMIN_USER")" "$(xml "$CMCR_PW")" \
-                     | fdesetup authrestart -delayminutes -1 -inputplist >"$CMCR_TMP/fde.out" 2>&1; then
-                  ARMED=1
-                  echo "FileVault: dysk zostanie jednorazowo odblokowany przy tym restarcie (fdesetup authrestart)."
-                else
-                  echo "✘ fdesetup authrestart odmówił: $(grep -v '^ *$' "$CMCR_TMP/fde.out" | head -2 | tr '\n' ' ')" >&2
-                fi
-              fi
-              if [ $ARMED = 0 ]; then
-                echo "⚠︎ FileVault jest włączony: po restarcie iMac zatrzyma się na ekranie odblokowania – ktoś musi wpisać hasło przy komputerze (do tego czasu SSH i Wake-on-LAN nie działają)." >&2
-                if [ -z "$CMCR_PW" ]; then
-                  echo "  Zapisz hasło administratora w Konfiguracji, aby restartować z odblokowaniem (fdesetup authrestart)." >&2
-                elif ! fdesetup list 2>/dev/null | grep -q "^$CMCR_ADMIN_USER,"; then
-                  echo "  Konto $CMCR_ADMIN_USER nie może odblokować FileVault (brak na liście fdesetup list)." >&2
-                elif [ "$(fdesetup supportsauthrestart 2>/dev/null)" != "true" ]; then
-                  echo "  Ten Mac nie obsługuje restartu z odblokowaniem (fdesetup supportsauthrestart)." >&2
-                fi
-              fi
-            fi
+            \#(fileVaultArmFunction)
+            cmcr_arm_authrestart "przy tym restarcie"
             echo 'Ponowne uruchamianie za 2 s…'
             ( trap '' HUP; sleep 2; shutdown -r now ) </dev/null >/dev/null 2>&1 &
             """#, asRoot: true)

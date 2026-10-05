@@ -89,6 +89,24 @@ expect_not "setup: idempotentność – bez poleceń zmieniających" "$(fakelog)
 out="$(setup_run --verify)"; code=$?
 expect_code "setup --verify: kod 0" "$code" 0 "$out"
 expect "setup --verify: nic do zmiany" "$out" '"mode": "verify"' '"pending_count": 0,'
+marker="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("power_schedule_sched", "-"))' "$MARK" 2>&1)"
+expect "setup: znacznik zapamiętuje faktyczne zdarzenia pmset" "$marker" "wakeorpoweron MTWRF 07:30:00 shutdown MTWRF 17:00:00"
+
+# The schedule changed later in the app (Zajęcia › Harmonogram zasilania): setup must notice it, not trust its marker.
+out="$(ctlpw schedule set 1 --on MTWRF@08:15 --off MTWRF@15:00 --no-autorestart --no-womp)"
+expect "harmonogram zmieniony w aplikacji" "$(cat "$SS/sched" 2>&1)" "wakeorpoweron MTWRF 08:15:00 sleep MTWRF 15:00:00"
+out="$(setup_run --verify)"; code=$?
+expect "setup --verify po zmianie harmonogramu w aplikacji: do zmiany" "$out" \
+  "Wymaga zmiany: ustawić harmonogram (pn wt śr cz pt: włączenie 07:30, wyłączenie 17:00)" '"pending_count": 1,' \
+  "Obecny harmonogram (pmset): wakeorpoweron MTWRF 08:15:00 sleep MTWRF 15:00:00"
+expect_not "setup --verify po zmianie harmonogramu: nie udaje, że jest dobrze" "$out" "✔ Harmonogram:"
+clear_fakelog
+out="$(setup_run)"; code=$?
+expect_code "setup po zmianie harmonogramu: kod 0" "$code" 0 "$out"
+expect "setup po zmianie harmonogramu: harmonogram przywrócony" "$out" "Harmonogram ustawiony: pn wt śr cz pt: włączenie 07:30, wyłączenie 17:00"
+expect "setup po zmianie harmonogramu: pmset repeat" "$(fakelog)" "pmset repeat wakeorpoweron MTWRF 07:30:00 shutdown MTWRF 17:00:00"
+out="$(setup_run --verify)"
+expect "setup --verify po przywróceniu: nic do zmiany" "$out" "✔ Harmonogram: pn wt śr cz pt" '"pending_count": 0,'
 
 cp -p "$SR/etc/ssh/sshd_config.d/050-cmcr-manager.conf" "$WORK/sshd-before.conf"
 : > "$SS/sshd-t-fails"
@@ -162,11 +180,24 @@ mkdir -p "$TCCDIR"
 sqlite3 "$TCCDIR/TCC.db" "CREATE TABLE access (service TEXT, client TEXT, auth_value INTEGER);
   INSERT INTO access VALUES ('kTCCServiceSystemPolicyAllFiles','/usr/libexec/sshd-keygen-wrapper',2);
   INSERT INTO access VALUES ('kTCCServiceScreenCapture','/usr/libexec/sshd-keygen-wrapper',2);"
+# The grant is in TCC.db, but the preview's own process chain is still refused (e.g. macOS attributes the
+# session to sshd-session): the preflight wins, the stale row does not make the Mac look ready.
+out="$(sctl readiness 1)"; code=$?
+expect "readiness: wpis w TCC.db, ale sesja SSH bez uprawnienia – ręcznie" "$out" "☐ Nagrywanie ekranu" "/usr/libexec/sshd-session"
+expect_not "readiness: nieaktualny wpis TCC nie udaje gotowości" "$out" "● imac01 – gotowy"
+echo true > "$SS/screen-preflight"
 out="$(sctl readiness 1)"; code=$?
 expect_code "readiness: wszystko gotowe – kod 0" "$code" 0 "$out"
 expect "readiness: gotowy" "$out" "● imac01 – gotowy" "zezwolono"
 out="$(setup_run --verify)"
 expect "setup --verify: uprawnienia TCC odczytane z bazy" "$out" '"fda_remote": "yes"' '"screen_capture_remote": "yes"' '"todo_count": 0,'
+# OpenSSH 9.8+ (macOS 15+): the grant may belong to sshd-session instead of sshd-keygen-wrapper.
+sqlite3 "$TCCDIR/TCC.db" "DELETE FROM access WHERE service='kTCCServiceScreenCapture';
+  INSERT INTO access VALUES ('kTCCServiceScreenCapture','com.apple.sshd-session',2);"
+out="$(setup_run --verify)"
+expect "setup --verify: uprawnienie dla sshd-session rozpoznane" "$out" '"screen_capture_remote": "yes"' \
+  "Nagrywanie ekranu dla sesji SSH: zezwolono"
+echo false > "$SS/screen-preflight"
 rm -rf "$TCCDIR"
 out="$(CMCR_CONFIG_DIR="$SCONF" CMCR_PASSWORD="zle-haslo" "$CTL" readiness 1 2>&1)"
 expect "readiness: błędne hasło sudo" "$out" "złe hasło"

@@ -76,6 +76,21 @@ screencapture() {
   done
 }
 
+# Observation notice of the screen preview (Scripts.observeNoticeJXA, tag CMCR_OBSERVE_NOTICE): answers like
+# the real panel. Control files in $CMCR_E2E_WORK: fake-notify-fail (osascript fails, e.g. no access to the
+# GUI session), fake-notify-hidden (the panel is not on screen), fake-notify-silent (no answer at all).
+_e2e_notice() {
+  local w="${CMCR_E2E_WORK:-/nonexistent}"
+  _e2e_log "observe-notice: $1"
+  if [ -e "$w/fake-notify-fail" ]; then
+    echo "execution error: Error: Connection to the window server refused (-2700)" >&2; return 1
+  fi
+  if [ -e "$w/fake-notify-hidden" ]; then echo "CMCR:NOTICE:hidden"; return 0; fi
+  if [ -e "$w/fake-notify-silent" ]; then sleep 10; return 0; fi
+  echo "CMCR:NOTICE:shown"
+}
+_e2e_is_notice() { case " $* " in *" CMCR_OBSERVE_NOTICE "*) return 0 ;; esac; return 1; }
+
 # launchctl: `asuser UID cmd…` runs cmd "in the GUI session" – here: logs it and executes only safe tools.
 launchctl() {
   case "${1:-}" in
@@ -93,6 +108,7 @@ launchctl() {
         /usr/sbin/screencapture|screencapture) shift; screencapture "$@" ;;
         /usr/bin/lsappinfo|lsappinfo) shift; lsappinfo "$@" ;;
         *)
+          if [ "${1:-}" = /usr/bin/osascript ] && _e2e_is_notice "$@"; then _e2e_notice gui; return; fi
           local input=""
           if [ ! -t 0 ]; then input="$(cat)"; fi
           _e2e_log "gui-exec: $*"
@@ -209,7 +225,10 @@ mas() {
   fi
   echo "mas (fake) $*"
 }
-osascript() { _e2e_log "osascript $*"; return 0; }
+osascript() {
+  if _e2e_is_notice "$@"; then _e2e_notice own; return; fi
+  _e2e_log "osascript $*"; return 0
+}
 # FileVault state comes from marker files in the test folder: fake-filevault (on, admin can unlock),
 # fake-filevault-nouser (on, admin not enabled for FileVault).
 fdesetup() {
@@ -271,7 +290,7 @@ networksetup() {
     *) _e2e_log "networksetup $*"; return 0 ;;
   esac
 }
-export -f _e2e_log _e2e_fake_png sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer \
+export -f _e2e_log _e2e_fake_png _e2e_notice _e2e_is_notice sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer \
   chown systemsetup scutil dseditgroup visudo spctl defaults brew mas osascript fdesetup stat diskutil dscl \
   createhomedir networksetup 2>/dev/null
 
@@ -296,6 +315,11 @@ launchctl() {
       case "$all" in *" /usr/bin/osascript -l JavaScript "*) _e2e_log "attention-overlay: osascript JXA $last" ;;
         *) _e2e_log "attention-overlay: $last" ;; esac
       : > "$(_e2e_state attention.running)"
+      # Like the real overlay: whether macOS let it take the keyboard (overlay.inactive: it did not;
+      # overlay.silent: no report at all).
+      if [ -e "$(_e2e_state overlay.silent)" ]; then :
+      elif [ -e "$(_e2e_state overlay.inactive)" ]; then echo "CMCR:OVERLAY:inactive"
+      else echo "CMCR:OVERLAY:active"; fi
       return 0 ;;
   esac
   local input=""
