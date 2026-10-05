@@ -38,10 +38,8 @@ struct CMCRManagerApp: App {
                     .keyboardShortcut("r", modifiers: [.command])
                 Button("Zaznacz wszystkie komputery") { model.selection = Set(model.machines.map(\.id)) }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
-                Button("Zaznacz komputery online") {
-                    model.selection = Set(model.machines.filter { model.status($0).reachability == .online }.map(\.id))
-                }
-                .keyboardShortcut("o", modifiers: [.command, .shift])
+                Button("Zaznacz komputery online") { model.selectOnline() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
                 Button("Odznacz wszystkie") { model.selection = [] }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
             }

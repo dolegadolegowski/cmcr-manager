@@ -778,9 +778,11 @@ struct FileListEditor: View {
                             Button {
                                 items.removeAll { $0 == url }
                             } label: {
-                                Image(systemName: "minus.circle.fill")
+                                Label("Usuń z listy", systemImage: "minus.circle.fill")
                             }
+                            .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
+                            .help("Usuń \(url.lastPathComponent) z listy (plik na dysku zostaje)")
                         }
                     }
                 }
@@ -801,10 +803,18 @@ struct FileListEditor: View {
                 return true
             }
             HStack {
-                Button("Dodaj…") {
+                Button {
                     for url in Pickers.files(types: types) where !items.contains(url) { items.append(url) }
+                } label: {
+                    Label("Dodaj…", systemImage: "plus")
                 }
-                Button("Wyczyść") { items.removeAll() }.disabled(items.isEmpty)
+                Button {
+                    items.removeAll()
+                } label: {
+                    Label("Wyczyść listę", systemImage: "xmark.circle")
+                }
+                .disabled(items.isEmpty)
+                .help("Usuwa wszystkie pozycje z listy (pliki na dysku zostają)")
             }
         }
     }
