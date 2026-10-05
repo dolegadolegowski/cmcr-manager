@@ -11,6 +11,23 @@ public enum BrowseCode {
     public static let exists: Int32 = 66
 }
 
+/// A file of a "Zbierz prace" copy, used to delete exactly what was collected.
+public struct CollectedFile: Equatable, Sendable {
+    /// Relative to the collected folder.
+    public var path: String
+    /// Whole seconds since 1970, as `stat -f %m` prints it.
+    public var modified: Int
+    public var size: Int64
+    public var isLink: Bool
+
+    public init(path: String, modified: Int, size: Int64, isLink: Bool = false) {
+        self.path = path
+        self.modified = modified
+        self.size = size
+        self.isLink = isLink
+    }
+}
+
 /// Remote side of the file browser: listing, new folder, rename, delete and download.
 public extension Scripts {
 
@@ -18,9 +35,11 @@ public extension Scripts {
     ///
     /// - `cmcr_resolve PATH` – resolves `{console}` and a leading `~` (administrator's home) into `$CMCR_PATH`;
     ///   fails with exit code 3 when `{console}` is used while nobody is logged in.
-    /// - `cmcr_guard_item PATH` – canonicalises the parent folder (symlinks resolved) into `$CMCR_REAL` and refuses
-    ///   anything outside account folders, /tmp and external volumes, as well as Library, dot-files directly in a
-    ///   home folder and the standard folders (Desktop, Documents…) themselves.
+    /// - `cmcr_guard_item PATH` – changes into the parent folder (symlinks resolved), sets `$CMCR_REAL` (canonical
+    ///   path) and `$CMCR_BASE` (name), and refuses anything outside account folders, /tmp and external volumes,
+    ///   as well as Library, dot-files directly in a home folder and the standard folders (Desktop, Documents…)
+    ///   themselves. Callers act on `./$CMCR_BASE`, so a folder swapped for a symlink after the check cannot
+    ///   redirect them.
     internal static let browseLibrary = #"""
     cmcr_admin_home() {
       if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
@@ -58,11 +77,13 @@ public extension Scripts {
       local p="$1" base parent real sub
       base="${p##*/}"; parent="${p%/*}"; [ -n "$parent" ] || parent="/"
       case "$base" in ""|.|..) cmcr_refuse "niepoprawna ścieżka: $p"; return ;; esac
-      real="$(cd "$parent" 2>/dev/null && pwd -P)" || {
+      cd -P -- "$parent" 2>/dev/null || {
         echo "CMCR:NOT_FOUND" >&2; echo "Folder nie istnieje: $parent" >&2; return 61
       }
+      real="$PWD"
       [ "$real" = "/" ] && real=""
       CMCR_REAL="$real/$base"
+      CMCR_BASE="$base"
       case "$CMCR_REAL" in
         /Users/*/?*|/private/tmp/?*|/Volumes/*/?*) ;;
         *) cmcr_refuse "usuwać i zmieniać nazwy można tylko w folderach kont (/Users/…), w /tmp i na dyskach zewnętrznych – $CMCR_REAL"; return ;;
@@ -189,14 +210,13 @@ public extension Scripts {
         case "$NEWNAME" in ""|.|..|*/*) cmcr_refuse "niepoprawna nowa nazwa: $NEWNAME"; exit $? ;; esac
         cmcr_resolve \#(shQuote(path)) || exit $?
         cmcr_guard_item "$CMCR_PATH" || exit $?
-        SRC="$CMCR_REAL"
-        if [ ! -e "$SRC" ] && [ ! -L "$SRC" ]; then echo "CMCR:NOT_FOUND" >&2; echo "Nie znaleziono: $SRC" >&2; exit 61; fi
-        DST="${SRC%/*}/$NEWNAME"
+        SRC="./$CMCR_BASE"; DST="./$NEWNAME"
+        if [ ! -e "$SRC" ] && [ ! -L "$SRC" ]; then echo "CMCR:NOT_FOUND" >&2; echo "Nie znaleziono: $CMCR_REAL" >&2; exit 61; fi
         if { [ -e "$DST" ] || [ -L "$DST" ]; } && ! [ "$SRC" -ef "$DST" ]; then
           echo "CMCR:EXISTS" >&2; echo "Element o nazwie „$NEWNAME” już istnieje." >&2; exit 66
         fi
-        mv -n "$SRC" "$DST" || { echo "✘ Nie udało się zmienić nazwy $SRC" >&2; exit 1; }
-        echo "✔ Zmieniono nazwę: ${SRC##*/} → $NEWNAME"
+        mv -n "$SRC" "$DST" || { echo "✘ Nie udało się zmienić nazwy $CMCR_REAL" >&2; exit 1; }
+        echo "✔ Zmieniono nazwę: $CMCR_BASE → $NEWNAME"
         """#, asRoot: asRoot)
     }
 
@@ -209,9 +229,9 @@ public extension Scripts {
         for it in "${ITEMS[@]}"; do
           cmcr_resolve "$it" || { RC=$?; continue; }
           cmcr_guard_item "$CMCR_PATH" || { RC=$?; continue; }
-          if [ ! -e "$CMCR_REAL" ] && [ ! -L "$CMCR_REAL" ]; then echo "Brak (już usunięto?): $CMCR_REAL"; continue; fi
+          if [ ! -e "./$CMCR_BASE" ] && [ ! -L "./$CMCR_BASE" ]; then echo "Brak (już usunięto?): $CMCR_REAL"; continue; fi
           if [ \#(dryRun ? 1 : 0) = 1 ]; then echo "Zostałoby usunięte: $CMCR_REAL"; continue; fi
-          if rm -rf "$CMCR_REAL"; then echo "✔ Usunięto $CMCR_REAL"; else echo "✘ Nie udało się usunąć $CMCR_REAL" >&2; RC=1; fi
+          if rm -rf "./$CMCR_BASE"; then echo "✔ Usunięto $CMCR_REAL"; else echo "✘ Nie udało się usunąć $CMCR_REAL" >&2; RC=1; fi
         done
         exit $RC
         """#, asRoot: asRoot)
@@ -232,6 +252,66 @@ public extension Scripts {
         done
         [ "${#ARGS[@]}" -gt 0 ] || { echo "CMCR:NOT_FOUND" >&2; echo "Nie znaleziono wybranych elementów." >&2; exit 61; }
         COPYFILE_DISABLE=1 tar -cf - "${ARGS[@]}"
+        """#, asRoot: asRoot)
+    }
+
+    /// After "Zbierz prace": deletes the collected files from `source` that are still exactly as collected (same
+    /// size and modification time as the copy), then removes the listed folders if they became empty. Work saved
+    /// or changed after the collection stays on the Mac. Paths are relative to `source`.
+    static func removeCollected(in source: String, files: [CollectedFile], folders: [String],
+                                asRoot: Bool) -> RemoteScript {
+        let rel = files.map(\.path), mt = files.map { $0.isLink ? "L" : String($0.modified) },
+            sz = files.map { String($0.size) }
+        return browseScript(#"""
+        cmcr_resolve \#(shQuote(source)) || exit $?
+        SRC="$CMCR_PATH"
+        [ -d "$SRC" ] || { echo "CMCR:NOT_FOUND" >&2; echo "Folder nie istnieje: $SRC" >&2; exit 61; }
+        F=\#(shArray(rel))
+        M=\#(shArray(mt))
+        Z=\#(shArray(sz))
+        D=\#(shArray(folders))
+        DEL=0; KEPT=0; RC=0; i=0
+        while [ "$i" -lt "${#F[@]}" ]; do
+          rel="${F[$i]}"; mt="${M[$i]}"; sz="${Z[$i]}"; i=$((i + 1))
+          case "/$rel/" in */../*|*/./*|*//*) echo "Pominięto niepoprawną ścieżkę: $rel" >&2; continue ;; esac
+          cmcr_guard_item "$SRC/$rel" || { RC=$?; continue; }
+          f="./$CMCR_BASE"
+          if [ "$mt" = L ]; then
+            [ -L "$f" ] || continue
+          else
+            { [ -f "$f" ] && [ ! -L "$f" ]; } || continue
+            set -- $(stat -f '%m %z' "$f" 2>/dev/null)
+            if [ "${1:-}" != "$mt" ] || [ "${2:-}" != "$sz" ]; then
+              echo "Zachowano (zmieniony po zebraniu): $rel"; KEPT=$((KEPT + 1)); continue
+            fi
+          fi
+          if rm -f "$f"; then DEL=$((DEL + 1)); else echo "✘ Nie udało się usunąć $CMCR_REAL" >&2; RC=1; fi
+        done
+        for rel in "${D[@]}"; do
+          case "/$rel/" in */../*|*/./*|*//*) continue ;; esac
+          cmcr_guard_item "$SRC/$rel" 2>/dev/null || continue
+          [ -d "./$CMCR_BASE" ] && [ ! -L "./$CMCR_BASE" ] && rmdir "./$CMCR_BASE" 2>/dev/null
+        done
+        cd /
+        echo "✔ Usunięto z $SRC plików: $DEL"
+        [ "$KEPT" -eq 0 ] || echo "Pozostawiono plików zmienionych w międzyczasie: $KEPT"
+        exit $RC
+        """#, asRoot: asRoot)
+    }
+
+    /// Reports whether a folder exists: prints `CMCR-FOLDER yes|no|file|unknown` (unknown: no permission to look).
+    static func folderPresence(_ path: String, asRoot: Bool) -> RemoteScript {
+        browseScript(#"""
+        cmcr_resolve \#(shQuote(path)) || exit $?
+        P="$CMCR_PATH"
+        if [ -d "$P" ]; then echo "CMCR-FOLDER yes"
+        elif [ -e "$P" ]; then echo "CMCR-FOLDER file"
+        else
+          case "$(ls -d "$P" 2>&1 >/dev/null)" in
+            *"No such file"*) echo "CMCR-FOLDER no" ;;
+            *) echo "CMCR-FOLDER unknown" ;;
+          esac
+        fi
         """#, asRoot: asRoot)
     }
 }

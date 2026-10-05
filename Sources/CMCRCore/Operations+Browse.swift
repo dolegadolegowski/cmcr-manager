@@ -35,8 +35,9 @@ public extension Operations {
     }
 
     /// "Zbierz prace": copies the contents of a remote folder into `<folder>/<name>` (a new folder, never merged
-    /// with earlier collections). With `cleanAfter`, exactly the items that arrived are then deleted on the Mac,
-    /// so work saved in the meantime survives. Returns the local folder with the collected work.
+    /// with earlier collections). With `cleanAfter`, the collected files that are still unchanged on the Mac are
+    /// then deleted there (see `Scripts.removeCollected`), so work saved in the meantime survives.
+    /// Returns the local folder with the collected work.
     static func collect(source: String, from host: Machine, into folder: URL, name: String, asRoot: Bool,
                         cleanAfter: Bool, password: String?, settings: SSHSettings, handle: ProcessHandle? = nil,
                         onOutput: Output? = nil) async -> (result: CommandResult, folder: URL?) {
@@ -78,11 +79,46 @@ public extension Operations {
         onOutput?(.stdout, Data("✔ Zebrano \(files) \(plural(files, "plik", "pliki", "plików")) (\(bytes.formatted(.byteCount(style: .file)))) → \(dest.path)\n".utf8))
 
         guard cleanAfter else { return (CommandResult(exitCode: 0), dest) }
-        onOutput?(.stdout, Data("→ Czyszczenie: usuwanie zebranych elementów z \(source)…\n".utf8))
-        let paths = items.map { RemotePaths.join(source, $0) }
-        let c = await SSH.run(Scripts.deleteItems(paths, asRoot: true), on: host, password: password,
-                              settings: settings, handle: handle, onOutput: onOutput)
-        return (c.succeeded ? CommandResult(exitCode: 0) : c, dest)
+        onOutput?(.stdout, Data("→ Czyszczenie: usuwanie zebranych plików z \(source)…\n".utf8))
+        let (collected, folders) = collectedContents(dest)
+        // The script travels on the ssh command line, so very large collections are cleaned in parts.
+        let chunks = stride(from: 0, to: max(collected.count, 1), by: 800).map {
+            Array(collected[$0..<min($0 + 800, collected.count)])
+        }
+        for (index, chunk) in chunks.enumerated() {
+            let last = index == chunks.count - 1
+            let c = await SSH.run(Scripts.removeCollected(in: source, files: chunk, folders: last ? folders : [],
+                                                          asRoot: true),
+                                  on: host, password: password, settings: settings, handle: handle, onOutput: onOutput)
+            if !c.succeeded { return (c, dest) }
+        }
+        return (CommandResult(exitCode: 0), dest)
+    }
+
+    /// Files (with the size and time they were collected with) and folders below `root`, folders deepest first.
+    static func collectedContents(_ root: URL) -> (files: [CollectedFile], folders: [String]) {
+        var files: [CollectedFile] = []
+        var folders: [String] = []
+        guard let e = FileManager.default.enumerator(atPath: root.path) else { return ([], []) }
+        while let rel = e.nextObject() as? String {
+            guard let attrs = e.fileAttributes, let type = attrs[.type] as? FileAttributeType else { continue }
+            switch type {
+            case .typeDirectory:
+                folders.append(rel)
+            case .typeRegular, .typeSymbolicLink:
+                let date = attrs[.modificationDate] as? Date ?? .distantPast
+                files.append(CollectedFile(path: rel, modified: Int(date.timeIntervalSince1970.rounded(.down)),
+                                           size: (attrs[.size] as? NSNumber)?.int64Value ?? 0,
+                                           isLink: type == .typeSymbolicLink))
+            default:
+                continue
+            }
+        }
+        folders.sort { a, b in
+            let da = a.split(separator: "/").count, db = b.split(separator: "/").count
+            return da != db ? da > db : a < b
+        }
+        return (files, folders)
     }
 
     /// `<base>/<yyyy-MM-dd HH.mm>` – the folder one "Zbierz prace" run writes into (one subfolder per Mac).
