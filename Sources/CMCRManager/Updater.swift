@@ -39,6 +39,9 @@ final class Updater: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var candidate: UpdateCandidate?
     @Published private(set) var lastCheck: Date?
+    /// A check is running. While a verified or announced update waits (.ready/.available) the phase stays as it
+    /// is, so the banner and the installation at quit are not interrupted by the daily re-check.
+    @Published private(set) var isChecking = false
     /// The verified update is installed when the app quits (set by "Instaluj automatycznie").
     @Published private(set) var installOnQuit = false
     @Published var isSheetPresented = false
@@ -69,6 +72,9 @@ final class Updater: ObservableObject {
     private var preparedArchive: URL?
     private var installWhenReady = false
     private var work: Task<Void, Never>?
+    private var checkTask: Task<Void, Never>?
+    private var checkGeneration = 0
+    private var phaseBeforeCheck: Phase = .idle
     private var downloadTask: Task<Void, Never>?
     private var scheduler: Task<Void, Never>?
 
@@ -132,11 +138,18 @@ final class Updater: ObservableObject {
 
     // MARK: - Lifecycle
 
-    /// Called from applicationDidFinishLaunching. Every launch confirms its version to an update helper that
-    /// may be waiting for it (an update started from the app or from `cmcrctl app-update install --relaunch`).
+    /// First half of the start confirmation for an update helper that may be waiting (an update started from the
+    /// app or from `cmcrctl app-update install --relaunch`). Called at the very top of the App's init, before the
+    /// model reads the Keychain, which after an update can keep the main thread in a macOS dialog.
+    nonisolated static func confirmStart() {
+        guard let version = SemanticVersion.running?.description else { return }
+        UpdateInstaller.confirmLaunch(version: version, finished: false)
+    }
+
+    /// Called from applicationDidFinishLaunching: completes the start confirmation (see `confirmStart`).
     func applicationDidLaunch() {
         if let version = currentVersion?.description {
-            try? Data(version.utf8).write(to: UpdateInstaller.confirmFile, options: .atomic)
+            UpdateInstaller.confirmLaunch(version: version, finished: true)
         }
         if let pending = defaults.string(forKey: Keys.pendingVersion) {
             let from = defaults.string(forKey: Keys.pendingFrom) ?? "?"
@@ -182,8 +195,8 @@ final class Updater: ObservableObject {
             var first = true
             while !Task.isCancelled {
                 guard let self else { return }
-                if self.automaticChecks, self.isConfigured, self.currentVersion != nil, first || self.isDue {
-                    await self.check(userInitiated: false)
+                if self.automaticChecks, self.isConfigured, self.currentVersion != nil, !self.isChecking, first || self.isDue {
+                    await self.startCheck(userInitiated: false).value
                 }
                 first = false
                 try? await Task.sleep(nanoseconds: 3600 * 1_000_000_000)
@@ -201,22 +214,44 @@ final class Updater: ObservableObject {
     /// "Sprawdź uaktualnienia…" (app menu, settings).
     func checkNow() {
         isSheetPresented = true
-        guard !phase.isBusy || phase == .checking else { return }
-        work?.cancel()
-        work = Task { await check(userInitiated: true) }
+        guard !isTransferring else { return }
+        startCheck(userInitiated: true)
     }
 
-    func check(userInitiated: Bool) async {
+    /// Every check runs as `checkTask`, so a new one (e.g. from the menu) cancels the scheduled one.
+    @discardableResult
+    private func startCheck(userInitiated: Bool) -> Task<Void, Never> {
+        checkTask?.cancel()
+        let task = Task { await check(userInitiated: userInitiated) }
+        checkTask = task
+        return task
+    }
+
+    /// Downloading, verifying or installing: a check must not change the candidate under it.
+    private var isTransferring: Bool {
         switch phase {
-        case .downloading, .verifying, .installing: return
-        case .checking where !userInitiated: return
-        default: break
+        case .downloading, .verifying, .installing: return true
+        default: return false
         }
-        let previous = phase
-        phase = .checking
+    }
+
+    private func check(userInitiated: Bool) async {
+        guard !isTransferring else { return }
+        checkGeneration += 1
+        let generation = checkGeneration
+        isChecking = true
+        defer { if generation == checkGeneration { isChecking = false } }
+        switch phase {
+        case .ready, .available, .checking: break
+        default:
+            phaseBeforeCheck = phase
+            phase = .checking
+        }
         let cache = defaults.data(forKey: Keys.cache).flatMap { try? JSONDecoder().decode(UpdateFeed.Cache.self, from: $0) }
         do {
             let (result, newCache) = try await feed.check(current: currentVersion, includePrereleases: includePrereleases, cache: cache)
+            // A newer check replaced this one, or a download started meanwhile (the user clicked "Zainstaluj").
+            guard generation == checkGeneration, !isTransferring else { return }
             if let newCache, let data = try? JSONEncoder().encode(newCache) { defaults.set(data, forKey: Keys.cache) }
             lastCheck = Date()
             defaults.set(lastCheck, forKey: Keys.lastCheck)
@@ -225,7 +260,6 @@ final class Updater: ObservableObject {
                 candidate = nil
                 preparedArchive = nil
                 phase = .upToDate
-                updateInstallOnQuit()
             case .available(let c):
                 if candidate?.manifest != c.manifest { preparedArchive = nil }
                 candidate = c
@@ -238,13 +272,17 @@ final class Updater: ObservableObject {
                     if automaticDownloads, canInstall, !skipped || userInitiated { startDownload() }
                 }
             }
-        } catch UpdateError.cancelled {
-            phase = previous == .checking ? .idle : previous
+            updateInstallOnQuit()
         } catch {
+            guard generation == checkGeneration else { return }
+            if (error as? UpdateError) == .cancelled {
+                if phase == .checking { phase = phaseBeforeCheck }
+                return
+            }
             ConfigStore.log("Uaktualnienie aplikacji: sprawdzanie nie powiodło się – \(error.localizedDescription)")
-            // Background checks fail quietly and keep an already verified download; the sheet shows the reason
-            // only when the user asked.
-            phase = userInitiated ? .failed(error.localizedDescription) : (previous == .checking ? .idle : previous)
+            // Background checks fail quietly; a waiting update (.ready/.available) stays offered. The sheet shows
+            // the reason only when the user asked and there is nothing else to show.
+            if phase == .checking { phase = userInitiated ? .failed(error.localizedDescription) : phaseBeforeCheck }
         }
     }
 

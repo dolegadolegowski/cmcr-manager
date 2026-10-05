@@ -444,10 +444,16 @@ public struct UpdateFeed: Sendable {
             throw UpdateError.hashMismatch
         }
         if let current, version <= current { return (.upToDate(latest: version), newCache) }
-        let notes = [release.body, manifest.notes].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? ""
         return (.available(UpdateCandidate(manifest: manifest, version: version, archiveURL: archive.browserDownloadURL,
-                                           releasePageURL: release.htmlURL, notes: notes,
+                                           releasePageURL: release.htmlURL,
+                                           notes: Self.releaseNotes(signed: manifest.notes, releaseBody: release.body),
                                            publishedAt: release.publishedAt.flatMap(Self.parseDate))), newCache)
+    }
+
+    /// The notes in the signed manifest (Polish, written for the teachers) win over the release body on GitHub,
+    /// which nobody signed and which `gh release create --generate-notes` fills with an English changelog.
+    static func releaseNotes(signed: String?, releaseBody: String?) -> String {
+        [signed, releaseBody].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? ""
     }
 
     func latestRelease(includePrereleases: Bool, cache: Cache?) async throws -> (GitHubRelease?, Cache?) {
@@ -700,7 +706,7 @@ public enum UpdateInstaller {
         }
     }
 
-    /// Written by every launch of the app with its version; the helper waits for it before deleting the backup.
+    /// Written by every launch of the app (see `confirmLaunch`); the helper waits for it before deleting the backup.
     public static var confirmFile: URL { stateDirectory.appendingPathComponent("pl.cmcr.manager.update-confirm") }
     /// Written by the helper when the update failed (read by the version that runs afterwards).
     public static var statusFile: URL { stateDirectory.appendingPathComponent("pl.cmcr.manager.update-status") }
@@ -713,6 +719,15 @@ public enum UpdateInstaller {
         return FileManager.default.temporaryDirectory
     }
     public static var logURL: URL { ConfigStore.logURL.deletingLastPathComponent().appendingPathComponent("update.log") }
+
+    /// The app reports its start in two steps: "<version> <pid>" as the very first thing (before anything that
+    /// can wait for the user, such as the Keychain asking whether the updated app may read the saved password)
+    /// and "<version>" once launching has finished. After the first step the helper waits as long as that
+    /// process lives, so a slow start is not rolled back, while a crash during the start still is.
+    public static func confirmLaunch(version: String, finished: Bool, to file: URL = confirmFile) {
+        let text = finished ? version : "\(version) \(ProcessInfo.processInfo.processIdentifier)"
+        try? Data(text.utf8).write(to: file, options: .atomic)
+    }
 
     /// Same-user install: the helper is a child that outlives the app and waits for it to exit.
     public static func launch(_ request: Request) throws {
@@ -801,8 +816,16 @@ public enum UpdateInstaller {
         "$@"
       fi
     }
-    # The status file lives in the user's temporary folder, so it is written with the user's rights.
-    status() { [ -z "$STATUS" ] || as_user /bin/sh -c 'printf "%s\n" "$2" > "$1"' cmcr-status "$STATUS" "$*"; }
+    # The status file lives in the user's temporary folder, so it is written with the user's rights – unless it
+    # sits in a folder only root can write (`sudo cmcrctl app-update install`), which the user cannot even enter.
+    status() {
+      [ -z "$STATUS" ] && return 0
+      if [ "$(id -u)" = 0 ] && [ -n "$(find "$(dirname "$STATUS")" -maxdepth 0 -user 0 ! -perm +022 2>/dev/null)" ]; then
+        printf '%s\n' "$*" > "$STATUS"
+      else
+        as_user /bin/sh -c 'printf "%s\n" "$2" > "$1"' cmcr-status "$STATUS" "$*"
+      fi
+    }
     finish() { rm -rf "$WORK"; [ -e "$NEW" ] && rm -rf "$NEW"; exit "$1"; }
     die() {
       log "BŁĄD: $*"
@@ -865,18 +888,36 @@ public enum UpdateInstaller {
       rm -rf "$WORK"; exit 2
     }
 
-    # 4. Relaunch and wait until the new version confirms that it started.
+    # 4. Relaunch and wait until the new version confirms that it started. The app writes "<version> <pid>" as
+    #    soon as its process runs and "<version>" when launching has finished (UpdateInstaller.confirmLaunch);
+    #    in between it may wait for the user (Keychain dialog), so then only the death of that process counts.
+    KEEP_OLD=0
     if [ "$RELAUNCH" = 1 ]; then
+      confirmed() { [ "$(cat "$CONFIRM" 2>/dev/null)" = "$VERSION" ]; }
+      starting_pid() { set -- $(cat "$CONFIRM" 2>/dev/null); [ "${1:-}" = "$VERSION" ] && [[ "${2:-}" =~ ^[0-9]+$ ]] && echo "$2"; }
+      alive() { case "$(ps -o stat= -p "$1" 2>/dev/null)" in ''|Z*) return 1 ;; esac; }
       rm -f "$CONFIRM"
       as_user open "$DST" || rollback "nie można uruchomić nowej wersji"
+      APP_PID=
       for _ in $(seq 1 $((WAIT_CONFIRM * 10))); do
-        [ "$(cat "$CONFIRM" 2>/dev/null)" = "$VERSION" ] && break
+        confirmed && break
+        APP_PID=$(starting_pid) && break
         sleep 0.1
       done
-      [ "$(cat "$CONFIRM" 2>/dev/null)" = "$VERSION" ] || rollback "nowa wersja nie potwierdziła uruchomienia w ciągu $WAIT_CONFIRM s"
+      if ! confirmed; then
+        [ -n "$APP_PID" ] || rollback "nowa wersja nie potwierdziła uruchomienia w ciągu $WAIT_CONFIRM s"
+        log "nowa wersja uruchamia się (PID $APP_PID) – czekam na zakończenie startu"
+        for _ in $(seq 1 3600); do
+          confirmed && break
+          alive "$APP_PID" || { confirmed && break; rollback "nowa wersja zakończyła działanie w trakcie uruchamiania"; }
+          sleep 0.5
+        done
+        confirmed || { KEEP_OLD=1; log "nowa wersja nadal się uruchamia po 30 min – zostaje, kopia poprzedniej: $OLD"; }
+      fi
       rm -f "$CONFIRM"
     fi
-    rm -rf "$OLD" "$WORK"
+    [ "$KEEP_OLD" = 1 ] || rm -rf "$OLD"
+    rm -rf "$WORK"
     rm -f "$STATUS"
     log "gotowe"
     exit 0

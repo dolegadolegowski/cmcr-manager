@@ -45,6 +45,7 @@ signing() { "$TOOLS/update-signing" "$@"; }
 step "Kontrole wstępne ($TAG)"
 [ -z "$(git status --porcelain)" ] || die "Masz niezatwierdzone lub nieśledzone pliki – zatwierdź je albo dodaj do .gitignore."
 [ -z "$NOTES_FILE" ] || [ -f "$NOTES_FILE" ] || die "Brak pliku $NOTES_FILE"
+[ -n "$NOTES_FILE" ] || warn "Bez --notes-file aplikacja pokaże automatyczny, angielski opis zmian z GitHuba (bez podpisu) – lepiej podać opis po polsku."
 git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && die "Tag $TAG już istnieje."
 [ "$(git rev-parse --abbrev-ref HEAD)" = main ] || warn "Wydanie nie z gałęzi main."
 if [ $DRY = 0 ]; then

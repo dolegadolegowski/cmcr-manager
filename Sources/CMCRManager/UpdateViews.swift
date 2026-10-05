@@ -98,6 +98,12 @@ struct UpdateSheet: View {
                 notices
             }
             statusRow
+            if updater.isChecking, updater.phase != .checking {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Sprawdzanie, czy jest jeszcze nowsza wersja…").foregroundStyle(.secondary)
+                }
+            }
             Divider()
             footer
         }
@@ -107,7 +113,7 @@ struct UpdateSheet: View {
             Button("Zainstaluj i uruchom ponownie", role: .destructive) { updater.install() }
             Button("Anuluj", role: .cancel) {}
         } message: {
-            Text("Na iMacach trwa \(model.runningJobCount) zadań. Ponowne uruchomienie aplikacji przerwie te połączenia.")
+            Text("Na iMacach \(runningJobs(model.runningJobCount)). Ponowne uruchomienie aplikacji je przerwie.")
         }
     }
 
@@ -158,7 +164,7 @@ struct UpdateSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         if model.runningJobCount > 0 {
-            Label("Trwa \(model.runningJobCount) zadań na iMacach – ponowne uruchomienie aplikacji je przerwie.",
+            Label("Na iMacach \(runningJobs(model.runningJobCount)) – ponowne uruchomienie aplikacji je przerwie.",
                   systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
@@ -253,6 +259,13 @@ struct UpdateSheet: View {
     }
 
     private func bytes(_ n: Int64) -> String { ByteCountFormatter.string(fromByteCount: n, countStyle: .file) }
+
+    /// "trwa 1 zadanie", "trwają 3 zadania", "trwa 5 zadań", "trwają 22 zadania".
+    private func runningJobs(_ n: Int) -> String {
+        if n == 1 { return "trwa 1 zadanie" }
+        if (2...4).contains(n % 10), !(12...14).contains(n % 100) { return "trwają \(n) zadania" }
+        return "trwa \(n) zadań"
+    }
 }
 
 private extension Updater.Phase {

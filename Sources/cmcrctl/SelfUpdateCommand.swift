@@ -98,7 +98,9 @@ enum SelfUpdateCommand {
         defer { try? FileManager.default.removeItem(at: work) }
         let zip = work.appendingPathComponent(m.file)
         do {
-            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+            // Private, so the helper running as root (sudo) may write its status file there directly.
+            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
             _ = try await FileDownloader.download(candidate.archiveURL, to: zip, maxBytes: m.size, userAgent: userAgent(installed))
             try await UpdateVerifier.verifyDownload(zip, manifest: m, workDirectory: work)
         } catch {

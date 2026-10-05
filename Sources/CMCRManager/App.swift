@@ -28,6 +28,7 @@ struct CMCRManagerApp: App {
             print(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
             exit(0)
         }
+        Updater.confirmStart()       // before the model touches the Keychain (may wait in a dialog after an update)
         // Writing a password to an ssh that already exited must not kill the app.
         signal(SIGPIPE, SIG_IGN)
     }

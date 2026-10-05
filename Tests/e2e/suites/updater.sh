@@ -23,10 +23,15 @@ upd_run() {
   [ ${#UPD_KEY} = 44 ] && [ "$(stat -f %Lp "$U/keys/test.key")" = 600 ] \
     && pass "update-signing: klucz testowy (plik 0600 poza repozytorium)" || { fail "update-signing: keygen" "$UPD_KEY"; return; }
 
-  upd_bundle() {  # version app confirm(0|1)
+  upd_bundle() {  # version app confirm(0|1|slow|crash)
     local v=$1 app=$2
     local defs=(-DVERSION="\"$v\"" -DLAUNCHLOG="\"$U/launches.log\"")
-    [ "$3" = 1 ] && defs+=(-DCONFIRM="\"$U/state/pl.cmcr.manager.update-confirm\"")
+    local confirm=-DCONFIRM="\"$U/state/pl.cmcr.manager.update-confirm\""
+    case "$3" in
+      1) defs+=("$confirm") ;;
+      slow) defs+=("$confirm" -DSTART_DELAY=4) ;;
+      crash) defs+=("$confirm" -DSTART_CRASH) ;;
+    esac
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/bin"
     clang -O1 "${defs[@]}" -o "$app/Contents/MacOS/CMCRManager" "$UPD_SRC/dummy-app.c" || return 1
     cp "$CTL" "$app/Contents/Resources/bin/cmcrctl"
@@ -47,7 +52,7 @@ PLIST
     codesign --force --sign - "$app/Contents/Resources/bin/cmcrctl" 2>/dev/null
     codesign --force --sign - "$app" 2>/dev/null
   }
-  upd_release() {  # version confirm(0|1) → www/files/v<version>/{zip, cmcr-update.json, .sig}
+  upd_release() {  # version confirm(0|1|slow|crash) → www/files/v<version>/{zip, cmcr-update.json, .sig}
     local v=$1 d="$U/www/files/v$1"
     upd_bundle "$v" "$U/build/v$v/CMCR Manager.app" "$2" || return 1
     mkdir -p "$d"
@@ -57,7 +62,8 @@ PLIST
       --notes-file "$U/build/v$v/notes.md" --out "$d/cmcr-update.json" 2>/dev/null &&
     upd_tool sign "$d/cmcr-update.json" > "$d/cmcr-update.json.sig"
   }
-  upd_bundle 1.0.0 "$UPD_APP" 1 && upd_release 1.0.1 1 && upd_release 1.0.2 0 && upd_release 1.1.0-beta.1 1 \
+  upd_bundle 1.0.0 "$UPD_APP" 1 && upd_release 1.0.1 1 && upd_release 1.0.2 0 && upd_release 1.0.3 slow \
+    && upd_release 1.0.4 crash && upd_release 1.1.0-beta.1 1 \
     && python3 "$UPD_SRC/fixtures.py" "$U" >/dev/null \
     || { fail "przygotowanie wydań testowych"; return; }
   out="$(upd_tool verify "$U/www/files/v1.0.1/cmcr-update.json" "$U/www/files/v1.0.1/cmcr-update.json.sig" --public-key "$UPD_KEY" 2>&1)"
@@ -90,7 +96,8 @@ EOF
 
   # ---- check
   out="$(upd api-ok check)"; code=$?
-  expect "check: dostępna nowa wersja z opisem zmian" "$out" "Dostępna nowa wersja 1.0.1 (zainstalowana: 1.0.0)" "Zmiany v1.0.1"
+  expect "check: dostępna nowa wersja z podpisanym opisem zmian" "$out" "Dostępna nowa wersja 1.0.1 (zainstalowana: 1.0.0)" "Co nowego w 1.0.1"
+  expect_not "check: niepodpisany opis wydania z GitHuba pominięty" "$out" "Zmiany v1.0.1"
   expect_code "check: kod 0" "$code" 0 "$out"
   out="$(upd api-ok check --beta)"
   expect "check --beta: wersja testowa" "$out" "Dostępna nowa wersja 1.1.0-beta.1"
@@ -153,6 +160,23 @@ EOF
   [ "$(upd_version)" = 1.0.1 ] && codesign --verify --deep --strict "$UPD_APP" 2>/dev/null && [ "$(upd_leftovers)" = 0 ] \
     && pass "rollback: przywrócono 1.0.1 (podpis poprawny, bez kopii roboczych)" || fail "rollback: stan" "$(upd_version); $(ls -A "$U/apps")"
   expect "rollback: nowa wersja uruchomiona, potem poprzednia" "$(cat "$U/launches.log")" "open $UPD_APP" "launched 1.0.2" "launched 1.0.1"
+
+  # ---- crash after the first confirmation step (process gone before it finished launching)
+  : > "$U/launches.log"
+  out="$(upd api-crash install --relaunch --confirm-timeout 10)"; code=$?
+  expect_code "awaria w trakcie startu: kod 2" "$code" 2 "$out"
+  expect "awaria w trakcie startu: przywrócono poprzednią wersję" "$out" "przywrócono wersję 1.0.1" "zakończyła działanie w trakcie uruchamiania"
+  [ "$(upd_version)" = 1.0.1 ] && [ "$(upd_leftovers)" = 0 ] \
+    && pass "awaria w trakcie startu: 1.0.1 na miejscu, bez kopii roboczych" || fail "awaria w trakcie startu: stan" "$(upd_version); $(ls -A "$U/apps")"
+
+  # ---- slow start (after an update macOS may first ask about the Keychain): longer than the limit, not rolled back
+  : > "$U/launches.log"
+  out="$(upd api-slow install --relaunch --confirm-timeout 2)"; code=$?
+  expect_code "wolny start: kod 0 mimo startu dłuższego niż limit" "$code" 0 "$out"
+  # (the helper's own log lines come back in decomposed Unicode, so the needle avoids Polish letters)
+  expect "wolny start: czekano na zakończenie startu" "$out" "– czekam na zako" "Zainstalowano CMCR Manager 1.0.3"
+  [ "$(upd_version)" = 1.0.3 ] && [ "$(upd_leftovers)" = 0 ] \
+    && pass "wolny start: zainstalowano 1.0.3, bez kopii roboczych" || fail "wolny start: stan" "$(upd_version); $(ls -A "$U/apps")"
 
   # ---- relaunch with confirmation
   : > "$U/launches.log"

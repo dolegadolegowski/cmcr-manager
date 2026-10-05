@@ -3,7 +3,7 @@
     python3 fixtures.py ROOT
 
 Expects signed releases in ROOT/www/files/<tag>/ (zip, cmcr-update.json, cmcr-update.json.sig) for
-v1.0.1, v1.0.2 and v1.1.0-beta.1, and creates the tampered variants next to them.
+v1.0.1, v1.0.2, v1.0.3, v1.0.4 and v1.1.0-beta.1, and creates the tampered variants next to them.
 """
 import hashlib
 import json
@@ -67,6 +67,8 @@ for variant, data in (("tampered", bytes(b ^ 0xFF for b in original[:64]) + orig
 write("api-ok-latest", release(ok))
 write("api-ok-list", [release(ok), release("v1.1.0-beta.1", prerelease=True), release("v1.0.2")])
 write("api-bad-latest", release("v1.0.2"))
+write("api-slow-latest", release("v1.0.3"))
+write("api-crash-latest", release("v1.0.4"))
 write("api-forged-latest", release(ok, manifest_url="__BASE__/files/forged/cmcr-update.json"))
 write("api-relabel-latest", release("v9.9.9", files_tag=ok))
 write("api-digest-latest", release(ok, fake_digest="f" * 64))

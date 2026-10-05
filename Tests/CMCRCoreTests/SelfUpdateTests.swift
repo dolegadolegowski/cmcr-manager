@@ -196,11 +196,42 @@ import Testing
         #expect(try run(["--target", app.path, "--bogus"]) == 64)
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["CMCR Manager.app"])
     }
+
+    @Test func launchIsConfirmedInTwoSteps() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("confirm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: file) }
+        UpdateInstaller.confirmLaunch(version: "1.2.0", finished: false, to: file)
+        #expect(try String(contentsOf: file, encoding: .utf8) == "1.2.0 \(ProcessInfo.processInfo.processIdentifier)")
+        UpdateInstaller.confirmLaunch(version: "1.2.0", finished: true, to: file)
+        #expect(try String(contentsOf: file, encoding: .utf8) == "1.2.0")
+        // The helper waits for the first step, then for the second as long as that process lives.
+        #expect(UpdateInstaller.helperScript.contains(#"starting_pid() { set -- $(cat "$CONFIRM""#))
+        #expect(UpdateInstaller.helperScript.contains(#"alive "$APP_PID" || "#))
+    }
+
+    @Test func signedNotesWinOverReleaseBody() {
+        #expect(UpdateFeed.releaseNotes(signed: "## Co nowego\n- poprawka", releaseBody: "## What's Changed") == "## Co nowego\n- poprawka")
+        #expect(UpdateFeed.releaseNotes(signed: " \n", releaseBody: "## What's Changed\n") == "## What's Changed")
+        #expect(UpdateFeed.releaseNotes(signed: nil, releaseBody: nil) == "")
+    }
 }
 
 @Suite struct ReleaseConfigurationTests {
     /// Repository root, from this file's location (Tests/CMCRCoreTests/…).
     var root: URL { URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent() }
+
+    /// After an update macOS may ask whether the new build may read the saved password, and that dialog blocks
+    /// the main thread while AppModel is created. The first confirmation step must come before it.
+    @Test func appConfirmsStartBeforeCreatingTheModel() throws {
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/CMCRManager/App.swift"), encoding: .utf8)
+        let app = try #require(source.range(of: "struct CMCRManagerApp"))
+        let initStart = try #require(source.range(of: "init() {", range: app.upperBound..<source.endIndex))
+        let body = try #require(source.range(of: "var body: some Scene", range: initStart.upperBound..<source.endIndex))
+        let initText = source[initStart.upperBound..<body.lowerBound]
+        let selfTest = try #require(initText.range(of: "--cmcr-self-test"))
+        let confirm = try #require(initText.range(of: "Updater.confirmStart()"))
+        #expect(selfTest.lowerBound < confirm.lowerBound)
+    }
 
     @Test func versionFileIsSemanticVersion() throws {
         let text = try String(contentsOf: root.appendingPathComponent("VERSION"), encoding: .utf8)
