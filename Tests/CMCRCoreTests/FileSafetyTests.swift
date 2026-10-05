@@ -40,8 +40,9 @@ import Testing
         let viaTmp = "/tmp/" + dir.lastPathComponent
         let (s1, o1, _) = try Self.bash("cmcr_user_link \(shQuote(viaTmp + "/real/sub/x")) || echo none", tmp: dir)
         #expect(s1 == 0 && o1 == "none\n")
+        // Reported where it physically is (the walk resolves root's /tmp link first).
         let (_, o2, _) = try Self.bash("cmcr_user_link \(shQuote(viaTmp + "/link/sub/x"))", tmp: dir)
-        #expect(o2 == viaTmp + "/link\n")
+        #expect(o2 == dir.path + "/link\n")
         let (s3, _, e3) = try Self.bash("cmcr_pin_dir \(shQuote(viaTmp + "/link/sub"))", tmp: dir)
         #expect(s3 == 2 && e3.contains("Odmowa") && e3.contains("dowiązanie symboliczne"))
         let (s4, o4, _) = try Self.bash("cmcr_pin_dir \(shQuote(viaTmp + "/real/sub")) && echo \"$CMCR_PINNED|$(/bin/pwd -P)\"", tmp: dir)
@@ -79,6 +80,112 @@ import Testing
         #expect(try fm.contentsOfDirectory(atPath: normal.path).isEmpty)
     }
 
+    /// Runs `ln -P` (a hard link to the link itself, not to its target).
+    static func hardLink(_ source: String, _ dest: String) throws -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/ln")
+        p.arguments = ["-P", source, dest]
+        p.standardError = FileHandle.nullDevice
+        try p.run()
+        p.waitUntilExit()
+        return p.terminationStatus == 0
+    }
+
+    /// A student can hard-link root's own links into their folder (macOS has no protected hard links). Owned by
+    /// root, but in a folder the student controls: a relative target (MacOSX.sdk → MacOSX27.0.sdk) then names a
+    /// sibling the student makes a link to another account, and "/Volumes/Macintosh HD" → / leads to the whole
+    /// disk. Such a link must be refused like the student's own.
+    @Test func hardLinkedRootLinksAreNotTrusted() throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fm = FileManager.default
+        let victim = dir.appendingPathComponent("victim/Documents")
+        try fm.createDirectory(at: victim, withIntermediateDirectories: true)
+        try Data("tajne".utf8).write(to: victim.appendingPathComponent("praca.txt"))
+        let pub = dir.appendingPathComponent("student/Public")
+        try fm.createDirectory(at: pub, withIntermediateDirectories: true)
+        var tried = 0
+        let sdk = "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"
+        if let target = try? fm.destinationOfSymbolicLink(atPath: sdk), !target.hasPrefix("/"),
+           try Self.hardLink(sdk, pub.appendingPathComponent("cmcr").path) {
+            tried += 1
+            try fm.createSymbolicLink(atPath: pub.appendingPathComponent(target).path, withDestinationPath: victim.path)
+            let shared = pub.appendingPathComponent("cmcr").path
+            let (s1, o1, e1) = try Self.bash("cmcr_pin_dir \(shQuote(shared)) && /bin/pwd -P", tmp: dir)
+            #expect(s1 == 2 && !o1.contains("victim"), "\(o1)\(e1)")
+            #expect(e1.contains(shared) && e1.contains("root") && e1.contains("kopia dowiązania systemowego"), "\(e1)")
+            let (s2, o2, e2) = try Self.bash(Scripts.cleanFolder(shared).body, tmp: dir)
+            #expect(s2 == 2, "\(o2)\(e2)")
+            #expect(fm.fileExists(atPath: victim.appendingPathComponent("praca.txt").path))
+        }
+        if try Self.hardLink("/Volumes/Macintosh HD", pub.appendingPathComponent("dysk").path) {
+            tried += 1
+            let (s, o, e) = try Self.bash("cmcr_pin_dir \(shQuote(pub.path + "/dysk/Users")) && /bin/pwd -P", tmp: dir)
+            #expect(s == 2 && o.isEmpty, "\(o)\(e)")
+            // The original in /Volumes (root's folder) still works.
+            let (s3, o3, _) = try Self.bash("cmcr_pin_dir '/Volumes/Macintosh HD/private/tmp' && /bin/pwd -P", tmp: dir)
+            #expect(s3 == 0 && o3 == "/private/tmp\n")
+        }
+        #expect(tried > 0, "brak dowiązania systemowego do sprawdzenia")
+    }
+
+    /// The student swaps their folder and a link to another account back and forth (atomic rename) while root
+    /// empties the folder. Checks that look up the path again can each see a different side; walking one folder
+    /// at a time and comparing device:inode after every `cd` cannot be fooled (before: ~6% of runs wiped the
+    /// victim).
+    @Test func cleanFolderSurvivesSwapRace() throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fm = FileManager.default
+        let victim = dir.appendingPathComponent("victim")
+        try fm.createDirectory(at: victim, withIntermediateDirectories: true)
+        let pub = dir.appendingPathComponent("student/Public")
+        try fm.createDirectory(at: pub.appendingPathComponent("cmcr"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: pub.appendingPathComponent("alt").path, withDestinationPath: victim.path)
+        let swapper = Process()
+        swapper.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        swapper.arguments = ["-c", "import ctypes,sys,time\nc=ctypes.CDLL(None)\na,b=sys.argv[1].encode(),sys.argv[2].encode()\nend=time.time()+60\nwhile time.time()<end: c.renamex_np(a,b,2)",
+                             pub.appendingPathComponent("cmcr").path, pub.appendingPathComponent("alt").path]
+        try swapper.run()
+        defer { swapper.terminate(); swapper.waitUntilExit() }
+        let body = Scripts.cleanFolder(pub.appendingPathComponent("cmcr").path).body
+        var wiped = 0
+        for i in 0..<60 {
+            let file = victim.appendingPathComponent("praca\(i).txt")
+            try Data("tajne".utf8).write(to: file)
+            let (_, out, _) = try Self.bash(body, tmp: dir)
+            if !fm.fileExists(atPath: file.path) || out.contains("Wyczyszczono " + victim.path) { wiped += 1 }
+        }
+        #expect(wiped == 0)
+    }
+
+    /// With Gatekeeper switched off (spctl answers "override"), an application needs a certificate chain to
+    /// Apple; an ad-hoc signature (or a self-made "Developer ID Application: …" certificate) is not enough.
+    @Test func gatekeeperOffFallbackNeedsAppleChain() throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let macos = dir.appendingPathComponent("Adhoc.app/Contents/MacOS")
+        try FileManager.default.createDirectory(at: macos, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: macos.appendingPathComponent("Adhoc").path)
+        let sign = Process()
+        sign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        sign.arguments = ["--force", "--sign", "-", macos.appendingPathComponent("Adhoc").path]
+        sign.standardError = FileHandle.nullDevice
+        try sign.run()
+        sign.waitUntilExit()
+        let off = "spctl() { echo \"$4: accepted\"; echo 'override=security disabled'; }\n"
+        let lib = "CMCR_ALLOW_UNSIGNED=0\n" + Scripts.installLibrary + "\n" + off
+        let adhoc = dir.appendingPathComponent("Adhoc.app").path
+        let (s1, _, e1) = try Self.bash(lib + "cmcr_verify_signature \(shQuote(adhoc)) execute", tmp: dir)
+        #expect(s1 == 1 && e1.contains("brak ważnego podpisu"), "\(e1)")
+        for app in ["/System/Applications/Calculator.app", "/System/Applications/TextEdit.app"]
+        where FileManager.default.fileExists(atPath: app) {
+            let (s2, o2, e2) = try Self.bash(lib + "cmcr_verify_signature \(shQuote(app)) execute", tmp: dir)
+            #expect(s2 == 0 && o2.contains("Gatekeeper wyłączony"), "\(o2)\(e2)")
+            break
+        }
+    }
+
     @Test func fileScriptsUsePinnedFolders() {
         let push = Scripts.pushFinalize(remoteTar: "/tmp/x.tar", destination: "/Users/student/Public/cmcr", owner: "student",
                                         mode: "777", asRoot: true).body
@@ -89,7 +196,14 @@ import Testing
         #expect(!push.contains(#"chmod -R "$MODE" "$t""#))
         #expect(Scripts.pullArchive(source: "/Users/student/Public/cmcr", asRoot: true).body.contains(#"cmcr_pin_dir "$SRC""#))
         let remove = Scripts.removeCollected(in: "/Users/student/Public/cmcr", files: [], folders: [], asRoot: true).body
-        #expect(remove.contains(#"CMCR_JAIL="$CMCR_PINNED""#))
+        #expect(remove.contains(#"CMCR_JAIL="$CMCR_PINNED"; CMCR_JAIL_ID="$CMCR_PINNED_ID""#))
+        #expect(remove.contains(#"cmcr_guard_item "$rel""#))
+        // Missing folders are created one at a time (never `mkdir -p` as root through the student's folders).
+        #expect(push.contains(#"cmcr_walk "$REST" create "$OWNER""#))
+        #expect(Scripts.prepareSharedFolder("/Users/student/Public/cmcr", owner: "student").body.contains(#"cmcr_pin_create "$DIR""#))
+        #expect(Scripts.createStudentFolder("/Users/student/Public/cmcr", owner: "student").body.contains(#"cmcr_pin_create "$DIR""#))
+        let mk = Scripts.makeDirectory("/Users/student/Desktop/a/b", asRoot: true, intermediate: true).body
+        #expect(mk.contains(#"cmcr_walk "$REST" create "$OWN""#) && !mk.contains("chown -R"))
         #expect(Scripts.prepareSharedFolder("/Users/student/Public/cmcr", owner: "student").body.contains("chmod 777 ."))
     }
 

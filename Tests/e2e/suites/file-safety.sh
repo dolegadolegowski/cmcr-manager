@@ -168,6 +168,74 @@ expect_code "prepare-shared: folder to dowiązanie ucznia – kod 2" "$code" 2 "
 [ "$(stat -f %Lp "$F2/ofiara6")" = 700 ] && pass "prepare-shared: folder innego konta bez chmod 777" \
   || fail "prepare-shared: chmod 777 na folderze innego konta" "$out"
 
+section "Bezpieczeństwo plików – podstawiona kopia dowiązania systemowego"
+# macOS lets a student hard-link root's own links into their folder. The copy still belongs to root, but a
+# relative target (MacOSX.sdk → MacOSX27.0.sdk) then names a sibling the student controls, and
+# "/Volumes/Macintosh HD" → / leads to the whole disk. Trusted are only root's links in root's folders.
+SDKLINK=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+SDKT="$(readlink "$SDKLINK" 2>/dev/null)"
+mkdir -p "$F2/uczen7/Public"
+if [ -n "$SDKT" ] && [ "${SDKT#/}" = "$SDKT" ] && ln -P "$SDKLINK" "$F2/uczen7/Public/cmcr" 2>/dev/null; then
+  f2_victim "$F2/ofiara7"
+  ln -s "$F2/ofiara7" "$F2/uczen7/Public/$SDKT"
+  S7="$F2/uczen7/Public/cmcr"
+  out="$(ctlpw clean "$S7" 1 --yes)"; code=$?
+  [ "$code" != 0 ] && pass "kopia dowiązania: clean odrzucony (kod $code)" || fail "kopia dowiązania: wyczyszczono cudzy folder" "$out"
+  expect "kopia dowiązania: komunikat" "$out" "Odmowa" "kopia dowiązania systemowego"
+  f2_intact "kopia dowiązania: clean – pliki nietknięte" "$F2/ofiara7"
+  out="$(ctlpw _builder push 1 "$S7" "$ME" 777 "$F2/wyslij/plan.txt" --root)"; code=$?
+  expect_code "kopia dowiązania: push – kod 2" "$code" 2 "$out"
+  f2_intact "kopia dowiązania: push – pliki nietknięte" "$F2/ofiara7"
+  out="$(ctlpw collect 1 --from "$S7" --to "$F2/zebrane7" --no-date --clean --root)"; code=$?
+  [ "$code" != 0 ] && pass "kopia dowiązania: collect --clean odrzucony (kod $code)" || fail "kopia dowiązania: collect" "$out"
+  f2_intact "kopia dowiązania: collect – pliki nietknięte" "$F2/ofiara7"
+  [ -z "$(find "$F2/zebrane7" -name 'plan.txt' 2>/dev/null)" ] && pass "kopia dowiązania: nic nie zebrano" \
+    || fail "kopia dowiązania: zebrano pliki innego konta" "$(find "$F2/zebrane7" 2>&1)"
+  out="$(ctl rm 1 "$S7/plan.txt")"; code=$?
+  expect_code "kopia dowiązania: rm – kod 65" "$code" 65 "$out"
+  out="$(ctlpw mkdir 1 "$S7/nowy" --root)"; code=$?
+  expect_code "kopia dowiązania: mkdir --root – kod 65" "$code" 65 "$out"
+  f2_intact "kopia dowiązania: rm i mkdir – pliki nietknięte" "$F2/ofiara7"
+  chmod 700 "$F2/ofiara7"
+  out="$(ctlpw _builder prepare-shared 1 "$S7" "$ME")"; code=$?
+  expect_code "kopia dowiązania: prepare-shared – kod 2" "$code" 2 "$out"
+  [ "$(stat -f %Lp "$F2/ofiara7")" = 700 ] && pass "kopia dowiązania: bez chmod 777" || fail "kopia dowiązania: chmod 777" "$out"
+  rm -f "$S7"
+else
+  echo "  (brak względnego dowiązania $SDKLINK – pominięto)"
+fi
+if ln -P "/Volumes/Macintosh HD" "$F2/uczen7/dysk" 2>/dev/null; then
+  f2_victim "$F2/ofiara8"
+  V8="$F2/uczen7/dysk$(cd "$F2" && /bin/pwd -P)/ofiara8"
+  out="$(ctlpw collect 1 --from "$V8" --to "$F2/zebrane8" --no-date --clean --root)"; code=$?
+  [ "$code" != 0 ] && pass "kopia /Volumes/Macintosh HD: collect odrzucony (kod $code)" || fail "kopia /Volumes/Macintosh HD: collect" "$out"
+  f2_intact "kopia /Volumes/Macintosh HD: pliki nietknięte" "$F2/ofiara8"
+  out="$(ctlpw clean "$V8" 1 --yes)"; code=$?
+  [ "$code" != 0 ] && pass "kopia /Volumes/Macintosh HD: clean odrzucony (kod $code)" || fail "kopia /Volumes/Macintosh HD: clean" "$out"
+  f2_intact "kopia /Volumes/Macintosh HD: clean – pliki nietknięte" "$F2/ofiara8"
+  rm -f "$F2/uczen7/dysk"
+fi
+
+section "Bezpieczeństwo plików – podmiana folderu w trakcie (wyścig)"
+# The student swaps their folder and a link to another account back and forth (atomic rename) while root
+# empties it at the end of the lesson. Every attempt must either clean the student's own folder or refuse.
+f2_victim "$F2/ofiara9"
+mkdir -p "$F2/uczen9/Public/cmcr"
+ln -s "$F2/ofiara9" "$F2/uczen9/Public/alt"
+python3 -c 'import ctypes,sys,time
+c=ctypes.CDLL(None); a,b=sys.argv[1].encode(),sys.argv[2].encode(); end=time.time()+120
+while time.time()<end: c.renamex_np(a,b,2)' "$F2/uczen9/Public/cmcr" "$F2/uczen9/Public/alt" &
+SWAP=$!
+wiped=0; refused=0
+for _ in $(seq 1 25); do
+  out="$(ctlpw _builder clean-folder 1 "$F2/uczen9/Public/cmcr" 2>&1)"
+  case "$out" in *"Wyczyszczono"*ofiara9*) wiped=$((wiped + 1)) ;; *Odmowa*) refused=$((refused + 1)) ;; esac
+done
+kill "$SWAP" 2>/dev/null; wait "$SWAP" 2>/dev/null
+[ "$wiped" = 0 ] && pass "wyścig: ani razu nie wyczyszczono cudzego folderu ($refused odmów z 25)" \
+  || fail "wyścig: wyczyszczono cudzy folder $wiped razy z 25"
+f2_intact "wyścig: pliki innego konta nietknięte" "$F2/ofiara9"
+
 section "Bezpieczeństwo instalacji – podpis i https"
 mkdir -p "$F2/pkgroot/x" "$F2/in"
 echo x > "$F2/pkgroot/x/plik.txt"
@@ -224,6 +292,19 @@ out="$(ctlpw install "$F2/in/F2Adhoc.zip" 1 --allow-unsigned)"; code=$?
 expect_code "install .zip --allow-unsigned: kod 0" "$code" 0 "$out"
 [ -d "$WORK/Applications/F2Adhoc.app" ] && pass "install .zip --allow-unsigned: aplikacja zainstalowana" || fail "install .zip --allow-unsigned" "$out"
 rm -rf "$WORK/Applications/F2Adhoc.app"
+# Gatekeeper switched off on the iMac (spctl answers "override"): the signature itself must still chain to Apple.
+touch "$WORK/spctl.override"
+out="$(ctlpw install "$F2/in/F2Adhoc.zip" 1)"; code=$?
+[ "$code" != 0 ] && pass "Gatekeeper wyłączony: aplikacja z podpisem ad hoc odrzucona (kod $code)" || fail "Gatekeeper wyłączony: zainstalowano ad hoc" "$out"
+expect "Gatekeeper wyłączony: komunikat" "$out" "brak ważnego podpisu"
+[ ! -e "$WORK/Applications/F2Adhoc.app" ] && pass "Gatekeeper wyłączony: aplikacja nie skopiowana" || fail "Gatekeeper wyłączony: F2Adhoc.app w Applications"
+if [ -f "$F2/in/Niepodpisany.pkg" ]; then
+  clear_fakelog
+  out="$(ctlpw install "$F2/in/Niepodpisany.pkg" 1)"; code=$?
+  [ "$code" != 0 ] && pass "Gatekeeper wyłączony: pakiet bez podpisu odrzucony (kod $code)" || fail "Gatekeeper wyłączony: zainstalowano pakiet" "$out"
+  expect_not "Gatekeeper wyłączony: installer nie uruchomiony" "$(fakelog)" "installer -pkg"
+fi
+rm -f "$WORK/spctl.override"
 # A notarized app (if this Mac has a small one) passes without the override.
 signed=""
 for a in /Applications/*.app; do
@@ -239,6 +320,12 @@ if [ -n "$signed" ]; then
   expect_code "install: aplikacja z notaryzacją ($sname) – kod 0" "$code" 0 "$out"
   expect "install: podpis sprawdzony" "$out" "Podpis sprawdzony"
   [ -d "$WORK/Applications/$sname" ] && pass "install: podpisana aplikacja zainstalowana" || fail "install: brak $sname" "$out"
+  rm -rf "$WORK/Applications/$sname"
+  touch "$WORK/spctl.override"
+  out="$(ctlpw install "$F2/in/podpisana.zip" 1)"; code=$?
+  expect_code "Gatekeeper wyłączony: aplikacja Developer ID ($sname) – kod 0" "$code" 0 "$out"
+  expect "Gatekeeper wyłączony: podpis sprawdzony bez notaryzacji" "$out" "Gatekeeper wyłączony"
+  rm -f "$WORK/spctl.override"
   rm -rf "$WORK/Applications/$sname"
 else
   echo "  (brak małej aplikacji z notaryzacją w /Applications – pominięto test pozytywny)"

@@ -171,9 +171,16 @@ dseditgroup() {
 visudo() { _e2e_log "visudo $*"; return 0; }
 # spctl: an assessment (--assess/-a, read-only) asks the real Gatekeeper, so installers are checked for real;
 # anything that would change the policy is only logged.
+# With $CMCR_E2E_WORK/spctl.override it answers like a Mac with Gatekeeper switched off.
 spctl() {
   case "${1:-}" in
-    --assess|-a) _e2e_log "spctl $*"; command spctl "$@" ;;
+    --assess|-a)
+      _e2e_log "spctl $*"
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/spctl.override" ]; then
+        local last=""; for last in "$@"; do :; done
+        printf '%s: accepted\noverride=security disabled\n' "$last" >&2; return 0
+      fi
+      command spctl "$@" ;;
     *) _e2e_log "spctl $*"; return 0 ;;
   esac
 }
