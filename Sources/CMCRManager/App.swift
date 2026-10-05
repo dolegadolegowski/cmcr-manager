@@ -9,7 +9,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// Closing the window while jobs run keeps the app (and the jobs) going; a notification reports the end.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        (AppModel.shared?.runningJobCount ?? 0) == 0
+    }
 }
 
 @main

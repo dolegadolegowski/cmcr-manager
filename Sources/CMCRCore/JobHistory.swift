@@ -198,6 +198,11 @@ public enum JobHistory {
         record.outputFile.map { dir.appendingPathComponent($0) }
     }
 
+    /// Purges old history on the history queue (called at app start).
+    public static func purgeInBackground(olderThan days: Int = 90) {
+        queue.async { purge(olderThan: days) }
+    }
+
     /// Removes output folders and month files older than `days`.
     public static func purge(olderThan days: Int, now: Date = Date(), in dir: URL = directory) {
         let fm = FileManager.default
