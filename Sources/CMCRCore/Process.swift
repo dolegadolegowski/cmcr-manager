@@ -17,15 +17,19 @@ public struct CommandResult: Sendable {
     public var cancelled = false
     /// The oldest part of stdout or stderr was dropped because it exceeded the capture limit.
     public var truncated = false
+    /// The remote script had started on the Mac (its start marker or output arrived); set by `SSH.run`.
+    /// A timeout after the start means a slow command on a Mac that answers, not a Mac that is off.
+    public var started = false
 
     public init(exitCode: Int32, stdout: Data = Data(), stderr: Data = Data(), timedOut: Bool = false,
-                cancelled: Bool = false, truncated: Bool = false) {
+                cancelled: Bool = false, truncated: Bool = false, started: Bool = false) {
         self.exitCode = exitCode
         self.stdout = stdout
         self.stderr = stderr
         self.timedOut = timedOut
         self.cancelled = cancelled
         self.truncated = truncated
+        self.started = started
     }
 
     public static func failure(_ message: String, code: Int32 = -1) -> CommandResult {

@@ -387,8 +387,8 @@ struct ReadinessView: View {
                 model.applyReadinessFix(.vnc, on: model.selectedMachines)
             }
             Divider()
-            Button("Zapomnij klucz hosta (po reinstalacji iMaca)", systemImage: "key.slash") {
-                model.forgetHostKeys(model.selectedMachines)
+            Button("Sprawdź klucz komputera (pierwsze połączenie, reinstalacja)…", systemImage: "lock.shield") {
+                model.reviewHostKeys(model.selectedMachines)
             }
         } label: {
             Label("Szybkie naprawy", systemImage: "bandage")
@@ -644,15 +644,17 @@ struct ReadinessCellDetail: View {
             EmptyView()
         case (.ssh, .warning):
             fix("Zainstaluj klucz SSH", "key.horizontal", .key)
-        case (.ssh, .problem) where connectionFailure == .hostKeyChanged:
-            // Re-trusting a changed host key is only offered when ssh actually reported a mismatch.
-            Button(role: .destructive) {
-                model.forgetHostKeys([machine])
+        case (.ssh, .problem) where connectionFailure == .hostKeyChanged || connectionFailure == .hostKeyUnknown:
+            // Trusting a key is offered only when ssh refused it; the sheet shows its fingerprint first.
+            Button {
+                model.reviewHostKeys([machine])
                 onDone()
             } label: {
-                Label("Zapomnij klucz hosta", systemImage: "key.slash")
+                Label("Sprawdź klucz komputera…", systemImage: "lock.shield")
             }
-            .help("Tylko jeśli ten iMac był reinstalowany lub wymieniony – inaczej zmieniony klucz może oznaczać, że w sieci podszywa się pod niego inne urządzenie.")
+            .help(connectionFailure == .hostKeyChanged
+                  ? "Tylko jeśli ten iMac był reinstalowany lub wymieniony – inaczej zmieniony klucz może oznaczać, że w sieci podszywa się pod niego inne urządzenie."
+                  : "Pierwsze połączenie z tym iMakiem: pokaże odcisk jego klucza SSH do potwierdzenia.")
         case (.ssh, .problem) where connectionFailure == .authFailed:
             Button(action: onPassword) {
                 Label("Hasło tego komputera…", systemImage: "key.fill")

@@ -730,7 +730,9 @@ public enum UpdateInstaller {
     }
 
     /// Same-user install: the helper is a child that outlives the app and waits for it to exit.
-    public static func launch(_ request: Request) throws {
+    /// Returns the helper process, so the app can stop it again when quitting was cancelled after all.
+    @discardableResult
+    public static func launch(_ request: Request) throws -> Process {
         let log = try openLog()
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -739,6 +741,7 @@ public enum UpdateInstaller {
         p.standardOutput = log
         p.standardError = log
         do { try p.run() } catch { throw UpdateError.helperFailed(error.localizedDescription) }
+        return p
     }
 
     /// Install into a folder the user cannot write (e.g. /Applications owned by root): macOS asks for an

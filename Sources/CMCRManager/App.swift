@@ -15,9 +15,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Updater.shared.applicationWillTerminate()
     }
 
-    /// Closing the window while jobs run keeps the app (and the jobs) going; a notification reports the end.
+    /// Closing the window while jobs run – or during the end-of-lesson countdown – keeps the app (and the work)
+    /// going; a notification reports the end.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        (AppModel.shared?.runningJobCount ?? 0) == 0
+        !(AppModel.shared?.hasRunningWork ?? false)
     }
 }
 
@@ -116,6 +117,7 @@ struct ContentView: View {
             }
         }
         .modifier(ConfigIssuesAlert())
+        .hostTrustUI()
     }
 }
 

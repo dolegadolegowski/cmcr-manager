@@ -58,7 +58,8 @@ Konfiguracja
   password set [--host nr]                 zapisz hasło administratora w Pęku kluczy (ze stdin, bez echa)
   password clear [--host nr]               usuń zapisane hasło
   password status                          czy hasła są zapisane
-  selftest                                 sprawdź składnię wszystkich skryptów zdalnych (bash -n)
+\(CLI.trustUsage)
+  selftest                                sprawdź składnię wszystkich skryptów zdalnych (bash -n)
 
 Opcje
   -j N, --jobs N    ile komputerów obsługiwać naraz (domyślnie 1; status i updates list: \(AppSettings().maxParallel)
@@ -135,6 +136,7 @@ struct CLI: Sendable {
         case "wake": return wake()
         case "hosts": return hostsCommand()
         case "password": return password()
+        case "trust": return await trust()
         case "selftest": return await selftest()
         default:
             usageError("Nieznane polecenie: \(command)")

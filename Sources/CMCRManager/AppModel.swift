@@ -259,6 +259,19 @@ final class AppModel: ObservableObject {
     @Published private(set) var runningJobCount = 0 {
         didSet { runningJobsChanged(from: oldValue) }
     }
+    /// A lesson routine has not finished – also during the end-of-lesson countdown, when no job runs. Set by
+    /// ClassroomModel; quitting or closing the last window must not silently drop its remaining steps.
+    @Published var lessonInProgress = false {
+        didSet { if lessonInProgress != oldValue { runningJobsChanged(from: runningJobCount) } }
+    }
+    /// Jobs or a lesson routine are running: quitting the app would cut them short.
+    var hasRunningWork: Bool { runningJobCount > 0 || lessonInProgress }
+    /// Host keys waiting for the user's decision (HostTrustSheet).
+    @Published var hostTrustReview: HostTrustReview?
+    /// Macs whose first-contact question was answered with "Nie teraz" in this session: not asked again automatically.
+    var hostTrustPostponed = Set<UUID>()
+    /// Macs whose last status check was refused because their key was never trusted.
+    var untrustedHosts = Set<UUID>()
     /// Skip hosts known to be offline or failing to log in instead of waiting for their timeouts.
     @Published var skipUnreachable = TargetUIState.skipUnreachable {
         didSet { TargetUIState.skipUnreachable = skipUnreachable }
@@ -512,6 +525,7 @@ final class AppModel: ObservableObject {
         let timeout = OperationTimeout.status(connectTimeout: settings.connectTimeout)
         let jobs = list.map { ($0, password(for: $0)) }
         Task {
+            defer { if !quietly { offerTrustForNewHosts(list) } }
             await withTaskGroup(of: Void.self) { group in
                 var active = 0
                 for (m, pw) in jobs {
@@ -541,8 +555,18 @@ final class AppModel: ObservableObject {
         return true
     }
 
+    /// After an explicit check (and at start): Macs refused because their key was never trusted are offered in
+    /// HostTrustSheet – once per session, never for a changed key (that one needs a deliberate look in
+    /// Konfiguracja › Przygotowanie iMaców).
+    private func offerTrustForNewHosts(_ checked: [Machine]) {
+        let candidates = checked.filter { untrustedHosts.contains($0.id) && !hostTrustPostponed.contains($0.id) }
+        guard !candidates.isEmpty else { return }
+        reviewHostKeys(candidates, automatic: true)
+    }
+
     private func applyStatus(_ m: Machine, _ r: CommandResult) {
         statusInFlight.remove(m.id)
+        if !r.started, HostTrust.refusal(r) == .unknown { untrustedHosts.insert(m.id) } else { untrustedHosts.remove(m.id) }
         var st = HostStatus()
         st.updatedAt = Date()
         if r.succeeded {
@@ -649,17 +673,11 @@ final class AppModel: ObservableObject {
         runScript(title, on: targets) { _ in RemoteScript(text, asRoot: asRoot) }
     }
 
-    /// cmcr-go: interactive ssh session in Terminal.app.
+    /// cmcr-go: interactive ssh session in Terminal.app. Every host field in the script is quoted
+    /// (`SSH.terminalScript`): an address from an imported list must never run as shell code.
     func openTerminal(_ m: Machine) {
-        let args = SSH.interactiveArguments(for: m, settings: sshSettings).map(shQuote).joined(separator: " ")
-        let script = """
-        #!/bin/zsh
-        clear
-        echo "cmcr-go → \(m.destination)"
-        exec /usr/bin/ssh \(args)
-
-        """
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("cmcr-go-\(m.name).command")
+        let script = SSH.terminalScript(for: m, settings: sshSettings)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(SSH.terminalFileName(for: m))
         do {
             try script.write(to: url, atomically: true, encoding: .utf8)
             chmod(url.path, 0o755)
@@ -884,8 +902,84 @@ final class AppModel: ObservableObject {
                   onResult: { [weak self] m, r in self?.recheckAfterLogin(m, r) })
     }
 
+    // MARK: - Host keys (first contact, reinstalled Macs)
+
+    /// Fetches the key each Mac presents (no login, no password) and asks the user to trust it in
+    /// HostTrustSheet, with its fingerprint and – for a changed key – the one trusted before.
+    /// `automatic`: offered after a status check found Macs that were never trusted.
+    func reviewHostKeys(_ targets: [Machine], automatic: Bool = false) {
+        guard !targets.isEmpty else { return }
+        if let open = hostTrustReview {
+            // One sheet at a time: add the Macs to the one already shown.
+            let known = Set(open.entries.map(\.machine.id))
+            let added = targets.filter { !known.contains($0.id) }
+            guard !added.isEmpty else { return }
+            open.entries += added.map { HostTrustReview.Entry(machine: $0) }
+            scanHostKeys(added, into: open)
+            return
+        }
+        let review = HostTrustReview(machines: targets, automatic: automatic)
+        hostTrustReview = review
+        scanHostKeys(targets, into: review)
+    }
+
+    private func scanHostKeys(_ targets: [Machine], into review: HostTrustReview) {
+        let ss = sshSettings
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                var active = 0
+                for m in targets {
+                    if active >= 8 {
+                        await group.next()
+                        active -= 1
+                    }
+                    group.addTask {
+                        let scan = await HostTrust.scan(m, settings: ss)
+                        await MainActor.run { review.setScan(scan) }
+                    }
+                    active += 1
+                }
+            }
+        }
+    }
+
+    /// Trusts the keys the user confirmed in `review` (exactly the scanned ones), then checks those Macs again.
+    /// The sheet closes when every key was saved; otherwise it stays open with the reason next to the Mac.
+    func trustHostKeys(in review: HostTrustReview) async {
+        let scans = review.chosenScans
+        guard !scans.isEmpty, !review.saving else { return }
+        review.saving = true
+        defer { review.saving = false }
+        let ss = sshSettings
+        var trusted: [Machine] = []
+        // One after another: every trust rewrites the same known_hosts file.
+        for scan in scans {
+            let r = await HostTrust.trust(scan, settings: ss)
+            if r.succeeded {
+                trusted.append(scan.host)
+                review.markTrusted(scan.host.id)
+            } else {
+                review.setError(scan.host.id, r.stderrText.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+        hostTrustPostponed.subtract(trusted.map(\.id))
+        if !trusted.isEmpty {
+            showToast(ActionToast(message: "Zaufano kluczom: \(trusted.map(\.name).joined(separator: ", "))",
+                                  icon: "checkmark.shield.fill"))
+            refreshStatus(trusted)
+        }
+        if trusted.count == scans.count, hostTrustReview === review { hostTrustReview = nil }
+    }
+
+    /// "Nie teraz": the automatic question is not repeated for these Macs until the app restarts.
+    func postponeHostTrust(_ review: HostTrustReview) {
+        if review.automatic { hostTrustPostponed.formUnion(review.entries.map(\.machine.id)) }
+    }
+
+    /// Removes the Macs' trusted keys (cmcrctl __forget-host-key does the same); connections are then refused
+    /// until a key is trusted again. Kept for scripted checks; the app offers `reviewHostKeys` instead.
     func forgetHostKeys(_ targets: [Machine]) {
-        runBatch("Zapomnij klucz hosta (known_hosts)", on: targets, includeUnreachable: true) { m, job in
+        runBatch("Zapomnij klucz komputera (known_hosts)", on: targets, includeUnreachable: true) { m, job in
             let r = await SSHKeys.forgetHostKey(m, settings: self.sshSettings)
             job.append(r.stdoutText + r.stderrText)
             return r

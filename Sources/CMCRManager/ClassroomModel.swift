@@ -16,6 +16,9 @@ final class LessonRun: ObservableObject, Identifiable, @unchecked Sendable {
     var batches: [Batch] = []
     private(set) var cancelled = false
     var skipCountdown = false
+    /// The end-of-lesson countdown (and the steps after it) was started. A repeated warning batch – "Powtórz na
+    /// nieudanych" reuses its completion – must not start them a second time.
+    var restScheduled = false
 
     init(plan: LessonPlan, machines: [Machine]) {
         self.plan = plan
@@ -219,16 +222,22 @@ final class ClassroomModel: ObservableObject {
         }.value
     }
 
+    /// Sends the magic packets (`sendWake`); tests replace it so that nothing goes out on the network.
+    static var wakeSender: @Sendable ([LessonRunner.Host]) async -> [UUID: String] = { await sendWake($0) }
+
     /// Sends magic packets to every target at once, then waits (per Mac) until it answers over SSH.
     func wake(_ model: AppModel, _ targets: [Machine], section: AppSection? = nil) {
-        let hosts = targets.map { lessonHost($0, model) }
-        let sending = Task { await Self.sendWake(hosts) }
         let ss = model.sshSettings
-        // Waiting is cheap (a probe every few seconds), so every Mac waits at once.
+        let send = Self.wakeSender
+        // Waiting is cheap (a probe every few seconds), so every Mac waits at once – and every job starts at once,
+        // so the packets still go out together. Each job sends its own packet: "Powtórz na nieudanych" reuses this
+        // closure and must send again, with the MAC the host list has now (e.g. typed in Konfiguracja after a
+        // "Brak adresu MAC"), not repeat the first attempt's result.
         model.runBatch("Wake-on-LAN", on: targets, section: section, maxParallel: targets.count,
                        includeUnreachable: true) { m, job in
-            if let error = await sending.value[m.id] { return .failure(error) }
-            let host = self.lessonHost(m, model)
+            // A retry passes the batch's copy of the Mac; the host list entry may have changed since.
+            let host = self.lessonHost(model.machine(m.id) ?? m, model)
+            if let error = await send([host])[m.id] { return .failure(error) }
             job.note("Wysłano pakiet Wake-on-LAN (\(host.macs.joined(separator: ", "))) – czekam do 3 min, aż komputer odpowie.")
             let state = await LessonRunner.wake(host, ssh: ss, minutes: 3, handle: job.handle, onOutput: OutputSink(job).callback)
             switch state {
@@ -248,33 +257,40 @@ final class ClassroomModel: ObservableObject {
 
     // MARK: - Lesson routines
 
+    /// Tells the app whether a lesson routine is still in progress (quitting and closing the last window ask
+    /// first, also during the end-of-lesson countdown when no job runs).
+    private func syncLessonState(_ model: AppModel) {
+        model.lessonInProgress = !(run?.finished ?? true)
+    }
+
     func startLesson(_ model: AppModel, targets: [Machine]) {
         let plan = LessonPlan.start(config.start, settings: model.settings)
         guard !plan.steps.isEmpty, !targets.isEmpty else { NSSound.beep(); return }
         let run = LessonRun(plan: plan, machines: targets)
         run.phase = "W toku"
         self.run = run
+        syncLessonState(model)
         if plan.steps.contains(.wake) {
             // Wake everything at once; each Mac's job then only waits for its machine.
             let sleeping = targets.filter { model.status($0).reachability != .online }.map { lessonHost($0, model) }
-            if !sleeping.isEmpty { Task { _ = await Self.sendWake(sleeping) } }
+            let send = Self.wakeSender
+            if !sleeping.isEmpty { Task { _ = await send(sleeping) } }
         }
         var items: [URL] = []
         if plan.steps.contains(.materials) {
             items = materialItems(config.start.materialsFolder)
         }
-        let payloadTask = Task { () -> URL? in
-            guard !items.isEmpty else { return nil }
-            if case .success(let url) = await Payload.make(items) { return url }
-            return nil
-        }
+        // Packed on first use and again for "Powtórz na nieudanych" after the cleanup (a retry reuses the batch's
+        // operation, so a one-off archive would already be deleted then).
+        let payload = items.isEmpty ? nil : SharedPayload(items)
         // Macs that are still waking up must not hold back the ones that are ready: waking runs for all Macs at
         // once, the other steps share the usual number of parallel connections.
         let limiter = plan.steps.contains(.wake) ? ConcurrencyLimiter(limit: model.settings.maxParallel) : nil
-        launch(plan, run: run, title: "Rozpoczęcie zajęć", range: nil, model: model, payload: payloadTask,
-               limiter: limiter) {
-            Task { if let url = await payloadTask.value { try? FileManager.default.removeItem(at: url) } }
+        launch(plan, run: run, title: "Rozpoczęcie zajęć", range: nil, model: model, payload: payload,
+               limiter: limiter) { [weak self] in
+            payload?.discard()          // deferred until no job (a retry included) uses the archive
             run.complete()
+            self?.syncLessonState(model)
             model.refreshStatus(targets)
         }
     }
@@ -285,11 +301,16 @@ final class ClassroomModel: ObservableObject {
         if let folder = plan.collectFolder {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         }
+        // What the confirmation sheet decided ("Pomiń komputery z zalogowanym użytkownikiem", the confirmed
+        // button) is set only while this call runs; the steps after the countdown start later and need it too.
+        let skip = model.pendingSkip
+        let confirmation = model.pendingConfirmation
         let run = LessonRun(plan: plan, machines: targets)
         self.run = run
-        let none = Task<URL?, Never> { nil }
-        let finish = {
+        syncLessonState(model)
+        let finish = { [weak self] in
             run.complete()
+            self?.syncLessonState(model)
             model.refreshStatus(targets)
         }
         let rest = { [weak self] in
@@ -297,12 +318,17 @@ final class ClassroomModel: ObservableObject {
             let first = plan.steps.first == .warn ? 1 : 0
             guard first < plan.steps.count else { finish(); return }
             run.phase = "W toku"
-            self.launch(plan, run: run, title: "Zakończenie zajęć", range: first..<plan.steps.count, model: model,
-                        payload: none, completion: finish)
+            model.perform(skipping: skip?.ids ?? [], reason: skip?.reason ?? .loggedInUser, confirmation: confirmation) {
+                self.launch(plan, run: run, title: "Zakończenie zajęć", range: first..<plan.steps.count, model: model,
+                            completion: finish)
+            }
         }
         guard plan.steps.first == .warn else { rest(); return }
         run.phase = "Ostrzeżenie"
-        launch(plan, run: run, title: "Zakończenie zajęć – ostrzeżenie", range: 0..<1, model: model, payload: none) {
+        launch(plan, run: run, title: "Zakończenie zajęć – ostrzeżenie", range: 0..<1, model: model) {
+            // A retry of the warning only shows the message again: the countdown and the steps after it run once.
+            guard !run.restScheduled else { return }
+            run.restScheduled = true
             guard !run.cancelled else { finish(); return }
             let end = Date().addingTimeInterval(TimeInterval(max(1, plan.end.warnMinutes) * 60))
             run.countdownEnd = end
@@ -318,24 +344,37 @@ final class ClassroomModel: ObservableObject {
     }
 
     private func launch(_ plan: LessonPlan, run: LessonRun, title: String, range: Range<Int>?, model: AppModel,
-                        payload: Task<URL?, Never>, limiter: ConcurrencyLimiter? = nil,
+                        payload: SharedPayload? = nil, limiter: ConcurrencyLimiter? = nil,
                         completion: @escaping @MainActor () -> Void) {
         let ss = model.sshSettings
         // A lesson that starts by waking the Macs must not skip the ones that are still asleep.
         let batch = model.runBatch(title, on: run.machines, section: .classroom,
                                    maxParallel: limiter == nil ? nil : run.machines.count,
                                    includeUnreachable: plan.steps.contains(.wake), operation: { m, job in
-            let host = self.lessonHost(m, model)
-            let materials = await payload.value
-            return await LessonRunner.run(plan, on: host, ssh: ss, materials: materials, range: range, limiter: limiter,
-                                          handle: job.handle, onOutput: OutputSink(job).callback) { index, state in
-                DispatchQueue.main.async { run.update(m.id, index, state) }
+            // A retry passes the batch's copy of the Mac; the host list entry may have changed since.
+            let host = self.lessonHost(model.machine(m.id) ?? m, model)
+            let steps: @MainActor (URL?) async -> CommandResult = { materials in
+                await LessonRunner.run(plan, on: host, ssh: ss, materials: materials, range: range, limiter: limiter,
+                                       handle: job.handle, onOutput: OutputSink(job).callback) { index, state in
+                    DispatchQueue.main.async { run.update(m.id, index, state) }
+                }
+            }
+            guard let payload else { return await steps(nil) }
+            return await payload.useIfAvailable { materials, failure in
+                if let failure { job.note("Materiały: \(failure)") }
+                return await steps(materials)
             }
         }, completion: { _ in
             // Step updates are queued on the main queue; run the completion after them.
             DispatchQueue.main.async { completion() }
         })
-        if let batch { run.batches.append(batch) }
+        guard let batch else { return }
+        run.batches.append(batch)
+        // Macs left out on purpose or known to be off never run their steps: say why in the lesson table.
+        for job in batch.jobs where job.state == .skipped {
+            let why = job.skipReason == .loggedInUser ? "pominięto – zalogowany użytkownik" : "pominięto – komputer niedostępny"
+            for i in range ?? 0..<plan.steps.count { run.update(job.machine.id, i, .skipped(why)) }
+        }
     }
 
     /// Files and folders inside the materials folder (the folder itself is not sent).

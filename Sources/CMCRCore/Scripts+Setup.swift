@@ -88,7 +88,8 @@ public struct ReadinessItem: Sendable, Hashable {
 public struct ReadinessReport: Sendable {
     /// Why a Mac could not be checked; decides which fix the SSH cell offers.
     public enum ConnectionFailure: String, Sendable {
-        case hostKeyChanged, authFailed, offline, other
+        /// `hostKeyUnknown`: the Mac's key was never trusted (first contact) – see `HostTrust`.
+        case hostKeyChanged, hostKeyUnknown, authFailed, offline, other
     }
 
     public var items: [ReadinessCheck: ReadinessItem]
@@ -130,12 +131,11 @@ public struct ReadinessReport: Sendable {
     /// Report for a failed readiness run, classified from ssh's error output.
     public static func unreachable(_ result: CommandResult, date: Date = Date()) -> ReadinessReport {
         let (reachability, message) = SSH.diagnose(result)
-        let err = result.stderrText.lowercased()
         let failure: ConnectionFailure
         let short: String
-        if err.contains("host key verification failed") || err.contains("remote host identification has changed") {
-            failure = .hostKeyChanged
-            short = "zmieniony klucz"
+        if let refusal = result.started ? nil : HostTrust.refusal(result) {
+            failure = refusal == .changed ? .hostKeyChanged : .hostKeyUnknown
+            short = refusal == .changed ? "zmieniony klucz" : "niezaufany klucz"
         } else {
             switch reachability {
             case .authFailed: failure = .authFailed; short = "odmowa dostępu"

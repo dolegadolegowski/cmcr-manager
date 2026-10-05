@@ -67,10 +67,21 @@ final class Updater: ObservableObject {
     let location = InstallLocation.of(Bundle.main.bundleURL)
     let configuration = UpdateConfiguration.standard
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private lazy var feed = UpdateFeed(configuration: configuration, userAgent: userAgent)
     private var preparedArchive: URL?
     private var installWhenReady = false
+    /// The app is quitting because "Zainstaluj i uruchom ponownie" started the installer. Running jobs were
+    /// confirmed in the update sheet already, so the app delegate quits without asking a second time (a modal
+    /// question would also outlast the installer, which waits only 60 s for the app to quit).
+    private(set) var isQuittingForUpdate = false
+    /// The user agreed in the update sheet that running jobs may be interrupted.
+    private(set) var jobsConfirmed = false
+    /// The installer started as this user; stopped again when quitting is cancelled after all.
+    private var helperProcess: Process?
+    /// A root installer (folder that needs an administrator) cannot be stopped: until it gave up waiting for this
+    /// process, a second installation must not start next to it.
+    private var privilegedHelperBusyUntil: Date?
     private var work: Task<Void, Never>?
     private var checkTask: Task<Void, Never>?
     private var checkGeneration = 0
@@ -91,7 +102,9 @@ final class Updater: ObservableObject {
         static let pendingFrom = "update.pendingFrom"
     }
 
-    private init() {
+    /// `defaults`: tests pass their own suite; the app uses the standard one.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         defaults.register(defaults: [Keys.automaticChecks: true, Keys.automaticDownloads: true, Keys.automaticInstall: false])
         automaticChecks = defaults.bool(forKey: Keys.automaticChecks)
         automaticDownloads = defaults.bool(forKey: Keys.automaticDownloads)
@@ -318,9 +331,11 @@ final class Updater: ObservableObject {
             }
         } catch UpdateError.cancelled {
             installWhenReady = false
+            jobsConfirmed = false
             phase = .available
         } catch {
             installWhenReady = false
+            jobsConfirmed = false
             preparedArchive = nil
             ConfigStore.log("Uaktualnienie aplikacji: odrzucono \(c.manifest.version) – \(error.localizedDescription)")
             phase = .failed(error.localizedDescription)
@@ -328,7 +343,9 @@ final class Updater: ObservableObject {
     }
 
     /// Primary action of the sheet: downloads first when needed, then installs and relaunches.
-    func install() {
+    /// `jobsConfirmed`: the user answered "Przerwać trwające zadania?" in the sheet.
+    func install(jobsConfirmed: Bool = false) {
+        if jobsConfirmed { self.jobsConfirmed = true }
         switch phase {
         case .ready:
             installAndRelaunch()
@@ -347,12 +364,26 @@ final class Updater: ObservableObject {
 
     func cancelDownload() {
         installWhenReady = false
+        jobsConfirmed = false
         downloadTask?.cancel()
     }
 
-    /// "Zainstaluj i uruchom ponownie".
+    /// Jobs (or a lesson countdown) are running and the user has not agreed in the sheet to interrupt them.
+    var needsJobsConfirmation: Bool { (AppModel.shared?.hasRunningWork ?? false) && !jobsConfirmed }
+
+    /// "Zainstaluj i uruchom ponownie". Asks about running work in the sheet first – also when jobs started while
+    /// the update was downloading – and never after the installer is running.
     func installAndRelaunch() {
         guard phase == .ready else { return }
+        if needsJobsConfirmation {
+            ConfigStore.log("Uaktualnienie aplikacji: instalacja czeka – trwają zadania na iMacach")
+            isSheetPresented = true
+            return
+        }
+        if let until = privilegedHelperBusyUntil, until > Date() {
+            phase = .failed("Poprzednia próba instalacji jeszcze się nie zakończyła – spróbuj ponownie za minutę.")
+            return
+        }
         work = Task {
             phase = .installing
             do {
@@ -367,14 +398,40 @@ final class Updater: ObservableObject {
                 case .unsupported(let why):
                     throw UpdateError.notInstallable(why)
                 }
+                isQuittingForUpdate = true
                 NSApp.terminate(nil)             // the helper waits for this process to exit
+                // Reached only when quitting was cancelled after all.
+                quitForUpdateCancelled()
             } catch UpdateError.cancelled {
+                jobsConfirmed = false
                 phase = .ready
             } catch {
+                jobsConfirmed = false
                 ConfigStore.log("Uaktualnienie aplikacji: instalacja nie powiodła się – \(error.localizedDescription)")
                 phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    /// The app did not quit after the installer had started: stop that installer when possible and forget the
+    /// pending version, so the next start does not report a failed update, and offer the installation again.
+    func quitForUpdateCancelled() {
+        isQuittingForUpdate = false
+        jobsConfirmed = false
+        defaults.removeObject(forKey: Keys.pendingVersion)
+        defaults.removeObject(forKey: Keys.pendingFrom)
+        if let helper = helperProcess {
+            helperProcess = nil
+            if helper.isRunning { helper.terminate() }
+            ConfigStore.log("Uaktualnienie aplikacji: zamknięcie anulowane – instalacja nie została rozpoczęta")
+            phase = .ready
+        } else {
+            // The root installer gives up by itself once it has waited 60 s for this process.
+            privilegedHelperBusyUntil = Date().addingTimeInterval(75)
+            ConfigStore.log("Uaktualnienie aplikacji: zamknięcie anulowane – instalator administratora zakończy się sam")
+            phase = .failed("Aplikacja nie została zamknięta, więc uaktualnienia nie zainstalowano. Spróbuj ponownie za minutę.")
+        }
+        updateInstallOnQuit()
     }
 
     func skipThisVersion() {
@@ -423,7 +480,7 @@ final class Updater: ObservableObject {
 
     private func launchHelper(relaunch: Bool) throws {
         guard let request = installRequest(relaunch: relaunch) else { throw UpdateError.notInstallable("Brak pobranego uaktualnienia.") }
-        try UpdateInstaller.launch(request)
+        helperProcess = try UpdateInstaller.launch(request)
         markPending(request.version)
     }
 
@@ -441,7 +498,7 @@ final class Updater: ObservableObject {
         return url
     }
 
-    private static var cachesFolder: URL {
+    static var cachesFolder: URL {
         #if DEBUG
         if let dir = ProcessInfo.processInfo.environment["CMCR_UPDATE_STATE_DIR"] {
             return URL(fileURLWithPath: dir).appendingPathComponent("Updates")
@@ -450,11 +507,22 @@ final class Updater: ObservableObject {
         return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("pl.cmcr.manager/Updates")
     }
 
+    /// Only an installed copy with a known version cleans the update cache. A bare executable (`swift run`, UI
+    /// snapshots, the demo lab) or an isolated run (`CMCR_CONFIG_DIR`) shares the cache folder with the installed
+    /// app, whose verified update may be waiting there to be installed when it quits.
+    static func cleansUpdateCache(version: SemanticVersion?, location: InstallLocation,
+                                  environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        guard version != nil, location.url != nil else { return false }
+        return environment["CMCR_SNAPSHOT_DIR"] == nil && environment["CMCR_CONFIG_DIR"] == nil
+    }
+
     /// Removes downloaded archives of other versions and stale backups left by an interrupted helper.
-    private func removeLeftovers() {
+    func removeLeftovers() {
+        guard Self.cleansUpdateCache(version: currentVersion, location: location),
+              let current = currentVersion?.description else { return }
         let fm = FileManager.default
         for dir in (try? fm.contentsOfDirectory(at: Self.cachesFolder, includingPropertiesForKeys: nil)) ?? []
-            where dir.lastPathComponent != currentVersion?.description {
+            where dir.lastPathComponent != current {
             try? fm.removeItem(at: dir)
         }
         guard case .writable(let app) = location else { return }

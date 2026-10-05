@@ -173,9 +173,11 @@ final class OutputFlag: @unchecked Sendable {
 }
 
 /// ssh's messages about shared connections ("mux_client_request_session: … refused", "ControlSocket … already
-/// exists") and the wrapper's start marker are not the command's output.
+/// exists", a failed hand-over of the session's descriptors: "mm_send_fd: sendmsg(2): Message too long") and the
+/// wrapper's start marker are not the command's output.
 enum SSHNoise {
-    static let markers = ["mux_client_", "muxclient: ", "ControlSocket ", "Control socket connect("].map { Data($0.utf8) }
+    static let markers = ["mux_client_", "muxclient: ", "ControlSocket ", "Control socket connect(", "mm_send_fd: ",
+                          "mm_receive_fd: "].map { Data($0.utf8) }
     static let startLine = Data((RemoteScript.startMarker + "\n").utf8)
 
     static func containsStartMarker(_ data: Data) -> Bool {

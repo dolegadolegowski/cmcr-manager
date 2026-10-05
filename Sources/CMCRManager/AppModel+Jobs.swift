@@ -121,14 +121,13 @@ extension AppModel {
 
     /// Runs `action` (which starts batches synchronously) with `ids` turned into skipped jobs; the batches
     /// remember `confirmation`, so that repeating them asks again.
+    /// Nested calls (a lesson phase started inside the confirmed action) restore the outer values afterwards.
     func perform(skipping ids: Set<UUID>, reason: Job.SkipReason, confirmation: BatchConfirmation? = nil,
                  _ action: () -> Void) {
+        let outer = (pendingSkip, pendingConfirmation)
         pendingSkip = ids.isEmpty ? nil : (ids, reason)
         pendingConfirmation = confirmation
-        defer {
-            pendingSkip = nil
-            pendingConfirmation = nil
-        }
+        defer { (pendingSkip, pendingConfirmation) = outer }
         action()
     }
 
@@ -266,12 +265,13 @@ extension AppModel {
     // MARK: - Running jobs: sleep, Dock badge
 
     func runningJobsChanged(from old: Int) {
-        if runningJobCount > 0, sleepActivity == nil {
-            // An idle-sleeping admin Mac would drop every ssh connection and leave installs half done.
+        if hasRunningWork, sleepActivity == nil {
+            // An idle-sleeping admin Mac would drop every ssh connection and leave installs half done (or never
+            // run the rest of a lesson after its countdown).
             sleepActivity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .idleSystemSleepDisabled],
                 reason: "CMCR Manager: trwają zadania na iMacach")
-        } else if runningJobCount == 0, let activity = sleepActivity {
+        } else if !hasRunningWork, let activity = sleepActivity {
             ProcessInfo.processInfo.endActivity(activity)
             sleepActivity = nil
         }
@@ -367,6 +367,21 @@ final class SharedPayload: @unchecked Sendable {
         }
     }
 
+    /// Like `use`, but a packing failure does not stop the job: `body` gets nil and the reason (a lesson then
+    /// skips only its materials step and still wakes the Mac, opens apps and greets).
+    @MainActor
+    func useIfAvailable(_ body: @MainActor (URL?, String?) async -> CommandResult) async -> CommandResult {
+        switch await store.acquire() {
+        case .failure(let failure):
+            await store.release()
+            return await body(nil, failure.message)
+        case .success(let url):
+            let result = await body(url, nil)
+            await store.release()
+            return result
+        }
+    }
+
     func discard() {
         Task { await store.discard() }
     }
@@ -419,21 +434,67 @@ enum JobNotifier {
 
 // MARK: - Quitting while jobs run
 
+/// What the app asks before quitting with work in progress.
+struct QuitQuestion: Equatable {
+    let title: String
+    let message: String
+    let quitButton: String
+}
+
+extension AppModel {
+    /// The question to ask before quitting; nil quits right away. An update restart was confirmed in the update
+    /// sheet already ("Przerwać trwające zadania?"), so it is not asked twice – a second modal question would
+    /// also outlast the installer, which waits only 60 s for the app to quit.
+    func quitQuestion(quittingForUpdate: Bool) -> QuitQuestion? {
+        guard hasRunningWork, !quittingForUpdate else { return nil }
+        let n = runningJobCount
+        if n == 0 {
+            return QuitQuestion(
+                title: "Trwa zakończenie zajęć",
+                message: "Uczniowie zostali uprzedzeni; po odliczaniu aplikacja wykona pozostałe kroki (zamknięcie aplikacji, "
+                    + "zbieranie prac, porządki, wylogowanie, uśpienie lub wyłączenie – według ustawień). Zakończenie "
+                    + "aplikacji je pominie. Zamknięcie samego okna nie przerywa zajęć.",
+                quitButton: "Przerwij zajęcia i zakończ")
+        }
+        return QuitQuestion(
+            title: "\(Polish.plural(n, "Trwa", "Trwają", "Trwa")) \(Polish.jobs(n)) na iMacach",
+            message: "Zakończenie aplikacji przerwie połączenia – wysyłanie plików i instalacje mogą pozostać "
+                + "niedokończone. Zamknięcie samego okna nie przerywa zadań.",
+            quitButton: "Przerwij zadania i zakończ")
+    }
+
+    /// "Na iMacach trwają 3 zadania" / "Trwa zakończenie zajęć" for warnings before a restart.
+    var runningWorkSummary: String {
+        let n = runningJobCount
+        if n == 0 { return lessonInProgress ? "Trwa zakończenie zajęć (odliczanie)" : "Nic nie jest wykonywane" }
+        return "Na iMacach \(Polish.plural(n, "trwa", "trwają", "trwa")) \(Polish.jobs(n))"
+    }
+
+    /// Stops every batch and a lesson routine in progress (its countdown included).
+    func stopAllWork() {
+        ClassroomModel.shared.run?.cancel()
+        batches.forEach { $0.cancel() }
+    }
+}
+
 extension AppDelegate {
     @MainActor @objc
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model = AppModel.shared, model.runningJobCount > 0 else { return .terminateNow }
-        let n = model.runningJobCount
+        guard let model = AppModel.shared else { return .terminateNow }
+        let updating = Updater.shared.isQuittingForUpdate
+        guard let question = model.quitQuestion(quittingForUpdate: updating) else {
+            if updating { model.stopAllWork() }
+            return .terminateNow
+        }
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "\(Polish.plural(n, "Trwa", "Trwają", "Trwa")) \(Polish.jobs(n)) na iMacach"
-        alert.informativeText = "Zakończenie aplikacji przerwie połączenia – wysyłanie plików i instalacje mogą "
-            + "pozostać niedokończone. Zamknięcie samego okna nie przerywa zadań."
+        alert.messageText = question.title
+        alert.informativeText = question.message
         alert.addButton(withTitle: "Nie kończ")
-        let quit = alert.addButton(withTitle: "Przerwij zadania i zakończ")
+        let quit = alert.addButton(withTitle: question.quitButton)
         quit.hasDestructiveAction = true
         guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
-        model.batches.forEach { $0.cancel() }
+        model.stopAllWork()
         return .terminateNow
     }
 }
