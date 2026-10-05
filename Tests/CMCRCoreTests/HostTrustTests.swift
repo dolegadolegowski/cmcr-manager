@@ -46,6 +46,18 @@ struct HostTrustOptionTests {
         }
     }
 
+    @Test func sshReadsTheQuotedTrustedFiles() async {
+        // `ssh -G` prints the resulting configuration without connecting; -F /dev/null skips ~/.ssh/config.
+        let r = await ProcessRunner.run(SSH.sshPath, ["-F", "/dev/null", "-G"] + SSH.options(plain, password: "x")
+                                        + ["-p", "22", "nikt@imac07.local"], stdin: Data())
+        #expect(r.succeeded, "\(r.stderrText)")
+        #expect(r.stdoutText.contains("stricthostkeychecking true"))
+        #expect(r.stdoutText.contains("userknownhostsfile \(HostTrust.appKnownHostsFile.path) \(expandTilde("~/.ssh/known_hosts"))\n"))
+        let spaced = await ProcessRunner.run(SSH.sshPath, ["-F", "/dev/null", "-G", "-o",
+            "UserKnownHostsFile=" + HostTrust.optionValue(["/tmp/Application Support/known_hosts", "/tmp/a%b"]), "x@y"], stdin: Data())
+        #expect(spaced.stdoutText.contains("userknownhostsfile /tmp/Application Support/known_hosts /tmp/a%b\n"))
+    }
+
     @Test func trustedFilesAreTheAppsOwnOrTheConfiguredOnes() {
         #expect(HostTrust.files(plain) == [HostTrust.appKnownHostsFile.path, expandTilde("~/.ssh/known_hosts")])
         var s = plain
