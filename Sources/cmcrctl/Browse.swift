@@ -6,6 +6,7 @@ enum BrowseCLI {
     static let usage = """
       cmcrctl ls nr ścieżka [--all] [--root]    zawartość folderu na iMacu (--all: także ukryte)
       cmcrctl mkdir all|nr ścieżka [-p] [--root]   utwórz folder
+      cmcrctl exists all|nr ścieżka [--root]   czy folder istnieje na komputerach
       cmcrctl rm all|nr ścieżka… [--dry-run] [--root]   usuń pliki/foldery (foldery systemowe są chronione)
       cmcrctl rename nr ścieżka nowa-nazwa [--root]   zmień nazwę
       cmcrctl get nr ścieżka… katalog [--root]  pobierz wybrane elementy (z jednego folderu)
@@ -13,7 +14,7 @@ enum BrowseCLI {
                                                 zbierz prace do <katalog>/<data godzina>/<host>
     """
 
-    static let commands: Set<String> = ["ls", "mkdir", "rm", "rename", "get", "collect"]
+    static let commands: Set<String> = ["ls", "exists", "mkdir", "rm", "rename", "get", "collect"]
 
     struct Context {
         var settings: AppSettings
@@ -73,6 +74,18 @@ enum BrowseCLI {
                 printListing(listing, showHidden: flags.contains("--all"))
                 return 0
             }
+
+        case "exists":
+            guard args.count >= 2 else { error("Użycie: cmcrctl exists all|nr ścieżka"); return 2 }
+            let hosts = ctx.select(args[0])
+            var missing = 0
+            for h in hosts {
+                let p = await Operations.folderPresence(path(args[1]), on: h, asRoot: ctx.root,
+                                                        password: Keychain.password(for: h), settings: ctx.sshSettings)
+                if p != .exists { missing += 1 }
+                print("\(h.name): \(p.label)")
+            }
+            return missing == 0 ? 0 : 1
 
         case "mkdir":
             guard args.count >= 2 else { error("Użycie: cmcrctl mkdir all|nr ścieżka"); return 2 }

@@ -153,7 +153,10 @@ private extension RemoteBrowseError {
     let evil = "/Users/student/Desktop/'; rm -rf / #$(reboot)"
     for script in [Scripts.listDirectory(evil, asRoot: false), Scripts.makeDirectory(evil, asRoot: true),
                    Scripts.renameItem(evil, to: "x'y", asRoot: false), Scripts.deleteItems([evil, "/tmp/a"], asRoot: true),
-                   Scripts.archiveItems(in: "/tmp", names: [evil], asRoot: false)] {
+                   Scripts.archiveItems(in: "/tmp", names: [evil], asRoot: false),
+                   Scripts.removeCollected(in: evil, files: [CollectedFile(path: evil, modified: 1, size: 2)],
+                                           folders: [evil], asRoot: true),
+                   Scripts.folderPresence(evil, asRoot: false)] {
         #expect(script.body.contains(shQuote(evil)))
     }
     #expect(Scripts.deleteItems(["/tmp/a"], asRoot: true).asRoot)
@@ -165,7 +168,13 @@ private extension RemoteBrowseError {
                    Scripts.makeDirectory("~/a b", asRoot: true, intermediate: true),
                    Scripts.renameItem("/tmp/a", to: "b", asRoot: false),
                    Scripts.deleteItems(["/tmp/a", "/tmp/b\nc"], asRoot: true, dryRun: true),
-                   Scripts.archiveItems(in: "/tmp", names: ["a", "b c"], asRoot: false)]
+                   Scripts.archiveItems(in: "/tmp", names: ["a", "b c"], asRoot: false),
+                   Scripts.removeCollected(in: "/Users/{student}/Public/cmcr",
+                                           files: [CollectedFile(path: "a/b\nc.txt", modified: 1_759_650_000, size: 3),
+                                                   CollectedFile(path: "link", modified: 0, size: 0, isLink: true)],
+                                           folders: ["a"], asRoot: true),
+                   Scripts.removeCollected(in: "/tmp/x", files: [], folders: [], asRoot: false),
+                   Scripts.folderPresence("/Users/{console}/Desktop", asRoot: true)]
     for s in scripts {
         let r = await ProcessRunner.run("/bin/bash", ["-n", "-c", s.render()])
         #expect(r.succeeded, "bash -n: \(r.stderrText)")
@@ -214,4 +223,23 @@ private extension RemoteBrowseError {
     #expect(p.collectBase(s) == "~/Public/cmcr/zebrane")
     let decoded = try JSONDecoder().decode(FilesPreferences.self, from: Data(#"{"downloadFolder":"/tmp"}"#.utf8))
     #expect(decoded.downloadFolder == "/tmp" && decoded.collectTimestamped)
+}
+
+@Test func collectedContentsListsFilesWithTimesAndFoldersDeepestFirst() throws {
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("cmcr-unit-\(UUID().uuidString)")
+    try fm.createDirectory(at: dir.appendingPathComponent("projekt/src"), withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: dir) }
+    let file = dir.appendingPathComponent("projekt/src/main ą.txt")
+    try Data("abc".utf8).write(to: file)
+    let stamp = Date(timeIntervalSince1970: 1_759_650_000.75)
+    try fm.setAttributes([.modificationDate: stamp], ofItemAtPath: file.path)
+    try fm.createSymbolicLink(atPath: dir.appendingPathComponent("link").path, withDestinationPath: "/etc")
+    let (files, folders) = Operations.collectedContents(dir)
+    #expect(folders == ["projekt/src", "projekt"])
+    let main = try #require(files.first { $0.path == "projekt/src/main ą.txt" })
+    #expect(main.size == 3 && main.modified == 1_759_650_000 && !main.isLink)
+    let link = try #require(files.first { $0.path == "link" })
+    #expect(link.isLink)
+    #expect(files.count == 2, "the enumerator must not follow the link into /etc")
 }

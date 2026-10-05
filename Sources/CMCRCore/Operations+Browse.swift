@@ -15,6 +15,27 @@ public extension Operations {
         return .success(listing)
     }
 
+    /// Whether `path` exists as a folder on `host` (quick check used by the folder picker).
+    static func folderPresence(_ path: String, on host: Machine, asRoot: Bool, password: String?,
+                               settings: SSHSettings, timeout: TimeInterval = 20) async -> FolderPresence {
+        let r = await SSH.run(Scripts.folderPresence(path, asRoot: asRoot), on: host, password: password,
+                              settings: settings, timeout: timeout)
+        guard r.succeeded else {
+            switch RemoteBrowseError.from(r) {
+            case .noConsoleUser: return .noConsoleUser
+            case .unreachable: return .unreachable
+            case let e: return .failed(e.localizedDescription)
+            }
+        }
+        switch r.stdoutText.components(separatedBy: "CMCR-FOLDER ").last?
+            .trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "yes": return .exists
+        case "no": return .missing
+        case "file": return .notFolder
+        default: return .unknown
+        }
+    }
+
     /// Downloads items of one remote folder into `localDirectory`. Existing local items are never overwritten:
     /// copies get a " (2)", " (3)"… suffix. Returns the saved items (also after a partial failure).
     static func download(_ names: [String], in folder: String, from host: Machine, into localDirectory: URL,
@@ -193,6 +214,27 @@ public extension Operations {
         if n == 1 { return one }
         let d = n % 10, dd = n % 100
         return (2...4).contains(d) && !(12...14).contains(dd) ? few : many
+    }
+}
+
+/// Result of `Operations.folderPresence`.
+public enum FolderPresence: Equatable, Sendable {
+    case exists, missing, notFolder
+    /// No permission to look (e.g. a private folder checked without sudo).
+    case unknown
+    case noConsoleUser, unreachable
+    case failed(String)
+
+    public var label: String {
+        switch self {
+        case .exists: return "jest"
+        case .missing: return "brak folderu"
+        case .notFolder: return "to plik, nie folder"
+        case .unknown: return "brak dostępu"
+        case .noConsoleUser: return "nikt nie jest zalogowany"
+        case .unreachable: return "niedostępny"
+        case .failed(let m): return m
+        }
     }
 }
 

@@ -66,6 +66,22 @@ expect "ls: ~ → katalog administratora" "$out" "Folder nie istnieje: $HOME/.cm
 out="$(ctl ls 1 "względna/ścieżka")"
 expect "ls: ścieżka względna odrzucona" "$out" "musi zaczynać się od /"
 
+section "Wybór folderu – czy istnieje na komputerach"
+out="$(ctl exists 1 "$B/folder ze spacją")"; code=$?
+expect "exists: folder jest" "$out" "imac01: jest"
+expect_code "exists: kod 0" "$code" 0 "$out"
+out="$(ctl exists 1 "$B/nie ma takiego")"; code=$?
+expect "exists: brak folderu" "$out" "imac01: brak folderu"
+expect_code "exists: brak – kod 1" "$code" 1 "$out"
+out="$(ctl exists 1 "$B/rozmiar.bin")"
+expect "exists: plik zamiast folderu" "$out" "to plik, nie folder"
+chmod 000 "$B/zablokowany"
+out="$(ctl exists 1 "$B/zablokowany/w środku")"
+expect "exists: brak dostępu bez sudo" "$out" "brak dostępu"
+chmod 755 "$B/zablokowany"
+out="$(ctl exists 1 "/Users/{student}")"
+expect "exists: {student}" "$out" "imac01: jest"
+
 section "Przeglądarka plików – nowy folder i zmiana nazwy"
 out="$(ctl mkdir 1 "$B/Nowy folder ą")"; code=$?
 expect_code "mkdir: kod 0" "$code" 0 "$out"
@@ -153,6 +169,28 @@ expect_code "collect --clean: kod 0" "$code" 0 "$out"
   || fail "collect --no-date" "$(ls -laR "$WORK/zebrane-bez-daty")"
 [ -d "$S" ] && [ -z "$(ls -A "$S")" ] && pass "collect --clean: folder ucznia wyczyszczony (sam folder został)" \
   || fail "collect --clean" "$(ls -la "$S" 2>&1)"
+S2="$WORK/remote/prace w toku"
+mkdir -p "$S2/gotowe/głębiej" "$S2/w toku"
+echo "a" > "$S2/gotowe/głębiej/a.txt"
+echo "b" > "$S2/b ą.txt"
+: > "$S2/w toku/log.txt"
+echo "poza" > "$WORK/poza.txt"
+ln -s "$WORK/poza.txt" "$S2/link poza"
+( while :; do echo x >> "$S2/w toku/log.txt"; sleep 0.05; done ) &
+WRITER=$!
+out="$(ctlpw collect 1 --from "$S2" --to "$WORK/zebrane-w-toku" --no-date --clean)"; code=$?
+kill "$WRITER" 2>/dev/null; wait "$WRITER" 2>/dev/null
+expect_code "collect --clean w trakcie pracy: kod 0" "$code" 0 "$out"
+[ ! -e "$S2/b ą.txt" ] && [ ! -e "$S2/gotowe" ] \
+  && pass "collect --clean: zebrane pliki i opróżnione foldery usunięte" || fail "collect --clean: pozostałości" "$(ls -laR "$S2")"
+[ -f "$S2/w toku/log.txt" ] && pass "collect --clean: plik zmieniony w trakcie zbierania został" \
+  || fail "collect --clean: usunięto plik zmieniony po zebraniu" "$out"
+expect "collect --clean: informacja o pozostawionych" "$out" "Pozostawiono plików zmienionych w międzyczasie: 1"
+[ ! -L "$S2/link poza" ] && [ -f "$WORK/poza.txt" ] \
+  && pass "collect --clean: dowiązanie usunięte, plik docelowy nietknięty" || fail "collect --clean: dowiązanie" "$(ls -la "$S2" "$WORK")"
+[ -f "$WORK/zebrane-w-toku/imac01/gotowe/głębiej/a.txt" ] && pass "collect --clean: kopia kompletna" \
+  || fail "collect --clean: brak kopii" "$(ls -laR "$WORK/zebrane-w-toku")"
+
 out="$(ctlpw collect 1 --from "$S" --to "$WORK/zebrane-puste")"; code=$?
 expect "collect: pusty folder" "$out" "nic do zebrania"
 [ ! -e "$WORK/zebrane-puste" ] || [ -z "$(find "$WORK/zebrane-puste" -mindepth 2)" ] \
