@@ -39,14 +39,14 @@ struct RemoteFolderPicker: View {
             Divider()
             HStack(spacing: 0) {
                 sidebar
-                    .frame(width: 230)
+                    .frame(width: 265)
                 Divider()
                 content
             }
             Divider()
             footer
         }
-        .frame(minWidth: 900, idealWidth: 980, minHeight: 560, idealHeight: 660)
+        .frame(minWidth: 960, idealWidth: 1020, minHeight: 580, idealHeight: 680)
         .onAppear {
             let start = request.initialPath.isEmpty ? RemotePaths.favorites(model.settings)[0].path : request.initialPath
             preferConsole = RemotePaths.usesConsoleUser(start)
@@ -119,7 +119,7 @@ struct RemoteFolderPicker: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 RemoteNavigationButtons(browser: browser)
-                RemotePathBar(browser: browser)
+                    .labelStyle(.iconOnly)
                 Spacer(minLength: 8)
                 Toggle(isOn: $browser.showHidden) {
                     Label("Pokaż ukryte", systemImage: browser.showHidden ? "eye" : "eye.slash")
@@ -152,6 +152,12 @@ struct RemoteFolderPicker: View {
                 }
             }
             .overlay { RemoteBrowserStatus(browser: browser, emptyHint: "Możesz wybrać ten folder albo utworzyć w nim nowy.") }
+            Divider()
+            RemotePathBar(browser: browser)
+                .font(.callout)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

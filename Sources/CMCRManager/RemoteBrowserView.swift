@@ -108,14 +108,14 @@ private struct RemoteBrowserPage: View {
             Button {
                 uploadWithPanel()
             } label: {
-                Label("Wyślij tutaj…", systemImage: "square.and.arrow.up")
+                Label("Wyślij tutaj…", systemImage: "arrow.up.doc")
             }
             .disabled(browser.listing == nil)
             .help("Wyślij pliki z tego Maca do bieżącego folderu (możesz też przeciągnąć je z Findera)")
             Button {
                 download(browser.selectedEntries)
             } label: {
-                Label("Pobierz", systemImage: "square.and.arrow.down")
+                Label("Pobierz", systemImage: "arrow.down.doc")
             }
             .disabled(browser.selection.isEmpty)
             .help("Pobierz zaznaczone elementy na ten Mac")
@@ -278,12 +278,16 @@ private struct RemoteBrowserPage: View {
         let title = entries.count == 1
             ? "Usunąć „\(entries[0].displayName)”?"
             : "Usunąć \(entries.count) \(Operations.plural(entries.count, "element", "elementy", "elementów"))?"
-        let names = entries.count == 1 ? "Element" : entries.prefix(5).map { "„\($0.displayName)”" }.joined(separator: ", ")
-            + (entries.count > 5 ? " i \(entries.count - 5) innych" : "")
-        confirm = ConfirmRequest(
-            title: title,
-            message: "\(names) zostanie trwale usunięty z komputera \(browser.host?.name ?? "") (\(browser.path)). Elementy nie trafiają do Kosza – tej operacji nie można cofnąć.",
-            button: "Usuń") {
+        let place = "z komputera \(browser.host?.name ?? "") (\(browser.path))"
+        let message: String
+        if entries.count == 1 {
+            message = "Element zostanie trwale usunięty \(place). Nie trafi do Kosza – tej operacji nie można cofnąć."
+        } else {
+            let names = entries.prefix(5).map { "„\($0.displayName)”" }.joined(separator: ", ")
+                + (entries.count > 5 ? " i \(entries.count - 5) innych" : "")
+            message = "Zostaną trwale usunięte \(place): \(names). Nie trafią do Kosza – tej operacji nie można cofnąć."
+        }
+        confirm = ConfirmRequest(title: title, message: message, button: "Usuń") {
             browser.delete(entries)
         }
     }

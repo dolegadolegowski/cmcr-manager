@@ -16,13 +16,29 @@ extension RemoteEntry {
         return UTType(filenameExtension: fileExtension) ?? .data
     }
 
-    /// Finder-like "Rodzaj" column.
+    /// Finder-like "Rodzaj" column (in Polish regardless of the system's language).
     var kindDescription: String {
         if kind == .symlink { return pointsToDirectory && !isPackage ? "Dowiązanie do folderu" : "Dowiązanie" }
         if isFolder { return "Folder" }
-        if fileExtension == "app" { return "Aplikacja" }
-        if fileExtension.isEmpty && kind == .file { return "Dokument" }
-        return contentType.localizedDescription ?? "Dokument"
+        if kind == .other { return "Plik specjalny" }
+        let t = contentType
+        let ext = fileExtension.uppercased()
+        let kinds: [(UTType, String)] = [
+            (.applicationBundle, "Aplikacja"), (.image, "Obraz \(ext)"), (.movie, "Film"), (.audio, "Dźwięk"),
+            (.pdf, "Dokument PDF"), (.spreadsheet, "Arkusz kalkulacyjny"), (.presentation, "Prezentacja"),
+            (.shellScript, "Skrypt"), (.sourceCode, "Kod źródłowy"), (.html, "Strona internetowa"),
+            (.plainText, "Dokument tekstowy"), (.rtf, "Dokument RTF"), (.json, "Dane JSON"),
+            (.diskImage, "Obraz dysku"), (.archive, "Archiwum"), (.font, "Czcionka"),
+            (.unixExecutable, "Program"), (.bundle, "Pakiet"),
+        ]
+        if let match = kinds.first(where: { t.conforms(to: $0.0) }) { return match.1 }
+        if ["DOC", "DOCX", "PAGES", "ODT"].contains(ext) { return "Dokument tekstowy" }
+        if ["PKG", "MPKG"].contains(ext) { return "Pakiet instalacyjny" }
+        return ext.isEmpty ? "Dokument" : "Dokument \(ext)"
+    }
+
+    var sizeText: String {
+        kind == .file ? size.formatted(.byteCount(style: .file)) : "—"
     }
 }
 
@@ -118,26 +134,32 @@ struct RemoteFileTable<Menu: View>: View {
             TableColumn("Nazwa", value: \.name, comparator: .localizedStandard) { e in
                 RemoteEntryLabel(entry: e, dimmed: foldersOnly && !e.isFolder)
             }
-            .width(min: 180, ideal: 320)
+            .width(min: 150, ideal: 230)
             TableColumn("Data modyfikacji", value: \.modified) { e in
                 Text(e.modified, format: .dateTime.day().month(.abbreviated).year().hour().minute())
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .width(min: 120, ideal: 150)
+            .width(min: 100, ideal: 130)
             TableColumn("Rozmiar", value: \.size) { e in
-                Text(e.kind == .file ? ByteCountFormatter.string(fromByteCount: e.size, countStyle: .file) : "—")
+                Text(e.sizeText)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .width(min: 60, ideal: 80)
+            .width(min: 55, ideal: 70)
             TableColumn("Rodzaj", value: \.kindDescription) { e in
-                Text(e.kindDescription).foregroundStyle(.secondary)
+                Text(e.kindDescription)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .width(min: 80, ideal: 130)
+            .width(min: 70, ideal: 110)
             TableColumn("Właściciel", value: \.owner) { e in
-                Text(e.owner).foregroundStyle(.secondary)
+                Text(e.owner)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .width(min: 60, ideal: 90)
+            .width(min: 50, ideal: 70)
         }
         .contextMenu(forSelectionType: RemoteEntry.ID.self) { ids in
             menu(ids)
@@ -148,41 +170,64 @@ struct RemoteFileTable<Menu: View>: View {
     }
 }
 
-/// Breadcrumbs of the current folder (`imac04 › Users › student › Desktop`), each one clickable.
+/// Breadcrumbs of the current folder (`imac04 › Users › student › Desktop`), each one clickable. Deep paths
+/// keep the Mac, the last three folders and an "…" menu with the ones in between.
 struct RemotePathBar: View {
     @ObservedObject var browser: RemoteBrowserModel
 
     var body: some View {
         let crumbs = RemotePaths.breadcrumbs(browser.path)
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
-                    ForEach(Array(crumbs.enumerated()), id: \.offset) { index, crumb in
-                        if index > 0 {
-                            Image(systemName: "chevron.right")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                        let isLast = index == crumbs.count - 1
-                        Button {
-                            browser.open(crumb.path)
-                        } label: {
-                            Label(index == 0 && crumb.path == "/" ? (browser.host?.name ?? "Dysk") : crumb.name,
-                                  systemImage: index == 0 && crumb.path == "/" ? "desktopcomputer" : "folder")
-                                .labelStyle(.titleAndIcon)
-                                .lineLimit(1)
-                                .fontWeight(isLast ? .semibold : .regular)
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(isLast ? .primary : .secondary)
-                        .disabled(isLast)
-                        .help(crumb.path)
-                        .id(index)
-                    }
+        let collapsed = crumbs.count > 5 ? Array(crumbs[1..<(crumbs.count - 3)]) : []
+        let shown = collapsed.isEmpty ? crumbs : [crumbs[0]] + crumbs.suffix(3)
+        HStack(spacing: 2) {
+            ForEach(Array(shown.enumerated()), id: \.offset) { index, crumb in
+                if index > 0 {
+                    separator
                 }
-                .padding(.horizontal, 2)
+                if index == 1 && !collapsed.isEmpty {
+                    Menu {
+                        ForEach(collapsed.reversed(), id: \.path) { c in
+                            Button { browser.open(c.path) } label: { Label(c.name, systemImage: "folder") }
+                        }
+                    } label: {
+                        Text("…")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help(collapsed.map(\.name).joined(separator: " › "))
+                    separator
+                }
+                crumbButton(crumb, isRoot: crumb.path == "/", isLast: index == shown.count - 1)
             }
-            .onChange(of: browser.path) { _, _ in proxy.scrollTo(crumbs.count - 1, anchor: .trailing) }
+        }
+        .lineLimit(1)
+    }
+
+    var separator: some View {
+        Image(systemName: "chevron.right")
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+    }
+
+    @ViewBuilder
+    func crumbButton(_ crumb: (name: String, path: String), isRoot: Bool, isLast: Bool) -> some View {
+        let label = Label(isRoot ? (browser.host?.name ?? "Dysk") : crumb.name,
+                          systemImage: isRoot ? "desktopcomputer" : "folder")
+            .labelStyle(.titleAndIcon)
+            .truncationMode(.middle)
+        let help = isRoot ? "Dysk systemowy komputera \(browser.host?.name ?? "")" : crumb.path
+        if isLast {
+            label
+                .fontWeight(.semibold)
+                .layoutPriority(1)
+                .help(help)
+        } else {
+            Button { browser.open(crumb.path) } label: { label }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .help(help)
         }
     }
 }
@@ -201,6 +246,7 @@ struct RemoteNavigationButtons: View {
                 .help("Następny folder")
         }
         .controlGroupStyle(.navigation)
+        .fixedSize()
         Button { browser.goUp() } label: { Label("Folder nadrzędny", systemImage: "arrow.up") }
             .disabled(!browser.canGoUp)
             .help("Przejdź do folderu nadrzędnego")

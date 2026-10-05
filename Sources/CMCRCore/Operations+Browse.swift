@@ -75,7 +75,7 @@ public extension Operations {
             return (.failure("Nie można zapisać w \(dest.path): \(error.localizedDescription)"), nil)
         }
         let (files, bytes) = contentSummary(dest)
-        onOutput?(.stdout, Data("✔ Zebrano \(files) \(plural(files, "plik", "pliki", "plików")) (\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))) → \(dest.path)\n".utf8))
+        onOutput?(.stdout, Data("✔ Zebrano \(files) \(plural(files, "plik", "pliki", "plików")) (\(bytes.formatted(.byteCount(style: .file)))) → \(dest.path)\n".utf8))
 
         guard cleanAfter else { return (CommandResult(exitCode: 0), dest) }
         onOutput?(.stdout, Data("→ Czyszczenie: usuwanie zebranych elementów z \(source)…\n".utf8))

@@ -118,7 +118,8 @@ final class FilesState: ObservableObject {
     var nextCollectionExample: String {
         let folder = Operations.collectionFolder(base: collectBase, timestamped: prefs.collectTimestamped)
         let host = app.selectedMachines.first?.name ?? "imac01"
-        return (folder.appendingPathComponent(host).path as NSString).abbreviatingWithTildeInPath
+        let base = RemotePaths.lastComponent(collectBase)
+        return prefs.collectTimestamped ? "\(base)/\(folder.lastPathComponent)/\(host)/…" : "\(base)/\(host)/…"
     }
 
     // MARK: - Actions

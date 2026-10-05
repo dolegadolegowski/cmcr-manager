@@ -165,31 +165,38 @@ private struct FilesPage: View {
                 .help("Wskaż folder na iMacach, z którego mają zostać zebrane prace")
             }
             .padding(.vertical, 4)
-            LabeledContent("Zapisz na tym Macu w") {
-                HStack {
-                    Text((expandTilde(state.collectBase) as NSString).abbreviatingWithTildeInPath)
-                        .font(.body.monospaced())
+            HStack(spacing: 10) {
+                let local = expandTilde(state.collectBase)
+                Image(nsImage: NSWorkspace.shared.icon(forFile: FileManager.default.fileExists(atPath: local)
+                                                       ? local : NSHomeDirectory()))
+                    .resizable()
+                    .frame(width: 30, height: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Zapisz na tym Macu w")
+                    Text((local as NSString).abbreviatingWithTildeInPath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
-                    Button("Wybierz…") {
-                        if let url = Pickers.folder() { state.collectBase = (url.path as NSString).abbreviatingWithTildeInPath }
-                    }
                 }
+                Spacer(minLength: 12)
+                Button("Zmień…") {
+                    if let url = Pickers.folder() { state.collectBase = (url.path as NSString).abbreviatingWithTildeInPath }
+                }
+                .help("Wybierz folder na tym Macu, do którego trafią zebrane prace")
             }
-            Toggle("Osobny folder z datą i godziną dla każdego zbierania", isOn: $state.prefs.collectTimestamped)
+            Toggle(isOn: $state.prefs.collectTimestamped) {
+                Text("Osobny folder z datą i godziną dla każdego zbierania")
+                Text("Prace trafią do: \(state.nextCollectionExample)")
+            }
             Toggle("Z uprawnieniami administratora (prywatne foldery ucznia)", isOn: $state.collectAsRoot)
             Toggle(isOn: $state.collectClean) {
                 Text("Po zebraniu wyczyść folder ucznia")
                 Text("Usuwane są tylko pliki, które dotarły na ten Mac – praca zapisana w międzyczasie zostaje.")
             }
             HStack(spacing: 12) {
-                Text("Prace trafią do: \(state.nextCollectionExample)")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 12)
+                Spacer()
                 Button {
                     state.revealLastCollection()
                 } label: {
@@ -288,46 +295,60 @@ private struct FilesPage: View {
     // MARK: cmcr-helpers convention
 
     var conventionSection: some View {
-        Section {
-            Text("Na tym Macu: \(model.settings.localFolder)/all → na wszystkie komputery, \(model.settings.localFolder)/<host> → tylko na dany komputer. Cel: \(model.settings.sharedFolder) (właściciel \(model.settings.studentUser), wszyscy mogą zmieniać).")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
-                Button {
-                    model.prepareLocalFolders()
-                } label: {
-                    Label("Przygotuj foldery", systemImage: "folder.badge.plus")
+        let local = (expandTilde(model.settings.localFolder) as NSString).abbreviatingWithTildeInPath
+        let shared = RemotePaths.friendlyName(model.settings.sharedFolder, settings: model.settings).title
+        return Section {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Foldery na tym Macu")
+                    Text("\(local)/all → na wszystkie komputery, \(local)/<host> → tylko na dany komputer")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .help("Utwórz \(model.settings.localFolder)/all oraz foldery wszystkich komputerów i pokaż je w Finderze")
+                Spacer(minLength: 12)
+                Button("Przygotuj foldery") { model.prepareLocalFolders() }
+                    .help("Utwórz \(local)/all oraz foldery wszystkich komputerów i pokaż je w Finderze")
+                Button("Otwórz w Finderze") { model.openLocalFolder(model.settings.localFolder) }
+            }
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Wyślij do: \(shared)")
+                    Text("cmcr-push – właściciel \(model.settings.studentUser), wszyscy mogą zmieniać")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 12)
                 Button {
                     model.pushConvention(on: targets, includeAll: true)
                 } label: {
-                    Label("Wyślij (all + host)", systemImage: "arrow.up.circle")
+                    Label("Wszystko", systemImage: "arrow.up.circle")
                 }
                 .disabled(targets.isEmpty)
-                .help("cmcr-push: wyślij pliki z folderu all i folderu danego komputera")
+                .help("Wyślij pliki z folderu all oraz z folderu danego komputera")
                 Button {
                     model.pushConvention(on: targets, includeAll: false)
                 } label: {
-                    Label("Tylko foldery hostów", systemImage: "arrow.up.circle")
+                    Label("Tylko foldery komputerów", systemImage: "arrow.up.circle")
                 }
                 .disabled(targets.isEmpty)
-                .help("cmcr-push bez folderu all")
+                .help("Wyślij tylko pliki z folderów <host> (bez folderu all)")
+            }
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Pobierz z: \(shared)")
+                    Text("cmcr-pull – do \(local)/<host>; pliki o tych samych nazwach są nadpisywane")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 12)
                 Button {
                     model.pullFiles(source: model.settings.sharedFolder, localBase: model.settings.localFolder,
                                     asRoot: false, on: targets)
                 } label: {
-                    Label("Pobierz (cmcr-pull)", systemImage: "arrow.down.circle")
+                    Label("Pobierz", systemImage: "arrow.down.circle")
                 }
                 .disabled(targets.isEmpty)
-                .help("cmcr-pull: folder cmcr ucznia → \(model.settings.localFolder)/<host> (nadpisuje pliki o tych samych nazwach)")
-                Spacer(minLength: 8)
-                Button {
-                    model.openLocalFolder(model.settings.localFolder)
-                } label: {
-                    Label("Otwórz w Finderze", systemImage: "folder")
-                }
+                .help("Do zbierania prac lepiej użyć „Zbierz prace uczniów” – niczego nie nadpisuje")
             }
         } header: {
             Label("Konwencja cmcr-helpers", systemImage: "folder.badge.gearshape")
