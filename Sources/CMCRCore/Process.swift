@@ -61,7 +61,8 @@ public final class ProcessHandle: @unchecked Sendable {
 
     func attach(_ p: Process) {
         lock.lock()
-        process = p
+        // A process that already exited (and was detached) must not be pinned.
+        if p.isRunning { process = p }
         let cancelled = cancelledFlag
         lock.unlock()
         if cancelled { Self.terminate(p) }
