@@ -133,8 +133,10 @@ out="$(ctl exec 'exit 7' 1)"; code=$?
 expect_code "exec: kod wyjścia przekazany" "$code" 7 "$out"
 out="$(ctl exec 'ls -d "$CMCR_TMP" && echo ok' 1)"
 expect "exec: prywatny katalog tymczasowy" "$out" "/tmp/cmcr." "ok"
-left="$(ls -d /tmp/cmcr.?????? 2>/dev/null | while read -r d; do [ -O "$d" ] && echo "$d"; done | wc -l | tr -d ' ')"
-[ "$left" = 0 ] && pass "exec: katalog tymczasowy usunięty po zakończeniu" || fail "exec: zostały katalogi tymczasowe ($left)" "$(ls -ld /tmp/cmcr.?????? 2>/dev/null)"
+# Checks this run's directory only: other test runs on the same Mac may be creating their own right now.
+tmpdir="$(printf '%s\n' "$out" | grep -o '/tmp/cmcr\.[A-Za-z0-9]*' | head -n 1)"
+[ -n "$tmpdir" ] && [ ! -e "$tmpdir" ] && pass "exec: katalog tymczasowy usunięty po zakończeniu" \
+  || fail "exec: został katalog tymczasowy ${tmpdir:-?}" "$(ls -la "$tmpdir" 2>&1)"
 
 section "Uprawnienia administratora (sudo przez askpass)"
 clear_fakelog

@@ -61,7 +61,7 @@ Konfiguracja
 
 Opcje
   -j N, --jobs N    ile komputerów obsługiwać naraz (domyślnie 1; status i updates list: \(AppSettings().maxParallel)
-                    lub „Równoległość” z ustawień); wyniki zawsze w kolejności listy
+                    lub „Równoległe operacje” z ustawień); wyniki zawsze w kolejności listy
   --prefix          poprzedź każdy wiersz wyniku nazwą komputera, np. [imac04]
   --root            wykonaj jako root (sudo z hasłem administratora)
   --yes, -y         nie pytaj o potwierdzenie (wymagane bez terminala dla restartu, wylogowania, usuwania)
@@ -253,11 +253,11 @@ struct CLI: Sendable {
 
     /// Like the app: a MAC address reported by a running Mac is stored for Wake-on-LAN when none is set.
     func rememberMACs(_ list: [Machine], _ results: [CommandResult?], quiet: Bool) {
-        var learned: [UUID: String] = [:]
+        var learned: [(host: Machine, mac: String)] = []
         for (h, r) in zip(list, results) where h.macAddress.isEmpty {
             guard let r, r.succeeded, let mac = Parsers.keyValues(r.stdoutText)["mac"], WakeOnLAN.parseMAC(mac) != nil
             else { continue }
-            learned[h.id] = mac
+            learned.append((h, mac))
         }
         guard !learned.isEmpty else { return }
         let file = ConfigStore.directory.appendingPathComponent("hosts.json")
@@ -268,9 +268,13 @@ struct CLI: Sendable {
                   let decoded = try? JSONDecoder().decode([Machine].self, from: data) else { return }
             current = decoded
         }
+        // Entries written without an `id` get a new one on every load, so also match by connection details.
+        func same(_ a: Machine, _ b: Machine) -> Bool {
+            a.id == b.id || (a.name == b.name && a.address == b.address && a.user == b.user && a.port == b.port)
+        }
         var updated: [String] = []
-        for i in current.indices {
-            if current[i].macAddress.isEmpty, let mac = learned[current[i].id] {
+        for i in current.indices where current[i].macAddress.isEmpty {
+            if let mac = learned.first(where: { same($0.host, current[i]) })?.mac {
                 current[i].macAddress = mac
                 updated.append(current[i].name)
             }

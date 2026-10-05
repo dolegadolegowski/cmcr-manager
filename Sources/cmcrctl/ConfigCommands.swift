@@ -144,8 +144,9 @@ extension CLI {
         return ExitCode.success
     }
 
+    /// Always saves: the Keychain account is derived from the host `id`, which must therefore be persisted.
     func setUsesShared(_ shared: Bool, for host: Machine) {
-        guard let i = hosts.firstIndex(where: { $0.id == host.id }), hosts[i].usesSharedPassword != shared else { return }
+        guard let i = hosts.firstIndex(where: { $0.id == host.id }) else { return }
         var list = hosts
         list[i].usesSharedPassword = shared
         ConfigStore.saveHosts(list)
