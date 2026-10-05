@@ -224,7 +224,8 @@ final class ClassroomModel: ObservableObject {
         let hosts = targets.map { lessonHost($0, model) }
         let sending = Task { await Self.sendWake(hosts) }
         let ss = model.sshSettings
-        model.runBatch("Wake-on-LAN", on: targets, section: section) { m, job in
+        // Waiting is cheap (a probe every few seconds), so every Mac waits at once.
+        model.runBatch("Wake-on-LAN", on: targets, section: section, maxParallel: targets.count) { m, job in
             if let error = await sending.value[m.id] { return .failure(error) }
             let host = self.lessonHost(m, model)
             job.note("Wysłano pakiet Wake-on-LAN (\(host.macs.joined(separator: ", "))) – czekam do 3 min, aż komputer odpowie.")
@@ -266,7 +267,11 @@ final class ClassroomModel: ObservableObject {
             if case .success(let url) = await Payload.make(items) { return url }
             return nil
         }
-        launch(plan, run: run, title: "Rozpoczęcie zajęć", range: nil, model: model, payload: payloadTask) {
+        // Macs that are still waking up must not hold back the ones that are ready: waking runs for all Macs at
+        // once, the other steps share the usual number of parallel connections.
+        let limiter = plan.steps.contains(.wake) ? ConcurrencyLimiter(limit: model.settings.maxParallel) : nil
+        launch(plan, run: run, title: "Rozpoczęcie zajęć", range: nil, model: model, payload: payloadTask,
+               limiter: limiter) {
             Task { if let url = await payloadTask.value { try? FileManager.default.removeItem(at: url) } }
             run.complete()
             model.refreshStatus(targets)
@@ -312,12 +317,14 @@ final class ClassroomModel: ObservableObject {
     }
 
     private func launch(_ plan: LessonPlan, run: LessonRun, title: String, range: Range<Int>?, model: AppModel,
-                        payload: Task<URL?, Never>, completion: @escaping @MainActor () -> Void) {
+                        payload: Task<URL?, Never>, limiter: ConcurrencyLimiter? = nil,
+                        completion: @escaping @MainActor () -> Void) {
         let ss = model.sshSettings
-        let batch = model.runBatch(title, on: run.machines, section: .classroom, operation: { m, job in
+        let batch = model.runBatch(title, on: run.machines, section: .classroom,
+                                   maxParallel: limiter == nil ? nil : run.machines.count, operation: { m, job in
             let host = self.lessonHost(m, model)
             let materials = await payload.value
-            return await LessonRunner.run(plan, on: host, ssh: ss, materials: materials, range: range,
+            return await LessonRunner.run(plan, on: host, ssh: ss, materials: materials, range: range, limiter: limiter,
                                           handle: job.handle, onOutput: OutputSink(job).callback) { index, state in
                 DispatchQueue.main.async { run.update(m.id, index, state) }
             }
@@ -368,15 +375,17 @@ final class ClassroomModel: ObservableObject {
 
     // MARK: - Questions
 
-    func ask(_ model: AppModel, _ targets: [Machine]) {
+    /// Shows the question on every target at once (each dialog keeps its connection open until the student
+    /// answers, so the usual parallel limit would delay the question on the remaining Macs). Without `buttons`
+    /// the student types the answer.
+    func ask(_ model: AppModel, _ targets: [Machine], buttons: [String]) {
         let text = config.lastQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !targets.isEmpty else { return }
-        let buttons = config.questionButtons.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
         let seconds = max(1, config.questionTimeoutMinutes) * 60
         let round = QuestionRound(question: text, machines: targets)
         question = round
-        round.batch = model.runBatch("Pytanie: \(text.prefix(50))", on: targets, section: .classroom) { m, job in
+        round.batch = model.runBatch("Pytanie: \(text.prefix(50))", on: targets, section: .classroom,
+                                     maxParallel: targets.count) { m, job in
             let r = await model.ssh(Scripts.ask(title: "Pytanie od nauczyciela", prompt: text, buttons: buttons,
                                                  timeoutSeconds: seconds),
                                     on: m, job: job, timeout: TimeInterval(seconds + 60))

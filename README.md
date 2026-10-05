@@ -75,9 +75,9 @@ Zaznaczenie komputerów na liście (środkowa kolumna) jest wspólne dla wszystk
 ## Zajęcia, tryb uwagi i zasilanie
 
 - **Rozpocznij zajęcia** – budzi komputery (Wake-on-LAN) i czeka, aż odpowiedzą, wysyła materiały z wybranego folderu do folderu cmcr lub na Biurko ucznia, uruchamia aplikacje i wyświetla powitanie. Postęp każdego kroku widać osobno dla każdego iMaca.
-- **Zakończ zajęcia** – uprzedza uczniów i odlicza czas, zbiera prace do nowego folderu `~/Public/cmcr/zebrane/<data_godzina> <klasa>/<komputer>`, zamyka aplikacje, czyści folder cmcr i Pobrane (tylko na komputerach, z których prace zebrano), wylogowuje, usypia lub wyłącza. Ustawienia obu scenariuszy zapisują się w `classroom.json`.
+- **Zakończ zajęcia** – uprzedza uczniów i odlicza czas, zamyka aplikacje, zbiera prace do nowego folderu `~/Public/cmcr/zebrane/<data_godzina> <klasa>/<komputer>`, czyści folder cmcr (tylko razem ze zbieraniem prac i tylko na komputerach, z których prace zebrano) i Pobrane (pomijane, gdy zbieranie prac się nie udało), wylogowuje, usypia lub wyłącza. Ustawienia obu scenariuszy zapisują się w `classroom.json`.
 - **Tryb uwagi** – zakrywa ekrany uczniów komunikatem. Najpierw używa narzędzia LockScreen z Apple Remote Desktop wbudowanego w macOS (`…/RemoteManagement/AppleVNCServer.bundle/Contents/Support/LockScreen.app`, argumenty `-session <ID sesji z ioreg> -msg <tekst>`); jeśli się nie uruchomi, pokazuje okno na pełnym ekranie rysowane przez `osascript` (JavaScript for Automation) w sesji ucznia. Okno ukrywa Dock i menu i wyłącza przełączanie aplikacji, ale nie jest zabezpieczeniem. Apple nie dokumentuje LockScreen — sprawdź go na jednym iMacu przed lekcją. Automatyczne odblokowanie po ustawionym czasie chroni przed utratą połączenia.
-- **Zapytaj uczniów** – pytanie w oknie na ekranie ucznia (pole tekstowe albo do 3 przycisków); odpowiedzi zbierają się w tabeli i można je wyeksportować do CSV.
+- **Zapytaj uczniów** – pytanie pojawia się jednocześnie na wszystkich zaznaczonych komputerach w oknie na ekranie ucznia (pole tekstowe albo do 3 przycisków); odpowiedzi zbierają się w tabeli i można je wyeksportować do CSV.
 - **Harmonogram zasilania** – `pmset repeat` (jedno budzenie/włączanie i jedno usypianie/wyłączanie w wybrane dni), włączanie po zaniku zasilania (`autorestart`) i Wake-on-LAN (`womp`). **Wake-on-LAN budzi tylko z uśpienia** — wyłączone komputery włączy wyłącznie harmonogram. Na Macach z FileVault po restarcie lub włączeniu pojawia się ekran odblokowania dysku; aplikacja ostrzega o tym przed restartem.
 - **Wake-on-LAN** wysyła pakiety na 255.255.255.255 i na adres rozgłoszeniowy każdego interfejsu (porty 9 i 7, kilka razy), preferuje adres MAC karty Ethernet i czeka, aż komputer odpowie.
 - **Komputery** – kafelki zaznaczają pasujące komputery, kolumny tabeli można ukrywać, przestawiać i sortować, panel szczegółów pokazuje notatki, IP/MAC, FileVault i harmonogram. Ostatni znany stan zostaje zapisany między uruchomieniami (`status-cache.json`). Raport CSV (UTF-8, średnik – otwiera się w Excelu), porównanie wersji aplikacji na wszystkich iMacach i zmiana nazw komputerów (ComputerName, LocalHostName, HostName) z aktualizacją adresów `.local` na liście.
@@ -89,7 +89,7 @@ Zaznaczenie komputerów na liście (środkowa kolumna) jest wspólne dla wszystk
 | pytanie do uczniów | `cmcrctl ask "pytanie" [all\|nr] [--buttons "Tak,Nie"]` |
 | harmonogram zasilania | `cmcrctl schedule show\|set\|clear [all\|nr] [--on MTWRF@07:45] [--off MTWRF@16:30]` |
 | restart/wyłączenie za N min | `cmcrctl power-later restart\|shutdown\|sleep N [all\|nr] [--warn "…"]`, `cmcrctl power-cancel` |
-| nazwy komputerów | `cmcrctl rename [all\|nr] [--name "…"] [--dry-run] [--update-list]` |
+| nazwy komputerów (z listy; `--name` tylko dla jednego komputera) | `cmcrctl rename [all\|nr] [--name "…"] [--dry-run] [--update-list]` |
 | wersja aplikacji, FileVault, raport | `cmcrctl app-version "Nazwa"`, `cmcrctl filevault`, `cmcrctl report plik.csv` |
 
 ## Jak to działa i bezpieczeństwo

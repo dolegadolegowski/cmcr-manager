@@ -315,13 +315,14 @@ public extension Scripts {
         """#)
     }
 
-    /// Quits (SIGTERM) every application of the logged-in user started from an Applications folder.
+    /// Quits (SIGTERM) every application of the logged-in user started from an Applications folder, including
+    /// the apps macOS 13+ runs from the system cryptex (Safari).
     static func quitAllApps() -> RemoteScript {
         RemoteScript(#"""
         if [ -z "$CONSOLE_USER" ]; then echo "Nikt nie jest zalogowany – nie ma czego zamykać."; exit 0; fi
         PIDS="$(ps -axww -o pid=,user=,comm= | awk -v u="$CONSOLE_USER" '$2 == u {
           p = $0; sub(/^ *[0-9]+ +[^ ]+ +/, "", p)
-          if (p ~ /^(\/Applications\/|\/System\/Applications\/|\/Users\/[^\/]+\/Applications\/)/ && p ~ /\.app\/Contents\/MacOS\/[^\/]+$/ && p !~ /\.app\/.*\.app\//) print $1
+          if (p ~ /^(\/Applications\/|\/System\/Applications\/|\/System\/Volumes\/Preboot\/Cryptexes\/App\/System\/Applications\/|\/System\/Cryptexes\/App\/System\/Applications\/|\/Users\/[^\/]+\/Applications\/)/ && p ~ /\.app\/Contents\/MacOS\/[^\/]+$/ && p !~ /\.app\/.*\.app\//) print $1
         }')"
         if [ -z "$PIDS" ]; then echo "Brak otwartych aplikacji."; exit 0; fi
         asroot kill -TERM $PIDS && echo "✔ Zamknięto aplikacje użytkownika $CONSOLE_USER (PID: $(echo $PIDS))."

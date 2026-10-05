@@ -225,9 +225,14 @@ private struct EndLessonSection: View {
                 }
             }
 
-            Toggle(isOn: c.cleanShared) {
+            Toggle(isOn: Binding(get: { c.wrappedValue.collect && c.wrappedValue.cleanShared },
+                                 set: { c.wrappedValue.cleanShared = $0 })) {
                 StepLabel(.cleanShared, "Wyczyść folder cmcr ucznia")
             }
+            .disabled(!c.wrappedValue.collect)
+            .help(c.wrappedValue.collect
+                  ? "Po zebraniu prac usuwa zawartość folderu cmcr ucznia"
+                  : "Włącz „Zbierz prace” – folder ucznia jest czyszczony dopiero po zebraniu z niego prac")
             Toggle(isOn: c.cleanDownloads) {
                 StepLabel(.cleanDownloads, "Wyczyść folder Pobrane ucznia")
             }
@@ -262,7 +267,7 @@ private struct EndLessonSection: View {
         } header: {
             Label("Zakończ zajęcia", systemImage: "stop.circle")
         } footer: {
-            Text("Foldery ucznia są czyszczone tylko na komputerach, z których udało się zebrać prace.")
+            Text("Folder cmcr ucznia jest czyszczony tylko razem ze zbieraniem prac i tylko na komputerach, z których udało się je zebrać. Gdy zbieranie się nie uda, folder Pobrane też zostaje nietknięty. Aplikacje są zamykane przed zbieraniem prac.")
                 .foregroundStyle(.secondary)
         }
     }
@@ -455,21 +460,39 @@ private struct AttentionSection: View {
 private struct QuestionSection: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var classroom = ClassroomModel.shared
-    @ViewState private var withButtons = false
+
+    private var withButtons: Bool { classroom.config.questionWithButtons }
+    private var buttons: [String] { classroom.config.questionButtonList }
+
+    /// Why the question cannot be sent yet (shown under the button list), or nil.
+    private var buttonProblem: String? {
+        guard withButtons else { return nil }
+        if buttons.isEmpty { return "Wpisz nazwy przycisków, rozdzielone przecinkami." }
+        let limit = ClassroomConfig.maxQuestionButtons
+        if buttons.count > limit {
+            return "Okno pytania mieści najwyżej \(limit) przyciski – usuń \(buttons.count - limit)."
+        }
+        return nil
+    }
 
     var body: some View {
         Section {
             TextField("Pytanie", text: $classroom.config.lastQuestion, prompt: Text("np. Czy skończyłeś zadanie 3?"),
                       axis: .vertical)
                 .lineLimit(1...4)
-            Picker("Odpowiedź", selection: $withButtons) {
+            Picker("Odpowiedź", selection: $classroom.config.questionWithButtons) {
                 Text("Uczeń wpisuje tekst").tag(false)
                 Text("Uczeń wybiera przycisk").tag(true)
             }
             .pickerStyle(.segmented)
             if withButtons {
                 TextField("Przyciski", text: $classroom.config.questionButtons, prompt: Text("np. Tak, Nie, Potrzebuję pomocy"))
-                    .help("Najwyżej 3 przyciski, rozdzielone przecinkami.")
+                    .help("Najwyżej \(ClassroomConfig.maxQuestionButtons) przyciski, rozdzielone przecinkami.")
+                if let buttonProblem {
+                    Label(buttonProblem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                }
             }
             Picker("Czekaj na odpowiedź", selection: $classroom.config.questionTimeoutMinutes) {
                 ForEach([1, 2, 5, 10], id: \.self) { Text("\($0) min").tag($0) }
@@ -477,10 +500,10 @@ private struct QuestionSection: View {
             HStack {
                 Spacer()
                 TargetButton(title: "Zadaj pytanie", icon: "questionmark.bubble", prominent: false) {
-                    if !withButtons { classroom.config.questionButtons = "" }
-                    classroom.ask(model, model.selectedMachines)
+                    classroom.ask(model, model.selectedMachines, buttons: withButtons ? buttons : [])
                 }
-                .disabled(classroom.config.lastQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(classroom.config.lastQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || buttonProblem != nil)
             }
             if let round = classroom.question {
                 AnswersView(round: round)
@@ -491,7 +514,6 @@ private struct QuestionSection: View {
             Text("Pytanie pojawia się w oknie na ekranie ucznia; odpowiedzi zbierają się tutaj.")
                 .foregroundStyle(.secondary)
         }
-        .onAppear { withButtons = !classroom.config.questionButtons.isEmpty }
     }
 }
 

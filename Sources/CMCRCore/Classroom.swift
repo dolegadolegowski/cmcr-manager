@@ -316,7 +316,7 @@ public struct LessonEndConfig: Codable, Equatable, Sendable {
     public var appList: [String] { LessonStartConfig.splitList(apps) }
 
     /// True when the routine deletes files or ends the session (needs an explicit confirmation).
-    public var isDisruptive: Bool { cleanShared || cleanDownloads || logout || power != .none || quitApps }
+    public var isDisruptive: Bool { (cleanShared && collect) || cleanDownloads || logout || power != .none || quitApps }
 }
 
 public enum AttentionMode: String, Codable, CaseIterable, Sendable {
@@ -342,6 +342,8 @@ public struct ClassroomConfig: Codable, Equatable, Sendable {
     public var wakeOnLAN = true
     public var lastQuestion = ""
     public var questionButtons = ""
+    /// Answer with buttons (`questionButtons`) instead of a text field; the button names stay saved either way.
+    public var questionWithButtons = false
     public var questionTimeoutMinutes = 2
     /// Dashboard table column layout (visibility, order, widths) as encoded by SwiftUI.
     public var dashboardTableState = ""
@@ -362,9 +364,18 @@ public struct ClassroomConfig: Codable, Equatable, Sendable {
         wakeOnLAN = try c.decodeIfPresent(Bool.self, forKey: .wakeOnLAN) ?? d.wakeOnLAN
         lastQuestion = try c.decodeIfPresent(String.self, forKey: .lastQuestion) ?? d.lastQuestion
         questionButtons = try c.decodeIfPresent(String.self, forKey: .questionButtons) ?? d.questionButtons
+        questionWithButtons = try c.decodeIfPresent(Bool.self, forKey: .questionWithButtons) ?? !questionButtons.isEmpty
         questionTimeoutMinutes = try c.decodeIfPresent(Int.self, forKey: .questionTimeoutMinutes) ?? d.questionTimeoutMinutes
         dashboardTableState = try c.decodeIfPresent(String.self, forKey: .dashboardTableState) ?? d.dashboardTableState
         lastAppVersionQuery = try c.decodeIfPresent(String.self, forKey: .lastAppVersionQuery) ?? d.lastAppVersionQuery
+    }
+
+    /// The macOS dialog shows at most this many buttons.
+    public static let maxQuestionButtons = 3
+
+    /// Button names entered as a comma-separated list.
+    public var questionButtonList: [String] {
+        questionButtons.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 }
 
@@ -393,15 +404,23 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     }
 
     /// Restored status: hardware and network information is kept, the reachability is unknown until the next
-    /// check and the logged-in user (which changes all the time) is dropped.
+    /// check and the logged-in user and boot time (both stale by then) are dropped.
     public var restored: HostStatus {
         var st = HostStatus()
         st.reachability = .unknown
         st.info = info
         st.info["console"] = nil
+        st.info["boot"] = nil
         st.updatedAt = updatedAt
         return st
     }
+}
+
+extension HostStatus {
+    /// Uptime only while the Mac answers: for a Mac that is off, "now minus last boot" keeps growing.
+    private var answersNow: Bool { reachability == .online || reachability == .checking }
+    public var liveUptimeText: String? { answersNow ? uptimeText : nil }
+    public var liveUptime: TimeInterval? { answersNow ? bootDate.map { Date().timeIntervalSince($0) } : nil }
 }
 
 public enum ClassroomStore {
@@ -594,7 +613,7 @@ public enum InventoryReport {
         InventoryColumn("serial", "Numer seryjny") { _, s, _ in s.info["serial"] ?? "" },
         InventoryColumn("ip", "IP") { _, s, _ in s.ip ?? "" },
         InventoryColumn("mac", "MAC") { m, s, _ in s.info["mac_ethernet"].flatMap { $0.isEmpty ? nil : $0 } ?? s.mac ?? m.macAddress },
-        InventoryColumn("uptime", "Czas pracy") { _, s, _ in s.uptimeText ?? "" },
+        InventoryColumn("uptime", "Czas pracy") { _, s, _ in s.liveUptimeText ?? "" },
         InventoryColumn("diskFree", "Wolne miejsce (GB)") { _, s, _ in s.freeDiskGB.map { String(format: "%.0f", $0) } ?? "" },
         InventoryColumn("diskTotal", "Pojemność dysku (GB)") { _, s, _ in s.totalDiskGB.map { String(format: "%.0f", $0) } ?? "" },
         InventoryColumn("filevault", "FileVault") { _, s, _ in s.info["fv"] ?? s.info["filevault"] ?? "" },

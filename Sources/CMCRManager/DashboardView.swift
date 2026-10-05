@@ -17,7 +17,7 @@ struct DashboardRow: Identifiable {
     var model: String { status.model ?? "" }
     var ip: String { status.ip ?? "" }
     var mac: String { status.preferredMAC ?? machine.macAddress }
-    var uptime: Double { status.bootDate.map { Date().timeIntervalSince($0) } ?? -1 }
+    var uptime: Double { status.liveUptime ?? -1 }
     var freeGB: Double { status.freeDiskGB ?? -1 }
     var seen: Date { lastSeen ?? .distantPast }
     var note: String { status.message.isEmpty ? machine.notes : status.message }
@@ -201,7 +201,7 @@ struct DashboardView: View {
         .width(min: 90, ideal: 120)
         .customizationID("disk")
         TableColumn("Czas pracy", value: \.uptime) { row in
-            Text(row.status.uptimeText ?? "—")
+            Text(row.status.liveUptimeText ?? "—")
         }
         .width(min: 60, ideal: 80)
         .customizationID("uptime")

@@ -47,7 +47,7 @@ struct HostInspector: View {
                 LabeledContent("Model", value: st.model ?? "—")
                 if let chip = st.info["chip"], !chip.isEmpty { LabeledContent("Procesor", value: chip) }
                 if let mem = st.info["mem"], !mem.isEmpty { LabeledContent("Pamięć", value: "\(mem) GB") }
-                LabeledContent("Czas pracy", value: st.uptimeText ?? "—")
+                LabeledContent("Czas pracy", value: st.liveUptimeText ?? "—")
                 LabeledContent("Ostatnio widziany") {
                     if st.reachability == .online {
                         Text("teraz")

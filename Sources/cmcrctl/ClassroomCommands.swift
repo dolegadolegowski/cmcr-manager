@@ -15,6 +15,7 @@ enum ClassroomCLI {
       cmcrctl schedule show|set|clear [all|nr] [--on MTWRF@07:45] [--off MTWRF@16:30]
                        [--on-type wakeorpoweron|wake] [--off-type sleep|shutdown] [--no-autorestart] [--no-womp]
       cmcrctl rename [all|nr] [--name "Nazwa"] [--dry-run] [--update-list]
+                                                      nazwy z listy; --name tylko dla jednego komputera
       cmcrctl power-later restart|shutdown|sleep MINUTY [all|nr] [--warn "komunikat"]
       cmcrctl power-cancel [all|nr]                   anuluj zaplanowane wyłączenie/restart/uśpienie
       cmcrctl app-version "Nazwa" [all|nr]            wersja aplikacji na komputerach
@@ -99,19 +100,30 @@ enum ClassroomCLI {
         case "ask":
             guard let question = pos.first else { return error("Podaj treść pytania.") }
             let buttons = (opt["--buttons"] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            guard buttons.count <= ClassroomConfig.maxQuestionButtons else {
+                return error("Okno pytania mieści najwyżej \(ClassroomConfig.maxQuestionButtons) przyciski.")
+            }
             let seconds = opt["--timeout"].flatMap(Int.init) ?? 120
+            let script = Scripts.ask(title: "Pytanie od nauczyciela", prompt: question, buttons: buttons,
+                                     timeoutSeconds: seconds)
+            // All Macs at once: every dialog waits for its student. Answers are printed as they arrive.
             var status: Int32 = 0
-            for h in select(pos.count > 1 ? pos[1] : nil) {
-                let r = await SSH.run(Scripts.ask(title: "Pytanie od nauczyciela", prompt: question, buttons: buttons,
-                                                  timeoutSeconds: seconds),
-                                      on: h, password: Keychain.password(for: h), settings: ssh,
-                                      timeout: TimeInterval(seconds + 60))
-                if let answer = StudentAnswer.parse(r.stdoutText) {
-                    let who = answer.user.isEmpty ? "" : " (\(answer.user))"
-                    print("\(h.name)\(who): \(answer.displayText)")
-                } else {
-                    print("\(h.name): —")
-                    status = max(status, report(r))
+            await withTaskGroup(of: (Machine, CommandResult).self) { group in
+                for h in select(pos.count > 1 ? pos[1] : nil) {
+                    let pw = Keychain.password(for: h)
+                    group.addTask {
+                        (h, await SSH.run(script, on: h, password: pw, settings: ssh, timeout: TimeInterval(seconds + 60)))
+                    }
+                }
+                for await (h, r) in group {
+                    if let answer = StudentAnswer.parse(r.stdoutText) {
+                        let who = answer.user.isEmpty ? "" : " (\(answer.user))"
+                        print("\(h.name)\(who): \(answer.displayText)")
+                    } else {
+                        print("\(h.name): —")
+                        status = max(status, report(r))
+                    }
                 }
             }
             return status
@@ -164,9 +176,13 @@ enum ClassroomCLI {
             }
 
         case "rename":
+            let targets = select(pos.first)
+            if opt["--name"] != nil && targets.count > 1 {
+                return error("--name można podać tylko dla jednego komputera (wszystkie dostałyby tę samą nazwę). Bez --name każdy komputer dostaje nazwę z listy.")
+            }
             var hosts = ConfigStore.loadHosts()
             var status: Int32 = 0
-            for h in select(pos.first) {
+            for h in targets {
                 let name = opt["--name"] ?? h.name
                 let lhn = ComputerNames.localHostName(from: name)
                 guard ComputerNames.isValidLocalHostName(lhn) else {
