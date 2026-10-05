@@ -437,7 +437,7 @@ public enum SSH {
             if lower.contains("session open refused by peer") || lower.contains("mux_client") {
                 return (.error, "Przekroczono limit jednoczesnych sesji SSH na komputerze – spróbuj ponownie lub zmniejsz liczbę równoległych operacji.")
             }
-            if lower.contains("server not responding") {
+            if lower.contains("timeout, server") || lower.contains("not responding") {
                 return (.offline, "Połączenie zerwane – komputer przestał odpowiadać (uśpiony, wyłączony lub poza siecią).")
             }
             if lower.contains("closed by remote host") || lower.contains("broken pipe") {
