@@ -33,7 +33,7 @@ extension View {
     /// confirmation). Apply it to the button's label: bordered buttons on macOS ignore `.tint` and a colour set
     /// on the button itself. A disabled button keeps the usual dimmed look.
     func destructiveLabel() -> some View {
-        modifier(DestructiveLabel())
+        modifier(DestructiveLabelStyle())
     }
 }
 
@@ -66,7 +66,7 @@ private struct GroupedFormWidth: ViewModifier {
     }
 }
 
-private struct DestructiveLabel: ViewModifier {
+private struct DestructiveLabelStyle: ViewModifier {
     @Environment(\.isEnabled) private var isEnabled
 
     @ViewBuilder func body(content: Content) -> some View {

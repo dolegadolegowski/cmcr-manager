@@ -101,6 +101,11 @@ struct CMCRManagerApp: App {
         }
         .defaultSize(width: 1100, height: 720)
         .commandsRemoved()
+
+        Settings {
+            AppSettingsWindow()
+                .environmentObject(model)
+        }
     }
 }
 

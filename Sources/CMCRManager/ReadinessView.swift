@@ -174,26 +174,49 @@ extension ReadinessState {
 }
 
 extension ReadinessCheck {
+    /// Name shown in the app, without jargon (the core `title` keeps the technical name for the CLI).
+    var displayTitle: String {
+        switch self {
+        case .ssh: return "Połączenie i klucz"
+        case .sudo: return "Hasło administratora"
+        case .wol: return "Budzenie przez sieć"
+        case .filevault: return "Szyfrowanie FileVault"
+        case .setup: return "Wersja konfiguracji"
+        default: return title
+        }
+    }
+
     /// Column header broken into lines, so no title is truncated in the matrix.
     var header: String {
         switch self {
-        case .ssh: return "SSH\ni klucz"
+        case .ssh: return "Połączenie\ni klucz"
+        case .sudo: return "Hasło\nadministratora"
         case .folder: return "Folder\nucznia"
+        case .wol: return "Budzenie\nprzez sieć"
         case .vnc: return "Udostępnianie\nekranu"
         case .screen: return "Nagrywanie\nekranu"
         case .fda: return "Pełny dostęp\ndo dysku"
-        default: return title
+        case .filevault: return "FileVault"
+        case .setup: return "Wersja\nkonfiguracji"
+        }
+    }
+
+    /// Tooltip of the column: the explanation plus the technical name where the display name hides it.
+    var tooltip: String {
+        switch self {
+        case .ssh: return "Połączenie zdalne (SSH). " + explanation
+        case .sudo: return "Uprawnienia administratora (sudo). " + explanation
+        case .wol: return "Wake-on-LAN. " + explanation
+        default: return explanation
         }
     }
 }
 
 extension View {
-    @ViewBuilder func readinessChipBackground() -> some View {
-        if #available(macOS 26, *) {
-            glassEffect(.regular, in: .capsule)
-        } else {
-            background(.quaternary.opacity(0.6), in: Capsule())
-        }
+    /// Tile behind a summary count: a quiet fill with a hairline, readable in both appearances.
+    func readinessChipBackground() -> some View {
+        background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.secondary.opacity(0.08)))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.secondary.opacity(0.18)))
     }
 }
 
@@ -223,11 +246,21 @@ enum ManualStep: String, CaseIterable, Identifiable {
         }
     }
 
+    var color: Color {
+        switch self {
+        case .fullDiskAccess: return .gray
+        case .screenRecording: return .red
+        case .screenSharing: return .indigo
+        case .fileVault: return .blue
+        case .localNetwork: return .blue
+        }
+    }
+
     var summary: String {
         switch self {
         case .fullDiskAccess: return "Pobieranie prac z Biurka i Dokumentów ucznia, czyszczenie folderów, podmiana aplikacji."
         case .screenRecording: return "Bez tego podgląd ekranów pokazuje tylko tapetę."
-        case .screenSharing: return "Tylko gdy połączenie VNC pokazuje czarny ekran."
+        case .screenSharing: return "Tylko gdy Udostępnianie ekranu (VNC) pokazuje czarny obraz."
         case .fileVault: return "Z FileVault iMac po restarcie jest niedostępny, dopóki ktoś go nie odblokuje."
         case .localNetwork: return "Jednorazowa zgoda macOS dla CMCR Manager."
         }
@@ -297,8 +330,18 @@ struct ReadinessView: View {
     @ViewState private var passwordFor: Machine?
 
     var body: some View {
+        ScrollViewReader { proxy in
+            page
+                .onSnapshotSubpage { if $0 == "readiness+end" { proxy.scrollTo("manualSteps", anchor: .top) } }
+        }
+    }
+
+    var page: some View {
         Page {
-            header
+            PageHeader(title: "Gotowość iMaców", icon: "checklist",
+                       subtitle: "Co jest już przygotowane na każdym iMacu. Większość ustawień włączysz stąd zdalnie jednym przyciskiem; dwa uprawnienia prywatności macOS trzeba raz włączyć przy komputerze.") {
+                TargetSummary()
+            }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { primaryActions; secondaryActions; Spacer(minLength: 0) }
                 VStack(alignment: .leading, spacing: 8) {
@@ -317,6 +360,7 @@ struct ReadinessView: View {
                 legend
             }
             ManualStepsBox(store: store)
+                .id("manualSteps")
             LastBatchView(section: .setup)
         }
         .sheet(item: $sheet) { mode in
@@ -330,20 +374,12 @@ struct ReadinessView: View {
                 store.check(model.machines, model: model)
             }
         }
-    }
-
-    var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Label("Gotowość iMaców", systemImage: "checklist")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-                TargetSummary()
+        .onSnapshotSubpage { sub in
+            switch sub {
+            case "readiness+configure": sheet = .configure(model.selectedMachines)
+            case "readiness+save": sheet = .save
+            default: sheet = nil
             }
-            Text("Co jest już przygotowane na każdym iMacu. Większość ustawień skonfigurujesz stąd zdalnie jednym skryptem uruchamianym jako root; dwa uprawnienia prywatności macOS trzeba włączyć raz przy komputerze.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -353,42 +389,54 @@ struct ReadinessView: View {
         } label: {
             Label("Sprawdź wszystkie", systemImage: "arrow.clockwise")
         }
-        .help("Sprawdza wszystkie iMaki – nic nie zmienia.")
+        .keyboardShortcut("r", modifiers: [.command, .option])
+        .help("Sprawdza wszystkie iMaki – niczego nie zmienia i nie pokazuje uczniom żadnych okien (⌥⌘R)")
         .disabled(model.machines.isEmpty || !store.checking.isEmpty)
+        // Counted like the target header: Macs skipped as unreachable are not configured.
+        let targets = model.actionTargets.count
         Button {
             sheet = .configure(model.selectedMachines)
         } label: {
-            Label("Skonfiguruj zaznaczone (\(model.selection.count))…", systemImage: "wrench.and.screwdriver")
+            Label(targets == 0 ? "Skonfiguruj zaznaczone…" : "Skonfiguruj zaznaczone (\(targets))…",
+                  systemImage: "wrench.and.screwdriver")
         }
         .buttonStyle(.borderedProminent)
-        .disabled(model.selection.isEmpty)
-        .help("Uruchamia jednorazowy skrypt konfiguracyjny jako root na zaznaczonych iMacach (wymaga hasła administratora).")
+        .disabled(targets == 0)
+        .help(targets == 0 ? "Najpierw zaznacz włączone komputery na liście."
+              : "Włącza wybrane ustawienia \(Polish.onComputers(targets)) jednorazowym skryptem uruchamianym z uprawnieniami administratora – najpierw pokaże listę opcji.")
     }
 
     @ViewBuilder var secondaryActions: some View {
         Button {
             sheet = .save
         } label: {
-            Label("Zapisz skrypt konfiguracyjny…", systemImage: "square.and.arrow.down")
+            Label("Zapisz skrypt do pliku…", systemImage: "square.and.arrow.down")
         }
-        .help("Zapisuje skrypt do uruchomienia przy iMacu (sudo bash) – np. gdy SSH jeszcze nie działa.")
+        .help("Zapisuje skrypt do uruchomienia przy iMacu (np. z pendrive’a) – gdy połączenie zdalne jeszcze nie działa.")
         Menu {
-            Button("Zainstaluj klucz SSH aplikacji", systemImage: "key.horizontal") {
-                model.applyReadinessFix(.key, on: model.selectedMachines)
+            Section("Na zaznaczonych komputerach") {
+                Button("Zainstaluj klucz logowania", systemImage: "key.horizontal") {
+                    model.applyReadinessFix(.key, on: model.selectedMachines)
+                }
+                .disabled(model.managerPublicKey == nil || model.actionTargets.isEmpty)
+                Button("Utwórz folder ucznia", systemImage: "folder.badge.plus") {
+                    model.applyReadinessFix(.folder, on: model.selectedMachines)
+                }
+                .disabled(model.actionTargets.isEmpty)
+                Button("Włącz budzenie przez sieć (Wake-on-LAN)", systemImage: "dot.radiowaves.left.and.right") {
+                    model.applyReadinessFix(.wol, on: model.selectedMachines)
+                }
+                .disabled(model.actionTargets.isEmpty)
+                Button("Włącz Udostępnianie ekranu", systemImage: "rectangle.on.rectangle") {
+                    model.applyReadinessFix(.vnc, on: model.selectedMachines)
+                }
+                .disabled(model.actionTargets.isEmpty)
             }
-            .disabled(model.managerPublicKey == nil)
-            Button("Utwórz folder ucznia", systemImage: "folder.badge.plus") {
-                model.applyReadinessFix(.folder, on: model.selectedMachines)
-            }
-            Button("Włącz Wake-on-LAN", systemImage: "dot.radiowaves.left.and.right") {
-                model.applyReadinessFix(.wol, on: model.selectedMachines)
-            }
-            Button("Włącz Udostępnianie ekranu", systemImage: "rectangle.on.rectangle") {
-                model.applyReadinessFix(.vnc, on: model.selectedMachines)
-            }
-            Divider()
-            Button("Zapomnij klucz hosta (po reinstalacji iMaca)", systemImage: "key.slash") {
-                model.forgetHostKeys(model.selectedMachines)
+            Section("Tylko po reinstalacji lub wymianie iMaca") {
+                Button("Zapomnij zapamiętany identyfikator iMaca", systemImage: "key.slash") {
+                    model.forgetHostKeys(model.selectedMachines)
+                }
+                .help("Usuwa z tego Maca zapamiętany klucz hosta SSH zaznaczonych iMaców – przy następnym połączeniu zostanie zapamiętany nowy.")
             }
         } label: {
             Label("Szybkie naprawy", systemImage: "bandage")
@@ -405,7 +453,7 @@ struct ReadinessView: View {
                 Text("Sprawdzanie (\(store.checking.count))…").foregroundStyle(.secondary)
             }
         } else if let date = store.lastCheck {
-            Text("Sprawdzono o \(date.formatted(date: .omitted, time: .shortened))")
+            Text("Sprawdzono o \(date.formatted(date: .omitted, time: .shortened)). Kliknij liczbę, aby zaznaczyć te komputery.")
                 .foregroundStyle(.secondary)
         }
     }
@@ -416,17 +464,26 @@ struct ReadinessView: View {
         let offline = pairs.filter { $0.1.values.isEmpty }.map(\.0)
         let configure = pairs.filter { !$0.1.values.isEmpty && !$0.1.fixableBySetup.isEmpty }.map(\.0)
         let visit = pairs.filter { !$0.1.needsVisit.isEmpty }.map(\.0)
-        return HStack(spacing: 10) {
-            ReadinessChip(title: "Gotowe", value: "\(ready.count)/\(model.machines.count)",
-                          icon: "checkmark.seal.fill", color: .green, machines: ready)
+        let chips = [
+            ReadinessChip(title: "Gotowe", value: "\(ready.count) z \(model.machines.count)",
+                          icon: "checkmark.seal.fill", color: .green, machines: ready),
             ReadinessChip(title: "Do skonfigurowania", value: "\(configure.count)",
-                          icon: "wrench.and.screwdriver", color: configure.isEmpty ? .secondary : .orange, machines: configure)
+                          icon: "wrench.and.screwdriver.fill", color: configure.isEmpty ? .secondary : .orange, machines: configure),
             ReadinessChip(title: "Wizyta przy komputerze", value: "\(visit.count)",
-                          icon: "hand.raised.fill", color: visit.isEmpty ? .secondary : .blue, machines: visit)
+                          icon: "hand.raised.fill", color: visit.isEmpty ? .secondary : .blue, machines: visit),
             ReadinessChip(title: "Bez połączenia", value: "\(offline.count)",
-                          icon: "wifi.slash", color: offline.isEmpty ? .secondary : .red, machines: offline)
-            Spacer(minLength: 0)
-            checkStatus
+                          icon: "wifi.slash", color: offline.isEmpty ? .secondary : .red, machines: offline),
+        ]
+        return VStack(alignment: .leading, spacing: 6) {
+            // One row only when every chip fits whole at the same width; otherwise two rows of two.
+            ViewThatFits(in: .horizontal) {
+                EqualWidthRow(spacing: 8) { ForEach(chips.indices, id: \.self) { chips[$0] } }
+                VStack(spacing: 8) {
+                    EqualWidthRow(spacing: 8) { chips[0]; chips[1] }
+                    EqualWidthRow(spacing: 8) { chips[2]; chips[3] }
+                }
+            }
+            checkStatus.font(.caption)
         }
     }
 
@@ -445,6 +502,38 @@ struct ReadinessView: View {
     }
 }
 
+/// Row of equally wide views: its ideal width is the widest ideal width times the count (so `ViewThatFits`
+/// only picks it when nothing would be cut off), and it stretches evenly to the space it gets.
+struct EqualWidthRow: Layout {
+    var spacing: CGFloat = 8
+
+    private func widest(_ subviews: Subviews) -> CGSize {
+        subviews.reduce(.zero) { size, view in
+            let s = view.sizeThatFits(.unspecified)
+            return CGSize(width: max(size.width, s.width), height: max(size.height, s.height))
+        }
+    }
+
+    private func gaps(_ subviews: Subviews) -> CGFloat { spacing * CGFloat(max(subviews.count - 1, 0)) }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let cell = widest(subviews)
+        let ideal = cell.width * CGFloat(subviews.count) + gaps(subviews)
+        guard let width = proposal.width, width.isFinite else { return CGSize(width: ideal, height: cell.height) }
+        return CGSize(width: max(width, ideal), height: cell.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard !subviews.isEmpty else { return }
+        let width = (bounds.width - gaps(subviews)) / CGFloat(subviews.count)
+        var x = bounds.minX
+        for view in subviews {
+            view.place(at: CGPoint(x: x, y: bounds.minY), proposal: ProposedViewSize(width: width, height: bounds.height))
+            x += width + spacing
+        }
+    }
+}
+
 /// Count of Macs in one state; clicking selects them in the machine list.
 struct ReadinessChip: View {
     @EnvironmentObject var model: AppModel
@@ -458,18 +547,27 @@ struct ReadinessChip: View {
         Button {
             model.selection = Set(machines.map(\.id))
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: icon).foregroundStyle(color)
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .foregroundStyle(color)
+                    .frame(width: 20)
                 Text(title)
-                Text(value).fontWeight(.semibold).monospacedDigit()
+                    .fixedSize()
+                Spacer(minLength: 4)
+                Text(value)
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .readinessChipBackground()
         }
         .buttonStyle(.plain)
-        .disabled(machines.isEmpty)
-        .help(machines.isEmpty ? title : "Zaznacz: \(machines.map(\.name).joined(separator: ", "))")
+        // Not disabled when empty: a dimmed count would be hard to read; the click then just does nothing.
+        .help(machines.isEmpty ? "\(title): brak komputerów" : "Kliknij, aby zaznaczyć: \(machines.map(\.name).joined(separator: ", "))")
+        .accessibilityLabel("\(title): \(value)")
     }
 }
 
@@ -489,33 +587,61 @@ struct ReadinessMatrix: View {
 
     var body: some View {
         GroupBox {
-            ScrollView(.horizontal) {
-                Grid(alignment: .center, horizontalSpacing: 14, verticalSpacing: 6) {
-                    GridRow {
-                        Text("Komputer")
-                            .font(.caption.weight(.semibold))
-                            .gridColumnAlignment(.leading)
-                        ForEach(ReadinessCheck.allCases) { c in
-                            VStack(spacing: 3) {
-                                Image(systemName: c.icon).foregroundStyle(.secondary)
-                                Text(c.header)
-                                    .font(.caption.weight(.semibold))
-                                    .multilineTextAlignment(.center)
-                                    .fixedSize()
-                            }
-                            .help(c.explanation)
-                        }
-                    }
-                    Divider()
-                    ForEach(model.machines) { m in
-                        GridRow {
-                            nameCell(m)
-                            ForEach(ReadinessCheck.allCases) { c in cell(m, c) }
-                        }
-                        Divider()
-                    }
+            // Full headers when they fit; in a narrow window icon headers with a key below, scrolling only as a last resort.
+            ViewThatFits(in: .horizontal) {
+                grid(compact: false)
+                    .padding(8)
+                compactLayout
+                ScrollView(.horizontal) { compactLayout }
+                    .scrollIndicators(.visible, axes: .horizontal)
+            }
+        }
+    }
+
+    var compactLayout: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            grid(compact: true)
+            Divider()
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), alignment: .leading)], alignment: .leading, spacing: 4) {
+                ForEach(ReadinessCheck.allCases) { c in
+                    Label(c.displayTitle, systemImage: c.icon)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help(c.tooltip)
                 }
-                .padding(8)
+            }
+        }
+        .padding(8)
+    }
+
+    func grid(compact: Bool) -> some View {
+        Grid(alignment: .center, horizontalSpacing: compact ? 8 : 10, verticalSpacing: 6) {
+            GridRow {
+                Text("Komputer")
+                    .font(.caption.weight(.semibold))
+                    .gridColumnAlignment(.leading)
+                ForEach(ReadinessCheck.allCases) { c in
+                    VStack(spacing: 3) {
+                        Image(systemName: c.icon).foregroundStyle(.secondary)
+                        if !compact {
+                            Text(c.header)
+                                .font(.caption.weight(.semibold))
+                                .multilineTextAlignment(.center)
+                                .fixedSize()
+                        }
+                    }
+                    .help("\(c.displayTitle): \(c.tooltip)")
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(c.displayTitle)
+                }
+            }
+            Divider()
+            ForEach(model.machines) { m in
+                GridRow {
+                    nameCell(m)
+                    ForEach(ReadinessCheck.allCases) { c in cell(m, c, compact: compact) }
+                }
+                Divider()
             }
         }
     }
@@ -549,7 +675,7 @@ struct ReadinessMatrix: View {
         return "nikt nie jest zalogowany"
     }
 
-    @ViewBuilder func cell(_ m: Machine, _ c: ReadinessCheck) -> some View {
+    @ViewBuilder func cell(_ m: Machine, _ c: ReadinessCheck, compact: Bool) -> some View {
         if let r = store.reports[m.id] {
             let item = r[c]
             let ref = CellRef(machine: m.id, check: c)
@@ -560,18 +686,20 @@ struct ReadinessMatrix: View {
                     Image(systemName: item.state.icon)
                         .font(.title3)
                         .foregroundStyle(item.state.color)
-                    Text(item.short)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .fixedSize()
+                    if !compact {
+                        Text(item.short)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                    }
                 }
-                .frame(minWidth: 44)
+                .frame(minWidth: compact ? 26 : 44)
                 .contentShape(Rectangle())
                 .opacity(store.checking.contains(m.id) ? 0.4 : 1)
             }
             .buttonStyle(.plain)
-            .help("\(c.title): \(item.detail)")
-            .accessibilityLabel("\(m.name), \(c.title): \(item.short)")
+            .help("\(c.displayTitle): \(item.short). \(item.detail) Kliknij, aby zobaczyć szczegóły i naprawę.")
+            .accessibilityLabel("\(m.name), \(c.displayTitle): \(item.short)")
             .popover(isPresented: Binding(get: { popover == ref }, set: { if !$0 { popover = nil } }),
                      arrowEdge: .bottom) {
                 ReadinessCellDetail(machine: m, check: c, item: item, connectionFailure: r.connectionFailure,
@@ -582,7 +710,7 @@ struct ReadinessMatrix: View {
         } else {
             Image(systemName: store.checking.contains(m.id) ? "ellipsis" : "minus")
                 .foregroundStyle(.tertiary)
-                .frame(minWidth: 44)
+                .frame(minWidth: compact ? 26 : 44)
                 .help(store.checking.contains(m.id) ? "Sprawdzanie…" : "Nie sprawdzono")
         }
     }
@@ -601,13 +729,13 @@ struct ReadinessCellDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("\(check.title) – \(machine.name)", systemImage: check.icon)
+            Label("\(check.displayTitle) – \(machine.name)", systemImage: check.icon)
                 .font(.headline)
             Label(item.short, systemImage: item.state.icon)
                 .foregroundStyle(item.state.color)
             Text(item.detail)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(check.explanation)
+            Text(check.tooltip)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -643,21 +771,21 @@ struct ReadinessCellDetail: View {
         case (_, .ok):
             EmptyView()
         case (.ssh, .warning):
-            fix("Zainstaluj klucz SSH", "key.horizontal", .key)
+            fix("Zainstaluj klucz logowania", "key.horizontal", .key)
         case (.ssh, .problem) where connectionFailure == .hostKeyChanged:
             // Re-trusting a changed host key is only offered when ssh actually reported a mismatch.
             Button(role: .destructive) {
                 model.forgetHostKeys([machine])
                 onDone()
             } label: {
-                Label("Zapomnij klucz hosta", systemImage: "key.slash")
+                DestructiveLabel(title: "Zapomnij identyfikator iMaca", icon: "key.slash")
             }
-            .help("Tylko jeśli ten iMac był reinstalowany lub wymieniony – inaczej zmieniony klucz może oznaczać, że w sieci podszywa się pod niego inne urządzenie.")
+            .help("Usuwa zapamiętany klucz hosta SSH. Tylko jeśli ten iMac był reinstalowany lub wymieniony – inaczej zmieniony identyfikator może oznaczać, że w sieci podszywa się pod niego inne urządzenie.")
         case (.ssh, .problem) where connectionFailure == .authFailed:
             Button(action: onPassword) {
                 Label("Hasło tego komputera…", systemImage: "key.fill")
             }
-            .help("Odmowa dostępu: zapisz hasło administratora tego iMaca albo roześlij klucz SSH aplikacji.")
+            .help("Odmowa dostępu: zapisz hasło administratora tego iMaca albo roześlij klucz logowania (Dostęp i hasła).")
         case (.sudo, .problem), (.sudo, .unknown):
             Button(action: onPassword) {
                 Label("Hasło tego komputera…", systemImage: "key.fill")
@@ -665,7 +793,7 @@ struct ReadinessCellDetail: View {
         case (.folder, .problem), (.folder, .warning):
             fix("Utwórz folder ucznia", "folder.badge.plus", .folder)
         case (.wol, .problem):
-            fix("Włącz Wake-on-LAN", "dot.radiowaves.left.and.right", .wol)
+            fix("Włącz budzenie przez sieć", "dot.radiowaves.left.and.right", .wol)
         case (.vnc, .off):
             fix("Włącz Udostępnianie ekranu", "rectangle.on.rectangle", .vnc)
         case (.setup, _):
@@ -742,10 +870,8 @@ struct ManualStepRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: step.icon)
-                .font(.title3)
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 28)
+            SettingsIcon(symbol: step.icon, color: step.color)
+                .padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
                 Text(step.title).fontWeight(.medium)
                 Text(step.summary)

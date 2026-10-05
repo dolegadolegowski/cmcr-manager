@@ -8,8 +8,15 @@ import SwiftUI
 /// Use together with CMCR_CONFIG_DIR. `CMCR_SNAPSHOT_WINDOWS` also captures the screen wall window (`wall`) and the
 /// window of the first Mac on the list (`screen`); `CMCR_SNAPSHOT_SECTIONS=none` skips the sections.
 /// Optional state and sheets for the Files/Apps/Updates pages: see SnapshotSheets.
+///
+/// An entry may name a sub-page after a colon (`setup:access`): it is posted as `subpageNotification` and views
+/// with tabs or sheets switch to it (an empty sub-page means "back to the default"). A sheet attached to the
+/// window is captured too (`setup-access-sheet-light.png`). The entry `settings[:tab]` captures the Settings
+/// window (⌘,).
 @MainActor
 enum SnapshotRenderer {
+    static let subpageNotification = Notification.Name("CMCRSnapshotSubpage")
+
     /// True while rendering snapshots: the off-screen window counts as visible and active (live screen tiles).
     nonisolated static var isActive: Bool {
         !(ProcessInfo.processInfo.environment["CMCR_SNAPSHOT_DIR"] ?? "").isEmpty
@@ -20,9 +27,8 @@ enum SnapshotRenderer {
         guard let dir = env["CMCR_SNAPSHOT_DIR"], !dir.isEmpty else { return }
         let output = URL(fileURLWithPath: expandTilde(dir), isDirectory: true)
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        let sections = env["CMCR_SNAPSHOT_SECTIONS"].map {
-            $0.split(separator: ",").compactMap { AppSection(rawValue: String($0)) }
-        } ?? AppSection.allCases
+        let entries = (env["CMCR_SNAPSHOT_SECTIONS"].map { $0.split(separator: ",").map(String.init) }
+            ?? AppSection.allCases.map(\.rawValue))
         let windows = (env["CMCR_SNAPSHOT_WINDOWS"] ?? "").split(separator: ",").map(String.init)
         let wait = Double(env["CMCR_SNAPSHOT_WAIT"] ?? "") ?? 2.5
         let size = env["CMCR_SNAPSHOT_SIZE"].flatMap { spec -> NSSize? in
@@ -43,6 +49,9 @@ enum SnapshotRenderer {
             for other in NSApp.windows where other !== window && other.styleMask.contains(.titled) {
                 other.setContentSize(size)
             }
+            // Key and in front (also while the screen is locked): controls render active and sheets can attach.
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
             var extra: [(name: String, window: NSWindow)] = []
             for name in windows {
                 switch name {
@@ -58,14 +67,42 @@ enum SnapshotRenderer {
             }
             for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
                 window.appearance = NSAppearance(named: appearance)
-                for section in sections {
+                NSApp.appearance = NSAppearance(named: appearance)
+                for entry in entries {
+                    let parts = entry.split(separator: ":", maxSplits: 1).map(String.init)
+                    let sub = parts.count > 1 ? parts[1] : ""
+                    let file = entry.replacingOccurrences(of: ":", with: "-")
+                    if parts[0] == "settings" {
+                        await captureSettings(sub: sub, wait: wait, to: output.appendingPathComponent("\(file)-\(name).png"))
+                        window.makeKeyAndOrderFront(nil)
+                        continue
+                    }
+                    guard let section = AppSection(rawValue: parts[0]) else { continue }
                     model.section = section
+                    // Twice: views that appear after the first post (a newly selected tab) get the second one.
+                    for _ in 0..<2 {
+                        try? await Task.sleep(nanoseconds: 400_000_000)
+                        NotificationCenter.default.post(name: subpageNotification, object: sub)
+                    }
                     try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                    // A system prompt (e.g. local network access) may have taken focus meanwhile.
+                    if window.attachedSheet == nil {
+                        NSApp.activate(ignoringOtherApps: true)
+                        window.makeKeyAndOrderFront(nil)
+                        try? await Task.sleep(nanoseconds: 200_000_000)
+                    }
                     if env["CMCR_SNAPSHOT_TEXT"] == "1" {
-                        try? describe(window).write(to: output.appendingPathComponent("\(section.rawValue)-\(name).txt"),
+                        try? describe(window).write(to: output.appendingPathComponent("\(file)-\(name).txt"),
                                                     atomically: true, encoding: .utf8)
                     }
-                    capture(window, to: output.appendingPathComponent("\(section.rawValue)-\(name).png"))
+                    capture(window, to: output.appendingPathComponent("\(file)-\(name).png"))
+                    if let sheet = window.attachedSheet {
+                        capture(sheet, to: output.appendingPathComponent("\(file)-sheet-\(name).png"))
+                    }
+                    if !sub.isEmpty {
+                        NotificationCenter.default.post(name: subpageNotification, object: "")
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                    }
                 }
                 if env["CMCR_SNAPSHOT_CONFIRM"] == "1" {
                     await captureConfirmation(model, appearance: appearance,
@@ -112,6 +149,33 @@ enum SnapshotRenderer {
             .environmentObject(model.screens)
             .frame(width: size.width, height: size.height))
         return window
+    }
+
+    private static func captureSettings(sub: String, wait: Double, to url: URL) async {
+        // The app menu's "Settings…" item (⌘,), exactly as the user opens it.
+        let before = Set(NSApp.windows.map(ObjectIdentifier.init))
+        if let menu = NSApp.mainMenu?.items.first?.submenu,
+           let index = menu.items.firstIndex(where: { $0.keyEquivalent == "," && $0.keyEquivalentModifierMask == .command }) {
+            menu.performActionForItem(at: index)
+        }
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        guard let window = NSApp.windows.first(where: { !before.contains(ObjectIdentifier($0)) && $0.contentView != nil })
+                ?? NSApp.windows.first(where: { $0.identifier?.rawValue.localizedCaseInsensitiveContains("settings") == true }) else {
+            FileHandle.standardError.write(Data("Brak okna Ustawień: \(NSApp.windows.map { "\($0.identifier?.rawValue ?? "-") \($0.title)" })\n".utf8))
+            return
+        }
+        window.makeKeyAndOrderFront(nil)
+        for _ in 0..<2 {
+            NotificationCenter.default.post(name: subpageNotification, object: sub)
+            try? await Task.sleep(nanoseconds: 400_000_000)
+        }
+        try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        capture(window, to: url)
+        window.close()
+        try? await Task.sleep(nanoseconds: 300_000_000)
     }
 
     private static func capture(_ window: NSWindow, to url: URL) {
@@ -210,4 +274,13 @@ private final class SnapshotWindow: NSWindow {
     @objc func _hasActiveAppearanceIgnoringKeyFocus() -> Bool { true }
     @objc func _hasKeyAppearance() -> Bool { true }
     @objc func _hasMainAppearance() -> Bool { true }
+}
+
+extension View {
+    /// Lets the snapshot renderer switch this view's tab or open its sheet (see `SnapshotRenderer`).
+    func onSnapshotSubpage(perform action: @escaping (String) -> Void) -> some View {
+        onReceive(NotificationCenter.default.publisher(for: SnapshotRenderer.subpageNotification)) { note in
+            action(note.object as? String ?? "")
+        }
+    }
 }
