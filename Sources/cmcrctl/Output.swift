@@ -151,6 +151,12 @@ func runHosts(_ targets: [Machine], jobs: Int, prefixLines: Bool,
     }
 }
 
+/// Pads to a column width counted in characters (`%-12@` ignores the width for objects).
+func pad(_ text: String, _ width: Int, right: Bool = false) -> String {
+    let fill = String(repeating: " ", count: max(0, width - text.count))
+    return right ? fill + text : text + fill
+}
+
 /// Polish plural: 1 komputer, 2–4 komputery, 5+ komputerów (12–14 komputerów).
 func plural(_ n: Int, _ one: String, _ few: String, _ many: String) -> String {
     if n == 1 { return "\(n) \(one)" }

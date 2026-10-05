@@ -50,6 +50,7 @@ Sesja i zasilanie
 Konfiguracja
   hosts [list]                             komputery ze szczegółami (port, MAC, hasło)
   hosts add nazwa [adres] [konto] [--port N] [--mac MAC]
+  hosts set nr [--mac MAC] [--port N]      zmień adres MAC lub port komputera
   hosts remove KOMP
   hosts generate [prefiks] [--start 1] [--count 15] [--digits 2] [--domain local] [--replace|--append]
                                            jak pętla w cmcr-helpers.sh; bez --replace/--append tylko podgląd
@@ -117,9 +118,7 @@ struct CLI: Sendable {
         case "password": return password()
         case "selftest": return await selftest()
         default:
-            Console.err(usage)
-            Console.err("Nieznane polecenie: \(command)")
-            return ExitCode.usage
+            usageError("Nieznane polecenie: \(command)")
         }
     }
 
@@ -191,8 +190,8 @@ struct CLI: Sendable {
 
     func list() -> Int32 {
         for (i, h) in hosts.enumerated() {
-            Console.out(String(format: "%2ld  %-12@ %-24@ %@", i + 1, h.name as NSString, h.destination as NSString,
-                               (h.port == 22 ? "" : "port \(h.port)") as NSString))
+            Console.out(pad("\(i + 1)", 2, right: true) + "  " + pad(h.name, 12) + " " + pad(h.destination, 24) + " "
+                        + (h.port == 22 ? "" : "port \(h.port)"))
         }
         return ExitCode.success
     }
@@ -504,7 +503,7 @@ struct CLI: Sendable {
         var code = ExitCode.success
         for h in list {
             guard !h.macAddress.isEmpty else {
-                Console.err("✘ \(h.name): brak adresu MAC – uruchom „cmcrctl status”, gdy komputer jest włączony, lub dodaj go w Konfiguracji.")
+                Console.err("✘ \(h.name): brak adresu MAC – uruchom „cmcrctl status”, gdy komputer jest włączony, lub ustaw: cmcrctl hosts set \(h.name) --mac aa:bb:cc:dd:ee:ff.")
                 code = ExitCode.failure
                 continue
             }

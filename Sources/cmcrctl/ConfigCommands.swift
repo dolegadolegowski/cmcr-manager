@@ -10,7 +10,8 @@ extension CLI {
         case "add": return hostsAdd()
         case "remove", "rm": return hostsRemove()
         case "generate": return hostsGenerate()
-        default: usageError("Użycie: cmcrctl hosts [list|add|remove|generate]")
+        case "set": return hostsSet()
+        default: usageError("Użycie: cmcrctl hosts [list|add|set|remove|generate]")
         }
     }
 
@@ -19,12 +20,12 @@ extension CLI {
             Console.out("Lista komputerów jest pusta – dodaj: cmcrctl hosts generate --replace")
             return ExitCode.success
         }
-        Console.out(String(format: "%3@  %-12@ %-28@ %5@  %-17@ %@", "#" as NSString, "nazwa" as NSString,
-                           "konto@adres" as NSString, "port" as NSString, "MAC" as NSString, "hasło" as NSString))
+        Console.out(pad("#", 3, right: true) + "  " + pad("nazwa", 12) + " " + pad("konto@adres", 28) + " "
+                    + pad("port", 5, right: true) + "  " + pad("MAC (Wake-on-LAN)", 17) + "  hasło")
         for (i, h) in hosts.enumerated() {
-            Console.out(String(format: "%3ld  %-12@ %-28@ %5ld  %-17@ %@", i + 1, h.name as NSString,
-                               h.destination as NSString, h.port, (h.macAddress.isEmpty ? "—" : h.macAddress) as NSString,
-                               (h.usesSharedPassword ? "wspólne" : "własne") as NSString))
+            Console.out(pad("\(i + 1)", 3, right: true) + "  " + pad(h.name, 12) + " " + pad(h.destination, 28) + " "
+                        + pad("\(h.port)", 5, right: true) + "  " + pad(h.macAddress.isEmpty ? "—" : h.macAddress, 17)
+                        + "  " + (h.usesSharedPassword ? "wspólne" : "własne"))
         }
         return ExitCode.success
     }
@@ -36,11 +37,7 @@ extension CLI {
         let address = args[3] ?? "\(name).local"
         let user = args[4] ?? name
         let port = args.int("--port", in: 1...65535) ?? 22
-        var mac = ""
-        if let raw = args.value("--mac"), !raw.isEmpty {
-            guard let bytes = WakeOnLAN.parseMAC(raw) else { usageError("Niepoprawny adres MAC: \(raw)") }
-            mac = bytes.map { String(format: "%02x", $0) }.joined(separator: ":")
-        }
+        let mac = normalizedMAC(args.value("--mac") ?? "")
         if let dup = hosts.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame
             || ($0.address.caseInsensitiveCompare(address) == .orderedSame && $0.port == port) }) {
             fail("Komputer \(dup.name) (\(dup.destination)) już jest na liście.", code: ExitCode.usage)
@@ -49,6 +46,29 @@ extension CLI {
         ConfigStore.saveHosts(hosts + [added])
         Console.out("Dodano \(added.name) (\(added.destination)\(port == 22 ? "" : ", port \(port)")).")
         return ExitCode.success
+    }
+
+    func hostsSet() -> Int32 {
+        let use = "Użycie: cmcrctl hosts set nr [--mac MAC] [--port N]"
+        let host = single(args[2], usage: use)
+        let port = args.int("--port", in: 1...65535)
+        let mac = args.value("--mac").map(normalizedMAC)
+        guard port != nil || mac != nil else { usageError(use) }
+        var list = hosts
+        guard let i = list.firstIndex(where: { $0.id == host.id }) else { return ExitCode.failure }
+        if let port { list[i].port = port }
+        if let mac { list[i].macAddress = mac }
+        ConfigStore.saveHosts(list)
+        let h = list[i]
+        Console.out("Zapisano \(h.name): port \(h.port), MAC \(h.macAddress.isEmpty ? "—" : h.macAddress).")
+        return ExitCode.success
+    }
+
+    /// `aa:bb:cc:dd:ee:ff` from any common spelling; an empty value clears the address.
+    func normalizedMAC(_ raw: String) -> String {
+        guard !raw.isEmpty else { return "" }
+        guard let bytes = WakeOnLAN.parseMAC(raw) else { usageError("Niepoprawny adres MAC: \(raw)") }
+        return bytes.map { String(format: "%02x", $0) }.joined(separator: ":")
     }
 
     func hostsRemove() -> Int32 {

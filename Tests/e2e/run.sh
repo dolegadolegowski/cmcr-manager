@@ -120,7 +120,7 @@ fi
 # ---------------------------------------------------------------- tests
 section "Połączenie i stan"
 out="$(ctl status 1)"; expect "status: komputer online" "$out" "● imac01" "macOS"
-out="$(ctl status 2)"; code=$?
+out="$(ctl status 99)"; code=$?
 expect "status: nieistniejący host – czytelny błąd" "$out" "Nie można odnaleźć nazwy hosta"
 expect_code "status: kod błędu dla offline" "$code" 1 "$out"
 
