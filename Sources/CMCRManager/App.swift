@@ -23,9 +23,10 @@ struct CMCRManagerApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("CMCR Manager") {
+        WindowGroup("CMCR Manager", id: MainWindow.id) {
             ContentView()
                 .environmentObject(model)
+                .environmentObject(model.screens)
                 .frame(minWidth: 1180, minHeight: 720)
         }
         .defaultSize(width: 1440, height: 900)
@@ -48,7 +49,22 @@ struct CMCRManagerApp: App {
                         .keyboardShortcut(KeyEquivalent(Character(String((index + 1) % 10))), modifiers: [.command])
                 }
             }
+            ScreenCommands(center: model.screens)
         }
+
+        Window("Ściana ekranów", id: ScreenWallView.windowID) {
+            ScreenWallView()
+                .environmentObject(model)
+                .environmentObject(model.screens)
+        }
+        .defaultSize(width: 1600, height: 1000)
+
+        WindowGroup("Podgląd ekranu", id: ScreenWindowView.windowID, for: UUID.self) { $id in
+            ScreenWindowView(machineID: id)
+                .environmentObject(model)
+                .environmentObject(model.screens)
+        }
+        .defaultSize(width: 1100, height: 720)
     }
 }
 
@@ -64,6 +80,9 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 250, ideal: 290)
         } detail: {
             DetailView()
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) { OpenScreenWallButton() }
         }
         .task {
             model.refreshStatus()
@@ -221,6 +240,7 @@ struct MachineContextMenu: View {
             model.selection = [machine.id]
             model.section = .screens
         }
+        OpenScreenWindowMenuItem(machine: machine)
         Divider()
         Button("Wake-on-LAN") { model.wake([machine]) }
         Button("Kopiuj adres") {
