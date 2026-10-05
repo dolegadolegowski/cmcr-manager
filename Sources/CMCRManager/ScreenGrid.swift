@@ -273,11 +273,11 @@ struct ZoomedScreen: View {
                     .help("Następny komputer (→)")
             }
             .fixedSize()
-            Button { composing = true } label: { Label("Wiadomość", systemImage: "text.bubble") }
+            Button { composing = true } label: { Label("Wyślij wiadomość", systemImage: "text.bubble") }
                 .help("Wyślij wiadomość na ten ekran")
             Button { actions.sleepDisplay([machine]) } label: { Label("Uśpij ekran", systemImage: "moon.zzz") }
                 .help("Wygasza monitor tego komputera (uczeń obudzi go myszą lub klawiaturą)")
-            Button { actions.openInWindow(machine) } label: { Label("Osobne okno", systemImage: "macwindow.badge.plus") }
+            Button { actions.openInWindow(machine) } label: { Label("Otwórz w oknie", systemImage: "macwindow.badge.plus") }
                 .help("Otwórz ten ekran w osobnym oknie – można je zostawić obok innych okien")
             Button(action: onClose) { Label("Zamknij", systemImage: "xmark") }
                 .help("Wróć do wszystkich ekranów (Esc)")

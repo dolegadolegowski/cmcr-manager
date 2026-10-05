@@ -2,10 +2,45 @@ import AppKit
 import CMCRCore
 import SwiftUI
 
+/// Parts of the "Zajęcia" section, switched with a segmented control (each fits on one screen).
+enum ClassroomTab: String, CaseIterable, Identifiable {
+    case start, end, attention, questions
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .start: return "Początek lekcji"
+        case .end: return "Koniec lekcji"
+        case .attention: return "Tryb uwagi"
+        case .questions: return "Pytania"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .start: return "play.circle"
+        case .end: return "stop.circle"
+        case .attention: return "eye.slash"
+        case .questions: return "questionmark.bubble"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .start: return "Scenariusz na początek lekcji: budzenie, materiały, aplikacje, powitanie"
+        case .end: return "Scenariusz na koniec lekcji: zbieranie prac, porządki, wylogowanie, uśpienie"
+        case .attention: return "Zablokuj ekrany uczniów komunikatem, np. „Proszę patrzeć na tablicę”"
+        case .questions: return "Zadaj uczniom pytanie i zbierz odpowiedzi"
+        }
+    }
+}
+
 /// "Zajęcia": one-click lesson routines, attention mode and questions to students.
 struct ClassroomView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var classroom = ClassroomModel.shared
+    @AppStorage("classroom.tab") private var tab: ClassroomTab = .start
     @ViewState private var confirm: ConfirmRequest?
 
     var body: some View {
@@ -13,16 +48,31 @@ struct ClassroomView: View {
             TargetHeader(section: .classroom,
                          subtitle: "Początek i koniec lekcji jednym przyciskiem, tryb uwagi (zablokowane ekrany) i szybkie pytania do uczniów.")
                 .padding([.horizontal, .top], 20)
+            Picker("Część", selection: $tab) {
+                ForEach(ClassroomTab.allCases) { t in
+                    Label(t.title, systemImage: t.icon).tag(t)
+                        .help(t.help)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .frame(maxWidth: .infinity)
+            .padding(.top, 8)
             ScrollViewReader { proxy in
                 Form {
-                    StartLessonSection(confirm: $confirm)
-                    EndLessonSection(confirm: $confirm)
-                    if let run = classroom.run {
-                        LessonProgressSection(run: run)
-                            .id("progress")
+                    switch tab {
+                    case .start:
+                        StartLessonSection(confirm: $confirm)
+                        progress(.start)
+                    case .end:
+                        EndLessonSection(confirm: $confirm)
+                        progress(.end)
+                    case .attention:
+                        AttentionSection()
+                    case .questions:
+                        QuestionSection()
                     }
-                    AttentionSection()
-                    QuestionSection()
                     if model.lastBatch[.classroom] != nil {
                         Section {
                             LastBatchView(section: .classroom)
@@ -31,12 +81,20 @@ struct ClassroomView: View {
                 }
                 .formStyle(.grouped)
                 .onChange(of: classroom.run?.id) { _, id in
-                    guard id != nil else { return }
+                    guard id != nil, let kind = classroom.run?.plan.kind else { return }
+                    tab = kind == .start ? .start : .end
                     withAnimation { proxy.scrollTo("progress", anchor: .top) }
                 }
             }
         }
         .confirmation($confirm)
+    }
+
+    @ViewBuilder private func progress(_ kind: LessonPlan.Kind) -> some View {
+        if let run = classroom.run, run.plan.kind == kind {
+            LessonProgressSection(run: run)
+                .id("progress")
+        }
     }
 }
 

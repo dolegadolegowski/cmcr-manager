@@ -175,7 +175,7 @@ struct ScreenWallView: View {
         ToolbarItemGroup(placement: .primaryAction) {
             let n = selection.count
             Button { composing = true } label: {
-                Label(n == 0 ? "Wiadomość" : "Wiadomość (\(n))", systemImage: "text.bubble")
+                Label(n == 0 ? "Wyślij wiadomość" : "Wyślij wiadomość (\(n))", systemImage: "text.bubble")
                     .labelStyle(.titleAndIcon)
             }
             .disabled(n == 0)
@@ -235,9 +235,17 @@ struct ScreenWallView: View {
                      ? "Zaznacz komputery na liście w oknie głównym albo pokaż wszystkie."
                      : "Żaden komputer nie spełnia wybranego warunku (\(source.label.lowercased())). Odśwież stan komputerów albo pokaż wszystkie.")
             } actions: {
-                Button("Pokaż wszystkie komputery") { source = .all }
-                    .buttonStyle(.borderedProminent)
-                Button("Odśwież stan komputerów") { model.refreshStatus() }
+                Button {
+                    source = .all
+                } label: {
+                    Label("Pokaż wszystkie komputery", systemImage: "desktopcomputer")
+                }
+                .buttonStyle(.borderedProminent)
+                Button {
+                    model.refreshStatus()
+                } label: {
+                    Label("Odśwież stan komputerów", systemImage: "arrow.clockwise")
+                }
             }
         }
     }
@@ -326,7 +334,7 @@ private struct ScreenWindowContent: View {
                 .help("Który monitor tego komputera pokazywać")
             }
             Button { composing = true } label: {
-                Label("Wiadomość", systemImage: "text.bubble").labelStyle(.titleAndIcon)
+                Label("Wyślij wiadomość", systemImage: "text.bubble").labelStyle(.titleAndIcon)
             }
             .help("Wyślij wiadomość na ten ekran")
             .popover(isPresented: $composing, arrowEdge: .bottom) { MessageComposer(targets: [machine]) }

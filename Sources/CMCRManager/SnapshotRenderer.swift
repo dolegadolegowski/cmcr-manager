@@ -29,9 +29,12 @@ enum SnapshotRenderer {
             return p.count == 2 ? NSSize(width: p[0], height: p[1]) : nil
         } ?? NSSize(width: 1440, height: 900)
 
+        let restore = applyDefaults(env["CMCR_SNAPSHOT_DEFAULTS"] ?? "")
+
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard let model = AppModel.shared else { exit(3) }
+            defer { restore() }
             let window = makeWindow(size: size, title: "CMCR Manager", root: ContentView(), model: model)
             var extra: [(name: String, window: NSWindow)] = []
             for name in windows {
@@ -59,7 +62,26 @@ enum SnapshotRenderer {
                     capture(w, to: output.appendingPathComponent("window-\(kind)-\(name).png"))
                 }
             }
+            restore()
             exit(0)
+        }
+    }
+
+    /// `CMCR_SNAPSHOT_DEFAULTS=classroom.tab=attention,screens.labels=false`: user defaults (e.g. the
+    /// `@AppStorage` of a sub-tab) set for the capture; the returned closure puts the previous values back.
+    private static func applyDefaults(_ spec: String) -> () -> Void {
+        let defaults = UserDefaults.standard
+        var previous: [(String, Any?)] = []
+        for pair in spec.split(separator: ",") {
+            let kv = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            guard kv.count == 2 else { continue }
+            previous.append((kv[0], defaults.object(forKey: kv[0])))
+            let value: Any = kv[1] == "true" ? true : kv[1] == "false" ? false
+                : Int(kv[1]).map { $0 as Any } ?? Double(kv[1]).map { $0 as Any } ?? kv[1]
+            defaults.set(value, forKey: kv[0])
+        }
+        return {
+            for (key, value) in previous { defaults.set(value, forKey: key) }
         }
     }
 
