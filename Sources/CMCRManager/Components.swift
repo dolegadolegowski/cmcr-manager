@@ -169,7 +169,7 @@ struct TargetSummary: View {
     func note(selected: Int, unreachable: Int) -> String? {
         guard unreachable > 0 else { return nil }
         let count = Polish.count(unreachable, "niedostępny", "niedostępne", "niedostępnych")
-        return model.skipUnreachable ? "Pominięte: \(count) z \(selected) zaznaczonych"
+        return model.skipUnreachable ? "Pominięte: \(count) z \(selected) \(selected == 1 ? "zaznaczonego" : "zaznaczonych")"
                                      : "W tym \(count) – trzeba będzie poczekać na ich odpowiedź"
     }
 
@@ -215,16 +215,20 @@ struct TargetButton: View {
     var body: some View {
         let selected = model.selectedMachines.count
         let count = includeUnreachable ? selected : model.actionTargets.count
+        let destructive = role == .destructive
         let button = Button(role: role, action: action) {
-            Label(title, systemImage: icon)
-                .labelStyle(.titleAndIcon)
+            let label = Label(title, systemImage: icon).labelStyle(.titleAndIcon)
+            if destructive && !prominent && count > 0 {
+                // A bordered macOS button ignores the tint; red text marks the dangerous ones.
+                label.foregroundStyle(.red)
+            } else {
+                label
+            }
         }
         .disabled(count == 0)
         .help(help(selected: selected, count: count))
         if prominent {
-            button.buttonStyle(.borderedProminent)
-        } else if role == .destructive {
-            button.buttonStyle(.bordered).tint(.red)
+            button.buttonStyle(.borderedProminent).tint(destructive ? .red : nil)
         } else {
             button.buttonStyle(.bordered)
         }

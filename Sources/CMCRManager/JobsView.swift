@@ -121,7 +121,7 @@ struct JobsView: View {
                     model.clearFinishedBatches()
                     history.load()
                 } label: {
-                    Label("Wyczyść zakończone", systemImage: "trash")
+                    Label("Wyczyść zakończone", systemImage: "eraser")
                 }
                 .disabled(!model.batches.contains { $0.finished })
                 .help("Usuwa zakończone operacje z tej listy (zostają w historii na dysku)")

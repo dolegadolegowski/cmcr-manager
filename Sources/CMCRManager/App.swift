@@ -465,7 +465,7 @@ struct SelectionMenuItems: View {
 
     var body: some View {
         Button("Wszystkie") { model.selection = Set(model.machines.map(\.id)) }
-        Button("Włączone (online)") { model.selectOnline() }
+        Button("Włączone") { model.selectOnline() }
         Button("Odwróć zaznaczenie") { model.invertSelection() }
         if !model.groups.isEmpty {
             Menu("Grupa") {
@@ -607,18 +607,6 @@ struct MachineContextMenu: View {
             }
             Divider()
             Button {
-                targets.prefix(4).forEach(model.openTerminal)
-            } label: {
-                Label(targets.count > 4 ? "Sesja SSH w Terminalu (pierwsze 4)" : "Sesja SSH w Terminalu",
-                      systemImage: "terminal")
-            }
-            Button {
-                targets.prefix(4).forEach(model.openScreenSharing)
-            } label: {
-                Label(targets.count > 4 ? "Udostępnianie ekranu (pierwsze 4)" : "Udostępnianie ekranu (VNC)",
-                      systemImage: "rectangle.on.rectangle")
-            }
-            Button {
                 if model.selection != ids { model.selection = ids }
                 model.section = .screens
             } label: {
@@ -627,11 +615,23 @@ struct MachineContextMenu: View {
             if targets.count == 1 {
                 OpenScreenWindowMenuItem(machine: targets[0])
             }
+            Button {
+                targets.prefix(4).forEach(model.openScreenSharing)
+            } label: {
+                Label(targets.count > 4 ? "Steruj ekranem (pierwsze 4)" : "Steruj ekranem (Udostępnianie ekranu)",
+                      systemImage: "rectangle.on.rectangle")
+            }
+            Button {
+                targets.prefix(4).forEach(model.openTerminal)
+            } label: {
+                Label(targets.count > 4 ? "Otwórz w Terminalu (pierwsze 4)" : "Otwórz w Terminalu (SSH)",
+                      systemImage: "terminal")
+            }
             Divider()
             Button {
                 model.wake(targets)
             } label: {
-                Label("Obudź (Wake-on-LAN)", systemImage: "sunrise")
+                Label(targets.count == 1 ? "Obudź komputer" : "Obudź komputery", systemImage: "sunrise")
             }
             Menu {
                 GroupMembershipMenu(ids: ids, newGroup: newGroup)
