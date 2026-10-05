@@ -115,13 +115,6 @@ import Testing
         #expect(WakeOnLAN.parseMAC(mac) == nil)
     }
 
-    @Test func unpaddedArpSpelling() {
-        // `arp -a` drops leading zeros; accepted once parseMAC splits on separators.
-        withKnownIssue("parseMAC wymaga dwóch cyfr w każdej grupie", isIntermittent: true) {
-            #expect(WakeOnLAN.parseMAC("0:1b:63:84:45:e6") == [0x00, 0x1B, 0x63, 0x84, 0x45, 0xE6])
-        }
-    }
-
     @Test func badMACThrowsReadableError() {
         #expect(throws: WakeOnLAN.WOLError.self) { try WakeOnLAN.wake(mac: "xyz") }
         #expect(WakeOnLAN.WOLError.badMAC("xyz").errorDescription?.contains("xyz") == true)

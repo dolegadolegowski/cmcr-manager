@@ -7,8 +7,9 @@ cmcrctl – zarządzanie iMacami z terminala (odpowiednik cmcr-helpers.sh)
 Użycie: cmcrctl POLECENIE [argumenty] [opcje]
 
 KOMP – wybór komputerów: all | numer z nazwy (4 → imac04) | lista (1,3,7) | zakres (1-5)
-       | pozycja na liście (#2) | nazwa, adres lub konto (imac04, imac04.local).
-Bez KOMP polecenia status, exec, open-app i quit-app działają na wszystkich komputerach.
+       | pozycja na liście (@2) | nazwa, adres lub konto (imac04, imac04.local).
+Bez KOMP status działa na wszystkich komputerach; exec, open-app i quit-app – tylko w terminalu
+(z informacją, na których), a w skryptach wymagają podania KOMP, np. all.
 
 Stan i polecenia
   list                                     lista komputerów
@@ -63,6 +64,7 @@ Opcje
   -j N, --jobs N    ile komputerów obsługiwać naraz (domyślnie 1; status i updates list: \(AppSettings().maxParallel)
                     lub „Równoległe operacje” z ustawień); wyniki zawsze w kolejności listy
   --prefix          poprzedź każdy wiersz wyniku nazwą komputera, np. [imac04]
+                    (-j i --prefix: polecenia z argumentem KOMP, poza wake i hosts remove)
   --root            wykonaj jako root (sudo z hasłem administratora)
   --yes, -y         nie pytaj o potwierdzenie (wymagane bez terminala dla restartu, wylogowania, usuwania)
   --                koniec opcji – dalsze argumenty dosłownie
@@ -174,6 +176,19 @@ struct CLI: Sendable {
         }
     }
 
+    /// exec, open-app and quit-app keep cmcr-exec's "no list = every Mac", but only at a terminal and announced
+    /// there. In a script a dropped argument – an unquoted `#3` is a comment – must not widen the command to the lab.
+    func targetsOrAllAtTerminal(_ spec: String?, command: String) -> [Machine] {
+        guard spec == nil else { return targets(spec) }
+        guard isatty(STDIN_FILENO) != 0 else {
+            usageError("Podaj komputery dla polecenia \(command) (all, numer 4, lista 1,3, zakres 1-5 lub pozycja @2) "
+                       + "– bez terminala nie są wybierane wszystkie automatycznie.")
+        }
+        let list = targets(nil, defaultAll: true)
+        Console.err("Nie podano komputerów – \(command) na wszystkich: \(names(list)).")
+        return list
+    }
+
     func single(_ spec: String?, usage text: String) -> Machine {
         guard let spec else { usageError(text) }
         let found = targets(spec)
@@ -241,7 +256,8 @@ struct CLI: Sendable {
     }
 
     func status() async -> Int32 {
-        args.expect("status", options: ["-j", "--json"], positional: 2)
+        // --prefix is accepted for symmetry with the other commands: status lines already start with the name.
+        args.expect("status", options: Self.parallel.union(["--json"]), positional: 2)
         let list = targets(args[1], defaultAll: true)
         let json = args.has("--json")
         let ssh = sshSettings()
@@ -294,7 +310,7 @@ struct CLI: Sendable {
     func rememberMACs(_ list: [Machine], _ results: [CommandResult?], quiet: Bool) {
         var learned: [(host: Machine, mac: String)] = []
         for (h, r) in zip(list, results) where h.macAddress.isEmpty {
-            guard let r, r.succeeded, let mac = Parsers.keyValues(r.stdoutText)["mac"], WakeOnLAN.parseMAC(mac) != nil
+            guard let r, r.succeeded, let mac = Parsers.keyValues(r.stdoutText)["mac"].flatMap(HostEntry.normalizedMAC)
             else { continue }
             learned.append((h, mac))
         }
@@ -321,7 +337,7 @@ struct CLI: Sendable {
     func exec() async -> Int32 {
         args.expect("exec", options: Self.parallel.union(["--root"]), positional: 3)
         guard let command = args[1] else { usageError("Podaj polecenie.") }
-        let list = targets(args[2], defaultAll: true)
+        let list = targetsOrAllAtTerminal(args[2], command: "exec")
         let asRoot = root
         return await runScript(on: list, passThrough: true, header: { "Running command on \($0.destination) ..." }) { _ in
             RemoteScript(command, asRoot: asRoot)
@@ -418,7 +434,7 @@ struct CLI: Sendable {
         args.expect(open ? "open-app" : "quit-app", options: open ? Self.parallel : Self.parallel.union(["--force"]),
                     positional: 3)
         guard let app = args[1] else { usageError("Podaj nazwę aplikacji.") }
-        let list = targets(args[2], defaultAll: true)
+        let list = targetsOrAllAtTerminal(args[2], command: open ? "open-app" : "quit-app")
         let hard = force
         return await runScript(on: list, header: { "\($0.name):" }) { _ in
             open ? Scripts.launchApp(app) : Scripts.quitApp(app, force: hard)

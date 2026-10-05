@@ -1,7 +1,8 @@
 import Foundation
 
 /// Target selection used by `cmcrctl`: `all`, the number from the host name (`4` → imac04), lists (`1,3,7`),
-/// ranges (`1-5`), list positions (`#2`) and exact names, addresses or accounts (`imac04`, `imac04.local`).
+/// ranges (`1-5`), list positions (`@2`) and exact names, addresses or accounts (`imac04`, `imac04.local`).
+/// Positions use `@`, not `#`: an unquoted `#2` starts a comment in scripts, so the shell would drop it.
 ///
 /// A part that matches nothing is an error – never a fallback to another Mac – so a command meant for one
 /// computer cannot silently run on a different one.
@@ -16,7 +17,9 @@ public enum HostSpec {
             case .empty: return "Nie podano komputerów (all, numer, lista 1,3 lub zakres 1-5)."
             case .emptyList: return "Lista komputerów jest pusta (cmcrctl hosts generate lub aplikacja › Konfiguracja)."
             case .notFound(let parts):
-                return "Nie znaleziono komputera: \(parts.joined(separator: ", ")) (lista: cmcrctl list)."
+                let hint = parts.contains { $0.hasPrefix("#") }
+                    ? " Pozycję na liście podaj jako @2 – znak # w skryptach rozpoczyna komentarz." : ""
+                return "Nie znaleziono komputera: \(parts.joined(separator: ", ")) (lista: cmcrctl list).\(hint)"
             }
         }
     }
@@ -46,7 +49,7 @@ public enum HostSpec {
 
     static func indices(matching part: String, in hosts: [Machine]) -> [Int] {
         let all = Array(hosts.indices)
-        if part.hasPrefix("#"), let pos = Int(part.dropFirst()) {
+        if part.hasPrefix("@"), let pos = Int(part.dropFirst()) {
             return (1...hosts.count).contains(pos) ? [pos - 1] : []
         }
         if let n = Int(part) {
