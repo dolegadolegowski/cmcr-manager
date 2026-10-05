@@ -66,7 +66,10 @@ public final class HostGate: @unchecked Sendable {
             token = handle.addCancelAction { [weak self] in self?.giveUp(key, id) }
             if token == nil { return false }
         }
-        defer { if let token { handle?.removeCancelAction(token) } }
+        defer {
+            if let token { handle?.removeCancelAction(token) }
+            forget(id)
+        }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
                 lock.lock()
@@ -85,7 +88,7 @@ public final class HostGate: @unchecked Sendable {
                 lock.unlock()
                 if let timeout {
                     DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
-                        self?.giveUp(key, id)
+                        self?.giveUp(key, id, rememberIfMissing: false)
                     }
                 }
             }
@@ -94,10 +97,11 @@ public final class HostGate: @unchecked Sendable {
         }
     }
 
-    private func giveUp(_ key: String, _ id: UUID) {
+    /// `rememberIfMissing`: the waiter may not be queued yet (cancellation racing with `acquire`).
+    private func giveUp(_ key: String, _ id: UUID, rememberIfMissing: Bool = true) {
         lock.lock()
         guard var list = waiters[key], let i = list.firstIndex(where: { $0.id == id }) else {
-            abandoned.insert(id)
+            if rememberIfMissing { abandoned.insert(id) }
             lock.unlock()
             return
         }
@@ -105,6 +109,12 @@ public final class HostGate: @unchecked Sendable {
         waiters[key] = list.isEmpty ? nil : list
         lock.unlock()
         w.cont.resume(returning: false)
+    }
+
+    private func forget(_ id: UUID) {
+        lock.lock()
+        abandoned.remove(id)
+        lock.unlock()
     }
 
     public func release(_ key: String) {
