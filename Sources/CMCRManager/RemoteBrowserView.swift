@@ -22,15 +22,7 @@ private struct RemoteBrowserPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                RemoteHostPicker(browser: browser)
-                    .labelsHidden()
-                Divider().frame(height: 18)
-                RemotePathBar(browser: browser)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            locationBar
             Divider()
             RemoteFileTable(browser: browser, onOpen: open) { ids in contextMenu(ids) }
                 .overlay { RemoteBrowserStatus(browser: browser) }
@@ -52,7 +44,11 @@ private struct RemoteBrowserPage: View {
             Divider()
             statusBar
         }
-        .toolbar { toolbar }
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                RemoteNavigationButtons(browser: browser)
+            }
+        }
         .searchable(text: $browser.search, placement: .toolbar, prompt: "Szukaj w tym folderze")
         .navigationSubtitle(browser.host.map { "\($0.name) — \(browser.path)" } ?? "")
         .confirmation($confirm)
@@ -74,67 +70,107 @@ private struct RemoteBrowserPage: View {
         }
     }
 
-    // MARK: Toolbar
+    // MARK: Location and actions
 
-    @ToolbarContentBuilder var toolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .navigation) {
-            RemoteNavigationButtons(browser: browser)
+    /// Which Mac and folder are shown, and what can be done here. In a narrow window the view toggles show
+    /// only their icons.
+    var locationBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                RemoteHostPicker(browser: browser)
+                    .labelsHidden()
+                favoritesMenu
+                Divider().frame(height: 18)
+                RemotePathBar(browser: browser)
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                Button {
+                    prompt = NamePrompt(kind: .newFolder, text: "Nowy folder")
+                } label: {
+                    Label("Nowy folder", systemImage: "folder.badge.plus")
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .disabled(browser.listing == nil)
+                .help("Utwórz nowy folder w tym miejscu (⇧⌘N)")
+                .fixedSize()
+                Button {
+                    download(browser.selectedEntries)
+                } label: {
+                    Label("Pobierz…", systemImage: "arrow.down.doc")
+                }
+                .disabled(browser.selection.isEmpty)
+                .help("Pobierz zaznaczone elementy na ten Mac")
+                .fixedSize()
+                Button(role: .destructive) {
+                    confirmDelete(browser.selectedEntries)
+                } label: {
+                    Label("Usuń…", systemImage: "trash")
+                }
+                .keyboardShortcut(.delete, modifiers: .command)
+                .disabled(browser.selection.isEmpty)
+                .help("Usuń zaznaczone elementy z komputera – nie trafią do Kosza (z potwierdzeniem, ⌘⌫)")
+                .fixedSize()
+                Button {
+                    uploadWithPanel()
+                } label: {
+                    Label("Wyślij tutaj…", systemImage: "arrow.up.doc")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(browser.listing == nil)
+                .help("Wyślij pliki z tego Maca do bieżącego folderu (możesz też przeciągnąć je z Findera)")
+                .fixedSize()
+                Spacer(minLength: 12)
+                ViewThatFits(in: .horizontal) {
+                    viewToggles(iconOnly: false)
+                    viewToggles(iconOnly: true)
+                }
+            }
+            .labelStyle(.titleAndIcon)
         }
-        ToolbarItemGroup {
-            Menu {
-                ForEach(RemotePaths.favorites(model.settings)) { f in
-                    Button { browser.open(f.path) } label: { Label(f.title, systemImage: f.icon) }
-                }
-                let recents = files.prefs.recentRemoteFolders
-                if !recents.isEmpty {
-                    Divider()
-                    Section("Ostatnio używane") {
-                        ForEach(recents, id: \.self) { path in
-                            Button(RemotePaths.friendlyName(path, settings: model.settings).title) { browser.open(path) }
-                        }
-                    }
-                }
-            } label: {
-                Label("Ulubione", systemImage: "star")
-            }
-            .help("Przejdź do często używanego folderu")
-            Button {
-                prompt = NamePrompt(kind: .newFolder, text: "Nowy folder")
-            } label: {
-                Label("Nowy folder", systemImage: "folder.badge.plus")
-            }
-            .disabled(browser.listing == nil)
-            .help("Utwórz nowy folder w tym miejscu")
-            Button {
-                uploadWithPanel()
-            } label: {
-                Label("Wyślij tutaj…", systemImage: "arrow.up.doc")
-            }
-            .disabled(browser.listing == nil)
-            .help("Wyślij pliki z tego Maca do bieżącego folderu (możesz też przeciągnąć je z Findera)")
-            Button {
-                download(browser.selectedEntries)
-            } label: {
-                Label("Pobierz", systemImage: "arrow.down.doc")
-            }
-            .disabled(browser.selection.isEmpty)
-            .help("Pobierz zaznaczone elementy na ten Mac")
-            Button(role: .destructive) {
-                confirmDelete(browser.selectedEntries)
-            } label: {
-                Label("Usuń", systemImage: "trash")
-            }
-            .disabled(browser.selection.isEmpty)
-            .help("Usuń zaznaczone elementy z iMaca (nie trafiają do Kosza)")
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    func viewToggles(iconOnly: Bool) -> some View {
+        HStack(spacing: 8) {
             Toggle(isOn: $browser.showHidden) {
-                Label("Pokaż ukryte", systemImage: browser.showHidden ? "eye" : "eye.slash")
+                Label("Ukryte pliki", systemImage: browser.showHidden ? "eye" : "eye.slash")
+                    .labelStyle(TitleOrIconLabelStyle(iconOnly: iconOnly))
             }
+            .toggleStyle(.button)
             .help(browser.showHidden ? "Ukryj ukryte pliki i foldery" : "Pokaż ukryte pliki i foldery")
             Toggle(isOn: Binding(get: { browser.asRoot }, set: { browser.asRoot = $0; browser.reload() })) {
                 Label("Jako administrator", systemImage: "lock.shield")
+                    .labelStyle(TitleOrIconLabelStyle(iconOnly: iconOnly))
             }
+            .toggleStyle(.button)
             .help("Przeglądaj z uprawnieniami administratora (sudo) – także prywatne foldery użytkowników")
         }
+        .fixedSize()
+    }
+
+    var favoritesMenu: some View {
+        Menu {
+            ForEach(RemotePaths.favorites(model.settings)) { f in
+                Button { browser.open(f.path) } label: { Label(f.title, systemImage: f.icon) }
+            }
+            let recents = files.prefs.recentRemoteFolders
+            if !recents.isEmpty {
+                Divider()
+                Section("Ostatnio używane") {
+                    ForEach(recents, id: \.self) { path in
+                        Button { browser.open(path) } label: {
+                            Label(RemotePaths.friendlyName(path, settings: model.settings).title, systemImage: "clock")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label("Ulubione", systemImage: "star")
+        }
+        .fixedSize()
+        .help("Przejdź do często używanego folderu")
     }
 
     // MARK: Status bar
@@ -147,22 +183,23 @@ private struct RemoteBrowserPage: View {
             } else if let notice = browser.notice {
                 Image(systemName: notice.isError ? "xmark.octagon.fill" : "checkmark.circle.fill")
                     .foregroundStyle(notice.isError ? .red : .green)
+                    .accessibilityHidden(true)
                 Text(notice.text)
-                    .lineLimit(1)
                     .truncationMode(.middle)
                 Button("Szczegóły") { model.section = .jobs }
                     .buttonStyle(.link)
-                    .help("Pełny wynik w sekcji Zadania")
+                    .help("Pełny wynik w dziale Zadania")
             } else {
                 Text(summary)
             }
             Spacer(minLength: 8)
             if let l = browser.listing {
                 if !l.writable && !browser.asRoot {
-                    Label("Tylko do odczytu – zmiany przez sudo", systemImage: "lock")
-                        .help("Konto administratora nie może tu zapisywać; nowe pliki i foldery zostaną utworzone przez sudo.")
+                    Label("Tylko do odczytu", systemImage: "lock")
+                        .help("Konto administratora nie może tu zapisywać; nowe pliki i foldery zostaną utworzone z uprawnieniami administratora (sudo).")
                 }
                 Text("Właściciel: \(l.owner)")
+                    .help("Właściciel tego folderu na komputerze")
             }
             if browser.isLoading && browser.listing != nil {
                 ProgressView().controlSize(.small)
@@ -177,6 +214,7 @@ private struct RemoteBrowserPage: View {
             .disabled(browser.path.isEmpty)
             .help("Wczytaj folder ponownie")
         }
+        .lineLimit(1)
         .font(.callout)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 14)
@@ -187,7 +225,7 @@ private struct RemoteBrowserPage: View {
     var summary: String {
         guard let l = browser.listing else { return browser.isLoading ? "Wczytywanie…" : "" }
         let n = browser.visibleEntries.count
-        var parts = ["\(n) \(Operations.plural(n, "element", "elementy", "elementów"))"]
+        var parts = [Polish.count(n, "element", "elementy", "elementów")]
         if browser.hiddenCount > 0 { parts.append("ukryte: \(browser.hiddenCount)") }
         if !browser.selection.isEmpty { parts.append("zaznaczono: \(browser.selection.count)") }
         if l.truncated { parts.append("pokazano \(l.entries.count) z \(l.total)") }
@@ -199,31 +237,41 @@ private struct RemoteBrowserPage: View {
     @ViewBuilder func contextMenu(_ ids: Set<RemoteEntry.ID>) -> some View {
         let entries = browser.listing?.entries.filter { ids.contains($0.id) } ?? []
         if entries.isEmpty {
-            Button("Nowy folder…") { prompt = NamePrompt(kind: .newFolder, text: "Nowy folder") }
-            Button("Wyślij tutaj pliki…") { uploadWithPanel() }
+            Button { prompt = NamePrompt(kind: .newFolder, text: "Nowy folder") } label: {
+                Label("Nowy folder…", systemImage: "folder.badge.plus")
+            }
+            Button { uploadWithPanel() } label: { Label("Wyślij tutaj pliki…", systemImage: "arrow.up.doc") }
             Divider()
-            Button("Odśwież") { browser.reload() }
+            Button { browser.reload() } label: { Label("Odśwież", systemImage: "arrow.clockwise") }
         } else {
             if entries.count == 1, let e = entries.first, e.isFolder {
-                Button("Otwórz") { browser.enter(e) }
-                Button("Wyślij pliki do tego folderu…") { uploadWithPanel(into: e) }
-                Button("Ustaw jako cel wysyłania (Pliki)") {
+                Button { browser.enter(e) } label: { Label("Otwórz", systemImage: "folder") }
+                Button { uploadWithPanel(into: e) } label: {
+                    Label("Wyślij pliki do tego folderu…", systemImage: "arrow.up.doc")
+                }
+                Button {
                     files.useDestination(browser.portablePathFor(e))
                     model.section = .files
+                } label: {
+                    Label("Ustaw jako cel wysyłania (Pliki)", systemImage: "paperplane")
                 }
                 Divider()
             }
-            Button("Pobierz…") { download(entries) }
+            Button { download(entries) } label: { Label("Pobierz…", systemImage: "arrow.down.doc") }
             if entries.count == 1, let e = entries.first {
-                Button("Zmień nazwę…") { prompt = NamePrompt(kind: .rename(e), text: e.name) }
+                Button { prompt = NamePrompt(kind: .rename(e), text: e.name) } label: {
+                    Label("Zmień nazwę…", systemImage: "pencil")
+                }
             }
-            Button("Kopiuj ścieżkę") {
+            Button {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(entries.map { RemotePaths.join(browser.path, $0.name) }.joined(separator: "\n"),
                                                forType: .string)
+            } label: {
+                Label("Kopiuj ścieżkę", systemImage: "doc.on.doc")
             }
             Divider()
-            Button("Usuń…", role: .destructive) { confirmDelete(entries) }
+            Button(role: .destructive) { confirmDelete(entries) } label: { Label("Usuń…", systemImage: "trash") }
         }
     }
 
@@ -237,14 +285,15 @@ private struct RemoteBrowserPage: View {
 
     func download(_ entries: [RemoteEntry]) {
         guard !entries.isEmpty else { return }
+        let source = browser.host.map { "z komputera \($0.name)" } ?? "z komputera"
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.prompt = "Pobierz tutaj"
         panel.message = entries.count == 1
-            ? "Gdzie zapisać „\(entries[0].displayName)” z \(browser.host?.name ?? "iMaca")?"
-            : "Gdzie zapisać \(entries.count) elementów z \(browser.host?.name ?? "iMaca")?"
+            ? "Gdzie zapisać „\(entries[0].displayName)” \(source)?"
+            : "Gdzie zapisać \(Polish.count(entries.count, "element", "elementy", "elementów")) \(source)?"
         panel.directoryURL = URL(fileURLWithPath: expandTilde(files.prefs.downloadFolder), isDirectory: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         files.prefs.downloadFolder = (url.path as NSString).abbreviatingWithTildeInPath
@@ -253,7 +302,8 @@ private struct RemoteBrowserPage: View {
 
     func uploadWithPanel(into folder: RemoteEntry? = nil) {
         let target = folder.map { "„\($0.displayName)”" } ?? "bieżącego folderu"
-        let urls = Pickers.files(message: "Wybierz pliki lub foldery do wysłania do \(target) na \(browser.host?.name ?? "iMacu").")
+        let host = browser.host.map { " na komputerze \($0.name)" } ?? ""
+        let urls = Pickers.files(message: "Wybierz pliki lub foldery do wysłania do \(target)\(host).")
         guard !urls.isEmpty else { return }
         if let folder { browser.upload(urls, into: folder) } else { startUpload(urls) }
     }
@@ -265,9 +315,10 @@ private struct RemoteBrowserPage: View {
             return
         }
         let names = conflicts.prefix(5).map { "„\($0)”" }.joined(separator: ", ") + (conflicts.count > 5 ? "…" : "")
+        let host = browser.host.map { " na komputerze \($0.name)" } ?? ""
         confirm = ConfirmRequest(
             title: "Zastąpić istniejące elementy?",
-            message: "W tym folderze na \(browser.host?.name ?? "iMacu") są już: \(names). Pliki o tych samych nazwach zostaną zastąpione, a do folderów zostanie dodana nowa zawartość.",
+            message: "W tym folderze\(host) są już: \(names). Pliki o tych samych nazwach zostaną zastąpione, a do folderów zostanie dodana nowa zawartość.",
             button: "Zastąp") {
             browser.upload(urls)
         }
@@ -277,7 +328,7 @@ private struct RemoteBrowserPage: View {
         guard !entries.isEmpty else { return }
         let title = entries.count == 1
             ? "Usunąć „\(entries[0].displayName)”?"
-            : "Usunąć \(entries.count) \(Operations.plural(entries.count, "element", "elementy", "elementów"))?"
+            : "Usunąć \(Polish.count(entries.count, "element", "elementy", "elementów"))?"
         let place = "z komputera \(browser.host?.name ?? "") (\(browser.path))"
         let message: String
         if entries.count == 1 {
@@ -289,6 +340,19 @@ private struct RemoteBrowserPage: View {
         }
         confirm = ConfirmRequest(title: title, message: message, button: "Usuń") {
             browser.delete(entries)
+        }
+    }
+}
+
+/// Title and icon, or only the icon when space is short (the title stays as the accessibility label).
+struct TitleOrIconLabelStyle: LabelStyle {
+    var iconOnly: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        if iconOnly {
+            Label(configuration).labelStyle(.iconOnly)
+        } else {
+            Label(configuration).labelStyle(.titleAndIcon)
         }
     }
 }

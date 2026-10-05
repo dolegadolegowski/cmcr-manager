@@ -134,26 +134,27 @@ struct RemoteFileTable<Menu: View>: View {
             TableColumn("Nazwa", value: \.name, comparator: .localizedStandard) { e in
                 RemoteEntryLabel(entry: e, dimmed: foldersOnly && !e.isFolder)
             }
-            .width(min: 150, ideal: 230)
+            .width(min: 140, ideal: 220)
             TableColumn("Data modyfikacji", value: \.modified) { e in
                 Text(e.modified, format: .dateTime.day().month(.abbreviated).year().hour().minute())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .help(e.modified.formatted(date: .complete, time: .standard))
             }
-            .width(min: 100, ideal: 130)
+            .width(min: 90, ideal: 125)
             TableColumn("Rozmiar", value: \.size) { e in
                 Text(e.sizeText)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .width(min: 55, ideal: 70)
+            .width(min: 50, ideal: 65)
             TableColumn("Rodzaj", value: \.kindDescription) { e in
                 Text(e.kindDescription)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .width(min: 70, ideal: 110)
+            .width(min: 70, ideal: 100)
             TableColumn("Właściciel", value: \.owner) { e in
                 Text(e.owner)
                     .foregroundStyle(.secondary)
@@ -161,6 +162,7 @@ struct RemoteFileTable<Menu: View>: View {
             }
             .width(min: 50, ideal: 70)
         }
+        .alternatingRowBackgrounds(browser.visibleEntries.isEmpty ? .disabled : .enabled)
         .contextMenu(forSelectionType: RemoteEntry.ID.self) { ids in
             menu(ids)
         } primaryAction: { ids in
@@ -284,7 +286,7 @@ struct RemoteBrowserStatus: View {
         switch browser.phase {
         case .idle where browser.host == nil:
             ContentUnavailableView("Brak komputerów", systemImage: "desktopcomputer",
-                                   description: Text("Dodaj komputery w Konfiguracji."))
+                                   description: Text("Dodaj komputery w Konfiguracji › Komputery."))
         case .loading where browser.listing == nil:
             ProgressView("Wczytywanie zawartości folderu…")
         case .failed(let error):
@@ -301,7 +303,9 @@ struct RemoteBrowserStatus: View {
                          : emptyHint)
                 } actions: {
                     if browser.hiddenCount > 0 {
-                        Button("Pokaż ukryte") { browser.showHidden = true }
+                        Button { browser.showHidden = true } label: {
+                            Label("Pokaż ukryte pliki", systemImage: "eye")
+                        }
                     }
                 }
             }
@@ -326,24 +330,36 @@ struct RemoteBrowseErrorView: View {
             HStack {
                 switch error {
                 case .accessDenied where !browser.asRoot:
-                    Button("Otwórz jako administrator") {
+                    Button {
                         browser.asRoot = true
                         browser.reload()
+                    } label: {
+                        Label("Otwórz jako administrator", systemImage: "lock.shield")
                     }
                     .buttonStyle(.borderedProminent)
                 case .notFound, .notDirectory:
                     if browser.canGoUp {
-                        Button("Przejdź do folderu nadrzędnego") { browser.goUp() }
+                        Button { browser.goUp() } label: {
+                            Label("Folder nadrzędny", systemImage: "arrow.up")
+                        }
+                        .help("Przejdź do folderu nadrzędnego")
                     }
                 case .noConsoleUser:
-                    Button("Pokaż Biurko ucznia") { browser.open(RemotePaths.student + "/Desktop") }
+                    Button { browser.open(RemotePaths.student + "/Desktop") } label: {
+                        Label("Pokaż Biurko ucznia", systemImage: "menubar.dock.rectangle")
+                    }
                 case .authentication:
-                    Button("Otwórz Konfigurację") { model.section = .setup }
+                    Button { model.section = .setup } label: {
+                        Label("Otwórz Konfigurację", systemImage: "gearshape")
+                    }
                 default:
                     EmptyView()
                 }
-                Button("Spróbuj ponownie") { browser.reload() }
+                Button { browser.reload() } label: {
+                    Label("Spróbuj ponownie", systemImage: "arrow.clockwise")
+                }
             }
+            .fixedSize()
         }
     }
 
@@ -381,9 +397,9 @@ struct RemoteBrowseErrorView: View {
                 ? message
                 : "Konto administratora nie ma uprawnień do tego folderu. Można go otworzyć z uprawnieniami administratora (sudo)."
         case .privacyDenied:
-            return "Biurko, Dokumenty i Pobrane są chronione przez macOS. Na tym iMacu włącz: Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie (ⓘ) › „Zezwalaj zdalnym użytkownikom na pełny dostęp do dysku”."
+            return "Biurko, Dokumenty i Pobrane są chronione przez macOS. Na tym komputerze włącz: Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie (ⓘ) › „Zezwalaj zdalnym użytkownikom na pełny dostęp do dysku”."
         case .noConsoleUser:
-            return "Folder zalogowanego użytkownika jest dostępny tylko wtedy, gdy ktoś jest zalogowany na tym Macu."
+            return "Folder zalogowanego użytkownika jest dostępny tylko wtedy, gdy ktoś jest zalogowany na tym komputerze."
         default:
             return message
         }

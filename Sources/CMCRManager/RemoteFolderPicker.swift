@@ -14,7 +14,7 @@ struct RemoteFolderRequest: Identifiable {
         switch purpose {
         case .pushDestination: return "Do którego folderu wysłać pliki?"
         case .collectSource: return "Z którego folderu zebrać prace?"
-        case .cleanFolder: return "Wybierz folder na iMacach"
+        case .cleanFolder: return "Który folder uporządkować?"
         }
     }
 }
@@ -126,20 +126,23 @@ struct RemoteFolderPicker: View {
                     .labelStyle(.iconOnly)
                 Spacer(minLength: 8)
                 Toggle(isOn: $browser.showHidden) {
-                    Label("Pokaż ukryte", systemImage: browser.showHidden ? "eye" : "eye.slash")
+                    Label("Ukryte pliki", systemImage: browser.showHidden ? "eye" : "eye.slash")
                 }
                 .toggleStyle(.button)
-                .labelStyle(.iconOnly)
+                .labelStyle(.titleAndIcon)
                 .help(browser.showHidden ? "Ukryj ukryte pliki i foldery" : "Pokaż ukryte pliki i foldery")
                 Button {
                     prompt = NamePrompt(kind: .newFolder, text: "Nowy folder")
                 } label: {
                     Label("Nowy folder", systemImage: "folder.badge.plus")
                 }
+                .labelStyle(.titleAndIcon)
+                .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(browser.listing == nil)
-                .help("Utwórz nowy folder w tym miejscu (na komputerze \(browser.host?.name ?? "—"))")
-                SearchField(text: $browser.search, prompt: "Szukaj")
-                    .frame(width: 150)
+                .help("Utwórz nowy folder w tym miejscu na komputerze \(browser.host?.name ?? "—") (⇧⌘N)")
+                SearchField(text: $browser.search, prompt: "Szukaj w tym folderze")
+                    .frame(width: 210)
+                    .accessibilityLabel("Szukaj w tym folderze")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -147,12 +150,14 @@ struct RemoteFolderPicker: View {
             RemoteFileTable(browser: browser, foldersOnly: true, onOpen: { browser.enter($0) }) { ids in
                 let entries = browser.listing?.entries.filter { ids.contains($0.id) } ?? []
                 if entries.count == 1, let e = entries.first, e.isFolder {
-                    Button("Otwórz") { browser.enter(e) }
-                    Button("Wybierz „\(e.displayName)”") { choose(e) }
+                    Button { browser.enter(e) } label: { Label("Otwórz", systemImage: "folder") }
+                    Button { choose(e) } label: { Label("Wybierz „\(e.displayName)”", systemImage: "checkmark.circle") }
                 } else if ids.isEmpty {
-                    Button("Nowy folder…") { prompt = NamePrompt(kind: .newFolder, text: "Nowy folder") }
-                        .disabled(browser.listing == nil)
-                    Button("Odśwież") { browser.reload() }
+                    Button { prompt = NamePrompt(kind: .newFolder, text: "Nowy folder") } label: {
+                        Label("Nowy folder…", systemImage: "folder.badge.plus")
+                    }
+                    .disabled(browser.listing == nil)
+                    Button { browser.reload() } label: { Label("Odśwież", systemImage: "arrow.clockwise") }
                 }
             }
             .overlay { RemoteBrowserStatus(browser: browser, emptyHint: "Możesz wybrać ten folder albo utworzyć w nim nowy.") }
@@ -183,6 +188,7 @@ struct RemoteFolderPicker: View {
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
                 .disabled(browser.path.isEmpty || browser.isLoading)
+                .help("Użyj tego folderu na wszystkich zaznaczonych komputerach")
         }
         .padding(16)
     }

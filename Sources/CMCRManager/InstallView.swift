@@ -57,6 +57,7 @@ struct InstallView: View {
                 TargetButton(title: "Wyślij i zainstaluj", icon: "square.and.arrow.down.on.square.fill") {
                     model.installPackages(model.installItems, on: model.selectedMachines)
                 }
+                .keyboardShortcut(.return, modifiers: [.command])
                 .disabled(model.installItems.isEmpty)
             }
         } header: {
@@ -125,14 +126,8 @@ struct InstallView: View {
                 }
                 .disabled(brewName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Przygotowanie komputerów")
-                    Text("Homebrew trzeba zainstalować raz na każdym komputerze. Java (Oracle JDK) – z Homebrew.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 12)
+            FormActionRow("Przygotowanie komputerów",
+                          caption: "Homebrew trzeba zainstalować raz na każdym komputerze. Java (Oracle JDK) – z Homebrew.") {
                 TargetButton(title: "Zainstaluj Homebrew", icon: "hammer", prominent: false) {
                     model.runScript("Instalacja Homebrew", on: model.selectedMachines) { _ in Scripts.installHomebrew() }
                 }
@@ -207,10 +202,7 @@ struct InstallView: View {
         } header: {
             Label("Unity Hub i Android SDK", systemImage: "cube")
         } footer: {
-            Text("Instalacje Unity trwają długo – postęp widać w dziale Zadania. Wcześniej zainstaluj Unity Hub (Homebrew: pakiet unity-hub).")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            FormFooter("Instalacje Unity trwają długo – postęp widać w dziale Zadania. Wcześniej zainstaluj Unity Hub (Homebrew: pakiet unity-hub).")
         }
     }
 }

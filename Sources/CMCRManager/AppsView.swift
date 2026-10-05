@@ -77,15 +77,13 @@ struct AppsView: View {
                 TargetButton(title: "Uruchom", icon: "play.fill") {
                     model.launchApp(appName, arguments: appArguments, on: model.selectedMachines)
                 }
+                .keyboardShortcut(.return, modifiers: [.command])
                 .disabled(appName.isEmpty)
             }
         } header: {
             Label("Aplikacja na zaznaczonych komputerach", systemImage: "macwindow.on.rectangle")
         } footer: {
-            Text("„Zamknij” działa jak polecenie Zakończ – aplikacja może zapytać o zapisanie zmian. „Wymuś zamknięcie” kończy ją od razu.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            FormFooter("„Zamknij” działa jak polecenie Zakończ – aplikacja może zapytać o zapisanie zmian. „Wymuś zamknięcie” kończy ją od razu.")
         }
     }
 
@@ -141,14 +139,8 @@ struct AppsView: View {
     var runningSection: some View {
         let groups = runningGroups
         return Section {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Aplikacje otwarte przez zalogowanych użytkowników")
-                    Text("Lista odświeża się sama po uruchomieniu lub zamknięciu aplikacji.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 12)
+            FormActionRow("Aplikacje otwarte przez zalogowanych użytkowników",
+                          caption: "Lista odświeża się sama po uruchomieniu lub zamknięciu aplikacji.") {
                 TargetButton(title: "Odśwież listę", icon: "arrow.clockwise", prominent: false) {
                     model.refreshRunningApps(model.selectedMachines)
                 }
@@ -289,16 +281,10 @@ struct AppsView: View {
         let filter = installedFilter.trimmingCharacters(in: .whitespaces)
         let shown = filter.isEmpty ? rows : rows.filter { Self.appName($0.path).localizedStandardContains(filter) }
         return Section {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Aplikacje w folderach Programy")
-                    Text(checked == 0
-                         ? "Pobierz listę, aby zobaczyć, na ilu komputerach jest każda aplikacja."
-                         : "Sprawdzono \(Polish.computers(checked)). Pomarańczowa liczba – aplikacji brakuje na części z nich.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 12)
+            FormActionRow("Aplikacje w folderach Programy",
+                          caption: checked == 0
+                              ? "Pobierz listę, aby zobaczyć, na ilu komputerach jest każda aplikacja."
+                              : "Sprawdzono \(Polish.computers(checked)). Pomarańczowa liczba – aplikacji brakuje na części z nich.") {
                 TargetButton(title: checked == 0 ? "Pobierz listę" : "Odśwież listę",
                              icon: "arrow.down.circle", prominent: false) {
                     model.refreshInstalledApps(model.selectedMachines)

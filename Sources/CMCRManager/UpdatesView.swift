@@ -36,20 +36,14 @@ struct UpdatesView: View {
     var checkSection: some View {
         let rows = model.selectedMachines.filter { model.updates[$0.id] != nil }
         return Section {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Dostępne aktualizacje")
-                    Text("Sprawdzenie niczego nie instaluje i nie przeszkadza uczniom.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 12)
+            FormActionRow("Dostępne aktualizacje", caption: "Sprawdzenie niczego nie instaluje i nie przeszkadza uczniom.") {
                 TargetButton(title: "Historia instalacji", icon: "clock.arrow.circlepath", prominent: false) {
                     model.runScript("Historia aktualizacji", on: model.selectedMachines) { _ in Scripts.updateHistory() }
                 }
                 TargetButton(title: "Sprawdź aktualizacje", icon: "magnifyingglass") {
                     model.checkUpdates(model.selectedMachines)
                 }
+                .keyboardShortcut(.return, modifiers: [.command])
             }
             ForEach(rows) { m in
                 if let info = model.updates[m.id] { updateRow(m, info) }
@@ -118,10 +112,7 @@ struct UpdatesView: View {
         } header: {
             Label("Instalacja aktualizacji macOS", systemImage: "arrow.down.app")
         } footer: {
-            Text("Komputery z procesorem Apple wymagają do instalacji hasła administratora – aplikacja poda je sama.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            FormFooter("Komputery z procesorem Apple wymagają do instalacji hasła administratora – aplikacja poda je sama.")
                 .help("softwareupdate --user/--stdinpass")
         }
     }
@@ -145,24 +136,24 @@ struct UpdatesView: View {
 
     var appsSection: some View {
         Section {
-            actionRow("Programy z Homebrew",
-                      "Aktualizuje programy zainstalowane przez Homebrew (brew update i brew upgrade).") {
+            FormActionRow("Programy z Homebrew",
+                          caption: "Aktualizuje programy zainstalowane przez Homebrew (brew update i brew upgrade).") {
                 TargetButton(title: "Aktualizuj programy", icon: "mug", prominent: false) {
                     model.runScript("brew update && brew upgrade", on: model.selectedMachines) { _ in
                         Scripts.brew("update && with_askpass brew upgrade")
                     }
                 }
             }
-            actionRow("Także aplikacje z własnym aktualizatorem",
-                      "Np. przeglądarki zainstalowane z Homebrew, które zwykle aktualizują się same (--greedy).") {
+            FormActionRow("Także aplikacje z własnym aktualizatorem",
+                          caption: "Np. przeglądarki zainstalowane z Homebrew, które zwykle aktualizują się same (--greedy).") {
                 TargetButton(title: "Aktualizuj wszystkie", icon: "mug.fill", prominent: false) {
                     model.runScript("brew upgrade --cask --greedy", on: model.selectedMachines) { _ in
                         Scripts.brew("upgrade --cask --greedy")
                     }
                 }
             }
-            actionRow("Aplikacje z App Store",
-                      "Wymaga zalogowania do App Store na koncie administratora (raz, przy komputerze).") {
+            FormActionRow("Aplikacje z App Store",
+                          caption: "Wymaga zalogowania do App Store na koncie administratora (raz, przy komputerze).") {
                 TargetButton(title: "Aktualizuj z App Store", icon: "bag", prominent: false) {
                     model.runScript("mas upgrade", on: model.selectedMachines) { _ in Scripts.masUpgrade() }
                 }
@@ -170,25 +161,7 @@ struct UpdatesView: View {
         } header: {
             Label("Aktualizacje aplikacji", systemImage: "app.badge.checkmark")
         } footer: {
-            Text("Unity i Android SDK aktualizuje się w dziale Instalacja.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    func actionRow<Button: View>(_ title: String, _ caption: String,
-                                 @ViewBuilder button: () -> Button) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                Text(caption)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 12)
-            button()
+            FormFooter("Unity i Android SDK aktualizuje się w dziale Instalacja.")
         }
     }
 }
