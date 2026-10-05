@@ -67,7 +67,8 @@ Opcje
   --yes, -y         nie pytaj o potwierdzenie (wymagane bez terminala dla restartu, wylogowania, usuwania)
   --                koniec opcji – dalsze argumenty dosłownie
 
-Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie;
+Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie (także opcja,
+której polecenie nie używa, lub nadmiarowy argument – wtedy nic nie jest wykonywane);
 exec zwraca kod zdalnego polecenia (najwyższy z kilku komputerów).
 
 Konfiguracja: \(ConfigStore.directory.path)

@@ -50,6 +50,22 @@ out="$(ctl exec 'echo x' 1 --opcja-ktorej-nie-ma)"; code=$?
 expect_code "nieznana opcja: kod 2" "$code" 2 "$out"
 out="$(ctl exec 'echo x' 1 -j zero)"; code=$?
 expect_code "-j: niepoprawna wartość – kod 2" "$code" 2 "$out"
+out="$(ctl exec 'echo x' 1 -json)"; code=$?
+expect "-json to nie -j: nieznana opcja" "$out" "Nieznana opcja: -json"
+expect_code "-json: kod 2" "$code" 2 "$out"
+# Options of other commands must not be ignored: `--host 2` would otherwise leave exec without a selection = all Macs.
+out="$(mctl exec 'echo nie-powinno' --host 2)"; code=$?
+expect_code "opcja innego polecenia (exec --host 2): kod 2" "$code" 2 "$out"
+expect "opcja innego polecenia: czytelny błąd" "$out" "Opcja --host nie dotyczy polecenia exec"
+expect_not "opcja innego polecenia: nic nie wykonano (zamiast na wszystkich)" "$out" "Running command"
+out="$(mctl exec 'echo nie-powinno' 1 2)"; code=$?
+expect_code "nadmiarowy argument (exec … 1 2): kod 2" "$code" 2 "$out"
+expect "nadmiarowy argument: wskazówka" "$out" "Nadmiarowy argument „2”" "1,3 lub 1-5"
+expect_not "nadmiarowy argument: nic nie wykonano" "$out" "Running command"
+out="$(ctl power display-sleep 1 --dry-run)"; code=$?
+expect_code "power --dry-run (opcja polecenia wake): kod 2" "$code" 2 "$out"
+out="$(ctl password status --host 1)"; code=$?
+expect_code "password status --host: kod 2" "$code" 2 "$out"
 out="$(ctl apps)"; code=$?
 expect_code "apps bez numeru: kod 2" "$code" 2 "$out"
 out="$(ctl render 'echo "zażółć"' --root)"
@@ -184,6 +200,10 @@ expect "message: okno dialogowe z poprawnie zacytowaną treścią" "$(fakelog)" 
 clear_fakelog
 out="$(ctlpw message "T" "Powiadomienie e2e" 1 --notification)"
 expect "message --notification" "$(fakelog)" "display notification \"Powiadomienie e2e\" with title \"T\""
+clear_fakelog
+out="$(ctlpw message "Uwaga" "-5 minut do końca lekcji" 1 --notification)"; code=$?
+expect_code "message: treść zaczynająca się od „-” – kod 0" "$code" 0 "$out"
+expect "message: treść zaczynająca się od „-” przekazana" "$(fakelog)" "display notification \"-5 minut do końca lekcji\""
 out="$(ctl message "Tylko tytuł" 1)"; code=$?
 expect_code "message: brak treści – kod 2" "$code" 2 "$out"
 clear_fakelog
@@ -254,6 +274,34 @@ out="$(hctl exec 'echo x' 8)"; code=$?
 expect "hosts remove: komputer usunięty z listy" "$out" "Nie znaleziono komputera: 8"
 out="$(hctl hosts remove 1 </dev/null)"; code=$?
 expect_code "hosts remove: bez --yes – kod 2" "$code" 2 "$out"
+
+# An unreadable hosts.json must never be replaced by the default list (loadHosts() falls back to imac01–imac15).
+BAD="$WORK/cfg-bad"
+mkdir -p "$BAD"
+cp "$WORK/config/settings.json" "$BAD/"
+printf '%s\n' '[{"name":"sala1","address":"sala1.cmcr-e2e.invalid","macAddress":"aa:bb:cc:dd:ee:ff"},' \
+  ' {"name":"sala2","adress":"sala2.cmcr-e2e.invalid"}]' > "$BAD/hosts.json"
+cp "$BAD/hosts.json" "$WORK/hosts-bad.orig"
+bctl() { CMCR_CONFIG_DIR="$BAD" "$CTL" "$@" 2>&1; }
+for cmd in "hosts add nowy 10.0.0.9 admin" "hosts set 1 --mac 00:11:22:33:44:55" "hosts remove 1 --yes" \
+           "hosts generate --append" "password clear --host 1"; do
+  out="$(bctl $cmd </dev/null)"; code=$?
+  expect_code "nieczytelny hosts.json: $cmd – kod 1" "$code" 1 "$out"
+done
+expect "nieczytelny hosts.json: wskazanie błędu" "$out" "brak pola „address” (wpis nr 2)" "lista komputerów nie została zmieniona"
+out="$(printf 'tajne\n' | bctl password set --host 1)"; code=$?
+expect_code "nieczytelny hosts.json: password set --host – kod 1" "$code" 1 "$out"
+if security find-generic-password -s "$CMCR_KEYCHAIN_SERVICE" >/dev/null 2>&1; then
+  fail "nieczytelny hosts.json: password set --host zapisał hasło"
+else
+  pass "nieczytelny hosts.json: password set --host niczego nie zapisał"
+fi
+cmp -s "$BAD/hosts.json" "$WORK/hosts-bad.orig" && pass "nieczytelny hosts.json: plik nie został zmieniony" \
+  || fail "nieczytelny hosts.json: plik zmieniony" "$(cat "$BAD/hosts.json")"
+expect "nieczytelny hosts.json: ostrzeżenie przy liście domyślnej" "$(bctl list)" "Uwaga: nie można odczytać" "domyślna lista"
+out="$(bctl hosts generate sala --count 2 --replace --yes)"; code=$?
+expect_code "nieczytelny hosts.json: generate --replace naprawia listę" "$code" 0 "$out"
+expect "nieczytelny hosts.json: nowa lista" "$(bctl list)" "sala01@sala01.local" "sala02"
 
 # Keychain: a throw-away service name, never the app's own items.
 KS="pl.cmcr.manager.e2e-$$-$RANDOM"

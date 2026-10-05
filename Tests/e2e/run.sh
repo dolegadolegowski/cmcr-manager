@@ -16,6 +16,9 @@ SSHD_PID=""
 
 cleanup() {
   [ -n "$SSHD_PID" ] && kill "$SSHD_PID" 2>/dev/null
+  case "${CMCR_KEYCHAIN_SERVICE:-}" in
+    pl.cmcr.manager.e2e-*) while security delete-generic-password -s "$CMCR_KEYCHAIN_SERVICE" >/dev/null 2>&1; do :; done ;;
+  esac
   if [ "${CMCR_E2E_KEEP:-0}" = 1 ]; then echo "Zachowano: $WORK"; return; fi
   pkill -f "$WORK/" 2>/dev/null
   rm -rf "$WORK"
@@ -98,6 +101,8 @@ cat > "$WORK/config/settings.json" <<EOF
  "screenshotMaxSize":640}
 EOF
 export CMCR_CONFIG_DIR="$WORK/config"
+# A throw-away Keychain service: cmcrctl must never read or change the app's own pl.cmcr.manager items here.
+export CMCR_KEYCHAIN_SERVICE="pl.cmcr.manager.e2e-$$"
 unset CMCR_PASSWORD
 ctl() { "$CTL" "$@" 2>&1; }
 ctlpw() { CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }

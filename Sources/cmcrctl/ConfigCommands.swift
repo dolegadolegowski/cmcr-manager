@@ -100,6 +100,7 @@ extension CLI {
         let domain = args.value("--domain") ?? "local"
         let replace = args.has("--replace"), append = args.has("--append")
         if replace && append { usageError("Wybierz --replace albo --append.") }
+        let hosts = append ? editableHosts() : hosts
         let generated = Machine.generate(prefix: prefix, start: start, count: count, digits: digits, domain: domain)
         let sample = generated.prefix(3).map(\.destination).joined(separator: ", ")
             + (generated.count > 3 ? " … \(generated.last!.destination)" : "")
@@ -111,7 +112,6 @@ extension CLI {
             ConfigStore.saveHosts(generated)
             Console.out("Lista komputerów zastąpiona.")
         } else if append {
-            let hosts = editableHosts()
             let existing = Set(hosts.map { $0.address.lowercased() })
             let new = generated.filter { !existing.contains($0.address.lowercased()) }
             ConfigStore.saveHosts(hosts + new)

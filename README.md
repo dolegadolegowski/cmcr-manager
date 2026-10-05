@@ -74,7 +74,8 @@ Zaznaczenie komputerów na liście (środkowa kolumna) jest wspólne dla wszystk
 - Komputery wskazuje się numerem z nazwy (`4` → imac04), listą (`1,3,7`), zakresem (`1-5`), pozycją na liście (`#2`), nazwą lub `all`. Numer, którego nie ma na liście, jest błędem – polecenie nigdy nie trafi do innego Maca.
 - `-j N` obsługuje N komputerów naraz; wyniki i tak są wypisywane w kolejności listy (`--prefix` dodaje `[imac04]` przed każdym wierszem). `status` i `updates list` działają równolegle domyślnie.
 - Restart, wyłączenie, wylogowanie, czyszczenie folderu, deinstalacja i zmiany listy komputerów pytają o potwierdzenie; w skryptach (bez terminala) trzeba dodać `--yes`.
-- Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie; `exec` zwraca kod zdalnego polecenia.
+- Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie (także opcja, której polecenie nie używa, np. `exec … --host 4`, albo nadmiarowy argument – wtedy nic nie jest wykonywane); `exec` zwraca kod zdalnego polecenia.
+- Uszkodzony `hosts.json` nie jest nigdy nadpisywany: polecenia zmieniające listę komputerów kończą się błędem ze wskazaniem miejsca problemu.
 - Hasło: `cmcrctl password set` (czyta ze standardowego wejścia, bez echa) lub zmienna `CMCR_PASSWORD`.
 
 ```sh
