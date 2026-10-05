@@ -37,6 +37,10 @@ struct SetupOptionsSheet: View {
         return false
     }
 
+    /// Macs the script will really run on: like every batch, it skips those known to be unreachable.
+    private var reachable: [Machine] { targets.filter { !model.willSkip($0) } }
+    private var skipped: [Machine] { targets.filter { model.willSkip($0) } }
+
     var body: some View {
         if let url = savedURL {
             SavedScriptSheet(url: url)
@@ -55,7 +59,8 @@ struct SetupOptionsSheet: View {
                 Divider()
                 footer
             }
-            .frame(width: 600, height: 700)
+            .frame(width: 620)
+            .frame(minHeight: 480, idealHeight: 680)
         }
     }
 
@@ -71,8 +76,8 @@ struct SetupOptionsSheet: View {
                 Text(isSave ? "Zapisz skrypt konfiguracyjny" : "Skonfiguruj iMaki")
                     .font(.title2.weight(.semibold))
                 Text(isSave
-                     ? "Plik do jednorazowego uruchomienia przy iMacu (sudo bash). Jeden plik pasuje do wszystkich iMaców – konto administratora i nazwa są wykrywane na miejscu."
-                     : "Skrypt konfiguracyjny \(SetupScript.version) zostanie wysłany przez SSH i uruchomiony jako root na: \(targetNames). Można go bezpiecznie uruchamiać wielokrotnie – zmienia tylko to, co trzeba.")
+                     ? "Plik do jednorazowego uruchomienia przy iMacu (sudo bash), np. z pendrive’a. Jeden plik pasuje do wszystkich iMaców – konto administratora i nazwa są wykrywane na miejscu."
+                     : "Skrypt konfiguracyjny \(SetupScript.version) zostanie uruchomiony z uprawnieniami administratora (root) na: \(targetNames). Można go bezpiecznie uruchamiać wielokrotnie – zmienia tylko to, co trzeba.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -83,8 +88,13 @@ struct SetupOptionsSheet: View {
     }
 
     var targetNames: String {
-        let names = targets.prefix(8).map(\.name).joined(separator: ", ")
-        return targets.count > 8 ? "\(names) i \(targets.count - 8) innych" : names
+        guard !reachable.isEmpty else { return "żadnym komputerze (zaznaczone są niedostępne)" }
+        return Self.names(reachable)
+    }
+
+    static func names(_ machines: [Machine]) -> String {
+        let names = machines.prefix(8).map(\.name).joined(separator: ", ")
+        return machines.count > 8 ? "\(names) i \(machines.count - 8) innych" : names
     }
 
     var footer: some View {
@@ -96,7 +106,7 @@ struct SetupOptionsSheet: View {
                     Label("Tylko sprawdź", systemImage: "checklist")
                 }
                 .help("Uruchamia skrypt w trybie sprawdzania: raport pokaże, co zostałoby zmienione, nic nie jest zmieniane.")
-                .disabled(o.validationError() != nil)
+                .disabled(o.validationError() != nil || reachable.isEmpty)
             }
             Spacer()
             Button("Anuluj", role: .cancel) { dismiss() }
@@ -104,12 +114,13 @@ struct SetupOptionsSheet: View {
             Button {
                 if isSave { save() } else { run(.apply) }
             } label: {
-                Label(isSave ? "Zapisz…" : "Skonfiguruj (\(targets.count))",
+                Label(isSave ? "Zapisz…" : "Skonfiguruj \(Polish.computers(reachable.count))",
                       systemImage: isSave ? "square.and.arrow.down" : "wrench.and.screwdriver")
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
-            .disabled(o.validationError() != nil || (!isSave && targets.isEmpty))
+            .disabled(o.validationError() != nil || (!isSave && reachable.isEmpty))
+            .help(isSave ? "Wybierz, gdzie zapisać skrypt" : "Uruchamia skrypt \(Polish.onComputers(reachable.count)) i wprowadza zaznaczone ustawienia")
         }
         .padding(16)
     }
@@ -118,13 +129,21 @@ struct SetupOptionsSheet: View {
 
     @ViewBuilder var warnings: some View {
         let problems = warningTexts
-        if !problems.isEmpty {
+        if !problems.isEmpty || !skipped.isEmpty {
             Section {
                 ForEach(problems, id: \.self) { text in
                     Label {
                         Text(text).fixedSize(horizontal: false, vertical: true)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                }
+                if !skipped.isEmpty {
+                    Label {
+                        Text("Pominięte – niedostępne przy ostatnim sprawdzeniu: \(Self.names(skipped)). Pojawią się w wynikach; skrypt można później powtórzyć na nich.")
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "moon.zzz.fill").foregroundStyle(.secondary)
                     }
                 }
             }
@@ -136,35 +155,35 @@ struct SetupOptionsSheet: View {
         if let e = o.validationError() { out.append(e) }
         if let f = SetupScript.sharedFolderProblem(model.settings) { out.append(f + " Popraw go w zakładce Ustawienia.") }
         if o.installKey && model.managerPublicKey == nil {
-            out.append("Na tym Macu nie ma jeszcze klucza SSH – wygeneruj go w zakładce Dostęp i hasła, inaczej skrypt go nie zainstaluje.")
+            out.append("Na tym Macu nie ma jeszcze klucza logowania – utwórz go w zakładce Dostęp i hasła, inaczej skrypt go nie zainstaluje.")
         }
         if !isSave && !model.hasSharedPassword && targets.contains(where: { $0.usesSharedPassword }) {
-            out.append("Nie zapisano hasła administratora – bez niego uruchomienie jako root się nie uda (chyba że iMac ma sudo bez hasła).")
+            out.append("Nie zapisano hasła administratora – bez niego skrypt się nie uruchomi (chyba że iMac ma uprawnienia administratora bez hasła).")
         }
         return out
     }
 
     var accessSection: some View {
         Section("Dostęp zdalny") {
-            OptionToggle(title: "Zainstaluj klucz SSH tej aplikacji", icon: "key.horizontal",
+            OptionToggle(title: "Logowanie bez hasła (klucz tej aplikacji)", icon: "key.horizontal.fill", color: .blue,
                          detail: keyDetail, isOn: $o.installKey)
                 .disabled(model.managerPublicKey == nil)
-            OptionToggle(title: "SSH tylko dla administratorów", icon: "lock.shield",
-                         detail: "Logowanie zdalne dozwolone tylko dla grupy Administratorzy – uczniowie nie zalogują się przez SSH.",
+            OptionToggle(title: "Zdalne logowanie tylko dla administratorów", icon: "lock.shield.fill", color: .blue,
+                         detail: "Uczniowie nie zalogują się zdalnie (SSH) – tylko konta z grupy Administratorzy.",
                          isOn: $o.restrictSSH)
-            OptionToggle(title: "Podtrzymuj połączenia SSH", icon: "antenna.radiowaves.left.and.right",
-                         detail: "Zamyka zawieszone połączenia po około 3 minutach (np. gdy ten Mac uśnie w trakcie zadania).",
+            OptionToggle(title: "Zamykaj zawieszone połączenia", icon: "antenna.radiowaves.left.and.right", color: .teal,
+                         detail: "Po około 3 minutach bez odpowiedzi, np. gdy ten Mac uśnie w trakcie zadania.",
                          isOn: $o.sshKeepAlive)
-            OptionToggle(title: "Udostępnianie ekranu (VNC) dla administratorów", icon: "rectangle.on.rectangle",
-                         detail: "Pełne zdalne sterowanie w aplikacji „Udostępnianie ekranu”. Za pierwszym razem może być potrzebne przełączenie go w Ustawieniach przy komputerze.",
+            OptionToggle(title: "Udostępnianie ekranu dla administratorów", icon: "rectangle.on.rectangle", color: .indigo,
+                         detail: "Pełne zdalne sterowanie w aplikacji „Udostępnianie ekranu” (VNC). Za pierwszym razem może być potrzebne przełączenie go w Ustawieniach przy komputerze.",
                          isOn: $o.enableVNC)
         }
     }
 
     var keyDetail: String {
-        guard let key = model.managerPublicKey else { return "Brak klucza SSH na tym Macu (Dostęp i hasła › Wygeneruj nowy klucz)." }
+        guard let key = model.managerPublicKey else { return "Brak klucza na tym Macu – utwórz go w zakładce Dostęp i hasła." }
         let comment = key.split(separator: " ").dropFirst(2).joined(separator: " ")
-        return "Aplikacja będzie logować się bez hasła\(comment.isEmpty ? "" : " (klucz \(comment))")."
+        return "Aplikacja będzie łączyć się bez wpisywania hasła\(comment.isEmpty ? "" : " (klucz \(comment))")."
     }
 
     var folderSection: some View {
@@ -174,23 +193,23 @@ struct SetupOptionsSheet: View {
                     .font(.callout.monospaced())
                     .textSelection(.enabled)
             } label: {
-                FormLabel(title: "Folder współdzielony", icon: "folder")
+                FormLabel(title: "Folder współdzielony", icon: "folder.fill", color: .cyan)
             }
-            OptionToggle(title: "Wspólne uprawnienia do plików (ACL)", icon: "person.2",
-                         detail: "Pliki wysłane przez nauczyciela i zapisane przez ucznia mogą edytować obie strony.",
+            OptionToggle(title: "Wspólne uprawnienia do plików", icon: "person.2.fill", color: .blue,
+                         detail: "Pliki wysłane przez nauczyciela i zapisane przez ucznia mogą edytować obie strony (ACL).",
                          isOn: $o.sharedACL)
         }
     }
 
     var powerSection: some View {
         Section("Zasilanie") {
-            OptionToggle(title: "Budzenie przez sieć (Wake-on-LAN)", icon: "dot.radiowaves.left.and.right",
-                         detail: "Pozwala obudzić uśpionego iMaca z aplikacji (przez kabel Ethernet).",
+            OptionToggle(title: "Budzenie przez sieć", icon: "dot.radiowaves.left.and.right", color: .green,
+                         detail: "Pozwala obudzić uśpionego iMaca z aplikacji, przez kabel Ethernet (Wake-on-LAN).",
                          isOn: $o.wakeOnLAN)
-            OptionToggle(title: "Nie usypiaj komputera", icon: "moon.zzz",
+            OptionToggle(title: "Nie usypiaj komputera", icon: "moon.zzz.fill", color: .indigo,
                          detail: "iMac nie przechodzi w uśpienie, więc zawsze odpowiada; ekran nadal może się wyłączać.",
                          isOn: $o.noSleep)
-            OptionToggle(title: "Włączaj po zaniku zasilania", icon: "bolt",
+            OptionToggle(title: "Włączaj po zaniku zasilania", icon: "bolt.fill", color: .yellow,
                          detail: "Po powrocie prądu iMac uruchomi się sam (jeśli model to obsługuje).",
                          isOn: $o.autoRestart)
             Picker(selection: $o.scheduleMode) {
@@ -198,7 +217,7 @@ struct SetupOptionsSheet: View {
                 Text("Ustaw harmonogram").tag(SetupOptions.ScheduleMode.set)
                 Text("Usuń harmonogram").tag(SetupOptions.ScheduleMode.off)
             } label: {
-                FormLabel(title: "Automatyczne włączanie i wyłączanie", icon: "calendar.badge.clock")
+                FormLabel(title: "Automatyczne włączanie i wyłączanie", icon: "calendar.badge.clock", color: .red)
             }
             if o.scheduleMode == .set {
                 ScheduleEditor(options: $o)
@@ -208,7 +227,7 @@ struct SetupOptionsSheet: View {
 
     var systemSection: some View {
         Section("System") {
-            OptionToggle(title: "Ustaw nazwę komputera", icon: "textformat",
+            OptionToggle(title: "Ustaw nazwę komputera", icon: "textformat", color: .gray,
                          detail: isSave ? "Nazwa jak konto administratora, np. imac07 (adres imac07.local)."
                                         : "Nazwa według adresu z listy komputerów, np. imac07.local → imac07, więc adres się nie zmienia.",
                          isOn: $o.setHostname)
@@ -230,12 +249,12 @@ struct SetupOptionsSheet: View {
                 Text("Pobieraj, instaluj poprawki bezpieczeństwa").tag(SetupOptions.UpdatePolicy.download)
                 Text("Instaluj wszystko automatycznie").tag(SetupOptions.UpdatePolicy.auto)
             } label: {
-                FormLabel(title: "Aktualizacje macOS", icon: "arrow.triangle.2.circlepath")
+                FormLabel(title: "Aktualizacje macOS", icon: "gear.badge", color: .gray)
             }
-            OptionToggle(title: "Zainstaluj Rosetta 2", icon: "cpu",
-                         detail: "Potrzebna programom dla procesorów Intel na iMacach z Apple Silicon.",
+            OptionToggle(title: "Zainstaluj Rosettę 2", icon: "cpu.fill", color: .gray,
+                         detail: "Potrzebna programom dla procesorów Intel na iMacach z procesorem Apple.",
                          isOn: $o.rosetta)
-            OptionToggle(title: "Odblokuj SSH w zaporze", icon: "shield.lefthalf.filled",
+            OptionToggle(title: "Odblokuj zdalne logowanie w zaporze", icon: "flame.fill", color: .orange,
                          detail: "Wyłącza „Blokuj wszystkie połączenia przychodzące”, które uniemożliwia połączenie z aplikacji.",
                          isOn: $o.fixFirewall)
         }
@@ -257,32 +276,23 @@ struct SetupOptionsSheet: View {
                 Text("Włącz (niezalecane)").tag(SetupOptions.SudoPolicy.passwordless)
                 Text("Wyłącz").tag(SetupOptions.SudoPolicy.requirePassword)
             } label: {
-                Label {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("sudo bez hasła")
-                        Text("Każdy, kto ma klucz SSH tej aplikacji, miałby pełne uprawnienia roota bez hasła.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                } icon: {
-                    Image(systemName: "lock.open").frame(width: 22)
-                }
+                SettingLabel(title: "Uprawnienia administratora bez hasła",
+                             caption: "sudo bez hasła: każdy, kto ma klucz tej aplikacji, miałby pełne uprawnienia bez hasła.",
+                             icon: "lock.open.fill", color: .red)
             }
-            OptionToggle(title: "Logowanie SSH wyłącznie kluczem", icon: "lock",
+            OptionToggle(title: "Logowanie zdalne tylko kluczem", icon: "lock.fill", color: .blue,
                          detail: "Wyłącza logowanie hasłem przez SSH. Wymaga instalacji klucza tej aplikacji.",
                          isOn: $o.sshKeyOnly)
                 .disabled(!o.installKey)
             TextField(text: $o.keyFrom, prompt: Text("np. 192.168.1.0/24")) {
-                FormLabel(title: "Klucz tylko z adresów", icon: "network")
+                SettingLabel(title: "Klucz tylko z adresów", caption: "Opcjonalnie; adresy lub sieci oddzielone przecinkami",
+                             icon: "network", color: .blue)
             }
             .help("Opcjonalnie: klucz aplikacji zadziała tylko z tych adresów lub sieci (oddzielone przecinkami).")
         } header: {
             Text("Zaawansowane")
         } footer: {
-            Text("Domyślne ustawienia wystarczają w większości pracowni.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            FormFooter("Domyślne ustawienia wystarczają w większości pracowni.")
         }
     }
 

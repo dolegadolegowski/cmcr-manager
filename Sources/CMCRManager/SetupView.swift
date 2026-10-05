@@ -724,7 +724,7 @@ struct AccessSettings: View {
                      includeUnreachable: true) {
             model.runScript("Test sudo", on: model.selectedMachines, includeUnreachable: true) { _ in Scripts.sudoTest() }
         }
-        TargetButton(title: "Sprawdź połączenie", icon: "bolt.horizontal", prominent: false,
+        TargetButton(title: "Sprawdź połączenie", icon: "network", prominent: false,
                      includeUnreachable: true) {
             model.runScript("Test połączenia", on: model.selectedMachines, includeUnreachable: true,
                             script: { _ in

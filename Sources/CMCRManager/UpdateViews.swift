@@ -315,43 +315,36 @@ struct ReleaseNotesView: View {
     }
 }
 
-// MARK: - Settings (Konfiguracja › Ustawienia)
+// MARK: - Settings (Konfiguracja › Ustawienia and the Settings window)
 
 struct UpdateSettingsSection: View {
     @ObservedObject private var updater = Updater.shared
 
     var body: some View {
         Section {
-            LabeledContent("Zainstalowana wersja", value: updater.currentVersionText)
-            Toggle(isOn: $updater.automaticChecks) {
-                Text("Sprawdzaj automatycznie")
-                Text("Przy uruchomieniu aplikacji i raz dziennie, w GitHub Releases")
+            LabeledContent {
+                Text(updater.currentVersionText).foregroundStyle(.secondary)
+            } label: {
+                SettingLabel(title: "Zainstalowana wersja", caption: lastCheckText, icon: "app.badge.checkmark.fill", color: .blue)
             }
-            Toggle(isOn: $updater.automaticDownloads) {
-                Text("Pobieraj uaktualnienia w tle")
-                Text("Instalacja i tak wymaga Twojej zgody")
-            }
-            Toggle(isOn: $updater.automaticInstall) {
-                Text("Instaluj automatycznie")
-                Text(automaticInstallNote)
-            }
-            .disabled(!updater.canInstallOnQuit)
-            Toggle(isOn: $updater.includePrereleases) {
-                Text("Proponuj wersje testowe (beta)")
-                Text("Tylko do sprawdzania nowych funkcji przed resztą pracowni")
-            }
-            LabeledContent("Ostatnie sprawdzenie",
-                           value: updater.lastCheck?.formatted(date: .abbreviated, time: .shortened) ?? "jeszcze nie sprawdzano")
-            LabeledContent("Lokalizacja aplikacji") {
-                Text(locationText)
-                    .multilineTextAlignment(.trailing)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            OptionToggle(title: "Sprawdzaj automatycznie", icon: "arrow.triangle.2.circlepath", color: .blue,
+                         detail: "Przy uruchomieniu aplikacji i raz dziennie (wydania na GitHubie)",
+                         isOn: $updater.automaticChecks)
+            OptionToggle(title: "Pobieraj uaktualnienia w tle", icon: "arrow.down.circle.fill", color: .green,
+                         detail: "Instalacja i tak wymaga Twojej zgody",
+                         isOn: $updater.automaticDownloads)
+            OptionToggle(title: "Instaluj automatycznie", icon: "checkmark.seal.fill", color: .indigo,
+                         detail: automaticInstallNote, isOn: $updater.automaticInstall)
+                .disabled(!updater.canInstallOnQuit)
+            OptionToggle(title: "Proponuj wersje testowe (beta)", icon: "testtube.2", color: .orange,
+                         detail: "Tylko do sprawdzania nowych funkcji przed resztą pracowni",
+                         isOn: $updater.includePrereleases)
+            SettingLabel(title: "Lokalizacja aplikacji", caption: locationText, icon: "folder.fill", color: .gray)
+                .textSelection(.enabled)
             HStack {
                 Button("Sprawdź teraz", systemImage: "arrow.clockwise") { updater.checkNow() }
                     .disabled(!updater.isConfigured)
-                    .help("Sprawdź od razu, czy jest nowa wersja CMCR Manager")
+                    .help("Sprawdź od razu, czy jest nowa wersja CMCR Manager (także menu CMCR Manager › Sprawdź uaktualnienia…)")
                 Button("Historia wersji", systemImage: "clock.arrow.circlepath") {
                     NSWorkspace.shared.open(updater.configuration.releasesPageURL)
                 }
@@ -366,10 +359,14 @@ struct UpdateSettingsSection: View {
             if !updater.isConfigured {
                 Label("Ta kompilacja nie ma wpisanego klucza publicznego do sprawdzania podpisu (UpdateKeys.swift) – automatyczne uaktualnienia są wyłączone.",
                       systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
                     .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    private var lastCheckText: String {
+        "Ostatnio sprawdzono: " + (updater.lastCheck?.formatted(date: .abbreviated, time: .shortened) ?? "jeszcze nie sprawdzano")
     }
 
     private var automaticInstallNote: String {
@@ -383,7 +380,7 @@ struct UpdateSettingsSection: View {
     private var locationText: String {
         switch updater.location {
         case .writable(let u): return u.path
-        case .requiresAdmin(let u): return u.path + "\n(instalacja wymaga hasła administratora)"
+        case .requiresAdmin(let u): return u.path + " (instalacja wymaga hasła administratora tego Maca)"
         case .unsupported(let why): return why
         }
     }
@@ -445,6 +442,7 @@ private struct UpdaterUIModifier: ViewModifier {
             .sheet(isPresented: $updater.isSheetPresented) {
                 UpdateSheet().environmentObject(model)
             }
+            .onSnapshotSubpage { sub in updater.isSheetPresented = sub == "updater" }
             .alert(updater.outcome?.title ?? "",
                    isPresented: Binding(get: { updater.outcome?.success == false },
                                         set: { if !$0 { updater.outcome = nil } })) {
