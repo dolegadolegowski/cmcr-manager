@@ -59,7 +59,35 @@ public struct HistoryBatch: Identifiable, Hashable, Sendable {
 
     public var succeeded: Int { records.filter(\.succeeded).count }
     public var failed: Int { records.filter { $0.state == "failed" }.count }
+    public var cancelled: Int { records.filter { $0.state == "cancelled" }.count }
+    public var skipped: Int { records.filter { $0.state == "skipped" }.count }
     public var finishedAt: Date { records.map(\.finishedAt).max() ?? startedAt }
+    public var outcome: BatchOutcome {
+        BatchOutcome(succeeded: succeeded, failed: failed, cancelled: cancelled, skipped: skipped)
+    }
+}
+
+/// Overall result of a finished batch (its status icon in the job lists).
+public enum BatchOutcome: Equatable, Sendable {
+    /// At least one Mac reported an error.
+    case failed
+    /// Nothing ran to completion: every job was skipped or cancelled.
+    case nothingRan
+    /// Some Macs succeeded, others were skipped or cancelled.
+    case partial
+    case succeeded
+
+    public init(succeeded: Int, failed: Int, cancelled: Int, skipped: Int) {
+        if failed > 0 {
+            self = .failed
+        } else if succeeded == 0 {
+            self = .nothingRan
+        } else if cancelled + skipped > 0 {
+            self = .partial
+        } else {
+            self = .succeeded
+        }
+    }
 }
 
 /// Persistent audit trail: `history/jobs-YYYY-MM.jsonl` (one JSON object per job) plus the full output of every

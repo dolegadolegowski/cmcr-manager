@@ -200,10 +200,10 @@ private struct HistoryListRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: batch.failed > 0 ? "xmark.octagon.fill" : "checkmark.circle.fill")
-                .foregroundStyle(batch.failed > 0 ? Color.red : Color.green)
+            BatchOutcomeIcon(outcome: batch.outcome)
                 .frame(width: 18, height: 18)
-                .accessibilityLabel(batch.failed > 0 ? "Z błędami" : "Zakończono")
+                .help(batch.outcome.label)
+                .accessibilityLabel(batch.outcome.label)
             VStack(alignment: .leading, spacing: 3) {
                 Text(batch.title).lineLimit(2)
                 HStack(spacing: 4) {
@@ -537,6 +537,11 @@ struct HistoryDetailView: View {
                     Label("\(batch.succeeded)", systemImage: Job.State.succeeded.symbol).foregroundStyle(.green)
                     if batch.failed > 0 {
                         Label("\(batch.failed)", systemImage: Job.State.failed.symbol).foregroundStyle(.red)
+                    }
+                    if batch.skipped + batch.cancelled > 0 {
+                        Label("\(batch.skipped + batch.cancelled)", systemImage: Job.State.skipped.symbol)
+                            .foregroundStyle(.secondary)
+                            .help("Pominięte lub przerwane")
                     }
                 }
                 .monospacedDigit()

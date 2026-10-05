@@ -14,7 +14,7 @@ Natywna aplikacja okienkowa macOS (SwiftUI) do zdalnego zarządzania pracownią 
 | **Aktualizacje** | `softwareupdate` (lista, pobieranie, instalacja, restart; na Apple Silicon z `--user/--stdinpass`), historia, `brew upgrade`, `mas upgrade` |
 | **Podgląd ekranów** | Siatka miniatur ekranów zalogowanych użytkowników z automatycznym odświeżaniem i powiększeniem — tylko do odczytu, z ograniczeniami (niżej) |
 | **Sesja i zasilanie** | Wiadomość (okno/powiadomienie), wylogowanie, uśpienie ekranu/komputera, restart, wyłączenie, Wake-on-LAN |
-| **Zadania** | Operacje w toku i historia (także z poprzednich uruchomień) z wynikiem, kodem wyjścia, czasem i pełnym wyjściem dla każdego iMaca; „Powtórz na nieudanych”, „Zaznacz nieudane”, grupowanie identycznych wyników, eksport do pliku; dziennik działań w `~/Library/Logs/CMCRManager/actions.log`, historia w `<konfiguracja>/history/` (JSONL + wyjście każdego zadania, 90 dni) |
+| **Zadania** | Operacje w toku i historia (także z poprzednich uruchomień) z wynikiem, kodem wyjścia, czasem i wyjściem każdego iMaca (do 300 kB, przy dłuższym – jego końcówka); „Powtórz na nieudanych”, „Zaznacz nieudane”, grupowanie identycznych wyników, eksport do pliku; dziennik działań w `~/Library/Logs/CMCRManager/actions.log`, historia w `<konfiguracja>/history/` (JSONL + wyjście każdego zadania, 90 dni) |
 | **Konfiguracja** | Lista komputerów (generator jak pętla w `cmcr-helpers.sh`, import/eksport), hasła w Pęku kluczy (wspólne lub per komputer), generowanie i rozsyłanie klucza SSH, ustawienia, przygotowanie iMaców |
 
 ### Podgląd ekranu – ograniczenia

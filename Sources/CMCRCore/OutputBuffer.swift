@@ -73,7 +73,7 @@ public struct LastLineTracker: Sendable {
 
 /// Text that keeps only the newest part once it grows past `limit` UTF-8 bytes.
 public struct BoundedText: Sendable {
-    public static let marker = "…(początek obcięty – pełny dziennik w historii zadań)…\n"
+    public static let marker = "…(początek wyniku pominięty – zachowano tylko ostatnią część)…\n"
 
     public let limit: Int
     public private(set) var text = ""
@@ -88,13 +88,13 @@ public struct BoundedText: Sendable {
     }
 
     /// Drops everything but the last `bytes` UTF-8 bytes (cut on a character boundary).
-    public mutating func keepLast(_ bytes: Int) {
+    public mutating func keepLast(_ bytes: Int, marker: String = BoundedText.marker) {
         let u = text.utf8
         guard u.count > bytes else { return }
         var cut = u.index(u.endIndex, offsetBy: -bytes)
         // Never start inside a multi-byte sequence.
         while cut < u.endIndex, u[cut] & 0xC0 == 0x80 { cut = u.index(after: cut) }
-        text = Self.marker + String(decoding: u[cut...], as: UTF8.self)
+        text = marker + String(decoding: u[cut...], as: UTF8.self)
         generation += 1
     }
 

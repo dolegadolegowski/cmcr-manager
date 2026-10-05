@@ -319,10 +319,11 @@ struct ConfirmSheet: View {
     }
 
     func row(_ m: Machine) -> some View {
+        let reachability = model.status(m).reachability
         let user = model.status(m).consoleUser
         let skipped = skipLoggedIn && user != nil
         return HStack(spacing: 8) {
-            StatusDot(reachability: model.status(m).reachability)
+            StatusDot(reachability: reachability)
             Text(m.name)
                 .fontWeight(.medium)
                 .strikethrough(skipped)
@@ -331,10 +332,16 @@ struct ConfirmSheet: View {
                 Label(skipped ? "\(user) – pominięty" : "zalogowany: \(user)", systemImage: "person.fill")
                     .foregroundStyle(skipped ? Color.secondary : Color.orange)
                     .font(.callout)
-            } else {
+            } else if reachability == .online {
                 Text("nikt nie jest zalogowany")
                     .foregroundStyle(.secondary)
                     .font(.callout)
+            } else {
+                // Without a successful status check the console user is simply unknown.
+                Label("nie wiadomo, czy ktoś jest zalogowany", systemImage: "questionmark.circle")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+                    .help("Stan komputera: \(reachability.label). Odśwież stan komputerów, aby to sprawdzić.")
             }
         }
         .opacity(skipped ? 0.6 : 1)
@@ -575,7 +582,7 @@ struct JobRow: View {
     }
 }
 
-/// Copy / open full log / stop for one job.
+/// Copy / open the saved output / stop for one job.
 struct JobLogButtons: View {
     @ObservedObject var job: Job
 
@@ -586,9 +593,9 @@ struct JobLogButtons: View {
                 Button {
                     NSWorkspace.shared.open(url)
                 } label: {
-                    Label("Otwórz pełny dziennik", systemImage: "doc.text.magnifyingglass")
+                    Label("Otwórz zapisany wynik", systemImage: "doc.text.magnifyingglass")
                 }
-                .help(url.path)
+                .help("Wynik zapisany w historii zadań (przy bardzo długim wyniku – jego ostatnie ok. 300 kB): \(url.path)")
             }
             Button {
                 NSPasteboard.general.clearContents()

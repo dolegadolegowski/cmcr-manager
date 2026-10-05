@@ -96,6 +96,10 @@ func polishComputerPlurals(n: Int, expected: String) {
     #expect(!kept.contains("\u{FFFD}"))
     #expect(kept == String(repeating: "ż", count: 5) + String(repeating: "ą", count: 20))
     #expect(kept.utf8.count <= 50)
+
+    b.keepLast(10, marker: "[koniec]\n")
+    #expect(b.text == "[koniec]\n" + String(repeating: "ą", count: 5))
+    #expect(b.generation == 2)
 }
 
 // MARK: - Groups and filtering
@@ -230,6 +234,21 @@ private func record(_ host: String, batch: UUID, start: Date, state: String = "s
     let left = JobHistory.load(in: dir)
     #expect(left.count == 3)
     #expect(!left.contains { $0.host == "imac04" })
+}
+
+@Test func batchOutcomeTreatsSkippedAndCancelledAsNotSuccessful() {
+    #expect(BatchOutcome(succeeded: 5, failed: 0, cancelled: 0, skipped: 0) == .succeeded)
+    #expect(BatchOutcome(succeeded: 5, failed: 1, cancelled: 2, skipped: 2) == .failed)
+    #expect(BatchOutcome(succeeded: 0, failed: 0, cancelled: 0, skipped: 4) == .nothingRan)
+    #expect(BatchOutcome(succeeded: 0, failed: 0, cancelled: 3, skipped: 0) == .nothingRan)
+    #expect(BatchOutcome(succeeded: 3, failed: 0, cancelled: 0, skipped: 1) == .partial)
+
+    let b = UUID(), now = Date()
+    let skippedOnly = HistoryBatch(id: b, title: "Restart", section: nil, startedAt: now,
+                                   records: [record("imac01", batch: b, start: now, state: "skipped"),
+                                             record("imac02", batch: b, start: now, state: "cancelled")])
+    #expect(skippedOnly.outcome == .nothingRan)
+    #expect(skippedOnly.skipped == 1 && skippedOnly.cancelled == 1)
 }
 
 // MARK: - Host list validation

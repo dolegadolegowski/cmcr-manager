@@ -17,7 +17,7 @@ expect "list: lista z grupami wczytana" "$out" "imac01" "imac99"
 out="$(ctl exec 'echo "grupy=ok"' 1)"; code=$?
 expect "exec: komputer z grupami działa" "$out" "grupy=ok"
 expect_code "exec: kod 0 dla komputera z grupami" "$code" 0 "$out"
-out="$(ctl status 2)"; code=$?
+out="$(ctl status imac99)"; code=$?
 expect_code "status: niedostępny komputer z pustą listą grup – kod 1" "$code" 1 "$out"
 
 # A list written by an older version (no "groups" key at all) must still load.

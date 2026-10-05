@@ -217,14 +217,8 @@ struct BatchStatusIcon: View {
                 ProgressView(value: Double(batch.completed), total: Double(max(1, batch.jobs.count)))
                     .progressViewStyle(.circular)
                     .controlSize(.small)
-            } else if batch.failed > 0 {
-                Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
-            } else if batch.succeeded == 0 {
-                Image(systemName: "forward.end.circle").foregroundStyle(.gray)
-            } else if batch.cancelled + batch.skipped > 0 {
-                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
             } else {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                BatchOutcomeIcon(outcome: outcome)
             }
         }
         .frame(width: 18, height: 18)
@@ -232,9 +226,38 @@ struct BatchStatusIcon: View {
         .accessibilityLabel(accessibility)
     }
 
+    var outcome: BatchOutcome {
+        BatchOutcome(succeeded: batch.succeeded, failed: batch.failed, cancelled: batch.cancelled, skipped: batch.skipped)
+    }
+
     var accessibility: String {
         if !batch.finished { return "W toku: \(batch.completed) z \(batch.jobs.count)" }
-        return "Zakończono: gotowe \(batch.succeeded), błędy \(batch.failed)"
+        return "\(outcome.label): gotowe \(batch.succeeded), błędy \(batch.failed)"
+    }
+}
+
+extension BatchOutcome {
+    var label: String {
+        switch self {
+        case .failed: return "Z błędami"
+        case .nothingRan: return "Nie uruchomiono (pominięte lub przerwane)"
+        case .partial: return "Częściowo (część pominięta lub przerwana)"
+        case .succeeded: return "Zakończono pomyślnie"
+        }
+    }
+}
+
+/// Status symbol of a finished batch – the same in the live list and in the history.
+struct BatchOutcomeIcon: View {
+    let outcome: BatchOutcome
+
+    var body: some View {
+        switch outcome {
+        case .failed: Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+        case .nothingRan: Image(systemName: "forward.end.circle").foregroundStyle(.gray)
+        case .partial: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+        case .succeeded: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        }
     }
 }
 

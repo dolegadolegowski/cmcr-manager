@@ -115,11 +115,11 @@ final class Job: ObservableObject, Identifiable, @unchecked Sendable {
         append("▸ \(reason.text)\n")
     }
 
-    /// Keeps only the tail in memory once the full log is on disk.
+    /// Keeps only the tail in memory once the saved output (up to `maxOutput`) is on disk.
     func trimAfterArchive() {
         guard log.text.utf8.count > Self.keptAfterArchive else { return }
         objectWillChange.send()
-        log.keepLast(Self.keptAfterArchive)
+        log.keepLast(Self.keptAfterArchive, marker: "…(początek pominięty – dłuższa część wyniku: „Otwórz zapisany wynik”)…\n")
     }
 
     var isFinished: Bool { state == .succeeded || state == .failed || state == .cancelled || state == .skipped }
