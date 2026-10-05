@@ -166,7 +166,7 @@ expect_code "clean: kod 0" "$code" 0 "$out"
 ln -s /Applications "$WORK/link-do-apps"
 for p in "$WORK/link-do-apps" "/Users/$ME/.ssh" "/Users/$ME/Library" "/Users//Desktop" "/private/tmp" "/tmp" \
          "$WORK/clean/../clean" "/Applications" "/" "tmp/x" "/Users/$ME"; do
-  case "$p" in /Users/*/*) [ -d "$p" ] || continue ;; esac
+  case "$p" in */.ssh) [ -d "$p" ] || continue ;; esac
   out="$(ctlpw _builder clean-folder 1 "$p" --dry-run)"; code=$?
   if [ "$code" = 2 ] && contains "" "$out" "Odmowa"; then pass "clean: odmowa dla $p"; else fail "clean: brak odmowy dla $p (kod $code)" "$out"; fi
 done

@@ -253,10 +253,11 @@ public enum Scripts {
           exit
         fi
         EXE="$(ps -o comm= -p "$(echo "$PIDS" | head -1)" 2>/dev/null)"
-        BID=""
+        BID=""; PL="${EXE%%.app/Contents/MacOS/*}.app/Contents/Info.plist"
         case "$EXE" in
-          *.app/Contents/MacOS/*) BID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${EXE%%.app/Contents/MacOS/*}.app/Contents/Info.plist" 2>/dev/null)" ;;
+          *.app/Contents/MacOS/*) [ -f "$PL" ] && BID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PL" 2>/dev/null)" ;;
         esac
+        case "$BID" in *[!A-Za-z0-9._-]*) BID="" ;; esac
         if [ -n "$BID" ]; then
           as_console_user /usr/bin/osascript -e 'on run argv' -e 'set b to item 1 of argv' -e 'try' \
             -e 'if application id b is running then' -e 'ignoring application responses' \
