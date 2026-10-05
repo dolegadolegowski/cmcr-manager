@@ -59,7 +59,7 @@ struct CMCRManagerApp: App {
             CommandMenu("Przejdź") {
                 ForEach(Array(AppSection.allCases.enumerated()), id: \.element) { index, section in
                     Button(section.title) { model.section = section }
-                        .keyboardShortcut(KeyEquivalent(Character(String((index + 1) % 10))), modifiers: [.command])
+                        .keyboardShortcut(index < 10 ? KeyboardShortcut(KeyEquivalent(Character(String((index + 1) % 10))), modifiers: [.command]) : nil)
                 }
             }
             ScreenCommands(center: model.screens)
@@ -126,6 +126,7 @@ struct SidebarView: View {
                 row(.dashboard)
                 row(.commands)
                 row(.files)
+                row(.browser)
                 row(.apps)
                 row(.install)
                 row(.updates)
@@ -647,6 +648,7 @@ struct DetailView: View {
             case .dashboard: DashboardView()
             case .commands: CommandsView()
             case .files: FilesView()
+            case .browser: RemoteBrowserView()
             case .apps: AppsView()
             case .install: InstallView()
             case .updates: UpdatesView()

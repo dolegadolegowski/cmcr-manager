@@ -89,6 +89,20 @@ public enum ScriptCatalog {
             Sample(name: "screenCapture(display)", script: Scripts.screenCapture(ScreenCaptureOptions(maxSize: 0, quality: 0, interval: 1,
                                                                                                       notify: false, onlyStandardAccounts: false,
                                                                                                       display: .number(2)))),
+            // U6 files (Scripts+Browse.swift)
+            Sample(name: "listDirectory", script: Scripts.listDirectory("/Users/{console}/\(a)", asRoot: false)),
+            Sample(name: "listDirectory(root)", script: Scripts.listDirectory("/", asRoot: true, limit: 10)),
+            Sample(name: "makeDirectory", script: Scripts.makeDirectory("/Users/student/\(a)", asRoot: false, intermediate: true)),
+            Sample(name: "renameItem", script: Scripts.renameItem("/Users/student/\(a)", to: a, asRoot: true)),
+            Sample(name: "deleteItems", script: Scripts.deleteItems(["/Users/student/\(a)", "/tmp/x y"], asRoot: false)),
+            Sample(name: "deleteItems(dryRun)", script: Scripts.deleteItems([a], asRoot: true, dryRun: true)),
+            Sample(name: "archiveItems", script: Scripts.archiveItems(in: "/Users/student/\(a)", names: [a, "b c"], asRoot: false)),
+            Sample(name: "folderPresence", script: Scripts.folderPresence("/Users/{console}/\(a)", asRoot: false)),
+            Sample(name: "removeCollected", script: Scripts.removeCollected(in: "/Users/student/\(a)",
+                                                                            files: [CollectedFile(path: a, modified: 1_700_000_000, size: 12),
+                                                                                    CollectedFile(path: "b c/d", modified: 1, size: 0, isLink: true)],
+                                                                            folders: [a, "b c"], asRoot: true)),
+            Sample(name: "removeCollected(empty)", script: Scripts.removeCollected(in: "~/Public", files: [], folders: [], asRoot: false)),
         ]
         for restart in [false, true] {
             for recommended in [false, true] {
