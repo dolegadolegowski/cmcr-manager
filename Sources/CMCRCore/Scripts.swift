@@ -320,6 +320,8 @@ public enum Scripts {
     cmcr_fda_hint() {
       echo "  Wskazówka: jeśli aplikacja nie jest uruchomiona, włącz „Pełny dostęp do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie) – bez tego macOS nie pozwala podmieniać aplikacji." >&2
     }
+    # Apple's own software, Mac App Store apps or a Developer ID certificate issued by Apple (chain checked).
+    CMCR_APPLE_REQ='anchor apple or (anchor apple generic and (certificate leaf[field.1.2.840.113635.100.6.1.9] or certificate leaf[field.1.2.840.113635.100.6.1.13]))'
     # cmcr_verify_signature ITEM install|execute – Gatekeeper's verdict on a package (install) or an application
     # (execute) before root installs it. When Gatekeeper is switched off on the Mac (spctl answers "override"),
     # the signature itself is checked: Developer ID or Apple, without the notarization.
@@ -340,13 +342,13 @@ public enum Scripts {
               "signed by a developer certificate issued by Apple"*|"signed Apple Software"*) rc=0; src="Developer ID (Gatekeeper wyłączony – bez sprawdzenia notaryzacji)" ;;
               "no signature"*) why="brak podpisu" ;;
             esac
-          elif codesign --verify --deep --strict "$item" >/dev/null 2>&1; then
+          elif codesign --verify --deep --strict -R "=$CMCR_APPLE_REQ" "$item" >/dev/null 2>&1; then
+            # The requirement checks the certificate chain up to Apple's root; a certificate merely named
+            # "Developer ID Application: …" (self-signed) does not satisfy it. Authority is only for the log.
             origin="$(codesign -dvv "$item" 2>&1 | sed -n 's/^Authority=//p' | head -n 1)"
-            case "$origin" in
-              "Developer ID Application:"*|"Apple Mac OS Application Signing"|"Software Signing") rc=0; src="Developer ID (Gatekeeper wyłączony – bez sprawdzenia notaryzacji)" ;;
-            esac
+            rc=0; src="Developer ID (Gatekeeper wyłączony – bez sprawdzenia notaryzacji)"
           else
-            why="brak ważnego podpisu"
+            why="brak ważnego podpisu Apple lub Developer ID"
           fi ;;
       esac
       if [ $rc -eq 0 ]; then
@@ -757,20 +759,16 @@ public enum Scripts {
           OWNER="$(stat -f '%Su:%Sg' .)"
           echo "→ Właściciel jak w folderze docelowym: $OWNER"
         fi
-        # Missing folders are created one at a time from inside their parent; a name taken meanwhile by a link
-        # leads somewhere else, which the parent check after `cd` notices.
+        # Missing folders are created one at a time from inside their parent (cmcr_walk): a name taken meanwhile
+        # by a link is refused, not followed.
         if [ "$P" != "$DEST" ]; then
           REST="${DEST#"$P"}"; REST="${REST#/}"
-          while [ -n "$REST" ]; do
-            c="${REST%%/*}"
-            if [ "$c" = "$REST" ]; then REST=""; else REST="${REST#*/}"; fi
-            UP="$(stat -f %d:%i .)"
-            mkdir -- "./$c" 2>/dev/null
-            if ! cd -P -- "./$c" 2>/dev/null || [ "$(stat -f %d:%i ..)" != "$UP" ]; then
-              echo "✘ Nie można utworzyć $DEST" >&2; exit 2
-            fi
-            if [ -n "$OWNER" ]; then chown "$OWNER" . 2>/dev/null; fi
-          done
+          cmcr_walk "$REST" create "$OWNER"
+          case $? in
+            0) ;;
+            2) cmcr_walk_refusal "$DEST"; exit 2 ;;
+            *) echo "✘ Nie można utworzyć $DEST" >&2; exit 2 ;;
+          esac
         fi
         HERE="$(stat -f %d:%i .)"
         PROBE="$(mktemp -d ./.cmcr-push.XXXXXX 2>/dev/null)" || {
@@ -950,13 +948,12 @@ public enum Scripts {
           esac
         fi
         # chown/chmod 777 as root: never through a link the student planted, and on the folder itself (.).
-        if L="$(cmcr_user_link "$DIR")"; then cmcr_link_refusal "$L"; exit 2; fi
-        mkdir -p "$DIR" || exit 1
-        cmcr_pin_dir "$DIR"; X=$?
+        # Missing folders are created one at a time from inside their parent (cmcr_pin_create).
+        cmcr_pin_create "$DIR"; X=$?
         case $X in
           0) ;;
           2) exit 2 ;;
-          *) echo "✘ Nie można otworzyć $DIR" >&2; exit 2 ;;
+          *) echo "✘ Nie można utworzyć ani otworzyć $DIR" >&2; exit 2 ;;
         esac
         chown "$OWNER" . && chmod 777 . && ls -ld "$CMCR_PINNED"
         """#, asRoot: true)
