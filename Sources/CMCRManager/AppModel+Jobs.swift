@@ -470,6 +470,17 @@ extension AppModel {
         return "Na iMacach \(Polish.plural(n, "trwa", "trwają", "trwa")) \(Polish.jobs(n))"
     }
 
+    /// The work running now: unfinished batches, and a lesson routine in progress as one item (its own batches,
+    /// such as the steps after the countdown, belong to it). An update restart confirmed for this work asks
+    /// again when anything else starts before the installer does.
+    var runningWorkIDs: Set<UUID> {
+        let lesson = lessonInProgress ? ClassroomModel.shared.run : nil
+        let lessonBatches = Set(lesson?.batches.map(\.id) ?? [])
+        var ids = Set(batches.filter { !$0.finished && !lessonBatches.contains($0.id) }.map(\.id))
+        if let lesson { ids.insert(lesson.id) }
+        return ids
+    }
+
     /// Stops every batch and a lesson routine in progress (its countdown included).
     func stopAllWork() {
         ClassroomModel.shared.run?.cancel()
