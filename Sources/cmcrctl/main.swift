@@ -21,6 +21,7 @@ Użycie:
   cmcrctl open-app "Nazwa" [all|nr]         uruchom aplikację u zalogowanego użytkownika
   cmcrctl quit-app "Nazwa" [all|nr] [--force]  zamknij aplikację
   cmcrctl render "polecenie" [--root]       pokaż skrypt wykonywany zdalnie
+\(SetupCommands.usage)
 
 Konfiguracja: \(ConfigStore.directory.path)
 Hasło administratora: Pęk kluczy (ustawiane w aplikacji) lub zmienna CMCR_PASSWORD.
@@ -167,6 +168,10 @@ case "open-app", "quit-app":
         let r = await SSH.run(script, on: h, password: Keychain.password(for: h), settings: sshSettings, onOutput: Console.printer)
         status = max(status, report(r))
     }
+
+case _ where SetupCommands.names.contains(command):
+    status = await SetupCommands.run(command, Array(args.dropFirst()), select: selectHosts,
+                                     settings: settings, ssh: sshSettings)
 
 default:
     print(usage)

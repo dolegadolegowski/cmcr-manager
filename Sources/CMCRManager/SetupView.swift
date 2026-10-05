@@ -20,7 +20,7 @@ struct SetupView: View {
             case 0: HostsEditor()
             case 1: AccessSettings()
             case 2: GeneralSettings()
-            default: RemoteSetup()
+            default: ReadinessView()
             }
         }
     }
@@ -289,53 +289,5 @@ struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
-    }
-}
-
-// MARK: - Remote setup
-
-struct RemoteSetup: View {
-    @EnvironmentObject var model: AppModel
-
-    var body: some View {
-        Page {
-            SectionBox(title: "Działania na zaznaczonych iMacach", icon: "wrench.and.screwdriver") {
-                HStack {
-                    TargetButton(title: "Utwórz folder cmcr ucznia", icon: "folder.badge.plus", prominent: false) {
-                        let path = model.settings.sharedFolder, owner = model.settings.studentUser
-                        model.runScript("Folder \(path)", on: model.selectedMachines) { _ in
-                            Scripts.prepareSharedFolder(path, owner: owner)
-                        }
-                    }
-                    TargetButton(title: "Włącz Udostępnianie ekranu", icon: "rectangle.on.rectangle", prominent: false) {
-                        model.runScript("Włącz Udostępnianie ekranu", on: model.selectedMachines) { _ in Scripts.enableScreenSharing() }
-                    }
-                    TargetButton(title: "Włącz Wake-on-LAN", icon: "sunrise", prominent: false) {
-                        model.runScript("pmset womp 1", on: model.selectedMachines) { _ in Scripts.enableWakeOnLAN() }
-                    }
-                    TargetButton(title: "Zapomnij klucz hosta", icon: "key.slash", prominent: false) {
-                        model.forgetHostKeys(model.selectedMachines)
-                    }
-                }
-            }
-            SectionBox(title: "Jednorazowo na każdym iMacu (lokalnie, przy komputerze)", icon: "checklist") {
-                VStack(alignment: .leading, spacing: 8) {
-                    step(1, "Ustawienia systemowe › Ogólne › Udostępnianie › Logowanie zdalne: włącz, dostęp dla administratorów (konto imacNN). Zaznacz „Zezwalaj zdalnym użytkownikom na pełny dostęp do dysku”, by móc pobierać pliki z chronionych folderów ucznia.")
-                    step(2, "Podgląd ekranu: Ustawienia › Prywatność i ochrona › Nagrywanie ekranu i dźwięku systemowego › „+” › Cmd+Shift+G › /usr/libexec/sshd-keygen-wrapper › włącz. Bez tego zrzut pokaże tylko tapetę lub się nie powiedzie.")
-                    step(3, "Pełne zdalne sterowanie (opcjonalnie): Udostępnianie › Udostępnianie ekranu – włącz dla administratorów. Aplikacja otwiera wtedy wbudowane „Udostępnianie ekranu” (VNC).")
-                    step(4, "Wake-on-LAN: Ustawienia › Energia › „Budź przy dostępie do sieci” (lub przycisk powyżej).")
-                    step(5, "Na tym Macu: przy pierwszym połączeniu zezwól aplikacji CMCR Manager na dostęp do sieci lokalnej.")
-                }
-                .font(.callout)
-            }
-        }
-    }
-
-    func step(_ n: Int, _ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text("\(n)").font(.callout.weight(.bold)).frame(width: 20, height: 20)
-                .background(Circle().fill(Color.accentColor.opacity(0.2)))
-            Text(text).fixedSize(horizontal: false, vertical: true)
-        }
     }
 }
