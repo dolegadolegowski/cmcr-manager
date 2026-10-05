@@ -96,6 +96,14 @@ final class ScreenCenter: ObservableObject {
     private var timer: Timer?
     private var cancellables: Set<AnyCancellable> = []
     private var restrictionsKey = ""
+    /// `CMCR_SCREEN_TRACE=1` prints the engine's decisions to stderr (diagnostics).
+    private let tracing = ProcessInfo.processInfo.environment["CMCR_SCREEN_TRACE"] == "1"
+
+    private func trace(_ host: UUID, _ text: @autoclosure () -> String) {
+        guard tracing else { return }
+        let name = model?.machine(host)?.name ?? host.uuidString
+        FileHandle.standardError.write(Data("[screens] \(Date().timeIntervalSince1970) \(name): \(text())\n".utf8))
+    }
 
     private struct Observer {
         let host: UUID
@@ -200,6 +208,7 @@ final class ScreenCenter: ObservableObject {
     func register(host: UUID, request: ScreenRequest, scope: UUID?) -> UUID {
         let token = UUID()
         observers[token] = Observer(host: host, request: request, scope: scope ?? Self.defaultScope)
+        trace(host, "obserwator +\(request.pixels) px (razem \(observers.values.filter { $0.host == host }.count))")
         reconcile(host)
         ensureTimer()
         return token
@@ -209,6 +218,7 @@ final class ScreenCenter: ObservableObject {
         guard var o = observers[token], o.request != request else { return }
         o.request = request
         observers[token] = o
+        trace(o.host, "obserwator \(request.pixels) px")
         reconcile(o.host)
     }
 
@@ -218,6 +228,7 @@ final class ScreenCenter: ObservableObject {
     }
 
     func registerScope(_ id: UUID, pausesWhenInactive: Bool) {
+        if tracing { FileHandle.standardError.write(Data("[screens] zakres \(id.uuidString.prefix(8)) pauza w tle: \(pausesWhenInactive)\n".utf8)) }
         var s = scopes[id] ?? Scope()
         s.pausesWhenInactive = pausesWhenInactive
         scopes[id] = s
@@ -225,6 +236,7 @@ final class ScreenCenter: ObservableObject {
     }
 
     func setScope(_ id: UUID, visible: Bool) {
+        if tracing { FileHandle.standardError.write(Data("[screens] zakres \(id.uuidString.prefix(8)) widoczny: \(visible)\n".utf8)) }
         var s = scopes[id] ?? Scope()
         guard s.visible != visible || scopes[id] == nil else { return }
         s.visible = visible
@@ -314,6 +326,7 @@ final class ScreenCenter: ObservableObject {
             startQueue.removeAll { $0 == host }
             if let stream = s.stream {
                 if s.helloSeen && !s.remotePaused {
+                    trace(host, "pauza")
                     stream.send(.pause)
                     s.remotePaused = true
                 }
@@ -335,10 +348,14 @@ final class ScreenCenter: ObservableObject {
                 return
             }
             if s.remotePaused {
+                trace(host, "wznowienie")
                 stream.send(.resume)
                 s.remotePaused = false
             }
-            if s.sent.pixels != merged.pixels { stream.send(.size(merged.pixels)) }
+            if s.sent.pixels != merged.pixels {
+                trace(host, "rozmiar \(merged.pixels) px")
+                stream.send(.size(merged.pixels))
+            }
             if s.sent.interval != merged.interval { stream.send(.interval(merged.interval)) }
             if s.sent.display != display { stream.send(.display(display)) }
             s.sent = (merged.pixels, merged.interval, display)
@@ -362,9 +379,11 @@ final class ScreenCenter: ObservableObject {
         let status = model.status(machine)
         if s.failures == 0, status.reachability == .offline || status.reachability == .authFailed,
            let checked = status.updatedAt, now.timeIntervalSince(checked) < 300 {
+            trace(host, "pominięto – według stanu \(status.reachability.label)")
             feed.set(\.issue, .connection(status.reachability, status.message.isEmpty ? status.reachability.label : status.message))
             feed.set(\.phase, .offline)
             s.retryAt = now.addingTimeInterval(60)
+            startQueue.removeAll { $0 == host }
             return
         }
         if !startQueue.contains(host) && !starting.contains(host) {
@@ -392,6 +411,7 @@ final class ScreenCenter: ObservableObject {
 
     private func start(_ host: UUID) {
         guard let model, let machine = model.machine(host), let s = sessions[host], s.stream == nil,
+              (s.retryAt.map { $0 <= Date() } ?? true),
               observers.values.contains(where: { $0.host == host && scopeIsActive($0.scope) }) else {
             releaseSlot(host)
             return
@@ -405,6 +425,7 @@ final class ScreenCenter: ObservableObject {
         let options = ScreenCaptureOptions(settings: settings, maxSize: merged.pixels, interval: merged.interval,
                                            alreadyNotifiedUser: ledger.notifiedUser(host), display: display, frames: 0)
         let stream = ScreenStream(host: machine, options: options)
+        trace(host, "start \(merged.pixels) px, co \(merged.interval) s, \(display.scriptValue), powiadomiony: \(options.alreadyNotifiedUser ?? "-")")
         s.generation += 1
         let generation = s.generation
         s.stream = stream
@@ -433,6 +454,7 @@ final class ScreenCenter: ObservableObject {
     private func stop(_ s: Session, _ reason: StopReason) {
         startQueue.removeAll { $0 == s.host }
         guard let stream = s.stream else { return }
+        trace(s.host, "stop \(reason)")
         s.stopReason = reason
         if reason == .watchdog { stream.kill() } else { stream.stop() }
     }
@@ -458,6 +480,12 @@ final class ScreenCenter: ObservableObject {
         guard let s = sessions[host], s.generation == generation, s.stream != nil else { return }
         let now = Date()
         s.lastMessage = now
+        if tracing {
+            switch prepared {
+            case .frame(let d, let n, let image): trace(host, "klatka \(d)/\(n) \(image.map { "\($0.width)x\($0.height)" } ?? "błąd dekodowania")")
+            case .event(let e): trace(host, "\(e)")
+            }
+        }
         let feed = feed(for: host)
         switch prepared {
         case .frame(let display, let count, let image):
@@ -521,6 +549,7 @@ final class ScreenCenter: ObservableObject {
 
     private func handleExit(_ r: CommandResult, host: UUID, generation: Int) {
         guard let s = sessions[host], s.generation == generation else { return }
+        trace(host, "koniec: kod \(r.exitCode), \(String(describing: s.stopReason)), \(r.stderrText.prefix(200))")
         s.stream = nil
         s.helloSeen = false
         s.remotePaused = false
@@ -557,6 +586,7 @@ final class ScreenCenter: ObservableObject {
         }
         let retry = Date().addingTimeInterval(delay)
         s.retryAt = retry
+        trace(host, "ponowna próba za \(Int(delay)) s (\(issue?.title ?? "?"))")
         if case .connection(let reach, _)? = issue, reach == .offline || reach == .authFailed {
             feed.set(\.phase, .offline)
         } else {

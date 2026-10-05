@@ -44,7 +44,16 @@ struct ScreensView: View {
             }
         }
         .screenScope(pausesWhenInactive: true)
+        .task {
+            // Start-up hook for scripted UI checks: CMCR_OPEN_SCREEN_WALL=1 opens the screen wall window.
+            if ProcessInfo.processInfo.environment["CMCR_OPEN_SCREEN_WALL"] == "1", !Self.openedWall {
+                Self.openedWall = true
+                openWindow(id: ScreenWallView.windowID)
+            }
+        }
     }
+
+    @MainActor private static var openedWall = false
 
     private func controls(_ targets: [Machine]) -> some View {
         HStack(spacing: 12) {
