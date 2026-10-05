@@ -362,7 +362,8 @@ public enum SSH {
 
     /// Closes the shared connection to a Mac (after it restarted, its key changed or the settings changed).
     public static func closeMaster(_ host: Machine, settings: SSHSettings) async {
-        guard controlDirectory() != nil else { return }
+        guard let dir = controlDirectory(),
+              let sockets = try? FileManager.default.contentsOfDirectory(atPath: dir), !sockets.isEmpty else { return }
         var s = settings
         s.reuseConnections = true
         _ = await ProcessRunner.run(sshPath, options(s, password: nil) + ["-O", "exit", "-p", String(host.port), host.destination],

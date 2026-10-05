@@ -73,6 +73,7 @@ struct ContentView: View {
                 model.refreshStatus(quietly: true)
             }
         }
+        .modifier(ConfigIssuesAlert())
     }
 }
 
