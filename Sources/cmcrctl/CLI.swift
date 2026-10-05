@@ -68,7 +68,7 @@ Opcje
                     lub „Równoległe operacje” z ustawień); wyniki zawsze w kolejności listy
   --prefix          poprzedź każdy wiersz wyniku nazwą komputera, np. [imac04]
                     (-j i --prefix: polecenia z argumentem KOMP, poza wake, hosts remove, lesson,
-                    rename i ask – ask pyta wszystkie komputery naraz)
+                    rename, setup, readiness i ask – ask pyta wszystkie komputery naraz)
   --root            wykonaj jako root (sudo z hasłem administratora)
   --yes, -y         nie pytaj o potwierdzenie (wymagane bez terminala dla restartu, wylogowania, usuwania,
                     power-later, zakończenia zajęć, zmiany nazw komputerów, collect --clean)
