@@ -4,8 +4,9 @@ import SwiftUI
 /// Extra state and sheets for SnapshotRenderer (UI review of Pliki, Przeglądarka plików, Polecenia, Aplikacje,
 /// Instalacja, Aktualizacje):
 /// - CMCR_SNAPSHOT_BROWSE=<remote folder> opens it in the file browser (and the folder picker) first;
-/// - CMCR_SNAPSHOT_PRELOAD=updates,installed,command fills the pages first: checks macOS updates, reads the
-///   installed apps, runs `echo` from Polecenia – only with a demo or test configuration (Tests/ui/demo-env.sh);
+/// - CMCR_SNAPSHOT_PRELOAD=updates,installed,command,advanced fills the pages first: checks macOS updates, reads the
+///   installed apps, runs `echo` from Polecenia (only with a demo or test configuration: Tests/ui/demo-env.sh),
+///   opens the advanced push options;
 /// - CMCR_SNAPSHOT_SHEETS=folder-picker,save-snippet also renders those sheets on their own: a sheet is a separate
 ///   window, so the snapshot of the main window does not include it. Files: sheet-<name>-light/dark.png.
 @MainActor
@@ -15,6 +16,7 @@ enum SnapshotSheets {
             model.files.browser.open(path, on: model.files.browser.preferredHostID())
         }
         let preload = Set((env["CMCR_SNAPSHOT_PRELOAD"] ?? "").split(separator: ",").map(String.init))
+        if preload.contains("advanced") { model.files.showAdvanced = true }
         let targets = model.selectedMachines
         guard !preload.isEmpty, !targets.isEmpty else { return }
         let section = model.section

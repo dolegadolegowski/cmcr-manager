@@ -172,8 +172,8 @@ private struct RemoteBrowserPage: View {
     }
 
     var hiddenHelp: String {
-        browser.showHidden ? "Ukryj pliki i foldery systemowe (zaczynające się od kropki)"
-            : "Pokaż także ukryte pliki i foldery (zaczynające się od kropki)"
+        browser.showHidden ? "Nie pokazuj ukrytych plików i folderów (np. zaczynających się od kropki)"
+            : "Pokaż także ukryte pliki i foldery (np. zaczynające się od kropki)"
     }
 
     var asRootHelp: String {

@@ -105,7 +105,7 @@ struct InstallView: View {
                 Text("Narzędzie Terminala").tag(false)
             } label: {
                 Text("Rodzaj")
-                Text("Aplikacje z oknem (np. przeglądarki) to „Aplikacja”; programy bez okna – „Narzędzie Terminala”.")
+                Text("Programy z oknem, np. przeglądarki, to „Aplikacja”.")
             }
             .pickerStyle(.segmented)
             .help("„Aplikacja” instaluje pakiet --cask, „Narzędzie Terminala” – zwykłą formułę Homebrew.")

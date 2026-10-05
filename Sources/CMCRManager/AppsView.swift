@@ -57,7 +57,7 @@ struct AppsView: View {
             }
             TextField(text: $appArguments, prompt: Text("opcjonalnie")) {
                 Text("Argumenty")
-                Text("Dodatkowe opcje uruchomienia, np. adres strony. Z argumentami otwiera się nowe okno aplikacji.")
+                Text("Np. adres strony – aplikacja otworzy się w nowym oknie.")
             }
             .help("Argumenty jak w Terminalu – cudzysłowy grupują słowa. Z argumentami uruchamiana jest nowa instancja aplikacji.")
             HStack(spacing: 10) {

@@ -82,10 +82,14 @@ private struct FilesPage: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+            // The options follow as ordinary form rows (inside the group they would be squeezed into one row).
             DisclosureGroup(isExpanded: $state.showAdvanced) {
-                advancedPush
+                EmptyView()
             } label: {
                 Label("Zaawansowane: ścieżka, właściciel i uprawnienia", systemImage: "slider.horizontal.3")
+            }
+            if state.showAdvanced {
+                advancedPush
             }
             HStack(spacing: 12) {
                 Text(pushHint)
@@ -109,7 +113,7 @@ private struct FilesPage: View {
     }
 
     @ViewBuilder var advancedPush: some View {
-        LabeledContent("Ścieżka na komputerze") {
+        LabeledContent {
             TextField("Ścieżka na komputerze",
                       text: Binding(get: { state.destination }, set: { state.editDestination($0) }),
                       prompt: Text("/Users/{student}/Desktop"))
@@ -117,6 +121,9 @@ private struct FilesPage: View {
                 .multilineTextAlignment(.trailing)
                 .font(.body.monospaced())
                 .onSubmit { state.rememberFolder(state.destination) }
+        } label: {
+            Text("Ścieżka na komputerze")
+            Text("{student} – konto ucznia (\(model.settings.studentUser)), {console} – osoba zalogowana, ~ – katalog administratora.")
         }
         Picker("Właściciel plików", selection: Binding(get: { state.owner }, set: { state.setOwner($0) })) {
             ForEach(OwnerChoice.allCases) { Text($0.label).tag($0) }
@@ -134,7 +141,6 @@ private struct FilesPage: View {
                  : "Potrzebne, gdy folder należy do innego konta (sudo).")
         }
         .disabled(state.owner != .keep)
-        FormSectionNote("W ścieżce można użyć {student} (konto ucznia: \(model.settings.studentUser)), {console} (osoba zalogowana na komputerze) i ~ (katalog administratora).")
     }
 
     /// A remote folder with what it is for ("Dokąd wysłać") and the buttons that change it.
@@ -234,8 +240,9 @@ private struct FilesPage: View {
             }
             Toggle(isOn: $state.collectClean) {
                 Text("Po zebraniu wyczyść folder ucznia")
-                Text("Usuwane są tylko pliki skopiowane na ten Mac i niezmienione od tej chwili – praca zapisana w międzyczasie zostaje.")
+                Text("Usuwa tylko zebrane pliki, których nikt potem nie zmienił.")
             }
+            .help("Usuwane są tylko pliki skopiowane na ten Mac i niezmienione od tej chwili – praca zapisana w międzyczasie zostaje.")
             HStack(spacing: 12) {
                 Button {
                     state.revealLastCollection()
