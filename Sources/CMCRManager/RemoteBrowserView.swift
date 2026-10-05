@@ -106,8 +106,8 @@ private struct RemoteBrowserPage: View {
                     confirmDelete(browser.selectedEntries)
                 } label: {
                     Label("Usuń…", systemImage: "trash")
+                        .destructiveLabel()
                 }
-                .destructiveLabel()
                 .disabled(browser.selection.isEmpty)
                 .help("Usuń zaznaczone elementy z komputera – nie trafią do Kosza (z potwierdzeniem; także klawisz Delete)")
                 .fixedSize()

@@ -182,10 +182,10 @@ struct CommandsView: View {
                         }
                     } label: {
                         Label("Usuń fragment „\(s.name)”", systemImage: "trash")
+                            .destructiveLabel()
                     }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
-                    .destructiveLabel()
                     .help("Usuń zapisany fragment")
                 }
             }

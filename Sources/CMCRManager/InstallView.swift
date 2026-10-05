@@ -117,8 +117,7 @@ struct InstallView: View {
                         model.runScript("brew \(args)", on: model.selectedMachines) { _ in Scripts.brew(args) }
                     }
                 }
-                .destructiveLabel()
-                .disabled(brewName.trimmingCharacters(in: .whitespaces).isEmpty || model.actionTargets.isEmpty)
+                .disabled(brewName.trimmingCharacters(in: .whitespaces).isEmpty)
                 Spacer(minLength: 12)
                 TargetButton(title: "Zainstaluj pakiet", icon: "plus.circle") {
                     let args = "install \(brewCask ? "--cask " : "")\(brewArguments)"

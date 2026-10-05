@@ -309,8 +309,7 @@ private struct FilesPage: View {
                 TargetButton(title: "Wyczyść folder…", icon: "trash", role: .destructive, prominent: false) {
                     confirmClean()
                 }
-                .destructiveLabel()
-                .disabled(state.cleanPath.isEmpty || reachable.isEmpty)
+                .disabled(state.cleanPath.isEmpty)
             }
         } header: {
             Label("Przeglądanie i porządki", systemImage: "folder.badge.minus")

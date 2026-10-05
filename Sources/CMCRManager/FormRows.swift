@@ -30,8 +30,8 @@ struct FormActionRow<Buttons: View>: View {
 
 extension View {
     /// Red title and icon for a button that deletes or stops something (the action itself still asks for
-    /// confirmation). Bordered buttons on macOS ignore `.tint`, so the label colour is set directly; a
-    /// disabled button keeps the usual dimmed look.
+    /// confirmation). Apply it to the button's label: bordered buttons on macOS ignore `.tint` and a colour set
+    /// on the button itself. A disabled button keeps the usual dimmed look.
     func destructiveLabel() -> some View {
         modifier(DestructiveLabel())
     }
@@ -40,8 +40,12 @@ extension View {
 private struct DestructiveLabel: ViewModifier {
     @Environment(\.isEnabled) private var isEnabled
 
-    func body(content: Content) -> some View {
-        content.foregroundStyle(isEnabled ? Color.red : Color.secondary)
+    @ViewBuilder func body(content: Content) -> some View {
+        if isEnabled {
+            content.foregroundStyle(.red)
+        } else {
+            content
+        }
     }
 }
 
