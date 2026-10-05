@@ -57,7 +57,8 @@ expect "ls: plik zamiast folderu" "$out" "To nie jest folder"
 out="$(ctl ls 1 "$B/zablokowany")"
 expect "ls: brak uprawnień" "$out" "Brak dostępu do folderu"
 out="$(ctl rm 1 "$B/zablokowany/plik" --dry-run)"; code=$?
-expect_code "rm: folder bez dostępu – kod 63" "$code" 63 "$out"
+expect_code "rm: folder bez dostępu – kod 1" "$code" 1 "$out"
+expect "rm: folder bez dostępu – komunikat" "$out" "Brak dostępu"
 chmod 755 "$B/zablokowany"
 out="$(ctl ls 1 "/Users/{console}/.cmcr-e2e-brak")"
 expect "ls: {console} → zalogowany użytkownik" "$out" "Folder nie istnieje: /Users/$ME/.cmcr-e2e-brak"
@@ -90,9 +91,10 @@ expect_code "mkdir: kod 0" "$code" 0 "$out"
 [ -d "$B/Nowy folder ą" ] && pass "mkdir: folder utworzony" || fail "mkdir: brak folderu" "$out"
 out="$(ctl mkdir 1 "$B/Nowy folder ą")"; code=$?
 expect "mkdir: istniejący folder" "$out" "już istnieje"
-expect_code "mkdir: istniejący – kod 66" "$code" 66 "$out"
+expect_code "mkdir: istniejący – kod 1" "$code" 1 "$out"
 out="$(ctl mkdir 1 "$B/brak rodzica/x")"; code=$?
-expect_code "mkdir: brak folderu nadrzędnego – kod 61" "$code" 61 "$out"
+expect_code "mkdir: brak folderu nadrzędnego – kod 1" "$code" 1 "$out"
+expect "mkdir: brak folderu nadrzędnego – komunikat" "$out" "nie istnieje"
 out="$(ctl mkdir 1 "$B/a/b/c" -p)"; code=$?
 [ -d "$B/a/b/c" ] && pass "mkdir -p: cała ścieżka" || fail "mkdir -p" "$out"
 out="$(ctl mkdir 1 "$B/a/b/c" -p)"; code=$?
@@ -111,17 +113,19 @@ expect_code "rename: tylko wielkość liter – kod 0" "$code" 0 "$out"
 ls "$B" | grep -qx "Bez Nowej Linii.txt" && pass "rename: zmieniona wielkość liter" || fail "rename: wielkość liter" "$(ls "$B")"
 ctl rename 1 "$B/Bez Nowej Linii.txt" "bez nowej linii.txt" >/dev/null
 out="$(ctl rename 1 "$B/a" ".ukryty folder")"; code=$?
-expect_code "rename: na istniejący folder – kod 66" "$code" 66 "$out"
+expect_code "rename: na istniejący folder – kod 1" "$code" 1 "$out"
+expect "rename: na istniejący folder – komunikat" "$out" "już istnieje"
 out="$(ctl rename 1 "$B/bez nowej linii.txt" "rozmiar.bin")"; code=$?
-expect_code "rename: istniejąca nazwa – kod 66" "$code" 66 "$out"
+expect_code "rename: istniejąca nazwa – kod 1" "$code" 1 "$out"
 out="$(ctl rename 1 "$B/bez nowej linii.txt" "a/b")"; code=$?
-expect_code "rename: ukośnik w nazwie – odmowa" "$code" 65 "$out"
+expect_code "rename: ukośnik w nazwie – odmowa (kod 1)" "$code" 1 "$out"
+expect "rename: ukośnik w nazwie – komunikat" "$out" "Odmowa"
 
 section "Przeglądarka plików – usuwanie i zabezpieczenia"
-out="$(ctl rm 1 "$B/zażółć gęślą jaźń.txt" "$B/z	tabem.txt")"; code=$?
+out="$(ctl rm 1 "$B/zażółć gęślą jaźń.txt" "$B/z	tabem.txt" --yes)"; code=$?
 expect_code "rm: kod 0" "$code" 0 "$out"
 [ ! -e "$B/zażółć gęślą jaźń.txt" ] && [ ! -e "$B/z	tabem.txt" ] && pass "rm: pliki usunięte" || fail "rm" "$(ls -la "$B")"
-out="$(ctl rm 1 "$B/link do folderu")"
+out="$(ctl rm 1 "$B/link do folderu" --yes)"
 [ ! -L "$B/link do folderu" ] && [ -d "$B/folder ze spacją/podfolder" ] \
   && pass "rm: usunięte dowiązanie, cel nietknięty" || fail "rm: dowiązanie" "$(ls -laR "$B")"
 out="$(ctl rm 1 "$B/folder ze spacją" --dry-run)"; code=$?
@@ -132,14 +136,14 @@ for p in "/Users/$ME" "/Users/$ME/Desktop" "/Users/$ME/Documents" "/Users/$ME/Pu
          "/users/$ME/documents" "/Applications/Safari.app" "/etc/hosts" "/tmp/../etc/hosts" \
          "/Volumes/Macintosh HD/etc/hosts" "$B/link-poza/cmcr-e2e-brak" "/" "względna"; do
   out="$(ctl rm 1 "$p" --dry-run)"; code=$?
-  if [ "$code" = 65 ] && contains "" "$out" "Odmowa" && ! contains "" "$out" "Zostałoby"; then
+  if [ "$code" = 1 ] && contains "" "$out" "Odmowa" && ! contains "" "$out" "Zostałoby"; then
     pass "rm: odmowa dla $p"
   else
     fail "rm: brak odmowy dla $p (kod $code)" "$out"
   fi
 done
-out="$(ctl rm 1 "$WORK/nie ma/pliku")"; code=$?
-expect_code "rm: brak folderu – kod 61" "$code" 61 "$out"
+out="$(ctl rm 1 "$WORK/nie ma/pliku" --yes)"; code=$?
+expect_code "rm: brak folderu – kod 1" "$code" 1 "$out"
 
 section "Przeglądarka plików – pobieranie"
 mkdir -p "$WORK/pobrane"
@@ -172,7 +176,7 @@ expect "collect: podsumowanie" "$out" "Zebrano 2 pliki"
 out="$(ctlpw collect 1 --from "$S" --to "$WORK/zebrane")"
 n="$(find "$WORK/zebrane" -mindepth 2 -maxdepth 2 -type d -name 'imac01*' | wc -l | tr -d ' ')"
 [ "$n" = 2 ] && pass "collect: kolejne zebranie nie nadpisuje poprzedniego" || fail "collect: $n folderów hosta" "$(ls -laR "$WORK/zebrane")"
-out="$(ctlpw collect 1 --from "$S" --to "$WORK/zebrane-bez-daty" --no-date --clean)"; code=$?
+out="$(ctlpw collect 1 --from "$S" --to "$WORK/zebrane-bez-daty" --no-date --clean --yes)"; code=$?
 expect_code "collect --clean: kod 0" "$code" 0 "$out"
 [ -f "$WORK/zebrane-bez-daty/imac01/projekt 1/main.txt" ] && pass "collect --no-date: <katalog>/<host>" \
   || fail "collect --no-date" "$(ls -laR "$WORK/zebrane-bez-daty")"
@@ -187,7 +191,7 @@ echo "poza" > "$WORK/poza.txt"
 ln -s "$WORK/poza.txt" "$S2/link poza"
 ( while :; do echo x >> "$S2/w toku/log.txt"; sleep 0.05; done ) &
 WRITER=$!
-out="$(ctlpw collect 1 --from "$S2" --to "$WORK/zebrane-w-toku" --no-date --clean)"; code=$?
+out="$(ctlpw collect 1 --from "$S2" --to "$WORK/zebrane-w-toku" --no-date --clean --yes)"; code=$?
 kill "$WRITER" 2>/dev/null; wait "$WRITER" 2>/dev/null
 expect_code "collect --clean w trakcie pracy: kod 0" "$code" 0 "$out"
 [ ! -e "$S2/b ą.txt" ] && [ ! -e "$S2/gotowe" ] \

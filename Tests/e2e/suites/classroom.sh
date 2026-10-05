@@ -43,7 +43,9 @@ out="$(ctlpw unlock 1)"
 expect "unlock: komunikat zdjęty" "$out" "Ekran odblokowany"
 rm -f "$WORK/lockscreen.fail"
 out="$(ctl lock 1)"; code=$?
-expect_code "lock: bez hasła administratora – kod 91" "$code" 91 "$out"
+# Documented exit codes only (0/1/2): the remote 91 is explained, not passed through.
+expect_code "lock: bez hasła administratora – kod 1" "$code" 1 "$out"
+expect "lock: bez hasła administratora – komunikat" "$out" "Brak zapisanego hasła administratora"
 
 section "Zajęcia: pytania do uczniów"
 echo "Zadanie 3 gotowe" > "$WORK/ask.answer"
@@ -93,7 +95,7 @@ expect "filevault: włączony" "$out" "FileVault włączony"
 rm -f "$WORK/filevault.on"
 if [ "$U8_BG_OK" = 1 ]; then
   clear_fakelog
-  out="$(ctlpw power-later shutdown 5 1 --warn "Zapisz pracę – wyłączam za 5 minut")"; code=$?
+  out="$(ctlpw power-later shutdown 5 1 --warn "Zapisz pracę – wyłączam za 5 minut" --yes)"; code=$?
   expect_code "power-later: kod 0" "$code" 0 "$out"
   expect "power-later: komunikat" "$out" "Wyłącz: za 5 min"
   expect "power-later: ostrzeżenie dla ucznia" "$(fakelog)" "gui-stdin:" "Zapisz pracę – wyłączam za 5 minut"
@@ -112,7 +114,7 @@ fi
 
 section "Nazwy komputerów"
 clear_fakelog
-out="$(ctlpw rename 1 --name "Pracownia ą 01")"; code=$?
+out="$(ctlpw rename 1 --name "Pracownia ą 01" --yes)"; code=$?
 expect_code "rename: kod 0" "$code" 0 "$out"
 expect "rename: nowa nazwa i adres" "$out" "Pracownia-a-01.local" "CMCR:LHN:Pracownia-a-01"
 expect "rename: scutil i odświeżenie Bonjour" "$(fakelog)" "scutil --set ComputerName Pracownia ą 01" \
@@ -175,7 +177,7 @@ DUMMY2=$!
 disown "$DUMMY2" 2>/dev/null
 sleep 0.5
 clear_fakelog
-out="$(ctlpw lesson end 1 --no-wait)"; code=$?
+out="$(ctlpw lesson end 1 --no-wait --yes)"; code=$?
 expect_code "lesson end: kod 0" "$code" 0 "$out"
 expect "lesson end: wszystkie kroki" "$out" "ostrzeżenie wyświetlone" "zebrano" "zamknięto: CMCRDummy" \
   "wyczyszczono $WORK/remote/Public/cmcr" "użytkownik wylogowany"
@@ -188,7 +190,7 @@ if kill -0 "$DUMMY2" 2>/dev/null; then fail "lesson end: aplikacja nadal działa
 expect "lesson end: ostrzeżenie i wylogowanie" "$(fakelog)" "Koniec za chwilę – zapisz pracę" "launchctl bootout gui/"
 
 rm -rf "$WORK/remote/Public/cmcr"
-out="$(ctlpw lesson end 1 --no-wait)"; code=$?
+out="$(ctlpw lesson end 1 --no-wait --yes)"; code=$?
 expect_code "lesson end bez folderu ucznia: błąd zbierania" "$code" 1 "$out"
 expect "lesson end: bez zebranych prac folder nie jest czyszczony" "$out" "pominięto, bo zbieranie prac się nie udało"
 mkdir -p "$WORK/remote/Public/cmcr"
@@ -203,7 +205,7 @@ cfg["end"].update({"warn": False, "collect": False, "quitApps": False, "cleanSha
                    "logout": True, "power": "none"})
 json.dump(cfg, open(sys.argv[1], "w"), ensure_ascii=False)
 PY
-out="$(ctlpw lesson end 1 --no-wait)"; code=$?
+out="$(ctlpw lesson end 1 --no-wait --yes)"; code=$?
 expect_code "lesson end bez zbierania: kod 0" "$code" 0 "$out"
 expect "lesson end bez zbierania: pozostałe kroki wykonane" "$out" "użytkownik wylogowany"
 [ -f "$WORK/remote/Public/cmcr/praca2.txt" ] && pass "lesson end bez zbierania: folder ucznia nietknięty" \

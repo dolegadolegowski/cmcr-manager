@@ -63,7 +63,8 @@ else
 fi
 out="$(ctlpw install-url "file://$WORK/in/nie-ma-takiego.pkg" 1)"; code=$?
 expect "install-url: błąd pobierania" "$out" "Pobieranie nie powiodło się"
-expect_code "install-url: kod 2 przy błędzie pobierania" "$code" 2 "$out"
+# The remote `exit 2` of a failed download is a failure on that Mac (1), not a usage error (2).
+expect_code "install-url: kod 1 przy błędzie pobierania" "$code" 1 "$out"
 
 mkb "$WORK/dmgsrc" CMCRDmgApp pl.cmcr.e2e.dmg
 if hdiutil create -quiet -srcfolder "$WORK/dmgsrc" -volname "CMCR E2E" -format UDZO "$WORK/in/Test.dmg" 2>/dev/null; then

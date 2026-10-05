@@ -3,259 +3,229 @@ import Foundation
 
 /// `cmcrctl` commands for lesson routines, attention mode, energy schedule, names and reports.
 enum ClassroomCLI {
-    static let commands: Set<String> = ["lesson", "lock", "unlock", "ask", "schedule", "rename", "power-later",
-                                        "power-cancel", "app-version", "filevault", "report"]
-
     static let usage = """
     Zajęcia, zasilanie i raporty:
-      cmcrctl lesson start|end [all|nr] [--no-wait]   scenariusz zajęć zapisany w aplikacji (classroom.json)
-      cmcrctl lock [all|nr] [--message "…"] [--mode automatic|lockScreen|overlay] [--minutes N]
-      cmcrctl unlock [all|nr]                         zdejmij blokadę ekranu
-      cmcrctl ask "pytanie" [all|nr] [--buttons "Tak,Nie"] [--timeout sekundy]
-      cmcrctl schedule show|set|clear [all|nr] [--on MTWRF@07:45] [--off MTWRF@16:30]
+      cmcrctl lesson start|end KOMP [--no-wait] [--yes]   scenariusz zajęć zapisany w aplikacji (classroom.json)
+      cmcrctl lock KOMP [--message "…"] [--mode automatic|lockScreen|overlay] [--minutes N]
+      cmcrctl unlock KOMP                             zdejmij blokadę ekranu
+      cmcrctl ask "pytanie" KOMP [--buttons "Tak,Nie"] [--timeout sekundy]
+      cmcrctl schedule show [KOMP]                    harmonogram zasilania (bez KOMP: wszystkie)
+      cmcrctl schedule set|clear KOMP [--on MTWRF@07:45] [--off MTWRF@16:30]
                        [--on-type wakeorpoweron|wake] [--off-type sleep|shutdown] [--no-autorestart] [--no-womp]
-      cmcrctl rename [all|nr] [--name "Nazwa"] [--dry-run] [--update-list]
+      cmcrctl rename KOMP [--name "Nazwa"] [--dry-run] [--update-list] [--yes]
                                                       nazwy z listy; --name tylko dla jednego komputera
-      cmcrctl power-later restart|shutdown|sleep MINUTY [all|nr] [--warn "komunikat"]
-      cmcrctl power-cancel [all|nr]                   anuluj zaplanowane wyłączenie/restart/uśpienie
-      cmcrctl app-version "Nazwa" [all|nr]            wersja aplikacji na komputerach
-      cmcrctl filevault [all|nr]                      czy FileVault jest włączony
+      cmcrctl rename-computer KOMP [--name "Nazwa"] [--dry-run] [--update-list] [--yes]
+                                                      jak rename KOMP: zmiana nazw komputerów
+      cmcrctl power-later restart|shutdown|sleep MINUTY KOMP [--warn "komunikat"] [--yes]
+      cmcrctl power-cancel KOMP                       anuluj zaplanowane wyłączenie/restart/uśpienie
+      cmcrctl app-version "Nazwa" [KOMP]              wersja aplikacji na komputerach
+      cmcrctl filevault [KOMP]                        czy FileVault jest włączony
       cmcrctl report [plik.csv]                       raport CSV o komputerach
     """
 
-    static let printer: Operations.Output = { channel, data in
-        (channel == .stdout ? FileHandle.standardOutput : FileHandle.standardError).write(data)
-    }
+    static let specs: [String: ModuleSpec] = [
+        "lesson": ModuleSpec(flags: ["--no-wait"], maxPositional: 2),
+        "lock": ModuleSpec(values: ["--message", "--mode", "--minutes"], maxPositional: 1, parallel: true),
+        "unlock": ModuleSpec(maxPositional: 1, parallel: true),
+        // All Macs at once: every dialog waits for its student.
+        "ask": ModuleSpec(values: ["--buttons", "--timeout"], maxPositional: 2),
+        "schedule": ModuleSpec(flags: ["--no-autorestart", "--no-womp"], values: ["--on", "--off", "--on-type", "--off-type"],
+                               maxPositional: 2, parallel: true),
+        "rename": ModuleSpec(flags: ["--dry-run", "--update-list"], values: ["--name"], maxPositional: 1),
+        "rename-computer": ModuleSpec(flags: ["--dry-run", "--update-list"], values: ["--name"], maxPositional: 1),
+        "power-later": ModuleSpec(values: ["--warn"], maxPositional: 3, parallel: true),
+        "power-cancel": ModuleSpec(maxPositional: 1, parallel: true),
+        "app-version": ModuleSpec(maxPositional: 2, parallel: true),
+        "filevault": ModuleSpec(maxPositional: 1, parallel: true),
+        "report": ModuleSpec(maxPositional: 1),
+    ]
 
-    static let valueOptions: Set<String> = ["--message", "--mode", "--minutes", "--buttons", "--timeout", "--on", "--off",
-                                            "--on-type", "--off-type", "--name", "--warn"]
+    /// Runs a classroom command (`rawArgs` without the command word).
+    static func run(_ command: String, _ rawArgs: [String], settings: AppSettings, ssh: SSHSettings) async -> Int32 {
+        let a = ModuleArguments.parse(command, rawArgs, specs[command] ?? ModuleSpec())
+        func use(_ text: String) -> Never { moduleUsageError(command, text) }
 
-    /// Splits arguments into positionals and `--option value` / `--flag` pairs.
-    static func parse(_ args: [String]) -> (positional: [String], options: [String: String]) {
-        var positional: [String] = []
-        var options: [String: String] = [:]
-        var i = 0
-        while i < args.count {
-            let a = args[i]
-            if valueOptions.contains(a), i + 1 < args.count {
-                options[a] = args[i + 1]
-                i += 2
-            } else if a.hasPrefix("--") {
-                options[a] = ""
-                i += 1
-            } else {
-                positional.append(a)
-                i += 1
-            }
-        }
-        return (positional, options)
-    }
-
-    static func error(_ message: String) -> Int32 {
-        FileHandle.standardError.write(Data((message + "\n").utf8))
-        return 2
-    }
-
-    static func report(_ r: CommandResult) -> Int32 {
-        if !r.succeeded {
-            FileHandle.standardError.write(Data("✘ \(SSH.diagnose(r).1)\n".utf8))
-        }
-        return r.succeeded ? 0 : (r.exitCode == 0 ? 1 : r.exitCode)
-    }
-
-    /// Runs `script(host)` on every host in order, streaming output.
-    static func each(_ hosts: [Machine], ssh: SSHSettings, timeout: TimeInterval? = nil,
-                     _ script: (Machine) -> RemoteScript) async -> Int32 {
-        var status: Int32 = 0
-        for h in hosts {
-            print("\(h.name):")
-            let r = await SSH.run(script(h), on: h, password: Keychain.password(for: h), settings: ssh, timeout: timeout,
-                                  onOutput: printer)
-            status = max(status, report(r))
-        }
-        return status
-    }
-
-    static func run(_ command: String, _ rawArgs: [String], select: (String?) -> [Machine],
-                    settings: AppSettings, ssh: SSHSettings) async -> Int32 {
-        let (pos, opt) = parse(rawArgs)
         switch command {
         case "lesson":
-            guard let kind = pos.first, kind == "start" || kind == "end" else { return error(usage) }
-            return await lesson(start: kind == "start", hosts: select(pos.count > 1 ? pos[1] : nil),
-                                wait: opt["--no-wait"] == nil, settings: settings, ssh: ssh)
+            guard let kind = a[0], kind == "start" || kind == "end" else {
+                use("Użycie: cmcrctl lesson start|end KOMP [--no-wait]")
+            }
+            return await lesson(start: kind == "start", hosts: ModuleHosts.changing(a[1], "lesson \(kind)"),
+                                wait: !a.has("--no-wait"), yes: a.yes, settings: settings, ssh: ssh)
 
         case "lock":
             let config = ClassroomStore.loadConfig()
-            let message = opt["--message"] ?? config.lockMessage
-            let mode = opt["--mode"].flatMap(AttentionMode.init(rawValue:)) ?? config.lockMode
-            let minutes = opt["--minutes"].flatMap(Int.init) ?? config.autoUnlockMinutes
-            return await each(select(pos.first), ssh: ssh, timeout: 60) { _ in
+            let message = a.value("--message") ?? config.lockMessage
+            let mode: AttentionMode
+            if let raw = a.value("--mode") {
+                guard let m = AttentionMode.allCases.first(where: { $0.rawValue.lowercased() == raw.lowercased() }) else {
+                    use("--mode: automatic, lockScreen lub overlay (podano „\(raw)”).")
+                }
+                mode = m
+            } else {
+                mode = config.lockMode
+            }
+            let minutes = a.int("--minutes", in: 0...240) ?? config.autoUnlockMinutes
+            let list = ModuleHosts.changing(a[0], command)
+            return await runEach(list, a, ssh: ssh, timeout: 60) { _ in
                 Scripts.lockScreen(message: message, mode: mode, autoUnlockMinutes: minutes)
             }
 
         case "unlock":
-            return await each(select(pos.first), ssh: ssh, timeout: 60) { _ in Scripts.unlockScreen() }
+            return await runEach(ModuleHosts.changing(a[0], command), a, ssh: ssh, timeout: 60) { _ in Scripts.unlockScreen() }
 
         case "ask":
-            guard let question = pos.first else { return error("Podaj treść pytania.") }
-            let buttons = (opt["--buttons"] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard let question = a[0], !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                use("Podaj treść pytania: cmcrctl ask \"pytanie\" KOMP")
+            }
+            let buttons = (a.value("--buttons") ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
             guard buttons.count <= ClassroomConfig.maxQuestionButtons else {
-                return error("Okno pytania mieści najwyżej \(ClassroomConfig.maxQuestionButtons) przyciski.")
+                use("Okno pytania mieści najwyżej \(ClassroomConfig.maxQuestionButtons) przyciski.")
             }
-            let seconds = opt["--timeout"].flatMap(Int.init) ?? 120
-            let script = Scripts.ask(title: "Pytanie od nauczyciela", prompt: question, buttons: buttons,
-                                     timeoutSeconds: seconds)
-            // All Macs at once: every dialog waits for its student. Answers are printed as they arrive.
-            var status: Int32 = 0
-            await withTaskGroup(of: (Machine, CommandResult).self) { group in
-                for h in select(pos.count > 1 ? pos[1] : nil) {
-                    let pw = Keychain.password(for: h)
-                    group.addTask {
-                        (h, await SSH.run(script, on: h, password: pw, settings: ssh, timeout: TimeInterval(seconds + 60)))
-                    }
-                }
-                for await (h, r) in group {
-                    if let answer = StudentAnswer.parse(r.stdoutText) {
-                        let who = answer.user.isEmpty ? "" : " (\(answer.user))"
-                        print("\(h.name)\(who): \(answer.displayText)")
-                    } else {
-                        print("\(h.name): —")
-                        status = max(status, report(r))
-                    }
-                }
-            }
-            return status
+            let seconds = a.int("--timeout", in: 5...3600) ?? 120
+            let list = ModuleHosts.changing(a[1], command)
+            return await ask(question, buttons: buttons, seconds: seconds, hosts: list, ssh: ssh)
 
         case "schedule":
-            guard let action = pos.first, ["show", "set", "clear"].contains(action) else { return error(usage) }
-            let hosts = select(pos.count > 1 ? pos[1] : nil)
+            guard let action = a[0], ["show", "set", "clear"].contains(action) else {
+                use("Użycie: cmcrctl schedule show|set|clear KOMP [opcje] – szczegóły: cmcrctl schedule --help")
+            }
+            if action != "set", let option = (Array(a.values.keys) + Array(a.flags)).sorted().first {
+                use("Opcja \(option) dotyczy tylko polecenia schedule set.")
+            }
             switch action {
             case "set":
-                var s = EnergySchedule()
-                if let on = opt["--on"] {
-                    guard let parsed = parseEvent(on) else { return error("Niepoprawne --on (np. MTWRF@07:45).") }
-                    (s.onDays, s.onTime) = parsed
-                } else if opt["--off"] != nil {
-                    s.powerOnEnabled = false
-                }
-                if let off = opt["--off"] {
-                    guard let parsed = parseEvent(off) else { return error("Niepoprawne --off (np. MTWRF@16:30).") }
-                    (s.offDays, s.offTime) = parsed
-                } else if opt["--on"] != nil {
-                    s.powerOffEnabled = false
-                }
-                if let t = opt["--on-type"] {
-                    guard let v = EnergySchedule.OnType(rawValue: t) else { return error("--on-type: wakeorpoweron lub wake") }
-                    s.onType = v
-                }
-                if let t = opt["--off-type"] {
-                    guard let v = EnergySchedule.OffType(rawValue: t) else { return error("--off-type: sleep lub shutdown") }
-                    s.offType = v
-                }
-                if let e = s.validationError { return error(e) }
-                return await each(hosts, ssh: ssh, timeout: 60) { _ in
-                    Scripts.applyEnergySchedule(s, autoRestart: opt["--no-autorestart"] == nil, wakeOnLAN: opt["--no-womp"] == nil)
+                let schedule = parseSchedule(a)
+                let list = ModuleHosts.changing(a[1], "schedule set")
+                let autoRestart = !a.has("--no-autorestart"), wake = !a.has("--no-womp")
+                return await runEach(list, a, ssh: ssh, timeout: 60) { _ in
+                    Scripts.applyEnergySchedule(schedule, autoRestart: autoRestart, wakeOnLAN: wake)
                 }
             case "clear":
-                return await each(hosts, ssh: ssh, timeout: 60) { _ in Scripts.cancelEnergySchedule() }
+                return await runEach(ModuleHosts.changing(a[1], "schedule clear"), a, ssh: ssh, timeout: 60) { _ in
+                    Scripts.cancelEnergySchedule()
+                }
             default:
-                var status: Int32 = 0
-                for h in hosts {
+                return await eachHost(ModuleHosts.readOnly(a[1]), a, header: false) { io in
+                    let h = io.host
                     let r = await SSH.run(Scripts.energyScheduleStatus(), on: h, password: Keychain.password(for: h),
                                           settings: ssh, timeout: 30)
-                    guard r.succeeded else { print("\(h.name): —"); status = max(status, report(r)); continue }
+                    guard r.succeeded else {
+                        io.out("\(h.name): —")
+                        return io.report(r)
+                    }
                     let events = PowerScheduleParser.repeating(r.stdoutText)
                     let policy = PowerScheduleParser.policy(r.stdoutText)
-                    print("\(h.name): \(events.isEmpty ? "brak harmonogramu" : events.map(\.text).joined(separator: "; "))"
-                          + " | po zaniku zasilania: \(policy["autorestart"] == "1" ? "tak" : "nie")"
-                          + " | Wake-on-LAN: \(policy["womp"] == "1" ? "tak" : "nie")")
+                    io.out("\(h.name): \(events.isEmpty ? "brak harmonogramu" : events.map(\.text).joined(separator: "; "))"
+                           + " | po zaniku zasilania: \(policy["autorestart"] == "1" ? "tak" : "nie")"
+                           + " | Wake-on-LAN: \(policy["womp"] == "1" ? "tak" : "nie")")
+                    return ExitCode.success
                 }
-                return status
             }
 
-        case "rename":
-            let targets = select(pos.first)
-            if opt["--name"] != nil && targets.count > 1 {
-                return error("--name można podać tylko dla jednego komputera (wszystkie dostałyby tę samą nazwę). Bez --name każdy komputer dostaje nazwę z listy.")
-            }
-            var hosts = ConfigStore.loadHosts()
-            var status: Int32 = 0
-            for h in targets {
-                let name = opt["--name"] ?? h.name
-                let lhn = ComputerNames.localHostName(from: name)
-                guard ComputerNames.isValidLocalHostName(lhn) else {
-                    status = max(status, error("\(h.name): niepoprawna nazwa „\(name)”."))
-                    continue
-                }
-                print("\(h.name): „\(name)” → \(lhn).local")
-                if opt["--dry-run"] != nil { continue }
-                let r = await SSH.run(Scripts.renameComputer(computerName: name, localHostName: lhn), on: h,
-                                      password: Keychain.password(for: h), settings: ssh, timeout: 60, onOutput: printer)
-                status = max(status, report(r))
-                if r.succeeded, opt["--update-list"] != nil, let i = hosts.firstIndex(where: { $0.id == h.id }) {
-                    hosts[i].name = name
-                    if let address = ComputerNames.addressAfterRename(hosts[i].address, localHostName: lhn) {
-                        hosts[i].address = address
-                    }
-                    ConfigStore.saveHosts(hosts)
-                    print("Zaktualizowano listę komputerów: \(hosts[i].name) → \(hosts[i].address)")
-                }
-            }
-            return status
+        case "rename", "rename-computer":
+            return await renameComputers(a, ssh: ssh)
 
         case "power-later":
-            guard pos.count >= 2, let minutes = Int(pos[1]), minutes >= 0 else { return error(usage) }
+            guard a.positional.count >= 2 else { use("Użycie: cmcrctl power-later restart|shutdown|sleep MINUTY KOMP [--warn \"…\"]") }
             let action: PowerAction
-            switch pos[0] {
-            case "restart": action = .restart
+            switch a.positional[0] {
+            case "restart", "reboot": action = .restart
             case "shutdown": action = .shutdown
             case "sleep": action = .sleep
-            default: return error("Akcja: restart, shutdown lub sleep.")
+            default: use("Akcja: restart, shutdown lub sleep (podano „\(a.positional[0])”).")
             }
-            let warning = opt["--warn"]
-            return await each(select(pos.count > 2 ? pos[2] : nil), ssh: ssh, timeout: 60) { _ in
+            guard let minutes = Int(a.positional[1]), minutes >= 0 else {
+                use("MINUTY: liczba całkowita ≥ 0 (podano „\(a.positional[1])”).")
+            }
+            let warning = a.value("--warn")
+            let list = ModuleHosts.changing(a[2], command)
+            CLI.confirm("\(action.label) za \(minutes) min: \(ModuleHosts.names(list))? Zalogowani użytkownicy mogą stracić "
+                        + "niezapisane dane.", yes: a.yes)
+            return await runEach(list, a, ssh: ssh, timeout: 60) { _ in
                 Scripts.delayedPower(action, minutes: minutes, warning: warning)
             }
 
         case "power-cancel":
-            return await each(select(pos.first), ssh: ssh, timeout: 60) { _ in Scripts.cancelDelayedPower() }
+            return await runEach(ModuleHosts.changing(a[0], command), a, ssh: ssh, timeout: 60) { _ in
+                Scripts.cancelDelayedPower()
+            }
 
         case "app-version":
-            guard let name = pos.first else { return error("Podaj nazwę aplikacji.") }
-            var status: Int32 = 0
-            for h in select(pos.count > 1 ? pos[1] : nil) {
+            guard let name = a[0], !name.trimmingCharacters(in: .whitespaces).isEmpty else {
+                use("Podaj nazwę aplikacji: cmcrctl app-version \"Nazwa\" [KOMP]")
+            }
+            return await eachHost(ModuleHosts.readOnly(a[1]), a, header: false) { io in
+                let h = io.host
                 let r = await SSH.run(Scripts.appVersion(name), on: h, password: Keychain.password(for: h), settings: ssh,
                                       timeout: 60)
-                guard r.succeeded else { print("\(h.name): —"); status = max(status, report(r)); continue }
+                guard r.succeeded else {
+                    io.out("\(h.name): —")
+                    return io.report(r)
+                }
                 let found = AppVersionInfo.parse(r.stdoutText)
                 if found.isEmpty {
-                    print("\(h.name): brak")
+                    io.out("\(h.name): brak")
                 } else {
-                    for a in found { print("\(h.name): \(a.version.isEmpty ? "?" : a.version) (\(a.build)) \(a.path)") }
+                    // Version strings and paths come from the app bundles on the iMac.
+                    let esc = { TerminalText.escape($0, keepBackslash: true) }
+                    for app in found {
+                        io.out("\(h.name): \(app.version.isEmpty ? "?" : esc(app.version)) (\(esc(app.build))) \(esc(app.path))")
+                    }
                 }
+                return ExitCode.success
             }
-            return status
 
         case "filevault":
-            var status: Int32 = 0
-            for h in select(pos.first) {
+            return await eachHost(ModuleHosts.readOnly(a[0]), a, header: false) { io in
+                let h = io.host
                 let r = await SSH.run(Scripts.fileVaultStatus(), on: h, password: Keychain.password(for: h), settings: ssh,
                                       timeout: 30)
-                guard r.succeeded else { print("\(h.name): —"); status = max(status, report(r)); continue }
+                guard r.succeeded else {
+                    io.out("\(h.name): —")
+                    return io.report(r)
+                }
                 let kv = Parsers.keyValues(r.stdoutText)
-                print("\(h.name): FileVault \(kv["fv"] == "on" ? "włączony" : "wyłączony")"
-                      + (kv["fv"] == "on" ? (kv["authrestart"] == "yes" ? " (obsługuje authrestart)" : " (brak authrestart)") : ""))
+                io.out("\(h.name): FileVault \(kv["fv"] == "on" ? "włączony" : "wyłączony")"
+                       + (kv["fv"] == "on" ? (kv["authrestart"] == "yes" ? " (obsługuje authrestart)" : " (brak authrestart)") : ""))
+                return ExitCode.success
             }
-            return status
 
         case "report":
-            return await inventoryReport(to: pos.first, hosts: ConfigStore.loadHosts(), ssh: ssh)
+            return await inventoryReport(to: a[0], hosts: ConfigStore.loadHosts(), ssh: ssh)
 
         default:
-            return error(usage)
+            use(usage)
         }
+    }
+
+    /// `schedule set` options → schedule; a usage error (exit 2) for anything invalid.
+    static func parseSchedule(_ a: ModuleArguments) -> EnergySchedule {
+        func use(_ text: String) -> Never { moduleUsageError(a.command, text) }
+        var s = EnergySchedule()
+        if let on = a.value("--on") {
+            guard let parsed = parseEvent(on) else { use("Niepoprawne --on (np. MTWRF@07:45).") }
+            (s.onDays, s.onTime) = parsed
+        } else if a.value("--off") != nil {
+            s.powerOnEnabled = false
+        }
+        if let off = a.value("--off") {
+            guard let parsed = parseEvent(off) else { use("Niepoprawne --off (np. MTWRF@16:30).") }
+            (s.offDays, s.offTime) = parsed
+        } else if a.value("--on") != nil {
+            s.powerOffEnabled = false
+        }
+        if let t = a.value("--on-type") {
+            guard let v = EnergySchedule.OnType(rawValue: t) else { use("--on-type: wakeorpoweron lub wake") }
+            s.onType = v
+        }
+        if let t = a.value("--off-type") {
+            guard let v = EnergySchedule.OffType(rawValue: t) else { use("--off-type: sleep lub shutdown") }
+            s.offType = v
+        }
+        if let e = s.validationError { use(e) }
+        return s
     }
 
     /// `MTWRF@07:45` → days and time.
@@ -267,14 +237,95 @@ enum ClassroomCLI {
         return (days, time)
     }
 
-    static func lesson(start: Bool, hosts: [Machine], wait: Bool, settings: AppSettings, ssh: SSHSettings) async -> Int32 {
+    /// Asks all Macs at once; answers are printed as they arrive. Students type the answers, so they are escaped.
+    static func ask(_ question: String, buttons: [String], seconds: Int, hosts: [Machine], ssh: SSHSettings) async -> Int32 {
+        let script = Scripts.ask(title: "Pytanie od nauczyciela", prompt: question, buttons: buttons, timeoutSeconds: seconds)
+        var status = ExitCode.success
+        await withTaskGroup(of: (Machine, CommandResult).self) { group in
+            for h in hosts {
+                let pw = Keychain.password(for: h)
+                group.addTask {
+                    (h, await SSH.run(script, on: h, password: pw, settings: ssh, timeout: TimeInterval(seconds + 60)))
+                }
+            }
+            for await (h, r) in group {
+                if let answer = StudentAnswer.parse(r.stdoutText) {
+                    let who = answer.user.isEmpty ? "" : " (\(TerminalText.escape(answer.user)))"
+                    Console.out("\(h.name)\(who): \(TerminalText.escape(answer.displayText, keepBackslash: true))")
+                } else {
+                    Console.out("\(h.name): —")
+                    Console.err("✘ \(h.name): \(SSH.diagnose(r).1)")
+                    status = ExitCode.failure
+                }
+            }
+        }
+        return status
+    }
+
+    /// ComputerName, LocalHostName and HostName from the host list (or `--name` for one Mac). Always needs an
+    /// explicit host list; every new name is checked before anything changes, and the change is confirmed.
+    static func renameComputers(_ a: ModuleArguments, ssh: SSHSettings) async -> Int32 {
+        let targets = ModuleHosts.required(a[0], a.command, why: "bez --name każdy dostaje nazwę z listy komputerów")
+        if let name = a.value("--name") {
+            guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { moduleUsageError(a.command, "--name: podaj nazwę.") }
+            guard targets.count == 1 else {
+                moduleUsageError(a.command, "--name można podać tylko dla jednego komputera (wszystkie dostałyby tę samą nazwę). "
+                                 + "Bez --name każdy komputer dostaje nazwę z listy.")
+            }
+        }
+        var planned: [(host: Machine, name: String, localHostName: String)] = []
+        var invalid = false
+        for h in targets {
+            let name = a.value("--name") ?? h.name
+            let lhn = ComputerNames.localHostName(from: name)
+            guard ComputerNames.isValidLocalHostName(lhn) else {
+                Console.err("\(h.name): niepoprawna nazwa „\(name)”.")
+                invalid = true
+                continue
+            }
+            Console.out("\(h.name): „\(name)” → \(lhn).local")
+            planned.append((h, name, lhn))
+        }
+        if invalid { moduleUsageError(a.command, "Popraw nazwę – nic nie zostało zmienione.") }
+        if a.has("--dry-run") { return ExitCode.success }
+        var hosts = a.has("--update-list") ? legacyCLI.editableHosts() : []
+        CLI.confirm("Zmienić nazwę komputera (ComputerName, LocalHostName, HostName) na: \(ModuleHosts.names(targets))? "
+                    + "Adres .local każdego z nich zmieni się według nowej nazwy.", yes: a.yes)
+        var status = ExitCode.success
+        for p in planned {
+            Console.out("\(p.host.name):")
+            let r = await SSH.run(Scripts.renameComputer(computerName: p.name, localHostName: p.localHostName), on: p.host,
+                                  password: Keychain.password(for: p.host), settings: ssh, timeout: 60,
+                                  onOutput: Console.printer)
+            if report(r) != ExitCode.success { status = ExitCode.failure }
+            if r.succeeded, a.has("--update-list"), let i = hosts.firstIndex(where: { $0.id == p.host.id }) {
+                hosts[i].name = p.name
+                if let address = ComputerNames.addressAfterRename(hosts[i].address, localHostName: p.localHostName) {
+                    hosts[i].address = address
+                }
+                ConfigStore.saveHosts(hosts)
+                Console.out("Zaktualizowano listę komputerów: \(hosts[i].name) → \(hosts[i].address)")
+            }
+        }
+        return status
+    }
+
+    static func lesson(start: Bool, hosts: [Machine], wait: Bool, yes: Bool, settings: AppSettings,
+                       ssh: SSHSettings) async -> Int32 {
         let config = ClassroomStore.loadConfig()
         let plan = start ? LessonPlan.start(config.start, settings: settings) : LessonPlan.end(config.end, settings: settings)
-        guard !plan.steps.isEmpty else { return error("Scenariusz nie ma żadnych kroków (ustaw je w aplikacji: Zajęcia).") }
-        print("\(plan.kind.title): \(plan.steps.map(\.title).joined(separator: " → "))")
+        guard !plan.steps.isEmpty else {
+            moduleUsageError("lesson", "Scenariusz nie ma żadnych kroków (ustaw je w aplikacji: Zajęcia).")
+        }
+        // As in the app: ending a lesson that logs out, powers off, cleans folders or quits apps is confirmed.
+        if !start && config.end.isDisruptive {
+            CLI.confirm("Zakończyć zajęcia na: \(ModuleHosts.names(hosts))? Kroki: \(plan.steps.map(\.title).joined(separator: " → ")). "
+                        + "Uczniowie mogą stracić niezapisaną pracę.", yes: yes)
+        }
+        Console.out("\(plan.kind.title): \(plan.steps.map(\.title).joined(separator: " → "))")
         if let folder = plan.collectFolder {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            print("Zebrane prace: \(folder.path)")
+            Console.out("Zebrane prace: \(folder.path)")
         }
         var payload: URL?
         if plan.steps.contains(.materials) {
@@ -288,28 +339,28 @@ enum ClassroomCLI {
         func host(_ h: Machine) -> LessonRunner.Host {
             LessonRunner.Host(machine: h, password: Keychain.password(for: h), macs: h.macAddress.isEmpty ? [] : [h.macAddress])
         }
-        var status: Int32 = 0
+        var status = ExitCode.success
         var first = 0
         if plan.steps.first == .warn {
             for h in hosts {
-                print("== \(h.name)")
-                _ = await LessonRunner.run(plan, on: host(h), ssh: ssh, materials: nil, range: 0..<1, onOutput: printer)
+                Console.out("== \(h.name)")
+                _ = await LessonRunner.run(plan, on: host(h), ssh: ssh, materials: nil, range: 0..<1, onOutput: Console.printer)
             }
             if wait {
                 let secs = max(1, plan.end.warnMinutes) * 60
-                print("Czekam \(secs / 60) min przed kolejnymi krokami…")
+                Console.out("Czekam \(secs / 60) min przed kolejnymi krokami…")
                 try? await Task.sleep(nanoseconds: UInt64(secs) * 1_000_000_000)
             }
             first = 1
         }
-        guard first < plan.steps.count else { return 0 }
+        guard first < plan.steps.count else { return ExitCode.success }
         for h in hosts {
-            print("== \(h.name)")
+            Console.out("== \(h.name)")
             let r = await LessonRunner.run(plan, on: host(h), ssh: ssh, materials: payload, range: first..<plan.steps.count,
-                                           onOutput: printer)
+                                           onOutput: Console.printer)
             if !r.succeeded {
-                FileHandle.standardError.write(r.stderr)
-                status = 1
+                Console.write(.stderr, r.stderr)
+                status = ExitCode.failure
             }
         }
         return status
@@ -344,13 +395,14 @@ enum ClassroomCLI {
             let url = URL(fileURLWithPath: expandTilde(path))
             do {
                 try CSV.render(rows).write(to: url, atomically: true, encoding: .utf8)
-                print("Zapisano raport: \(url.path) (\(hosts.count) \(Plural.computers(hosts.count)))")
+                Console.out("Zapisano raport: \(url.path) (\(hosts.count) \(Plural.computers(hosts.count)))")
             } catch {
-                return self.error("Nie można zapisać \(url.path): \(error.localizedDescription)")
+                Console.err("✘ Nie można zapisać \(url.path): \(error.localizedDescription)")
+                return ExitCode.failure
             }
         } else {
-            print(CSV.render(rows, bom: false), terminator: "")
+            Console.out(CSV.render(rows, bom: false), terminator: "")
         }
-        return statuses.values.contains { $0.reachability != .online } ? 1 : 0
+        return statuses.values.contains { $0.reachability != .online } ? ExitCode.failure : ExitCode.success
     }
 }

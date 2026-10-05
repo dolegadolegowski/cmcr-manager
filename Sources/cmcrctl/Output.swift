@@ -3,12 +3,17 @@ import Foundation
 
 /// Terminal output. SIGPIPE is ignored, so writing to a closed pipe (`cmcrctl … | head`) fails with EPIPE;
 /// the non-throwing `FileHandle.write(_:)` would turn that into an uncaught exception (SIGABRT).
+///
+/// Everything printed to a terminal passes `TerminalText.StreamFilter`: output of the iMacs (exec, ls, error
+/// messages quoting remote text) cannot send escape sequences to the teacher's terminal. Output redirected to a
+/// file or a pipe stays byte for byte what the iMac sent.
 enum Console {
     static func write(_ channel: OutputChannel, _ data: Data) {
         guard !data.isEmpty else { return }
-        let handle = channel == .stdout ? FileHandle.standardOutput : FileHandle.standardError
+        let safe = TerminalGuard.shared.filter(channel, data)
+        guard !safe.isEmpty else { return }
         do {
-            try handle.write(contentsOf: data)
+            try handle(channel).write(contentsOf: safe)
         } catch {
             // The reader is gone: stop quietly, with the status of a process killed by SIGPIPE.
             if channel == .stdout { exit(128 + SIGPIPE) }
@@ -17,6 +22,44 @@ enum Console {
 
     static func out(_ text: String, terminator: String = "\n") { write(.stdout, Data((text + terminator).utf8)) }
     static func err(_ text: String, terminator: String = "\n") { write(.stderr, Data((text + terminator).utf8)) }
+
+    /// Streams remote output of commands that do not run through `runHosts` (single-host commands).
+    static let printer: Operations.Output = { channel, data in Console.write(channel, data) }
+
+    fileprivate static func handle(_ channel: OutputChannel) -> FileHandle {
+        channel == .stdout ? FileHandle.standardOutput : FileHandle.standardError
+    }
+}
+
+/// Per-channel `TerminalText.StreamFilter` for stdout/stderr when they are terminals.
+private final class TerminalGuard: @unchecked Sendable {
+    static let shared = TerminalGuard()
+
+    private let lock = NSLock()
+    private let isTerminal: [OutputChannel: Bool] = [.stdout: isatty(STDOUT_FILENO) != 0,
+                                                     .stderr: isatty(STDERR_FILENO) != 0]
+    private var filters: [OutputChannel: TerminalText.StreamFilter] = [.stdout: .init(), .stderr: .init()]
+    private var registered = false
+
+    func filter(_ channel: OutputChannel, _ data: Data) -> Data {
+        guard isTerminal[channel] == true else { return data }
+        lock.lock()
+        defer { lock.unlock() }
+        if !registered {
+            registered = true
+            // A held-back trailing byte (see StreamFilter) is printed when the process ends.
+            atexit { TerminalGuard.shared.finish() }
+        }
+        return filters[channel, default: .init()].filter(data)
+    }
+
+    /// Runs at exit: never calls exit() again, and ignores a reader that is gone.
+    private func finish() {
+        lock.lock()
+        let rest: [(OutputChannel, Data)] = [OutputChannel.stdout, .stderr].map { ($0, filters[$0, default: .init()].finish()) }
+        lock.unlock()
+        for (channel, data) in rest where !data.isEmpty { try? Console.handle(channel).write(contentsOf: data) }
+    }
 }
 
 enum ExitCode {

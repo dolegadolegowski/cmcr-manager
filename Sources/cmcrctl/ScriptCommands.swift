@@ -5,63 +5,73 @@ import Foundation
 /// explicit parameters, used by the end-to-end tests (Tests/e2e/suites/scripts.sh).
 @MainActor
 enum ScriptCommands {
-    static let usage = """
-      cmcrctl install plik… [all|nr]            zainstaluj programy (.pkg/.dmg/.zip/.app) jako root
-      cmcrctl install-url URL [all|nr]          pobierz instalator na iMacu i zainstaluj
+    nonisolated static let usage = """
+      cmcrctl install plik… KOMP                zainstaluj programy (.pkg/.dmg/.zip/.app) jako root
+      cmcrctl install-url URL KOMP              pobierz instalator na iMacu i zainstaluj
     """
 
-    /// Exit status, or nil when `command` is not one of these.
+    /// `--root` is accepted for compatibility: installing always runs as root.
+    nonisolated static let specs: [String: ModuleSpec] = [
+        "install": ModuleSpec(flags: ["--root"], parallel: true),
+        "install-url": ModuleSpec(flags: ["--root"], maxPositional: 2, parallel: true),
+    ]
+
+    /// Exit status, or nil when `command` is not one of these (`args` without the command word).
     static func run(_ command: String, _ args: [String]) async -> Int32? {
-        let rest = Array(args.dropFirst())
-        switch command {
-        case "install": return await install(rest)
-        case "install-url": return await installURL(rest)
-        case "_builder": return await builder(rest)
-        default: return nil
-        }
+        guard let spec = specs[command] else { return nil }
+        let a = ModuleArguments.parse(command, args, spec)
+        return command == "install" ? await install(a) : await installURL(a)
     }
 
-    static func install(_ args: [String]) async -> Int32 {
-        var files = args
+    static func install(_ a: ModuleArguments) async -> Int32 {
+        var files = a.positional
         var spec: String?
+        // The host list comes last; a last argument that is not a local file is taken as the host list.
         if files.count >= 2, let last = files.last, !FileManager.default.fileExists(atPath: expandTilde(last)) {
             spec = last
             files.removeLast()
         }
-        guard !files.isEmpty else { fail("Użycie: cmcrctl install plik… [all|nr]") }
+        guard !files.isEmpty else { moduleUsageError(a.command, "Użycie: cmcrctl install plik… KOMP") }
         let urls = files.map { URL(fileURLWithPath: expandTilde($0)).standardizedFileURL }
-        for u in urls where !FileManager.default.fileExists(atPath: u.path) { fail("Brak pliku: \(u.path)") }
-        let targets = selectHosts(spec)
+        for u in urls where !FileManager.default.fileExists(atPath: u.path) {
+            moduleUsageError(a.command, "Brak pliku: \(u.path)")
+        }
+        let targets = ModuleHosts.changing(spec, a.command)
         let payload: URL
         switch await Payload.make(urls) {
         case .failure(let e): fail(e.localizedDescription)
         case .success(let url): payload = url
         }
         defer { try? FileManager.default.removeItem(at: payload) }
-        var status: Int32 = 0
-        for h in targets {
-            print("\(h.name):")
-            let r = await Operations.install(payload: payload, on: h, password: Keychain.password(for: h),
-                                             settings: sshSettings, onOutput: Console.printer)
-            status = max(status, report(r))
+        let ssh = sshSettings
+        return await eachHost(targets, a) { io in
+            let r = await Operations.install(payload: payload, on: io.host, password: Keychain.password(for: io.host),
+                                             settings: ssh, onOutput: io.stream)
+            return io.report(r)
         }
-        return status
     }
 
-    static func installURL(_ args: [String]) async -> Int32 {
-        guard let url = args.first, url.contains("://") else { fail("Użycie: cmcrctl install-url URL [all|nr]") }
-        return await runOnHosts(Scripts.installFromURL(url), args.count > 1 ? args[1] : nil)
+    static func installURL(_ a: ModuleArguments) async -> Int32 {
+        guard let url = a[0], url.contains("://") else { moduleUsageError(a.command, "Użycie: cmcrctl install-url URL KOMP") }
+        let targets = ModuleHosts.changing(a[1], a.command)
+        return await runEach(targets, a, ssh: sshSettings) { _ in Scripts.installFromURL(url) }
     }
 
-    static func runOnHosts(_ script: RemoteScript, _ spec: String?) async -> Int32 {
+    /// `_builder` only: the remote exit code is kept, the e2e suites check the codes of the script builders.
+    static func runRaw(_ script: RemoteScript, _ spec: String) async -> Int32 {
         var status: Int32 = 0
-        for h in selectHosts(spec) {
-            print("\(h.name):")
+        for h in legacyCLI.targets(spec) {
+            Console.out("\(h.name):")
             let r = await SSH.run(script, on: h, password: Keychain.password(for: h), settings: sshSettings,
                                   onOutput: Console.printer)
-            status = max(status, report(r))
+            status = max(status, rawCode(r))
         }
         return status
+    }
+
+    static func rawCode(_ r: CommandResult) -> Int32 {
+        if !r.succeeded { Console.err("✘ \(SSH.diagnose(r).1)") }
+        return r.succeeded ? 0 : (r.exitCode == 0 ? 1 : r.exitCode)
     }
 
     /// `_builder NAME HOST [arguments…]`
@@ -129,16 +139,16 @@ enum ScriptCommands {
             }
             defer { try? FileManager.default.removeItem(at: payload) }
             var status: Int32 = 0
-            for h in selectHosts(spec) {
+            for h in legacyCLI.targets(spec) {
                 let r = await Operations.push(payload: payload, to: h, destination: dest, owner: owner, mode: mode,
                                               asRoot: root, password: Keychain.password(for: h),
                                               settings: sshSettings, onOutput: Console.printer)
-                status = max(status, report(r))
+                status = max(status, rawCode(r))
             }
             return status
         default:
             fail("Nieznany generator: \(name)")
         }
-        return await runOnHosts(script, spec)
+        return await runRaw(script, spec)
     }
 }
