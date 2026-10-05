@@ -63,13 +63,15 @@ struct ScreenWallToolbarButton: View {
 // MARK: - Toolbar titles
 
 /// Shows every toolbar item with its title under the icon ("Icon and Text"), so nobody has to guess what an
-/// icon means. Put it in the background of the window's root view.
+/// icon means. Put it in the background of the window's root view. Applied once per toolbar, so a different
+/// mode picked from the toolbar's context menu stays for the session.
 struct ToolbarTitlesShown: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { Probe() }
     func updateNSView(_ view: NSView, context: Context) { (view as? Probe)?.apply() }
 
     final class Probe: NSView {
         private var observation: NSKeyValueObservation?
+        private weak var configured: NSToolbar?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -80,7 +82,8 @@ struct ToolbarTitlesShown: NSViewRepresentable {
         }
 
         func apply() {
-            guard let toolbar = window?.toolbar, toolbar.displayMode != .iconAndLabel else { return }
+            guard let toolbar = window?.toolbar, toolbar !== configured else { return }
+            configured = toolbar
             toolbar.displayMode = .iconAndLabel
         }
     }

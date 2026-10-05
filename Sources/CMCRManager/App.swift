@@ -489,10 +489,10 @@ struct MachineRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Toggle("Cel operacji: \(machine.name)", isOn: $isTarget)
+            Toggle("Zaznacz \(machine.name)", isOn: $isTarget)
                 .toggleStyle(.checkbox)
                 .labelsHidden()
-                .help(isTarget ? "Zaznaczony – operacje obejmą ten komputer" : "Zaznacz, aby objąć ten komputer operacjami")
+                .help(isTarget ? "Zaznaczony – działania obejmą ten komputer" : "Zaznacz, aby działania objęły ten komputer")
             HStack(spacing: 8) {
                 StatusDot(reachability: status.reachability)
                 VStack(alignment: .leading, spacing: 1) {

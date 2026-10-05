@@ -41,7 +41,7 @@ struct JobsView: View {
                 ContentUnavailableView {
                     Label("Brak zadań", systemImage: AppSection.jobs.icon)
                 } description: {
-                    Text("Każda operacja uruchomiona na komputerach pojawi się tutaj z wynikiem dla każdego iMaca. Historia zapisuje się na dysku.")
+                    Text("Każde działanie uruchomione na komputerach pojawi się tutaj razem z wynikiem z każdego komputera. Historia zapisuje się na dysku.")
                 }
             } else {
                 HSplitView {
@@ -58,6 +58,10 @@ struct JobsView: View {
         }
         .onChange(of: model.batches.count) { _, _ in
             if model.focusedBatchID == nil { model.focusedBatchID = model.batches.first?.id }
+        }
+        .onChange(of: history.loaded) { _, loaded in
+            // Without anything from this session, show the newest saved result instead of an empty pane.
+            if loaded, model.focusedBatchID == nil { model.focusedBatchID = history.batches.first?.id }
         }
     }
 
@@ -87,7 +91,7 @@ struct JobsView: View {
         let live = liveIDs
         let older = history.batches.filter { !live.contains($0.id) && matches($0) }
         return VStack(spacing: 0) {
-            NativeSearchField(prompt: "Szukaj: operacja, komputer, wynik", text: $search)
+            NativeSearchField(prompt: "Szukaj: działanie, komputer, wynik", text: $search)
                 .padding(8)
             List(selection: $model.focusedBatchID) {
                 if !running.isEmpty {
@@ -111,7 +115,7 @@ struct JobsView: View {
                     ContentUnavailableView {
                         Label("Brak wyników", systemImage: "magnifyingglass")
                     } description: {
-                        Text("Żadna operacja nie pasuje do „\(search)”.")
+                        Text("Żadne działanie nie pasuje do „\(search)”.")
                     }
                 }
             }
@@ -124,7 +128,7 @@ struct JobsView: View {
                     Label("Wyczyść zakończone", systemImage: "eraser")
                 }
                 .disabled(!model.batches.contains { $0.finished })
-                .help("Usuwa zakończone operacje z tej listy (zostają w historii na dysku)")
+                .help("Usuwa zakończone działania z tej listy (zostają w historii na dysku)")
                 Spacer()
                 Menu {
                     Button("Odśwież historię") { history.load() }
@@ -163,9 +167,9 @@ struct JobsView: View {
             HistoryDetailView(batch: past).id(past.id)
         } else {
             ContentUnavailableView {
-                Label("Wybierz operację", systemImage: "sidebar.left")
+                Label("Wybierz działanie", systemImage: "list.bullet.rectangle")
             } description: {
-                Text("Po lewej są operacje w toku, z tej sesji i z historii.")
+                Text("Po lewej są działania w toku, z tej sesji i z historii.")
             }
         }
     }
@@ -577,7 +581,7 @@ struct HistoryDetailView: View {
                     Label("Zaznacz nieudane", systemImage: "checklist")
                 }
                 .disabled(existing.isEmpty)
-                .help("Zaznacza na liście komputery, na których operacja się nie udała")
+                .help("Zaznacza na liście komputery, na których działanie się nie udało")
                 Spacer()
                 Button {
                     BatchExport.save(batch)

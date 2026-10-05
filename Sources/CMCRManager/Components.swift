@@ -710,7 +710,7 @@ struct LogTextView: NSViewRepresentable {
         tv.textContainerInset = NSSize(width: 4, height: 6)
         tv.drawsBackground = true
         tv.backgroundColor = .textBackgroundColor
-        tv.setAccessibilityLabel("Wynik operacji")
+        tv.setAccessibilityLabel("Wynik działania")
         scroll.borderType = .noBorder
         scroll.wantsLayer = true
         scroll.layer?.cornerRadius = 6
