@@ -117,14 +117,17 @@ Pola wyboru na liście komputerów (środkowa kolumna) wyznaczają cel operacji 
 | dystrybucja klucza (README) | Konfiguracja › Dostęp i hasła | — |
 | Unity Hub / sdkmanager / Homebrew (notes.md) | Instalacja, Polecenia › Gotowe polecenia | `cmcrctl exec` |
 
-`cmcrctl` (w `build/cmcrctl` i w pakiecie aplikacji: `Contents/Resources/bin/cmcrctl`) korzysta z tej samej konfiguracji i Pęku kluczy co aplikacja. Pełna lista poleceń: `cmcrctl --help`. Poza odpowiednikami z tabeli: `status [--json]`, `apps`, `open-app`, `quit-app`, `open-url`, `kill`, `uninstall`, `brew`, `screenshot`, `screen-watch` (podgląd na żywo do folderu z klatkami), `ls`, `clean`, `updates list|install|history`, `message`, `logout`, `power restart|shutdown|sleep|display-sleep`, `wake`, `hosts list|add|set|remove|generate`, `password set|clear|status`, `install plik… [all|nr]` (`.pkg`/`.dmg`/`.zip`/`.app`), `install-url URL [all|nr]`, `render` (pokazuje dokładnie skrypt wykonywany zdalnie), `setup-script`, `setup` i `readiness` (jednorazowa konfiguracja iMaców) i `selftest` (sprawdza składnię wszystkich skryptów zdalnych).
+`cmcrctl` (w `build/cmcrctl` i w pakiecie aplikacji: `Contents/Resources/bin/cmcrctl`) korzysta z tej samej konfiguracji i Pęku kluczy co aplikacja. Pełna lista poleceń: `cmcrctl --help`. Poza odpowiednikami z tabeli: `status [--json]`, `apps`, `open-app`, `quit-app`, `open-url`, `kill`, `uninstall`, `brew`, `screenshot`, `screen-watch` (podgląd na żywo do folderu z klatkami), `ls`, `clean`, `updates list|install|history`, `message`, `logout`, `power restart|shutdown|sleep|display-sleep`, `wake`, `hosts list|add|set|remove|generate`, `password set|clear|status`, `install plik… KOMP` (`.pkg`/`.dmg`/`.zip`/`.app`), `install-url URL KOMP`, `render` (pokazuje dokładnie skrypt wykonywany zdalnie), `setup-script`, `setup` i `readiness` (jednorazowa konfiguracja iMaców) i `selftest` (sprawdza składnię wszystkich skryptów zdalnych).
 
 - Komputery wskazuje się numerem z nazwy (`4` → imac04), listą (`1,3,7`), zakresem (`1-5`), pozycją na liście (`@2`), nazwą lub `all`. Numer, którego nie ma na liście, jest błędem – polecenie nigdy nie trafi do innego Maca.
-- Bez listy komputerów `status` sprawdza wszystkie. `exec`, `open-app` i `quit-app` działają wtedy na wszystkich tylko w terminalu (i wypisują, na których); w skryptach trzeba podać listę, np. `all`. Dzięki temu argument zgubiony przez powłokę – np. niezacytowane `#3`, które w skrypcie jest komentarzem – kończy się błędem, a nie poleceniem dla całej pracowni.
-- `-j N` obsługuje N komputerów naraz (polecenia z listą komputerów poza `wake` i `hosts remove`); wyniki i tak są wypisywane w kolejności listy (`--prefix` dodaje `[imac04]` przed każdym wierszem). `status` i `updates list` działają równolegle domyślnie.
-- Restart, wyłączenie, wylogowanie, czyszczenie folderu, deinstalacja, usuwanie komputerów z listy i zastępowanie listy pytają o potwierdzenie; w skryptach (bez terminala) trzeba dodać `--yes`.
+- Bez listy komputerów polecenia, które tylko odczytują (`status`, `readiness`, `filevault`, `app-version`, `schedule show`), sprawdzają wszystkie. Polecenia, które coś zmieniają (`exec`, `open-app`, `quit-app`, `lock`, `unlock`, `ask`, `lesson`, `schedule set|clear`, `power-later`, `power-cancel`, `install`, `install-url`), działają wtedy na wszystkich tylko w terminalu (i wypisują, na których); w skryptach trzeba podać listę, np. `all`. Dzięki temu argument zgubiony przez powłokę – np. niezacytowane `#3`, które w skrypcie jest komentarzem – kończy się błędem, a nie poleceniem dla całej pracowni. Zmiana nazw komputerów (`rename KOMP`) zawsze wymaga listy.
+- `cmcrctl POLECENIE --help` (lub `-h`) pokazuje pomoc tego polecenia i niczego nie wykonuje.
+- `-j N` obsługuje N komputerów naraz (polecenia z listą komputerów poza `wake`, `hosts remove`, `lesson`, `rename` i `ask`, które pyta wszystkie komputery naraz); wyniki i tak są wypisywane w kolejności listy (`--prefix` dodaje `[imac04]` przed każdym wierszem). `status` i `updates list` działają równolegle domyślnie.
+- Restart, wyłączenie, wylogowanie, czyszczenie folderu, deinstalacja, usuwanie komputerów z listy i zastępowanie listy pytają o potwierdzenie – tak samo `power-later`, zakończenie zajęć, które wylogowuje, wyłącza, czyści foldery lub zamyka aplikacje (`lesson end`), zmiana nazw komputerów, usuwanie plików (`rm`) i `collect --clean`; w skryptach (bez terminala) trzeba dodać `--yes`.
 - `hosts add` i `hosts generate` odrzucają adresy, konta i prefiksy ze spacją, znakiem sterującym, „@” lub „-” na początku; adres MAC można podać także w zapisie `arp -a` (`0:1b:…`).
-- Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie (także opcja, której polecenie nie używa, np. `exec … --host 4`, albo nadmiarowy argument – wtedy nic nie jest wykonywane); `exec` zwraca kod zdalnego polecenia.
+- Kody wyjścia (wszystkich poleceń): 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie (także opcja, której polecenie nie używa, np. `exec … --host 4` albo `lock --mesage …`, lub nadmiarowy argument – wtedy nic nie jest wykonywane); `exec` zwraca kod zdalnego polecenia, `screen-watch` – także 3–6 (opis w `cmcrctl screen-watch --help`).
+- `rename nr ścieżka nowa-nazwa` zmienia nazwę pliku, `rename KOMP [--name …]` (lub `rename-computer`) – nazwę komputera; inna liczba argumentów albo ścieżka niezaczynająca się od `/`, `~` lub `{student}` jest błędem, więc pomyłka przy zmianie nazwy pliku nigdy nie zmieni nazw komputerów.
+- W terminalu znaki sterujące w wynikach z iMaców (np. sekwencje ESC w nazwach plików utworzonych przez ucznia) są pokazywane jako `^[`, `^M`… i nie mogą zmienić tytułu okna, wyczyścić ekranu ani nadpisać wierszy; wynik przekierowany do pliku lub potoku pozostaje dosłowny.
 - Uszkodzony `hosts.json` nie jest nigdy nadpisywany: polecenia zmieniające listę komputerów kończą się błędem ze wskazaniem miejsca problemu.
 - Hasło: `cmcrctl password set` (czyta ze standardowego wejścia, bez echa) lub zmienna `CMCR_PASSWORD`.
 
@@ -147,13 +150,13 @@ cmcrctl message "Przerwa" "Za 5 minut koniec zajęć" all
 
 | Zadanie | cmcrctl |
 |---|---|
-| scenariusz zajęć z aplikacji | `cmcrctl lesson start\|end [all\|nr] [--no-wait]` |
-| tryb uwagi | `cmcrctl lock [all\|nr] [--message "…"] [--minutes N]`, `cmcrctl unlock` |
-| pytanie do uczniów | `cmcrctl ask "pytanie" [all\|nr] [--buttons "Tak,Nie"]` |
-| harmonogram zasilania | `cmcrctl schedule show\|set\|clear [all\|nr] [--on MTWRF@07:45] [--off MTWRF@16:30]` |
-| restart/wyłączenie za N min | `cmcrctl power-later restart\|shutdown\|sleep N [all\|nr] [--warn "…"]`, `cmcrctl power-cancel` |
-| nazwy komputerów (z listy; `--name` tylko dla jednego komputera) | `cmcrctl rename [all\|nr] [--name "…"] [--dry-run] [--update-list]` |
-| wersja aplikacji, FileVault, raport | `cmcrctl app-version "Nazwa"`, `cmcrctl filevault`, `cmcrctl report plik.csv` |
+| scenariusz zajęć z aplikacji | `cmcrctl lesson start\|end KOMP [--no-wait]` |
+| tryb uwagi | `cmcrctl lock KOMP [--message "…"] [--minutes N]`, `cmcrctl unlock KOMP` |
+| pytanie do uczniów | `cmcrctl ask "pytanie" KOMP [--buttons "Tak,Nie"]` |
+| harmonogram zasilania | `cmcrctl schedule show [KOMP]`, `cmcrctl schedule set\|clear KOMP [--on MTWRF@07:45] [--off MTWRF@16:30]` |
+| restart/wyłączenie za N min | `cmcrctl power-later restart\|shutdown\|sleep N KOMP [--warn "…"]`, `cmcrctl power-cancel KOMP` |
+| nazwy komputerów (z listy; `--name` tylko dla jednego komputera) | `cmcrctl rename-computer KOMP [--name "…"] [--dry-run] [--update-list]` (lub `rename KOMP …`) |
+| wersja aplikacji, FileVault, raport | `cmcrctl app-version "Nazwa" [KOMP]`, `cmcrctl filevault [KOMP]`, `cmcrctl report plik.csv` |
 
 ## Jak to działa i bezpieczeństwo
 

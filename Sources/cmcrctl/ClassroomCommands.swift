@@ -14,7 +14,8 @@ enum ClassroomCLI {
                        [--on-type wakeorpoweron|wake] [--off-type sleep|shutdown] [--no-autorestart] [--no-womp]
       cmcrctl rename KOMP [--name "Nazwa"] [--dry-run] [--update-list] [--yes]
                                                       nazwy z listy; --name tylko dla jednego komputera
-      cmcrctl rename-computer KOMP [--name "Nazwa"] [--dry-run] [--update-list] [--yes]   to samo
+      cmcrctl rename-computer KOMP [--name "Nazwa"] [--dry-run] [--update-list] [--yes]
+                                                      jak rename KOMP: zmiana nazw komputerów
       cmcrctl power-later restart|shutdown|sleep MINUTY KOMP [--warn "komunikat"] [--yes]
       cmcrctl power-cancel KOMP                       anuluj zaplanowane wyłączenie/restart/uśpienie
       cmcrctl app-version "Nazwa" [KOMP]              wersja aplikacji na komputerach

@@ -151,6 +151,8 @@ func commandHelp(_ command: String, spec: ModuleSpec? = nil) -> String {
     guard !lines.isEmpty else { return fullUsage }
     var help = "Użycie:\n" + lines.joined(separator: "\n") + "\n\n"
     help += "KOMP: all | numer z nazwy (4 → imac04) | lista (1,3,7) | zakres (1-5) | pozycja na liście (@2) | nazwa.\n"
+    help += "Bez KOMP polecenie, które coś zmienia, działa na wszystkich komputerach tylko w terminalu; w skryptach "
+        + "trzeba podać KOMP, np. all.\n"
     if let spec, spec.parallel {
         help += "-j N, --prefix: N komputerów naraz (wyniki w kolejności listy), nazwa komputera przed każdym wierszem.\n"
     }

@@ -8,8 +8,11 @@ Użycie: cmcrctl POLECENIE [argumenty] [opcje]
 
 KOMP – wybór komputerów: all | numer z nazwy (4 → imac04) | lista (1,3,7) | zakres (1-5)
        | pozycja na liście (@2) | nazwa, adres lub konto (imac04, imac04.local).
-Bez KOMP status działa na wszystkich komputerach; exec, open-app i quit-app – tylko w terminalu
-(z informacją, na których), a w skryptach wymagają podania KOMP, np. all.
+Bez KOMP polecenia, które tylko odczytują (status, readiness, filevault, app-version, schedule show),
+działają na wszystkich komputerach; polecenia, które coś zmieniają (exec, open-app, quit-app, lock,
+lesson, install…) – tylko w terminalu (z informacją, na których), a w skryptach wymagają podania KOMP,
+np. all. rename (nazwy komputerów) zawsze wymaga KOMP.
+cmcrctl POLECENIE --help – pomoc jednego polecenia (niczego nie wykonuje).
 
 Stan i polecenia
   list                                     lista komputerów
@@ -64,14 +67,19 @@ Opcje
   -j N, --jobs N    ile komputerów obsługiwać naraz (domyślnie 1; status i updates list: \(AppSettings().maxParallel)
                     lub „Równoległe operacje” z ustawień); wyniki zawsze w kolejności listy
   --prefix          poprzedź każdy wiersz wyniku nazwą komputera, np. [imac04]
-                    (-j i --prefix: polecenia z argumentem KOMP, poza wake i hosts remove)
+                    (-j i --prefix: polecenia z argumentem KOMP, poza wake, hosts remove, lesson,
+                    rename i ask – ask pyta wszystkie komputery naraz)
   --root            wykonaj jako root (sudo z hasłem administratora)
-  --yes, -y         nie pytaj o potwierdzenie (wymagane bez terminala dla restartu, wylogowania, usuwania)
+  --yes, -y         nie pytaj o potwierdzenie (wymagane bez terminala dla restartu, wylogowania, usuwania,
+                    power-later, zakończenia zajęć, zmiany nazw komputerów, collect --clean)
   --                koniec opcji – dalsze argumenty dosłownie
 
 Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie (także opcja,
 której polecenie nie używa, lub nadmiarowy argument – wtedy nic nie jest wykonywane);
-exec zwraca kod zdalnego polecenia (najwyższy z kilku komputerów).
+exec zwraca kod zdalnego polecenia (najwyższy z kilku komputerów), screen-watch – także 3–6.
+
+W terminalu znaki sterujące w wynikach z iMaców (np. sekwencje ESC w nazwach plików) są pokazywane
+jako ^[, ^M…; wynik przekierowany do pliku lub potoku (… | cat) pozostaje dosłowny.
 
 Konfiguracja: \(ConfigStore.directory.path)
 Hasło administratora: Pęk kluczy (cmcrctl password set lub aplikacja) albo zmienna CMCR_PASSWORD.
@@ -272,7 +280,8 @@ struct CLI: Sendable {
             results.set(io.index, r)
             guard !json else { return r.succeeded ? ExitCode.success : ExitCode.failure }
             if r.succeeded {
-                let kv = Parsers.keyValues(r.stdoutText)
+                // Reported by the iMac: escaped like every remote value shown on its own line.
+                let kv = Parsers.keyValues(r.stdoutText).mapValues { TerminalText.escape($0, keepBackslash: true) }
                 let user = kv["console"].flatMap { $0.isEmpty ? nil : $0 } ?? "—"
                 io.out("● \(h.name): macOS \(kv["os"] ?? "?") \(kv["model"] ?? "") użytkownik: \(user) IP \(kv["ip"] ?? "?")")
                 return ExitCode.success
@@ -424,8 +433,10 @@ struct CLI: Sendable {
         let h = single(args[1], usage: "Podaj numer komputera.")
         let r = await SSH.run(Scripts.runningApps(), on: h, password: Keychain.password(for: h), settings: sshSettings())
         let parsed = Parsers.runningApps(r.stdoutText)
-        Console.out("Użytkownik: \(parsed.user ?? "—")")
-        for app in parsed.apps { Console.out(String(format: "%7ld  %@", app.pid, app.bundlePath as NSString)) }
+        Console.out("Użytkownik: \(parsed.user.map { TerminalText.escape($0) } ?? "—")")
+        for app in parsed.apps {
+            Console.out(String(format: "%7ld  %@", app.pid, TerminalText.escape(app.bundlePath, keepBackslash: true) as NSString))
+        }
         if !r.succeeded {
             Console.err("✘ \(h.name): \(SSH.diagnose(r).1)")
             return ExitCode.failure
@@ -489,7 +500,7 @@ struct CLI: Sendable {
         } catch {
             fail("Nie można zapisać \(file): \(error.localizedDescription)")
         }
-        Console.out("Zapisano \(file) (\(data.count) B, użytkownik \(shot.user ?? "?"))")
+        Console.out("Zapisano \(file) (\(data.count) B, użytkownik \(shot.user.map { TerminalText.escape($0) } ?? "?"))")
         return ExitCode.success
     }
 
@@ -510,12 +521,12 @@ struct CLI: Sendable {
                 let titles = Parsers.softwareUpdates(r.stdoutText)
                 if !titles.isEmpty {
                     io.out("\(h.name): \(plural(titles.count, "aktualizacja", "aktualizacje", "aktualizacji"))")
-                    for t in titles { io.out("  • \(t)") }
+                    for t in titles { io.out("  • \(TerminalText.escape(t, keepBackslash: true))") }
                 } else if r.stdoutText.contains("No new software available") {
                     io.out("\(h.name): brak aktualizacji")
                 } else {
                     io.out("\(h.name): brak rozpoznanych aktualizacji, odpowiedź softwareupdate:")
-                    for line in Parsers.lines(r.stdoutText) { io.out("  \(line)") }
+                    for line in Parsers.lines(r.stdoutText) { io.out("  \(TerminalText.escape(line, keepBackslash: true))") }
                 }
                 return ExitCode.success
             }
