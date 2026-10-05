@@ -95,6 +95,9 @@ struct ScreenGrid: View {
         .onMoveCommand(perform: move)
         .onKeyPress(.space) { toggleZoom() }
         .onKeyPress(.return) { toggleZoom() }
+        .onCommand(#selector(NSStandardKeyBindingResponding.selectAll(_:))) {
+            selection?.wrappedValue = Set(machines.map(\.id))
+        }
         .onExitCommand {
             if zoomed != nil {
                 zoomed = nil

@@ -58,6 +58,8 @@ struct CMCRManagerApp: App {
                 .environmentObject(model.screens)
         }
         .defaultSize(width: 1600, height: 1000)
+        // Opened from ScreenCommands (with ⇧⌘E) instead of SwiftUI's own Window-menu item.
+        .commandsRemoved()
 
         WindowGroup("Podgląd ekranu", id: ScreenWindowView.windowID, for: UUID.self) { $id in
             ScreenWindowView(machineID: id)
@@ -65,6 +67,7 @@ struct CMCRManagerApp: App {
                 .environmentObject(model.screens)
         }
         .defaultSize(width: 1100, height: 720)
+        .commandsRemoved()
     }
 }
 
