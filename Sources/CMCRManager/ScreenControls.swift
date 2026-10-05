@@ -32,8 +32,8 @@ struct ScreenRestrictionsBar: View {
                     ? "Na początku podglądu uczeń widzi „Administrator rozpoczął podgląd Twojego ekranu” – raz na sesję podglądu i ponownie, gdy zaloguje się inna osoba."
                     : "Uczeń nie jest powiadamiany o podglądzie.")
             item("person.badge.shield.checkmark",
-                 s.observeOnlyStandardAccounts ? (short ? "Bez administratorów" : "Tylko konta standardowe")
-                    : (short ? "Z administratorami" : "Także konta administratorów"),
+                 s.observeOnlyStandardAccounts ? (short ? "Konta standardowe" : "Tylko konta standardowe")
+                    : (short ? "Wszystkie konta" : "Także konta administratorów"),
                  s.observeOnlyStandardAccounts ? "Ekrany kont administratorów nie są pokazywane – tylko konta standardowe (np. ucznia)."
                     : "Pokazywane są także ekrany kont administratorów.")
             if !allowed.isEmpty {
