@@ -46,9 +46,9 @@ struct JobsView: View {
             } else {
                 HSplitView {
                     batchList
-                        .frame(minWidth: 250, idealWidth: 300, maxWidth: 440)
+                        .frame(minWidth: 230, idealWidth: 270, maxWidth: 360)
                     detail
-                        .frame(minWidth: 440, maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
@@ -267,32 +267,49 @@ struct BatchDetailView: View {
             if !batch.finished {
                 ProgressView(value: Double(batch.completed), total: Double(max(1, batch.jobs.count)))
             }
-            HStack(spacing: 8) {
-                BatchActions(batch: batch)
-                Spacer()
-                Picker("Widok", selection: $grouped) {
-                    Label("Komputery", systemImage: "list.bullet").tag(false)
-                    Label("Identyczne wyniki", systemImage: "square.stack.3d.up").tag(true)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    BatchActions(batch: batch).fixedSize()
+                    Spacer(minLength: 8)
+                    viewPicker
+                    exportMenu
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .help("Grupuje komputery, które zwróciły ten sam wynik")
-                Menu {
-                    Button("Kopiuj wyniki wszystkich komputerów") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(BatchExport.text(batch), forType: .string)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) { BatchActions(batch: batch).fixedSize() }
+                    HStack(spacing: 8) {
+                        viewPicker
+                        Spacer(minLength: 8)
+                        exportMenu
                     }
-                    Button("Eksportuj do pliku…") { BatchExport.save(batch) }
-                } label: {
-                    Label("Eksportuj", systemImage: "square.and.arrow.up")
                 }
-                .fixedSize()
-                .disabled(!batch.finished)
-                .help("Zapisuje wyniki wszystkich komputerów do pliku tekstowego")
             }
-            .controlSize(.regular)
         }
+    }
+
+    var viewPicker: some View {
+        Picker("Widok", selection: $grouped) {
+            Label("Każdy komputer", systemImage: "list.bullet").tag(false)
+            Label("Grupuj wyniki", systemImage: "square.stack.3d.up").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("„Grupuj wyniki” pokazuje razem komputery, które zwróciły ten sam wynik")
+    }
+
+    var exportMenu: some View {
+        Menu {
+            Button("Kopiuj wyniki wszystkich komputerów") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(BatchExport.text(batch), forType: .string)
+            }
+            Button("Zapisz do pliku…") { BatchExport.save(batch) }
+        } label: {
+            Label("Eksportuj", systemImage: "square.and.arrow.up")
+        }
+        .fixedSize()
+        .disabled(!batch.finished)
+        .help("Kopiuje wyniki wszystkich komputerów albo zapisuje je do pliku tekstowego")
     }
 
     var timing: String {

@@ -7,6 +7,9 @@ import SwiftUI
 /// Items shown in the main window's toolbar in every section (after the section's own items).
 struct MainToolbar: ToolbarContent {
     var body: some ToolbarContent {
+        if #available(macOS 26, *) {
+            ToolbarSpacer(.fixed)
+        }
         ToolbarItemGroup {
             RefreshToolbarButton()
             ScreenWallToolbarButton()

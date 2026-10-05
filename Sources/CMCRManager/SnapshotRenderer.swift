@@ -24,6 +24,7 @@ enum SnapshotRenderer {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard let model = AppModel.shared else { exit(3) }
+            prepare(model, env: env)
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                   backing: .buffered, defer: false)
@@ -50,8 +51,46 @@ enum SnapshotRenderer {
                     try? rep.representation(using: .png, properties: [:])?.write(to: url)
                     print(url.path)
                 }
+                if env["CMCR_SNAPSHOT_CONFIRM"] == "1" {
+                    await captureConfirmation(model, appearance: appearance,
+                                              to: output.appendingPathComponent("confirm-\(name).png"))
+                }
             }
             exit(0)
         }
+    }
+
+    /// Optional state for the pictures: CMCR_SNAPSHOT_SELECT=imac01,imac03 checks only these Macs,
+    /// CMCR_SNAPSHOT_COMMAND=<script> runs a command on the checked Macs first (only with a demo or test
+    /// configuration!), CMCR_SNAPSHOT_CONFIRM=1 also renders the confirmation sheet (confirm-light.png …).
+    private static func prepare(_ model: AppModel, env: [String: String]) {
+        if let names = env["CMCR_SNAPSHOT_SELECT"] {
+            let wanted = Set(names.split(separator: ",").map(String.init))
+            model.selection = Set(model.machines.filter { wanted.contains($0.name) }.map(\.id))
+        }
+        if let command = env["CMCR_SNAPSHOT_COMMAND"], !command.isEmpty {
+            model.runCommand(command, asRoot: false, on: model.selectedMachines)
+        }
+    }
+
+    /// A sheet is not attached to a window that is never shown, so the sheet's view is rendered on its own.
+    private static func captureConfirmation(_ model: AppModel, appearance: NSAppearance.Name, to url: URL) async {
+        let targets = model.selectedMachines
+        let request = ConfirmRequest(title: "Uruchomić ponownie zaznaczone komputery?",
+                                     message: "Niezapisana praca uczniów zostanie utracona.",
+                                     button: "Uruchom ponownie", targets: targets) {}
+        let host = NSHostingView(rootView: ConfirmSheet(request: request, targets: targets) {}
+            .environmentObject(model))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: appearance)
+        window.contentView = host
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        host.layoutSubtreeIfNeeded()
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        print(url.path)
     }
 }

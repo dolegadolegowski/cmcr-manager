@@ -57,10 +57,22 @@ struct CMCRManagerApp: App {
                 Button("Odznacz wszystkie") { model.selection = [] }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
             }
+            CommandGroup(replacing: .appSettings) {
+                Button("Konfiguracja…") { model.section = .setup }
+                    .keyboardShortcut(",", modifiers: [.command])
+            }
             CommandMenu("Przejdź") {
-                ForEach(Array(AppSection.allCases.enumerated()), id: \.element) { index, section in
-                    Button(section.title) { model.section = section }
-                        .keyboardShortcut(index < 10 ? KeyboardShortcut(KeyEquivalent(Character(String((index + 1) % 10))), modifiers: [.command]) : nil)
+                ForEach(AppSection.sidebar, id: \.title) { group in
+                    Section(group.title) {
+                        ForEach(group.sections) { section in
+                            Button {
+                                model.section = section
+                            } label: {
+                                Label(section.title, systemImage: section.icon)
+                            }
+                            .keyboardShortcut(section.keyboardShortcut)
+                        }
+                    }
                 }
             }
             ScreenCommands(center: model.screens)
@@ -99,7 +111,6 @@ struct ContentView: View {
         } detail: {
             DetailView()
         }
-        .overlay(alignment: .bottom) { ActionToastOverlay() }
         .confirmation($model.retryConfirmation)
         .background(ToolbarTitlesShown())
         .updaterUI(model: model)
@@ -121,40 +132,13 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: $model.section) {
-            Section("Zarządzanie") {
-                row(.dashboard)
-                row(.commands)
-                row(.files)
-                row(.browser)
-                row(.apps)
-                row(.install)
-                row(.updates)
-            }
-            Section("Nadzór") {
-                row(.classroom)
-                row(.screens)
-                row(.power)
-            }
-            Section("System") {
-                row(.jobs)
-                row(.setup)
+            ForEach(AppSection.sidebar, id: \.title) { group in
+                Section(group.title) {
+                    ForEach(group.sections) { row($0) }
+                }
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom) {
-            if PasswordBanner.isNeeded(model) {
-                Button {
-                    model.section = .setup
-                } label: {
-                    Label("Brak hasła administratora", systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.orange)
-                .help("Bez hasła operacje wymagające uprawnień (sudo) nie powiodą się. Kliknij, aby je ustawić.")
-                .padding(8)
-            }
-        }
     }
 
     func row(_ s: AppSection) -> some View {
@@ -182,13 +166,48 @@ struct SidebarView: View {
 
     func badgeHelp(for s: AppSection) -> String {
         let n = badge(for: s)
-        guard n > 0 else { return s.title }
+        guard n > 0 else { return s.summary }
         switch s {
         case .jobs: return "W toku: \(Polish.jobs(n))"
-        case .dashboard: return "Wymaga uwagi (błąd logowania lub inny błąd): \(Polish.computers(n))"
+        case .dashboard: return "Wymaga uwagi (błąd logowania lub połączenia): \(Polish.computers(n))"
         case .updates: return "Dostępne aktualizacje \(Polish.onComputers(n))"
-        default: return s.title
+        default: return s.summary
         }
+    }
+}
+
+extension AppSection {
+    /// Sidebar groups in display order; the Przejdź menu numbers the sections (⌘1…⌘0) in the same order.
+    static let sidebar: [(title: String, sections: [AppSection])] = [
+        ("Pracownia", [.dashboard, .classroom, .screens, .power]),
+        ("Pliki i programy", [.files, .browser, .apps, .install, .updates]),
+        ("Administracja", [.jobs, .commands, .setup]),
+    ]
+
+    static var sidebarOrder: [AppSection] { sidebar.flatMap(\.sections) }
+
+    /// What the section is for, in one sentence (sidebar tooltip).
+    var summary: String {
+        switch self {
+        case .dashboard: return "Stan wszystkich komputerów w pracowni"
+        case .classroom: return "Rozpoczęcie i zakończenie lekcji, blokada ekranów, pytania do uczniów"
+        case .screens: return "Podgląd ekranów uczniów na żywo"
+        case .power: return "Wiadomości, wylogowanie, uśpienie, ponowne uruchomienie i wyłączanie"
+        case .files: return "Wysyłanie materiałów i zbieranie prac uczniów"
+        case .browser: return "Przeglądanie plików na jednym komputerze, jak w Finderze"
+        case .apps: return "Uruchamianie i zamykanie aplikacji na komputerach"
+        case .install: return "Instalowanie programów na komputerach"
+        case .updates: return "Aktualizacje systemu macOS i programów"
+        case .jobs: return "Wyniki i historia wszystkich działań"
+        case .commands: return "Polecenia Terminala dla zaawansowanych"
+        case .setup: return "Lista komputerów, hasła, ustawienia i przygotowanie iMaców"
+        }
+    }
+
+    /// ⌘1…⌘9, ⌘0 for the first ten sidebar entries (Konfiguracja has ⌘, like Settings in other apps).
+    var keyboardShortcut: KeyboardShortcut? {
+        guard let index = Self.sidebarOrder.firstIndex(of: self), index < 10 else { return nil }
+        return KeyboardShortcut(KeyEquivalent(Character(String((index + 1) % 10))), modifiers: [.command])
     }
 }
 
@@ -301,7 +320,8 @@ struct MachineListView: View {
     func header(_ visible: [Machine]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                NativeSearchField(prompt: "Szukaj komputera lub użytkownika", text: $query.text)
+                NativeSearchField(prompt: "Szukaj komputera lub ucznia", text: $query.text)
+                    .help("Szukaj po nazwie komputera, adresie, grupie lub nazwie zalogowanego użytkownika")
                 filterMenu
             }
             if !model.groups.isEmpty { groupChips }
@@ -408,7 +428,7 @@ struct MachineListView: View {
         let hidden = model.selection.subtracting(visibleIDs).count
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text("Zaznaczono \(model.selection.count) z \(model.machines.count) · online: \(online)")
+                Text("Zaznaczone: \(model.selection.count) z \(model.machines.count) · włączone: \(online)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -633,6 +653,22 @@ struct DetailView: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
+        // A plain stack (not a safe-area inset): sections with an inspector or a table ignore top insets, and the
+        // banner would cover their header.
+        VStack(spacing: 0) {
+            if PasswordBanner.isNeeded(model), model.section != .setup {
+                PasswordBanner()
+            }
+            section
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .navigationTitle(model.section?.title ?? "CMCR Manager")
+        .overlay(alignment: .bottom) { ActionToastOverlay() }
+        // Declared after the section's own items, so the window-wide ones stay at the trailing end.
+        .overlay { Color.clear.allowsHitTesting(false).toolbar { MainToolbar() } }
+    }
+
+    @ViewBuilder var section: some View {
         Group {
             switch model.section ?? .dashboard {
             case .dashboard: DashboardView()
@@ -649,14 +685,6 @@ struct DetailView: View {
             case .classroom: ClassroomView()
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if PasswordBanner.isNeeded(model), ![.setup, .jobs].contains(model.section ?? .dashboard) {
-                PasswordBanner()
-            }
-        }
-        .navigationTitle(model.section?.title ?? "CMCR Manager")
-        // Declared after the section's own items, so the window-wide ones stay at the trailing end.
-        .overlay { Color.clear.allowsHitTesting(false).toolbar { MainToolbar() } }
     }
 }
 

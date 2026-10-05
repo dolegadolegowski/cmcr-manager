@@ -326,26 +326,32 @@ struct ConfirmSheet: View {
                     .foregroundStyle(request.destructive ? Color.orange : Color.accentColor)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(request.title).font(.headline)
+                    Text(request.title)
+                        .font(.title3.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(request.message)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("Dotyczy: \(Polish.computers(effective.count))")
+                Text("Działanie obejmie \(Polish.computers(effective.count)):")
                     .font(.subheadline.weight(.semibold))
                 List(targets) { m in row(m) }
                     .listStyle(.bordered(alternatesRowBackgrounds: true))
                     .frame(height: min(220, CGFloat(targets.count) * 26 + 10))
             }
-            if !withUser.isEmpty {
-                Toggle("Pomiń komputery z zalogowanym użytkownikiem (\(withUser.count))", isOn: $skipLoggedIn)
-                    .help(withUser.map(\.name).joined(separator: ", "))
-            }
-            if needsAcknowledgement {
-                Toggle("Rozumiem – operacja obejmie \(Polish.computers(effective.count)) i nie da się jej cofnąć",
-                       isOn: $acknowledged)
+            if !withUser.isEmpty || needsAcknowledgement {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !withUser.isEmpty {
+                        Toggle("Pomiń komputery, przy których ktoś jest zalogowany (\(withUser.count))", isOn: $skipLoggedIn)
+                            .help("Zalogowani teraz: " + withUser.map(\.name).joined(separator: ", "))
+                    }
+                    if needsAcknowledgement {
+                        Toggle("Rozumiem – działanie obejmie \(Polish.computers(effective.count)) i nie da się go cofnąć",
+                               isOn: $acknowledged)
+                    }
+                }
             }
             HStack {
                 Spacer()
@@ -353,6 +359,7 @@ struct ConfirmSheet: View {
                     .keyboardShortcut(.cancelAction)
                 confirmButton
             }
+            .controlSize(.large)
         }
         .padding(20)
         .frame(width: 500)
@@ -501,9 +508,9 @@ struct BatchActions: View {
     var body: some View {
         if !batch.finished {
             Button(role: .destructive) { batch.cancel() } label: {
-                Label("Anuluj", systemImage: "stop.circle")
+                Label("Przerwij", systemImage: "stop.circle")
             }
-            .help("Przerywa operację na wszystkich komputerach tej partii")
+            .help("Przerywa to działanie na wszystkich komputerach")
         } else {
             let retry = batch.retryableMachines
             if !retry.isEmpty, batch.rerun != nil {
@@ -512,7 +519,7 @@ struct BatchActions: View {
                     Label("Powtórz na nieudanych (\(retry.count))\(batch.confirmation == nil ? "" : "…")",
                           systemImage: "arrow.counterclockwise")
                 }
-                .help("Uruchamia to samo ponownie \(Polish.onComputers(retry.count)): "
+                .help("Uruchamia to samo jeszcze raz \(Polish.onComputers(retry.count)): "
                       + retry.map(\.name).joined(separator: ", ")
                       + (batch.confirmation == nil ? "" : ". Przed uruchomieniem trzeba to ponownie potwierdzić."))
             }
@@ -520,7 +527,7 @@ struct BatchActions: View {
                 Button { model.selectProblems(of: batch) } label: {
                     Label("Zaznacz nieudane", systemImage: "checklist")
                 }
-                .help("Zaznacza na liście komputery, na których operacja się nie udała lub została pominięta")
+                .help("Zaznacza na liście komputery, na których działanie się nie udało lub zostało pominięte")
             }
         }
     }
@@ -574,23 +581,22 @@ struct BatchResultsView: View {
         BatchCounts(batch: batch)
         BatchActions(batch: batch)
             .controlSize(.small)
+        let allExpanded = expanded.count == batch.jobs.count
+        Button {
+            expanded = allExpanded ? [] : Set(batch.jobs.map(\.id))
+        } label: {
+            Label(allExpanded ? "Zwiń" : "Rozwiń",
+                  systemImage: allExpanded ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
+        }
+        .controlSize(.small)
+        .help(allExpanded ? "Zwiń wyniki wszystkich komputerów" : "Pokaż wyniki wszystkich komputerów")
         Button {
             model.showJobs(batch.id)
         } label: {
-            Label("Pokaż w Zadaniach", systemImage: "list.bullet.rectangle")
+            Label("Szczegóły", systemImage: "list.bullet.rectangle")
         }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .help("Otwiera tę operację w sekcji Zadania (pełne wyniki, eksport, grupowanie)")
-        Button {
-            if expanded.count == batch.jobs.count { expanded = [] } else { expanded = Set(batch.jobs.map(\.id)) }
-        } label: {
-            Label(expanded.count == batch.jobs.count ? "Zwiń wszystkie" : "Rozwiń wszystkie",
-                  systemImage: expanded.count == batch.jobs.count ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
-        }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .help(expanded.count == batch.jobs.count ? "Zwiń wyniki wszystkich komputerów" : "Rozwiń wyniki wszystkich komputerów")
+        .controlSize(.small)
+        .help("Otwiera to działanie w Zadaniach: pełne wyniki, grupowanie, eksport")
     }
 }
 
@@ -772,7 +778,7 @@ struct LastBatchView: View {
     var body: some View {
         if let batch = model.lastBatch[section] {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Wynik ostatniej operacji").font(.headline)
+                Text("Wynik ostatniego działania").font(.headline)
                 BatchResultsView(batch: batch)
             }
             .id(batch.id)
@@ -817,19 +823,29 @@ struct FileListEditor: View {
     @ViewState private var targeted = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            VStack(alignment: .leading, spacing: 2) {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 if items.isEmpty {
-                    Text(placeholder)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                    VStack(spacing: 6) {
+                        Image(systemName: "arrow.down.doc")
+                            .font(.title2)
+                            .foregroundStyle(targeted ? Color.accentColor : Color.secondary)
+                            .accessibilityHidden(true)
+                        Text(placeholder)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 70)
                 } else {
                     ForEach(items, id: \.self) { url in
-                        HStack {
+                        HStack(spacing: 8) {
                             Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
                                 .resizable()
-                                .frame(width: 18, height: 18)
+                                .frame(width: 20, height: 20)
+                                .accessibilityHidden(true)
                             Text(url.lastPathComponent)
+                                .lineLimit(1)
                             Text(url.deletingLastPathComponent().path)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -842,15 +858,17 @@ struct FileListEditor: View {
                             }
                             .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
                             .help("Usuń \(url.lastPathComponent) z listy (plik na dysku zostaje)")
                         }
                     }
                 }
             }
-            .padding(8)
+            .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5]))
+            .background(shape.fill(targeted ? Color.accentColor.opacity(0.08) : Color.clear))
+            .overlay(shape
+                .strokeBorder(style: StrokeStyle(lineWidth: targeted ? 2 : 1, dash: [5]))
                 .foregroundStyle(targeted ? Color.accentColor : Color.secondary.opacity(0.5)))
             .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
                 for p in providers {
@@ -868,6 +886,7 @@ struct FileListEditor: View {
                 } label: {
                     Label("Dodaj…", systemImage: "plus")
                 }
+                .help("Wybierz pliki lub foldery z tego Maca")
                 Button {
                     items.removeAll()
                 } label: {
@@ -875,6 +894,12 @@ struct FileListEditor: View {
                 }
                 .disabled(items.isEmpty)
                 .help("Usuwa wszystkie pozycje z listy (pliki na dysku zostają)")
+                Spacer()
+                if !items.isEmpty {
+                    Text("Na liście: \(Polish.count(items.count, "pozycja", "pozycje", "pozycji"))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
