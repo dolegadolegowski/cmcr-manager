@@ -56,6 +56,9 @@ expect_code "zadanie: kod wyjścia przekazany" "$code" 3 "$out"
 jid="$(job_id "$out")"; jtmp="$(printf '%s\n' "$out" | sed -n 's/^tmp=//p')"
 if [ -n "$jid" ] && job_file_gone "$jid"; then pass "zadanie: wpis w rejestrze usunięty po zakończeniu"; else fail "zadanie: rejestr ($jid)" "$(ls -la /tmp/cmcr-jobs 2>&1)"; fi
 [ -n "$jtmp" ] && [ ! -d "$jtmp" ] && pass "zadanie: katalog tymczasowy usunięty" || fail "zadanie: katalog tymczasowy ($jtmp)"
+out="$(ctl exec 'yes | head -1; echo potok-ok' 1)$(ctl __run-job 'yes | head -1; echo potok-ok' 1)"
+expect "potoki: zwykłe zachowanie SIGPIPE w poleceniach" "$out" "potok-ok"
+expect_not "potoki: brak komunikatów Broken pipe" "$out" "Broken pipe"
 out="$(ctl __run-job '/bin/cat /bin/ls' 1 --stdout "$WORK/binary.out")"
 if cmp -s /bin/ls "$WORK/binary.out"; then pass "zadanie: dane binarne przez przekaźnik bez zmian"; else fail "zadanie: dane binarne różne" "$out"; fi
 clear_fakelog

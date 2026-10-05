@@ -9,8 +9,9 @@ import Foundation
 /// - `with_askpass cmd…`    – run a tool that calls `sudo -A` itself (e.g. Homebrew),
 /// - `$CONSOLE_USER`, `$CONSOLE_UID`, `$CMCR_ADMIN_USER`, `$CMCR_TMP` (private temp dir, removed on exit).
 ///
-/// The wrapper ignores SIGHUP/SIGPIPE, so a job keeps running (and cleans up) when the admin's Mac sleeps
-/// or the connection drops. Only an explicit cancel (`SSH.cancelRemote`) stops it.
+/// The wrapper ignores SIGHUP and SIGPIPE, so it always cleans up; the body runs in a subshell with the usual
+/// SIGPIPE behaviour. A job (`jobID`) writes through relays that outlive the connection, so it keeps running
+/// when the admin's Mac sleeps or the connection drops. Only an explicit cancel (`SSH.cancelRemote`) stops it.
 public struct RemoteScript: Sendable {
     public var body: String
     public var asRoot: Bool
@@ -92,11 +93,11 @@ public struct RemoteScript: Sendable {
             if [ "$(id -u)" -ne 0 ] && [ -z "$CMCR_PW" ] && ! sudo -n true 2>/dev/null; then
               echo "Brak hasła administratora – zapisz je w Konfiguracji (wymagane do sudo)." >&2; exit 91
             fi
-            printf '%s\n' "$CMCR_PW" | asroot /bin/bash --noprofile --norc -c 'IFS= read -r CMCR_PW; CMCR_TMP="$1"; export CMCR_TMP; trap "" HUP PIPE; trap "chown -hR $2 \"\$CMCR_TMP\" 2>/dev/null" EXIT; trap "exit 143" TERM INT; if [ -n "$3" ]; then echo "$$" > "$3.root"; fi; source "$CMCR_TMP/lib.sh"; source "$CMCR_TMP/body.sh"' cmcr "$CMCR_TMP" "$UID" "$CMCR_JOB_FILE"
+            ( trap - PIPE; printf '%s\n' "$CMCR_PW" | asroot /bin/bash --noprofile --norc -c 'IFS= read -r CMCR_PW; CMCR_TMP="$1"; export CMCR_TMP; trap "" HUP; trap "chown -hR $2 \"\$CMCR_TMP\" 2>/dev/null" EXIT; trap "exit 143" TERM INT; if [ -n "$3" ]; then echo "$$" > "$3.root"; fi; source "$CMCR_TMP/lib.sh"; source "$CMCR_TMP/body.sh"' cmcr "$CMCR_TMP" "$UID" "$CMCR_JOB_FILE" )
 
             """#
         } else {
-            s += "source \"$CMCR_TMP/body.sh\"\n"
+            s += "( trap - PIPE; source \"$CMCR_TMP/body.sh\" )\n"
         }
         return s
     }

@@ -134,6 +134,9 @@ struct RemoteJobTests {
         #expect(s.contains("trap '' HUP PIPE"))
         #expect(s.contains("trap 'exit 143' TERM INT"))
         #expect(!s.contains("cmcr_jobs_dir"))
+        // Pipelines in the body keep their usual SIGPIPE behaviour (no "Broken pipe" noise).
+        #expect(s.contains(#"( trap - PIPE; source "$CMCR_TMP/body.sh" )"#))
+        #expect(RemoteScript("id", asRoot: true).render().contains("( trap - PIPE; printf"))
     }
 
     @Test func jobIDRegistersTheJobAndRelaysOutput() {
