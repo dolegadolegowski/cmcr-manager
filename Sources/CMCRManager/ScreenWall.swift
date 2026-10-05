@@ -302,18 +302,8 @@ private struct ScreenWindowContent: View {
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             Menu {
-                Picker("Ekran", selection: Binding(get: { center.display(for: machine.id) },
-                                                   set: { center.setDisplay($0, for: machine.id) })) {
-                    Text(ScreenDisplay.main.label).tag(ScreenDisplay.main)
-                    Text(ScreenDisplay.all.label).tag(ScreenDisplay.all)
-                    if feed.displayCount > 1 {
-                        Divider()
-                        ForEach(1...feed.displayCount, id: \.self) { n in
-                            Text(ScreenDisplay.number(n).label).tag(ScreenDisplay.number(n))
-                        }
-                    }
-                }
-                .pickerStyle(.inline)
+                ScreenDisplayPicker(machine: machine, feed: feed, center: center)
+                    .pickerStyle(.inline)
             } label: {
                 Label(center.display(for: machine.id).label, systemImage: "display.2")
             }

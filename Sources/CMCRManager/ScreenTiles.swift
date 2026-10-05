@@ -386,9 +386,34 @@ struct ScreenMoreMenuItems: View {
         Button { actions.refresh([machine]) } label: { Label("Odśwież teraz", systemImage: "arrow.clockwise") }
         Button { actions.save(feed, of: machine) } label: { Label("Zapisz zrzut ekranu…", systemImage: "square.and.arrow.down") }
             .disabled(feed.image == nil)
+        ScreenDisplayPicker(machine: machine, feed: feed, center: actions.center)
         Divider()
         Button { actions.showApps(machine) } label: { Label("Aplikacje…", systemImage: "square.grid.2x2") }
         Button { actions.model.openTerminal(machine) } label: { Label("Sesja SSH w Terminalu", systemImage: "terminal") }
+    }
+}
+
+/// Which monitor of a Mac with several displays to show.
+struct ScreenDisplayPicker: View {
+    let machine: Machine
+    @ObservedObject var feed: ScreenFeed
+    @ObservedObject var center: ScreenCenter
+
+    var body: some View {
+        Picker(selection: Binding(get: { center.display(for: machine.id) },
+                                  set: { center.setDisplay($0, for: machine.id) })) {
+            Text(ScreenDisplay.main.label).tag(ScreenDisplay.main)
+            Text(ScreenDisplay.all.label).tag(ScreenDisplay.all)
+            if feed.displayCount > 1 {
+                Divider()
+                ForEach(1...feed.displayCount, id: \.self) { n in
+                    Text(ScreenDisplay.number(n).label).tag(ScreenDisplay.number(n))
+                }
+            }
+        } label: {
+            Label("Monitor", systemImage: "display.2")
+        }
+        .help("Który monitor tego komputera pokazywać (gdy ma ich kilka)")
     }
 }
 

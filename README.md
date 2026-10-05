@@ -12,7 +12,7 @@ Natywna aplikacja okienkowa macOS (SwiftUI) do zdalnego zarządzania pracownią 
 | **Aplikacje** | Lista uruchomionych aplikacji zalogowanego użytkownika; uruchamianie (z argumentami), zamykanie i wymuszanie zamknięcia na jednym lub wszystkich iMacach; otwieranie URL/plików; lista zainstalowanych i odinstalowywanie |
 | **Instalacja** | `.pkg`, `.dmg`, `.zip`, `.app` z tego Maca lub pobierane z URL bezpośrednio na iMacach; Homebrew (formuły i `--cask`), instalacja Homebrew i Oracle JDK; Unity Hub headless (edytor + moduły) i Android SDK (`sdkmanager`) — wg notes.md |
 | **Aktualizacje** | `softwareupdate` (lista, pobieranie, instalacja, restart; na Apple Silicon z `--user/--stdinpass`), historia, `brew upgrade`, `mas upgrade` |
-| **Podgląd ekranów** | Siatka miniatur ekranów zalogowanych użytkowników z automatycznym odświeżaniem i powiększeniem — tylko do odczytu, z ograniczeniami (niżej) |
+| **Podgląd ekranów** | Ekrany zalogowanych uczniów na żywo, z nazwą użytkownika i aplikacją na pierwszym planie; układ dopasowany do okna lub stała liczba kolumn, powiększanie (spacja, strzałki); osobne okno **Ściana ekranów** (⇧⌘E, także na pełnym ekranie drugiego monitora) i okna pojedynczych komputerów; z kafelka: wiadomość, uśpienie ekranu, Udostępnianie ekranu (VNC) — tylko do odczytu, z ograniczeniami (niżej) |
 | **Sesja i zasilanie** | Wiadomość (okno/powiadomienie), wylogowanie, uśpienie ekranu/komputera, restart, wyłączenie, Wake-on-LAN |
 | **Zadania** | Historia operacji z wynikiem i pełnym wyjściem dla każdego iMaca, anulowanie; dziennik działań w `~/Library/Logs/CMCRManager/actions.log` |
 | **Konfiguracja** | Lista komputerów (generator jak pętla w `cmcr-helpers.sh`, import/eksport), hasła w Pęku kluczy (wspólne lub per komputer), generowanie i rozsyłanie klucza SSH, ustawienia, przygotowanie iMaców |
@@ -22,7 +22,8 @@ Natywna aplikacja okienkowa macOS (SwiftUI) do zdalnego zarządzania pracownią 
 - wyłącznie zrzuty ekranu — bez przejmowania myszy i klawiatury (pełne sterowanie tylko świadomie przez „Udostępnianie ekranu”, jeśli jest włączone na iMacu),
 - domyślnie **tylko konta standardowe** — sesje kont administratorów są blokowane po stronie iMaca,
 - opcjonalna lista dozwolonych kont (np. `student`),
-- użytkownik dostaje powiadomienie o rozpoczęciu podglądu,
+- użytkownik dostaje powiadomienie o rozpoczęciu podglądu — raz na sesję podglądu i ponownie, gdy przy komputerze zaloguje się ktoś inny,
+- każdy komputer ma jedno stałe połączenie podglądu: najwyżej jedno `sudo` na sesję (żadnego, gdy przy ekranie jest zalogowane konto administracyjne), niezmienione ekrany nie są przesyłane ponownie, a podgląd zatrzymuje się, gdy okno jest ukryte,
 - ograniczona rozdzielczość i jakość JPEG oraz minimalny odstęp odświeżania,
 - każda sesja podglądu jest zapisywana w dzienniku działań.
 
@@ -69,7 +70,7 @@ Zaznaczenie komputerów na liście (środkowa kolumna) jest wspólne dla wszystk
 | dystrybucja klucza (README) | Konfiguracja › Dostęp i hasła | — |
 | Unity Hub / sdkmanager / Homebrew (notes.md) | Instalacja, Polecenia › Gotowe polecenia | `cmcrctl exec` |
 
-`cmcrctl` (w `build/cmcrctl` i w pakiecie aplikacji: `Contents/Resources/bin/cmcrctl`) korzysta z tej samej konfiguracji i Pęku kluczy co aplikacja. Dodatkowo: `status`, `apps`, `screenshot`, `open-app`, `quit-app`, `render` (pokazuje dokładnie skrypt wykonywany zdalnie). Hasło można też podać zmienną `CMCR_PASSWORD`.
+`cmcrctl` (w `build/cmcrctl` i w pakiecie aplikacji: `Contents/Resources/bin/cmcrctl`) korzysta z tej samej konfiguracji i Pęku kluczy co aplikacja. Dodatkowo: `status`, `apps`, `screenshot`, `screen-watch` (podgląd na żywo do folderu z klatkami), `open-app`, `quit-app`, `render` (pokazuje dokładnie skrypt wykonywany zdalnie). Hasło można też podać zmienną `CMCR_PASSWORD`.
 
 ## Jak to działa i bezpieczeństwo
 
