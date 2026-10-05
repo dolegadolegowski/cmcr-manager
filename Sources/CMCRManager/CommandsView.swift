@@ -11,6 +11,7 @@ struct CommandsView: View {
         VStack(alignment: .leading, spacing: 0) {
             TargetHeader(section: .commands,
                          subtitle: "Polecenia Terminala (skrypt bash) wykonywane naraz na zaznaczonych komputerach, na koncie administratora – jak cmcr-exec.")
+                .alignedWithGroupedForm()
                 .padding([.horizontal, .top], 20)
             Form {
                 scriptSection
@@ -28,6 +29,7 @@ struct CommandsView: View {
             }
             .formStyle(.grouped)
         }
+        .groupedFormPageBackground()
         .sheet(isPresented: $savingSnippet) { SnippetSaveSheet() }
         .confirmation($confirm)
     }

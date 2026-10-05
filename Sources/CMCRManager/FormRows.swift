@@ -37,6 +37,35 @@ extension View {
     }
 }
 
+extension View {
+    /// For the page header above a grouped Form: since macOS 26 the form's sections stop growing at a fixed
+    /// width and stay centred in a wide window, so the header keeps the same width to stay aligned with them.
+    func alignedWithGroupedForm() -> some View {
+        modifier(GroupedFormWidth())
+    }
+
+    /// Background of a page made of a header and a grouped Form: the form's own background, so the header does
+    /// not sit on a separate grey band.
+    func groupedFormPageBackground() -> some View {
+        background(Color(nsColor: .controlBackgroundColor))
+    }
+}
+
+private struct GroupedFormWidth: ViewModifier {
+    /// Width of a grouped form section in a wide window (measured on macOS 27).
+    static let sectionWidth: CGFloat = 704
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            content
+                .frame(maxWidth: Self.sectionWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+        } else {
+            content
+        }
+    }
+}
+
 private struct DestructiveLabel: ViewModifier {
     @Environment(\.isEnabled) private var isEnabled
 

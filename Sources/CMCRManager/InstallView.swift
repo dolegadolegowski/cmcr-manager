@@ -22,6 +22,7 @@ struct InstallView: View {
         VStack(alignment: .leading, spacing: 0) {
             TargetHeader(section: .install,
                          subtitle: "Instalowanie nowych aplikacji na zaznaczonych komputerach – z plików na tym Macu, z internetu lub z Homebrew.")
+                .alignedWithGroupedForm()
                 .padding([.horizontal, .top], 20)
             Form {
                 localSection
@@ -39,6 +40,7 @@ struct InstallView: View {
             }
             .formStyle(.grouped)
         }
+        .groupedFormPageBackground()
         .confirmation($confirm)
     }
 

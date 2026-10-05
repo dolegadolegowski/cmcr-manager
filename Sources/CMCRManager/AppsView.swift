@@ -17,6 +17,7 @@ struct AppsView: View {
         VStack(alignment: .leading, spacing: 0) {
             TargetHeader(section: .apps,
                          subtitle: "Uruchamianie i zamykanie aplikacji u osoby zalogowanej przy komputerze, otwieranie stron i plików, lista zainstalowanych aplikacji.")
+                .alignedWithGroupedForm()
                 .padding([.horizontal, .top], 20)
             Form {
                 bulkSection
@@ -34,6 +35,7 @@ struct AppsView: View {
             }
             .formStyle(.grouped)
         }
+        .groupedFormPageBackground()
         .onAppear {
             if !model.selectedMachines.isEmpty { model.refreshRunningApps(model.selectedMachines) }
         }

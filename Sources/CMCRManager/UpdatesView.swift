@@ -12,6 +12,7 @@ struct UpdatesView: View {
         VStack(alignment: .leading, spacing: 0) {
             TargetHeader(section: .updates,
                          subtitle: "Aktualizacje systemu macOS oraz programów z Homebrew i App Store na zaznaczonych komputerach.")
+                .alignedWithGroupedForm()
                 .padding([.horizontal, .top], 20)
             Form {
                 checkSection
@@ -28,6 +29,7 @@ struct UpdatesView: View {
             }
             .formStyle(.grouped)
         }
+        .groupedFormPageBackground()
         .confirmation($confirm)
     }
 

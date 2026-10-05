@@ -20,6 +20,7 @@ private struct FilesPage: View {
         VStack(alignment: .leading, spacing: 0) {
             TargetHeader(section: .files,
                          subtitle: "Wysyłanie plików na komputery uczniów, zbieranie prac i porządki w folderach.")
+                .alignedWithGroupedForm()
                 .padding([.horizontal, .top], 20)
             Form {
                 pushSection
@@ -37,6 +38,7 @@ private struct FilesPage: View {
             }
             .formStyle(.grouped)
         }
+        .groupedFormPageBackground()
         .sheet(item: $picker) { request in
             RemoteFolderPicker(app: model, request: request)
                 .environmentObject(model)
