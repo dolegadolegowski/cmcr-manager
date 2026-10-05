@@ -104,11 +104,11 @@ struct CLI: Sendable {
 
     func run() async -> Int32 {
         guard let command = args[0] else {
-            Console.out(usage)
+            Console.out(fullUsage)
             return ExitCode.success
         }
         if args.has("--help") || args.has("-h") || command == "help" {
-            Console.out(usage)
+            Console.out(fullUsage)
             return ExitCode.success
         }
         switch command {

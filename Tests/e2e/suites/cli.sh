@@ -142,13 +142,14 @@ expect "updates install --restart: prośba o potwierdzenie" "$out" "dodaj --yes"
 expect_not "updates install --restart: nic nie uruchomiono" "$(fakelog)" "softwareupdate"
 out="$(ctlpw updates install 1 --restart --yes)"; code=$?
 expect_code "updates install --restart --yes: kod 0" "$code" 0 "$out"
-expect "updates install: softwareupdate --install --all --restart" "$(fakelog)" "softwareupdate --install --all --agree-to-license --restart"
+# Only the listed, non-major labels are installed (see Scripts.installUpdates).
+expect "updates install: softwareupdate --install z restartem" "$(fakelog)" "softwareupdate --install " "--agree-to-license --restart"
 if [ "$(uname -m)" = arm64 ]; then
   expect "updates install: hasło przez --stdinpass (Apple Silicon)" "$(fakelog)" "softwareupdate stdinpass ok"
 fi
 clear_fakelog
 out="$(ctlpw updates install 1 --download --recommended)"
-expect "updates install --download --recommended" "$(fakelog)" "softwareupdate --download --recommended"
+expect "updates install --download --recommended" "$(fakelog)" "softwareupdate --download "
 expect_not "updates install --download: bez instalacji" "$(fakelog)" "--install"
 out="$(ctlpw updates history 1)"
 expect "updates history" "$out" "macOS Testowy  99.0"
@@ -178,7 +179,8 @@ sleep 0.3
 if kill -0 "$P2" 2>/dev/null; then fail "kill --force: proces nadal działa" "$out"; kill -9 "$P2"; else pass "kill --force: proces zakończony (SIGKILL)"; fi
 out="$(ctl kill abc 1)"; code=$?
 expect_code "kill: niepoprawny PID – kod 2" "$code" 2 "$out"
-APPX="/Applications/Nieistniejąca Gra CMCR e2e.app"
+# The test sshd sets CMCR_APPS_DIR, so the Applications folder of this run stands in for /Applications.
+APPX="$WORK/Applications/Nieistniejąca Gra CMCR e2e.app"
 if [ ! -e "$APPX" ]; then
   out="$(ctlpw uninstall "$APPX" 1 </dev/null)"; code=$?
   expect_code "uninstall: bez --yes – kod 2" "$code" 2 "$out"
@@ -205,7 +207,8 @@ out="$(ctlpw clean "$CLEAN" 1 </dev/null)"; code=$?
 expect_code "clean: bez --yes – kod 2" "$code" 2 "$out"
 [ -e "$CLEAN/a.txt" ] && pass "clean: bez potwierdzenia nic nie usunięto" || fail "clean: usunięto bez potwierdzenia"
 out="$(ctlpw clean "$CLEAN/" 1 --yes)"; code=$?
-expect "clean: komunikat" "$out" "Wyczyszczono $CLEAN"
+# The script reports the resolved path (/tmp → /private/tmp).
+expect "clean: komunikat" "$out" "Wyczyszczono " "${CLEAN#/tmp/}"
 if [ -d "$CLEAN" ] && [ -z "$(ls -A "$CLEAN")" ]; then pass "clean: folder pusty (także pliki ukryte)"; else fail "clean: zostały pliki" "$(ls -lA "$CLEAN")"; fi
 out="$(ctlpw clean "$WORK/remote/../remote/do czyszczenia" 1 --yes)"; code=$?
 expect "clean: ścieżka z .. odrzucona" "$out" "Odmowa"

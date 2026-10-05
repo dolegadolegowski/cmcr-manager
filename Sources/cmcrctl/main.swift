@@ -16,6 +16,8 @@ if let first = argv.first, first.hasPrefix("__") {
                                   settings: cli.sshSettings()))
 }
 
+if let code = await ExtraCommands.run(argv) { exit(code) }
+
 let cli = CLI(args: Arguments(argv))
 for issue in ConfigStore.loadIssues { FileHandle.standardError.write(Data("⚠ \(issue)\n".utf8)) }
 exit(await cli.run())

@@ -46,6 +46,7 @@ struct AppsView: View {
                 .help("Wybierz z aplikacji zainstalowanych na zaznaczonych komputerach")
                 TextField("Argumenty (opcjonalnie)", text: $appArguments)
                     .frame(maxWidth: 200)
+                    .help("Argumenty jak w Terminalu – cudzysłowy grupują słowa. Z argumentami uruchamiana jest nowa instancja aplikacji.")
             }
             HStack {
                 TargetButton(title: "Uruchom", icon: "play.fill") {

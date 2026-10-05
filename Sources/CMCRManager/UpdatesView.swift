@@ -5,6 +5,7 @@ struct UpdatesView: View {
     @EnvironmentObject var model: AppModel
     @ViewState private var restart = false
     @ViewState private var recommendedOnly = false
+    @ViewState private var allowMajor = false
     @ViewState private var confirm: ConfirmRequest?
 
     var body: some View {
@@ -30,24 +31,29 @@ struct UpdatesView: View {
             }
             updatesTable
             Divider()
-            HStack {
+            VStack(alignment: .leading, spacing: 6) {
                 Toggle("Uruchom ponownie, jeśli wymagane (-R)", isOn: $restart)
                 Toggle("Tylko zalecane (-r)", isOn: $recommendedOnly)
+                Toggle("Pozwól na nową wersję macOS", isOn: $allowMajor)
+                    .help("Bez tego zaznaczenia instalowane są tylko poprawki bieżącej wersji systemu – przejście np. z macOS 26 na 27 jest pomijane.")
             }
             HStack {
                 TargetButton(title: "Pobierz (bez instalacji)", icon: "arrow.down.circle", prominent: false) {
                     model.runScript("softwareupdate --download", on: model.selectedMachines) { _ in
-                        Scripts.installUpdates(restart: false, recommendedOnly: recommendedOnly, downloadOnly: true)
+                        Scripts.installUpdates(restart: false, recommendedOnly: recommendedOnly, downloadOnly: true,
+                                               allowMajorUpgrade: allowMajor)
                     }
                 }
                 TargetButton(title: "Zainstaluj aktualizacje", icon: "arrow.triangle.2.circlepath") {
-                    let r = restart, rec = recommendedOnly
+                    let r = restart, rec = recommendedOnly, major = allowMajor
+                    let majorNote = major ? " Uwaga: także przejście na nową wersję macOS (długa instalacja, restart)." : ""
                     confirm = ConfirmRequest(
-                        title: "Zainstalować aktualizacje macOS?",
-                        message: "\(Polish.onComputers(model.actionTargets.count).capitalizedFirst) zostanie uruchomione softwareupdate --install\(r ? " z automatycznym restartem – zalogowani użytkownicy stracą niezapisane dane" : "").",
-                        button: "Instaluj", destructive: r) {
+                        title: major ? "Zainstalować aktualizacje i nową wersję macOS?" : "Zainstalować aktualizacje macOS?",
+                        message: "\(Polish.onComputers(model.actionTargets.count).capitalizedFirst) zostanie uruchomione softwareupdate --install\(r ? " z automatycznym restartem – zalogowani użytkownicy stracą niezapisane dane" : "").\(majorNote)",
+                        button: "Instaluj", destructive: r || major) {
                         model.runScript("softwareupdate --install\(r ? " --restart" : "")", on: model.selectedMachines) { _ in
-                            Scripts.installUpdates(restart: r, recommendedOnly: rec, downloadOnly: false)
+                            Scripts.installUpdates(restart: r, recommendedOnly: rec, downloadOnly: false,
+                                                   allowMajorUpgrade: major)
                         }
                     }
                 }
@@ -100,8 +106,9 @@ struct UpdatesView: View {
                     model.runScript("mas upgrade", on: model.selectedMachines) { _ in Scripts.masUpgrade() }
                 }
             }
-            Text("Aktualizacje Unity i Android SDK: dział Instalacja › Unity Hub i Android SDK.")
+            Text("App Store (mas) aktualizuje aplikacje konta Apple ID zalogowanego w App Store na koncie administratora (raz, przy komputerze). Aktualizacje Unity i Android SDK: dział Instalacja › Unity Hub i Android SDK.")
                 .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

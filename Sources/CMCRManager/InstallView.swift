@@ -125,7 +125,7 @@ struct InstallView: View {
                     let v = unityVersion
                     let mods = Array(unityModules).sorted()
                     model.runScript("Unity \(v) + \(mods.joined(separator: ","))", on: model.selectedMachines) { _ in
-                        Scripts.unityHub(["install", "--version", v] + mods.flatMap { ["-m", $0] })
+                        Scripts.unityInstallEditor(version: v, modules: mods)
                     }
                 }
                 .disabled(unityVersion.isEmpty)

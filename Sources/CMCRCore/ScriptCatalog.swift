@@ -65,6 +65,12 @@ public enum ScriptCatalog {
             Sample(name: "enableScreenSharing", script: Scripts.enableScreenSharing()),
             Sample(name: "enableWakeOnLAN", script: Scripts.enableWakeOnLAN()),
             Sample(name: "exec", script: RemoteScript("echo \(shQuote(a)); for i in 1 2; do echo $i; done")),
+            // U1 core-runtime (SSHRuntime.swift)
+            Sample(name: "cancelScript", script: RemoteJobs.cancelScript(jobID: UUID().uuidString)),
+            // U2 scripts
+            Sample(name: "unityInstallEditor", script: Scripts.unityInstallEditor(version: "6000.3.7f1", modules: ["android", a],
+                                                                                  changeset: "abc123")),
+            Sample(name: "unityInstallEditor(min)", script: Scripts.unityInstallEditor(version: a, modules: [])),
         ]
         for restart in [false, true] {
             for recommended in [false, true] {

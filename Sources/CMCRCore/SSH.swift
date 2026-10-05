@@ -27,8 +27,13 @@ public struct RemoteScript: Sendable {
     }
 
     static let library = #"""
-    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
-    CMCR_ADMIN_USER="${SUDO_USER:-$(id -un)}"
+    # Root gets the system tools first; Homebrew tools only as a fallback.
+    if [ "$EUID" -eq 0 ]; then
+      export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:/opt/homebrew/sbin"
+    else
+      export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+    fi
+    CMCR_ADMIN_USER="${SUDO_USER:-${USER:-$(id -un)}}"
     CONSOLE_USER="$(stat -f%Su /dev/console 2>/dev/null)"
     case "$CONSOLE_USER" in root|_mbsetupuser|loginwindow) CONSOLE_USER="" ;; esac
     CONSOLE_UID=""
@@ -41,12 +46,66 @@ public struct RemoteScript: Sendable {
       fi
       CMCR_PW="$CMCR_PW" SUDO_ASKPASS="$CMCR_TMP/askpass" sudo -A -k -- "$@"
     }
+    # Runs in the GUI session of the console user with that user's HOME (sudo -H; macOS sudoers keeps the
+    # admin's HOME otherwise) and with the user's home folder as the working directory.
     as_console_user() {
       if [ -z "$CONSOLE_USER" ]; then echo "Brak zalogowanego użytkownika (ekran logowania)." >&2; return 3; fi
-      asroot launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" -- "$@"
+      local h=/
+      case "$CONSOLE_USER" in *[!A-Za-z0-9._-]*) ;; *) eval "h=~$CONSOLE_USER" ;; esac
+      ( cd "$h" 2>/dev/null || cd /; asroot launchctl asuser "$CONSOLE_UID" sudo -H -u "$CONSOLE_USER" -- "$@" )
     }
-    with_askpass() { CMCR_PW="$CMCR_PW" SUDO_ASKPASS="$CMCR_TMP/askpass" "$@"; }
+    # For tools that call `sudo -A` (Homebrew) or plain sudo without a tty (mas ≥ 4: needs DISPLAY to use the
+    # askpass). Homebrew re-executes itself with a filtered environment (SUDO_ASKPASS survives, CMCR_PW does
+    # not), so this askpass falls back to a 0600 file in a 0700 directory inside the admin's private
+    # $CMCR_TMP. The file exists only while the command runs (and the EXIT trap removes $CMCR_TMP if the job
+    # dies); only the admin and root can read it – the same accounts that can read the password from stdin.
+    # A FIFO would keep the password off the disk, but sudo blocks forever on a FIFO without a writer and a
+    # writer left behind by a killed job would hold the password indefinitely.
+    with_askpass() {
+      local d rc
+      d="$(mktemp -d "$CMCR_TMP/askpass.XXXXXX")" || return 90
+      ( umask 077; printf '%s\n' "$CMCR_PW" > "$d/pw" )
+      cat > "$d/askpass" <<'CMCR_ASKPASS'
+    #!/bin/sh
+    D="$(dirname "$0")"; M="$D/.used.$PPID"
+    [ -e "$M" ] && exit 1
+    : > "$M"
+    if [ -n "${CMCR_PW:-}" ]; then printf '%s\n' "$CMCR_PW"; else cat "$D/pw"; fi
+    CMCR_ASKPASS
+      chmod 700 "$d/askpass"
+      CMCR_PW="$CMCR_PW" SUDO_ASKPASS="$d/askpass" DISPLAY="${DISPLAY:-:0}" "$@"; rc=$?
+      rm -rf "$d"
+      return $rc
+    }
     is_admin_user() { dseditgroup -o checkmember -m "$1" admin >/dev/null 2>&1; }
+    # Adds a command to the EXIT trap, keeping the wrapper's own cleanup.
+    cmcr_on_exit() {
+      local add="$1" prev=""
+      eval "set -- $(trap -p EXIT)"
+      [ $# -ge 3 ] && prev="$3"
+      trap "$add${prev:+; $prev}" EXIT
+    }
+    # Stops the script (code 3) when a path or owner uses {console} while nobody is logged in.
+    cmcr_require_console() {
+      case "$*" in
+        *'{console}'*) [ -n "$CONSOLE_USER" ] || { echo "✘ Nikt nie jest zalogowany – nie można użyć {console}." >&2; exit 3; } ;;
+      esac
+    }
+    # Physical path of an existing folder: symlinks resolved (/Volumes/Macintosh HD → /) and every component
+    # in its on-disk case. /bin/pwd, not the builtin: the builtin keeps the case as typed (/Users/x/LIBRARY),
+    # which the case-insensitive file system accepts but path checks would not recognise.
+    cmcr_realdir() { ( cd "$1" 2>/dev/null && /bin/pwd -P ); }
+    # Canonical form of a path whose tail may not exist yet: the deepest existing folder through cmcr_realdir,
+    # then the missing components as given. Empty when no existing ancestor is a folder.
+    cmcr_canonpath() {
+      local p="$1" r
+      while [ ! -e "$p" ] && [ ! -L "$p" ]; do p="$(dirname "$p")"; done
+      r="$(cmcr_realdir "$p")" || return 1
+      [ -n "$r" ] || return 1
+      r="$r${1#"$p"}"
+      case "$r" in //*) r="${r#/}" ;; esac
+      printf '%s\n' "$r"
+    }
     """#
 
     /// First line the wrapper writes to stderr. Until it arrives nothing has run on the Mac, so a failure is
