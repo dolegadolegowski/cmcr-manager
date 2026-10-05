@@ -171,8 +171,14 @@ public enum SSH {
 
     /// Private directory for the shared-connection sockets. It lives in /tmp because a socket path must stay
     /// under 104 bytes; nil (no sharing) when it is not a real directory owned by this user.
+    /// `CMCR_SSH_CONTROL_DIR` overrides it (the tests keep their connections apart from the app's).
     public static func controlDirectory() -> String? {
-        let dir = "/tmp/cmcr-\(getuid())"
+        var dir = "/tmp/cmcr-\(getuid())"
+        if let custom = ProcessInfo.processInfo.environment["CMCR_SSH_CONTROL_DIR"], custom.hasPrefix("/") {
+            // %C adds 40 characters and ssh a 17-character suffix while creating the socket.
+            guard custom.utf8.count + 58 < 104 else { return nil }
+            dir = custom
+        }
         var st = stat()
         if lstat(dir, &st) != 0 {
             guard mkdir(dir, 0o700) == 0 || errno == EEXIST, lstat(dir, &st) == 0 else { return nil }

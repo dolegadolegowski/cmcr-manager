@@ -98,6 +98,9 @@ cat > "$WORK/config/settings.json" <<EOF
  "screenshotMaxSize":640}
 EOF
 export CMCR_CONFIG_DIR="$WORK/config"
+# Shared ssh connections of this run only (a master left from an earlier run would still talk to that
+# run's sshd); the cleanup's pkill finds them by this path.
+export CMCR_SSH_CONTROL_DIR="$WORK/mux"
 unset CMCR_PASSWORD
 ctl() { "$CTL" "$@" 2>&1; }
 ctlpw() { CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }

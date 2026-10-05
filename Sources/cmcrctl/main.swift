@@ -28,6 +28,7 @@ Hasło administratora: Pęk kluczy (ustawiane w aplikacji) lub zmienna CMCR_PASS
 
 let settings = ConfigStore.loadSettings()
 let hosts = ConfigStore.loadHosts()
+for issue in ConfigStore.loadIssues { FileHandle.standardError.write(Data("⚠ \(issue)\n".utf8)) }
 let sshSettings = SSHSettings(settings, askpassPath: ConfigStore.ensureAskpass())
 
 func fail(_ message: String) -> Never {
@@ -167,6 +168,9 @@ case "open-app", "quit-app":
         let r = await SSH.run(script, on: h, password: Keychain.password(for: h), settings: sshSettings, onOutput: Console.printer)
         status = max(status, report(r))
     }
+
+case "__run-job", "__forget-host-key":
+    status = await HiddenCommands.run(command, Array(args.dropFirst()), select: selectHosts, root: root, settings: sshSettings)
 
 default:
     print(usage)
