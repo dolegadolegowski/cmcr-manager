@@ -77,7 +77,23 @@ Hasło administratora: Pęk kluczy (cmcrctl password set lub aplikacja) albo zmi
 struct CLI: Sendable {
     let args: Arguments
     let settings = ConfigStore.loadSettings()
-    let hosts = ConfigStore.loadHosts()
+    let hosts: [Machine]
+    /// Why hosts.json could not be read; `hosts` is then the default lab, as in `ConfigStore.loadHosts()`.
+    let hostsProblem: String?
+
+    init(args: Arguments) {
+        self.args = args
+        do {
+            hosts = try ConfigStore.readHostsFile() ?? Machine.generate()
+            hostsProblem = nil
+        } catch {
+            hosts = Machine.generate()
+            hostsProblem = error.localizedDescription
+        }
+    }
+
+    /// Options of commands that run on several Macs through `runHosts`.
+    static let parallel: Set<String> = ["-j", "--prefix"]
 
     var root: Bool { args.has("--root") }
     var force: Bool { args.has("--force") }
@@ -124,9 +140,27 @@ struct CLI: Sendable {
 
     // MARK: - Helpers
 
+    var hostsPath: String { ConfigStore.directory.appendingPathComponent("hosts.json").path }
+
+    func warnIfDefaultHosts() {
+        guard let hostsProblem else { return }
+        Console.err("Uwaga: nie można odczytać \(hostsPath) (\(hostsProblem)) – używana jest domyślna lista "
+                    + "\(hosts.first?.name ?? "")–\(hosts.last?.name ?? "").")
+    }
+
+    /// The host list for commands that change and save it. Saving the default list that replaced an unreadable
+    /// hosts.json would silently lose the user's entries, so those commands stop instead.
+    func editableHosts() -> [Machine] {
+        if let hostsProblem {
+            fail("Nie można odczytać \(hostsPath) (\(hostsProblem)) – popraw plik lub usuń go; lista komputerów nie została zmieniona.")
+        }
+        return hosts
+    }
+
     func sshSettings() -> SSHSettings { SSHSettings(settings, askpassPath: ConfigStore.ensureAskpass()) }
 
     func targets(_ spec: String?, defaultAll: Bool = false) -> [Machine] {
+        warnIfDefaultHosts()
         guard let spec else {
             guard defaultAll else { usageError("Podaj komputery: all, numer (4), lista (1,3), zakres (1-5) lub nazwę.") }
             guard !hosts.isEmpty else { fail(HostSpec.SelectionError.emptyList.localizedDescription) }
@@ -189,6 +223,8 @@ struct CLI: Sendable {
     // MARK: - State & commands
 
     func list() -> Int32 {
+        args.expect("list", positional: 1)
+        warnIfDefaultHosts()
         for (i, h) in hosts.enumerated() {
             Console.out(pad("\(i + 1)", 2, right: true) + "  " + pad(h.name, 12) + " " + pad(h.destination, 24) + " "
                         + (h.port == 22 ? "" : "port \(h.port)"))
@@ -197,12 +233,14 @@ struct CLI: Sendable {
     }
 
     func render() -> Int32 {
+        args.expect("render", options: ["--root"], positional: 2)
         guard let command = args[1] else { usageError("Podaj polecenie.") }
         Console.out(RemoteScript(command, asRoot: root).render(), terminator: "")
         return ExitCode.success
     }
 
     func status() async -> Int32 {
+        args.expect("status", options: ["-j", "--json"], positional: 2)
         let list = targets(args[1], defaultAll: true)
         let json = args.has("--json")
         let ssh = sshSettings()
@@ -260,14 +298,9 @@ struct CLI: Sendable {
             learned.append((h, mac))
         }
         guard !learned.isEmpty else { return }
-        let file = ConfigStore.directory.appendingPathComponent("hosts.json")
-        var current = hosts
-        if FileManager.default.fileExists(atPath: file.path) {
-            // Never replace a list we could not read.
-            guard let data = try? Data(contentsOf: file),
-                  let decoded = try? JSONDecoder().decode([Machine].self, from: data) else { return }
-            current = decoded
-        }
+        // Re-read: the app may have changed the list while status was running. Never replace a list we could not read.
+        var current: [Machine]
+        do { current = try ConfigStore.readHostsFile() ?? hosts } catch { return }
         // Entries written without an `id` get a new one on every load, so also match by connection details.
         func same(_ a: Machine, _ b: Machine) -> Bool {
             a.id == b.id || (a.name == b.name && a.address == b.address && a.user == b.user && a.port == b.port)
@@ -285,6 +318,7 @@ struct CLI: Sendable {
     }
 
     func exec() async -> Int32 {
+        args.expect("exec", options: Self.parallel.union(["--root"]), positional: 3)
         guard let command = args[1] else { usageError("Podaj polecenie.") }
         let list = targets(args[2], defaultAll: true)
         let asRoot = root
@@ -294,6 +328,7 @@ struct CLI: Sendable {
     }
 
     func go() -> Never {
+        args.expect("go", positional: 2)
         let h = single(args[1], usage: "Podaj numer komputera.")
         let argv = ["ssh"] + SSH.interactiveArguments(for: h, settings: sshSettings())
         let cargs = argv.map { strdup($0) } + [nil]
@@ -304,6 +339,7 @@ struct CLI: Sendable {
     // MARK: - Files
 
     func push() async -> Int32 {
+        args.expect("push", options: Self.parallel.union(["--root"]), positional: 2)
         guard args[1] != nil else { usageError("Podaj all lub numer komputera.") }
         let list = targets(args[1])
         let ssh = sshSettings()
@@ -329,6 +365,7 @@ struct CLI: Sendable {
     }
 
     func pull() async -> Int32 {
+        args.expect("pull", options: Self.parallel.union(["--root"]), positional: 2)
         guard args[1] != nil else { usageError("Podaj all lub numer komputera.") }
         let list = targets(args[1])
         let ssh = sshSettings()
@@ -345,6 +382,7 @@ struct CLI: Sendable {
     }
 
     func listFolder() async -> Int32 {
+        args.expect("ls", options: Self.parallel.union(["--root"]), positional: 3)
         guard let path = args[1] else { usageError("Użycie: cmcrctl ls ŚCIEŻKA KOMP [--root]") }
         let list = targets(args[2])
         let asRoot = root
@@ -352,6 +390,7 @@ struct CLI: Sendable {
     }
 
     func clean() async -> Int32 {
+        args.expect("clean", options: Self.parallel, positional: 3)
         guard let path = args[1] else { usageError("Użycie: cmcrctl clean ŚCIEŻKA KOMP") }
         let list = targets(args[2])
         confirm("Usunąć całą zawartość folderu \(path) na: \(names(list))?")
@@ -361,6 +400,7 @@ struct CLI: Sendable {
     // MARK: - Applications
 
     func apps() async -> Int32 {
+        args.expect("apps", positional: 2)
         let h = single(args[1], usage: "Podaj numer komputera.")
         let r = await SSH.run(Scripts.runningApps(), on: h, password: Keychain.password(for: h), settings: sshSettings())
         let parsed = Parsers.runningApps(r.stdoutText)
@@ -374,6 +414,8 @@ struct CLI: Sendable {
     }
 
     func openQuitApp(open: Bool) async -> Int32 {
+        args.expect(open ? "open-app" : "quit-app", options: open ? Self.parallel : Self.parallel.union(["--force"]),
+                    positional: 3)
         guard let app = args[1] else { usageError("Podaj nazwę aplikacji.") }
         let list = targets(args[2], defaultAll: true)
         let hard = force
@@ -383,12 +425,14 @@ struct CLI: Sendable {
     }
 
     func openURL() async -> Int32 {
+        args.expect("open-url", options: Self.parallel, positional: 3)
         guard let url = args[1] else { usageError("Użycie: cmcrctl open-url ADRES KOMP") }
         let list = targets(args[2])
         return await runScript(on: list) { _ in Scripts.openURL(url) }
     }
 
     func kill() async -> Int32 {
+        args.expect("kill", options: Self.parallel.union(["--force"]), positional: 3)
         guard let raw = args[1], let pid = Int(raw), pid > 1 else { usageError("Użycie: cmcrctl kill PID KOMP [--force]") }
         let list = targets(args[2])
         let hard = force
@@ -396,6 +440,7 @@ struct CLI: Sendable {
     }
 
     func uninstall() async -> Int32 {
+        args.expect("uninstall", options: Self.parallel, positional: 3)
         guard let path = args[1] else { usageError("Użycie: cmcrctl uninstall /Applications/Nazwa.app KOMP") }
         let list = targets(args[2])
         confirm("Usunąć \(path) na: \(names(list))?")
@@ -403,6 +448,7 @@ struct CLI: Sendable {
     }
 
     func brew() async -> Int32 {
+        args.expect("brew", options: Self.parallel, positional: 3)
         guard let arguments = args[1], !arguments.trimmingCharacters(in: .whitespaces).isEmpty else {
             usageError("Użycie: cmcrctl brew \"argumenty\" KOMP, np. cmcrctl brew \"install --cask firefox\" all")
         }
@@ -411,6 +457,7 @@ struct CLI: Sendable {
     }
 
     func screenshot() async -> Int32 {
+        args.expect("screenshot", positional: 3)
         let h = single(args[1], usage: "Użycie: cmcrctl screenshot nr plik.jpg")
         guard let file = args[2] else { usageError("Użycie: cmcrctl screenshot nr plik.jpg") }
         let shot = await Operations.screenshot(of: h, maxSize: settings.screenshotMaxSize, settings: settings,
@@ -433,6 +480,7 @@ struct CLI: Sendable {
         guard let sub = args[1] else { usageError(use) }
         switch sub {
         case "list":
+            args.expect("updates list", options: Self.parallel, positional: 3)
             let list = targets(args[2])
             let ssh = sshSettings()
             let codes = await runHosts(list, jobs: args.jobs ?? max(1, settings.maxParallel), prefixLines: prefixLines) { io in
@@ -453,6 +501,8 @@ struct CLI: Sendable {
             }
             return combine(codes)
         case "install":
+            args.expect("updates install", options: Self.parallel.union(["--restart", "--download", "--recommended"]),
+                        positional: 3)
             let list = targets(args[2])
             let restart = args.has("--restart"), download = args.has("--download"), recommended = args.has("--recommended")
             if restart && !download {
@@ -462,6 +512,7 @@ struct CLI: Sendable {
                 Scripts.installUpdates(restart: restart, recommendedOnly: recommended, downloadOnly: download)
             }
         case "history":
+            args.expect("updates history", options: Self.parallel, positional: 3)
             let list = targets(args[2])
             return await runScript(on: list) { _ in Scripts.updateHistory() }
         default:
@@ -472,6 +523,7 @@ struct CLI: Sendable {
     // MARK: - Session & power
 
     func message() async -> Int32 {
+        args.expect("message", options: Self.parallel.union(["--notification"]), positional: 4)
         guard let title = args[1], let text = args[2], !text.isEmpty else {
             usageError("Użycie: cmcrctl message \"tytuł\" \"treść\" KOMP [--notification]")
         }
@@ -481,6 +533,7 @@ struct CLI: Sendable {
     }
 
     func logout() async -> Int32 {
+        args.expect("logout", options: Self.parallel, positional: 2)
         let list = targets(args[1])
         confirm("Wylogować użytkowników na: \(names(list))? Niezapisane dane przepadną.")
         return await runScript(on: list) { _ in Scripts.logoutUser() }
@@ -494,6 +547,7 @@ struct CLI: Sendable {
         guard let name = args[1], let action = actions[name.lowercased()] else {
             usageError("Użycie: cmcrctl power restart|shutdown|sleep|display-sleep KOMP")
         }
+        args.expect("power", options: Self.parallel, positional: 3)
         let list = targets(args[2])
         if action != .displaySleep {
             confirm("\(action.label): \(names(list))? Zalogowani użytkownicy mogą stracić niezapisane dane.")
@@ -502,6 +556,7 @@ struct CLI: Sendable {
     }
 
     func wake() -> Int32 {
+        args.expect("wake", options: ["--dry-run"], positional: 2)
         let list = targets(args[1])
         let dryRun = args.has("--dry-run")
         var code = ExitCode.success
@@ -538,6 +593,7 @@ struct CLI: Sendable {
     // MARK: - Self test
 
     func selftest() async -> Int32 {
+        args.expect("selftest", positional: 1)
         let samples = ScriptCatalog.samples
         let problems = await ScriptCatalog.syntaxCheck(samples)
         for p in problems { Console.err("✘ \(p)") }

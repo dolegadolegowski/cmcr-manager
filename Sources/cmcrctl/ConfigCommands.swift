@@ -16,6 +16,8 @@ extension CLI {
     }
 
     func hostsList() -> Int32 {
+        args.expect("hosts list", positional: 2)
+        warnIfDefaultHosts()
         guard !hosts.isEmpty else {
             Console.out("Lista komputerów jest pusta – dodaj: cmcrctl hosts generate --replace")
             return ExitCode.success
@@ -31,6 +33,8 @@ extension CLI {
     }
 
     func hostsAdd() -> Int32 {
+        args.expect("hosts add", options: ["--port", "--mac"], positional: 5)
+        let hosts = editableHosts()
         guard let name = args[2]?.trimmingCharacters(in: .whitespaces), !name.isEmpty else {
             usageError("Użycie: cmcrctl hosts add nazwa [adres] [konto] [--port N] [--mac MAC]")
         }
@@ -50,6 +54,8 @@ extension CLI {
 
     func hostsSet() -> Int32 {
         let use = "Użycie: cmcrctl hosts set nr [--mac MAC] [--port N]"
+        args.expect("hosts set", options: ["--mac", "--port"], positional: 3)
+        let hosts = editableHosts()
         let host = single(args[2], usage: use)
         let port = args.int("--port", in: 1...65535)
         let mac = args.value("--mac").map(normalizedMAC)
@@ -72,7 +78,9 @@ extension CLI {
     }
 
     func hostsRemove() -> Int32 {
+        args.expect("hosts remove", positional: 3)
         guard args[2] != nil else { usageError("Użycie: cmcrctl hosts remove KOMP") }
+        let hosts = editableHosts()
         let gone = targets(args[2])
         confirm("Usunąć z listy: \(names(gone))? Na samych iMacach nic się nie zmieni.")
         let ids = Set(gone.map(\.id))
@@ -83,6 +91,8 @@ extension CLI {
 
     /// Same generator as Konfiguracja › Komputery (the loop at the top of cmcr-helpers.sh).
     func hostsGenerate() -> Int32 {
+        args.expect("hosts generate", options: ["--start", "--count", "--digits", "--domain", "--replace", "--append"],
+                    positional: 3)
         let prefix = args[2] ?? "imac"
         let start = args.int("--start", in: 0...999) ?? 1
         let count = args.int("--count", in: 1...250) ?? 15
@@ -95,10 +105,13 @@ extension CLI {
             + (generated.count > 3 ? " … \(generated.last!.destination)" : "")
         Console.out("Wygenerowano \(plural(generated.count, "komputer", "komputery", "komputerów")): \(sample)")
         if replace {
-            confirm("Zastąpić obecną listę (\(hosts.count)) wygenerowanymi wpisami (\(generated.count))?")
+            confirm(hostsProblem == nil
+                    ? "Zastąpić obecną listę (\(hosts.count)) wygenerowanymi wpisami (\(generated.count))?"
+                    : "Zastąpić nieczytelny plik \(hostsPath) wygenerowanymi wpisami (\(generated.count))?")
             ConfigStore.saveHosts(generated)
             Console.out("Lista komputerów zastąpiona.")
         } else if append {
+            let hosts = editableHosts()
             let existing = Set(hosts.map { $0.address.lowercased() })
             let new = generated.filter { !existing.contains($0.address.lowercased()) }
             ConfigStore.saveHosts(hosts + new)
@@ -114,6 +127,9 @@ extension CLI {
     func password() -> Int32 {
         let use = "Użycie: cmcrctl password set|clear|status [--host nr]"
         guard let sub = args[1] else { usageError(use) }
+        args.expect("password \(sub)", options: sub == "status" ? [] : ["--host"], positional: 2)
+        // Choosing a host saves the list (the Keychain account is derived from its id): check it first.
+        if args.value("--host") != nil { _ = editableHosts() }
         let host = args.value("--host").map { single($0, usage: use) }
         switch sub {
         case "set":
