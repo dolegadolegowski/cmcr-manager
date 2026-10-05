@@ -33,6 +33,12 @@ public struct RemoteScript: Sendable {
     else
       export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
     fi
+    # One fixed locale for every script, so the output they parse (last, sysctl, pmset, softwareupdate…) is
+    # always English with '.' decimals. The app inherits no LANG from launchd, but cmcrctl started from a
+    # Terminal forwards LANG/LC_* (macOS ssh SendEnv, sshd AcceptEnv): pl_PL gives 'sob. 3 paź' and '1,35'.
+    # C, not a UTF-8 locale: bash 3.2 then treats [A-Za-z] as ASCII (in en_US.UTF-8 it matches 'ą'), and
+    # sed/tr/grep never stop on bytes that are not UTF-8. Polish text still passes through unchanged.
+    export LC_ALL=C
     CMCR_ADMIN_USER="${SUDO_USER:-${USER:-$(id -un)}}"
     CONSOLE_USER="$(stat -f%Su /dev/console 2>/dev/null)"
     case "$CONSOLE_USER" in root|_mbsetupuser|loginwindow) CONSOLE_USER="" ;; esac

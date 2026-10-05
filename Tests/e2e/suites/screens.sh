@@ -9,7 +9,7 @@ p = sys.argv[1]; s = json.load(open(p))
 s.update(observeAllowedUsers="", observeOnlyStandardAccounts=False, notifyOnObserve=True, screenshotMaxSize=640)
 json.dump(s, open(p, "w"))
 PY
-scr_reset() { rm -f "$WORK/console_user" "$WORK/screencapture_fail" "$WORK/displays" "$WORK/screen_variant" "$WORK/front_app"; }
+scr_reset() { rm -f "$WORK/console_user" "$WORK/screencapture_fail" "$WORK/displays" "$WORK/screen_variant" "$WORK/front_app" "$WORK"/fake-notify-*; }
 scr_console() { printf '%s' "$1" > "$WORK/console_user"; }
 scr_count() { local n; n="$(grep -c -- "$1" "$WORK/fake.log" 2>/dev/null)"; echo "${n:-0}"; }
 scr_wait_for() { # scr_wait_for FILE NEEDLE [seconds] – polls a growing file
@@ -46,7 +46,7 @@ out="$(ctlpw screenshot 1 "$WORK/scr-student.jpg")"; code=$?
 expect_code "zrzut ucznia: kod 0" "$code" 0 "$out"
 scr_is_jpeg "$WORK/scr-student.jpg" && pass "zrzut ucznia: JPEG przez launchctl asuser" || fail "zrzut ucznia: brak JPEG" "$out"
 expect_code "zrzut ucznia: dokładnie jedno sudo na klatkę" "$(scr_count '^sudo ')" 1 "$(fakelog)"
-expect "zrzut ucznia: powiadomienie w sesji ucznia" "$(fakelog)" "gui-exec: /usr/bin/osascript -e display notification"
+expect "zrzut ucznia: powiadomienie w sesji ucznia" "$(fakelog)" "observe-notice: gui"
 expect "zrzut ucznia: aplikacja na pierwszym planie odczytana" "$(fakelog)" "lsappinfo info -only name ASN:"
 
 clear_fakelog
@@ -91,7 +91,7 @@ expect "na żywo: pierwsza klatka" "$out" "Klatka 1: nowy obraz"
 expect "na żywo: niezmieniony ekran nie jest przesyłany ponownie" "$out" "Klatka 2: bez zmian" "Klatka 3: bez zmian"
 expect_code "na żywo: jedno sudo na trzy klatki" "$(scr_count '^sudo ')" 1 "$(fakelog)"
 expect_code "na żywo: trzy przechwycenia" "$(scr_count '^screencapture ')" 3 "$(fakelog)"
-expect_code "na żywo: jedno powiadomienie na sesję" "$(scr_count 'display notification')" 1 "$(fakelog)"
+expect_code "na żywo: jedno powiadomienie na sesję" "$(scr_count 'observe-notice:')" 1 "$(fakelog)"
 f="$(ls "$WORK/scr-live"/*.jpg 2>/dev/null | head -1)"
 [ -n "$f" ] && scr_is_jpeg "$f" && pass "na żywo: klatka zapisana jako JPEG" || fail "na żywo: brak klatki" "$(ls -la "$WORK/scr-live" 2>&1)"
 scr_sessions_gone && pass "na żywo: sesja zamknięta po zakończeniu podglądu" || fail "na żywo: zostały procesy sesji" "$(pgrep -lP "$SSHD_PID")"
@@ -99,7 +99,7 @@ scr_sessions_gone && pass "na żywo: sesja zamknięta po zakończeniu podglądu"
 clear_fakelog
 out="$(ctlpw screen-watch 1 "$WORK/scr-live2" --frames 1 --interval 2 --notified-user daemon)"
 expect "na żywo: kontynuacja sesji obserwacji" "$out" "Klatka 1: nowy obraz"
-expect_code "na żywo: ten sam użytkownik nie jest powiadamiany ponownie" "$(scr_count 'display notification')" 0 "$(fakelog)"
+expect_code "na żywo: ten sam użytkownik nie jest powiadamiany ponownie" "$(scr_count 'observe-notice:')" 0 "$(fakelog)"
 
 clear_fakelog
 ctlpw screen-watch 1 "$WORK/scr-live3" --frames 3 --interval 2 > "$WORK/scr-live3.out" 2>&1 &
@@ -110,7 +110,7 @@ echo nowy > "$WORK/screen_variant"
 wait "$scr_pid"
 out="$(cat "$WORK/scr-live3.out")"
 expect "na żywo: zmiana użytkownika – nowe powiadomienie" "$out" "Powiadomiono użytkownika daemon" "Powiadomiono użytkownika nobody"
-expect_code "na żywo: zmiana użytkownika – dwa powiadomienia" "$(scr_count 'display notification')" 2 "$(fakelog)"
+expect_code "na żywo: zmiana użytkownika – dwa powiadomienia" "$(scr_count 'observe-notice:')" 2 "$(fakelog)"
 expect "na żywo: zmieniony ekran przesłany ponownie" "$out" "Klatka 2: nowy obraz"
 expect_code "na żywo: zmiana użytkownika bez ponownego sudo" "$(scr_count '^sudo ')" 1 "$(fakelog)"
 rm -f "$WORK/screen_variant"
@@ -142,7 +142,7 @@ out="$(ctl screen-watch 1 "$WORK/scr-live6" --frames 1 --interval 2)"
 expect "na żywo: konto spoza listy dozwolonych" "$out" "nie jest na liście kont dozwolonych"
 expect_not "na żywo: zablokowane konto – nic nie przechwycono" "$(fakelog)" "screencapture"
 expect_not "na żywo: zablokowane konto – bez sudo" "$(fakelog)" "sudo"
-expect_not "na żywo: zablokowane konto – bez powiadomienia" "$(fakelog)" "display notification"
+expect_not "na żywo: zablokowane konto – bez powiadomienia" "$(fakelog)" "observe-notice"
 expect_not "na żywo: zablokowane konto – aplikacja nie jest odczytywana" "$out" "Przeglądarka Testowa"
 python3 - "$WORK/config/settings.json" <<'PY'
 import json, sys
@@ -156,6 +156,65 @@ out="$(ctlpw screen-watch 1 "$WORK/scr-live7" --frames 1 --interval 2 --display 
 expect "na żywo: wszystkie ekrany" "$out" "ekran 1/2" "ekran 2/2"
 n="$(ls "$WORK/scr-live7"/*.jpg 2>/dev/null | wc -l | tr -d ' ')"
 expect_code "na żywo: osobny obraz dla każdego ekranu" "$n" 2 "$(ls -la "$WORK/scr-live7" 2>&1)"
+
+section "Podgląd ekranów – bez potwierdzonego powiadomienia nie ma obrazu"
+scr_reset
+scr_console daemon
+touch "$WORK/fake-notify-fail"
+clear_fakelog
+out="$(ctlpw screenshot 1 "$WORK/scr-nonotice.jpg")"; code=$?
+[ "$code" -ne 0 ] && pass "powiadomienie nieudane: zrzut kończy się błędem" || fail "powiadomienie nieudane: kod 0" "$out"
+expect "powiadomienie nieudane: czytelny powód" "$out" "nie udało się wyświetlić informacji o podglądzie" "daemon" \
+  "Connection to the window server refused"
+expect_not "powiadomienie nieudane: nie zgłoszono powiadomienia" "$out" "Powiadomiono"
+[ ! -f "$WORK/scr-nonotice.jpg" ] && pass "powiadomienie nieudane: brak pliku" || fail "powiadomienie nieudane: zapisano obraz"
+expect "powiadomienie nieudane: próba w sesji ucznia" "$(fakelog)" "observe-notice: gui"
+expect_not "powiadomienie nieudane: ekran nie został przechwycony" "$(fakelog)" "screencapture"
+expect_not "powiadomienie nieudane: aplikacja na pierwszym planie nie jest odczytywana" "$(fakelog)" "lsappinfo"
+
+out="$(ctlpw screen-watch 1 "$WORK/scr-nonotice" --frames 1 --interval 2)"; code=$?
+expect_code "na żywo: powiadomienie nieudane – kod 8" "$code" 8 "$out"
+expect "na żywo: powiadomienie nieudane – powód" "$out" "Na ekranie użytkownika daemon nie udało się wyświetlić"
+n="$(ls "$WORK/scr-nonotice"/*.jpg 2>/dev/null | wc -l | tr -d ' ')"
+expect_code "na żywo: powiadomienie nieudane – żadnej klatki" "$n" 0 "$out"
+
+# The next cycle tries again; the first frame comes only after a confirmed notice.
+clear_fakelog
+ctlpw screen-watch 1 "$WORK/scr-notice-retry" --frames 3 --interval 2 > "$WORK/scr-notice-retry.out" 2>&1 &
+scr_pid=$!
+scr_wait_for "$WORK/scr-notice-retry.out" "nie udało się wyświetlić" 20
+expect_code "na żywo: przed powiadomieniem brak przechwycenia" "$(scr_count '^screencapture ')" 0 "$(fakelog)"
+rm -f "$WORK/fake-notify-fail"
+wait "$scr_pid"
+out="$(cat "$WORK/scr-notice-retry.out")"
+expect "na żywo: ponowna próba powiadomienia, potem obraz" "$out" "Powiadomiono użytkownika daemon" "nowy obraz"
+notices="$(scr_count 'observe-notice:')"
+[ "$notices" -ge 2 ] && pass "na żywo: powiadomienie ponowione w kolejnym cyklu ($notices)" || fail "na żywo: brak ponownej próby ($notices)" "$(fakelog)"
+order="$(awk '/observe-notice:/ {n++} /^screencapture / {print (n >= 2 ? "ok" : "za wcześnie"); exit}' "$WORK/fake.log")"
+[ "$order" = ok ] && pass "na żywo: pierwsza klatka dopiero po potwierdzonym powiadomieniu" \
+  || fail "na żywo: przechwycenie przed powiadomieniem (${order:-brak})" "$(fakelog)"
+
+touch "$WORK/fake-notify-hidden"
+out="$(ctlpw screenshot 1 "$WORK/scr-hidden.jpg")"
+expect "powiadomienie niewidoczne: obraz nie jest pobierany" "$out" "okno komunikatu nie pojawiło się na ekranie"
+[ ! -f "$WORK/scr-hidden.jpg" ] && pass "powiadomienie niewidoczne: brak pliku" || fail "powiadomienie niewidoczne: zapisano obraz"
+rm -f "$WORK/fake-notify-hidden"
+
+touch "$WORK/fake-notify-silent"
+clear_fakelog
+out="$(ctlpw screenshot 1 "$WORK/scr-silent.jpg")"
+expect "powiadomienie bez potwierdzenia: limit czasu" "$out" "brak potwierdzenia wyświetlenia"
+expect_not "powiadomienie bez potwierdzenia: ekran nie został przechwycony" "$(fakelog)" "screencapture"
+rm -f "$WORK/fake-notify-silent"
+
+# Own session of the SSH account (no sudo): the same rule.
+rm -f "$WORK/console_user"
+touch "$WORK/fake-notify-fail"
+clear_fakelog
+out="$(ctlpw screenshot 1 "$WORK/scr-own-nonotice.jpg")"
+expect "własna sesja: powiadomienie nieudane – obraz nie jest pobierany" "$out" "nie udało się wyświetlić informacji o podglądzie"
+expect "własna sesja: próba powiadomienia bez launchctl" "$(fakelog)" "observe-notice: own"
+expect_not "własna sesja: ekran nie został przechwycony" "$(fakelog)" "screencapture"
 
 scr_reset
 printf '%s' "$scr_settings_backup" > "$WORK/config/settings.json"

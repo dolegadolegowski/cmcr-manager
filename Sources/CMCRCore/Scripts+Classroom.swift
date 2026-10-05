@@ -45,18 +45,37 @@ public extension Scripts {
             echo "⚠︎ LockScreen niedostępny – używam komunikatu na pełnym ekranie."
           fi
         fi
+        OVERLAY_STATE=""
         if [ -z "$USED" ]; then
           S="$(echo \#(overlay) | base64 -D)"
-          ( trap '' HUP; as_console_user /usr/bin/osascript -l JavaScript -e "$S" "$TAG" ) </dev/null >/dev/null 2>&1 &
+          # The overlay reports once whether macOS let it take the keyboard (CMCR:OVERLAY:active|inactive).
+          # The file is opened here, so the descriptor reaches the user's process through launchctl and sudo.
+          OV="$CMCR_TMP/overlay.out"; : > "$OV"
+          ( trap '' HUP; as_console_user /usr/bin/osascript -l JavaScript -e "$S" "$TAG" ) </dev/null >"$OV" 2>/dev/null &
           sleep 2
           if pgrep -f "$TAG" >/dev/null 2>&1; then USED=overlay; else
             echo "✘ Nie udało się wyświetlić komunikatu na ekranie użytkownika $CONSOLE_USER." >&2; exit 1
           fi
+          i=0
+          while [ $i -lt 50 ]; do
+            OVERLAY_STATE="$(sed -n 's/^CMCR:OVERLAY://p' "$OV" 2>/dev/null | head -n 1)"
+            [ -n "$OVERLAY_STATE" ] && break
+            sleep 0.1; i=$((i + 1))
+          done
         fi
         if [ "$MINUTES" -gt 0 ]; then
           ( trap '' HUP; exec /bin/bash --noprofile --norc -c 'sleep "$1"; pkill -x LockScreen; pkill -f "$2"' "$TAG-unlock" "$((MINUTES * 60))" "$TAG" ) </dev/null >/dev/null 2>&1 &
         fi
+        # First CMCR:LOCK line: the app records the lock from it (the screen is covered either way).
         echo "CMCR:LOCK:$USED"
+        if [ "$USED" = overlay ] && [ "$OVERLAY_STATE" != active ]; then
+          echo "CMCR:LOCKWARN:inactive"
+          if [ "$OVERLAY_STATE" = inactive ]; then
+            echo "⚠︎ Komunikat zakrywa ekran, ale macOS nie oddał mu klawiatury – do pierwszego kliknięcia w komunikat uczeń może przełączać aplikacje (⌘⇥) i pisać w aplikacji pod spodem. Pełną blokadę daje tryb „Blokada systemowa (LockScreen)”, jeśli działa na tym Macu."
+          else
+            echo "⚠︎ Komunikat zakrywa ekran, ale nie udało się potwierdzić, że przejął klawiaturę – uczeń może przełączać aplikacje (⌘⇥). Pełną blokadę daje tryb „Blokada systemowa (LockScreen)”, jeśli działa na tym Macu."
+          fi
+        fi
         if [ "$USED" = lockscreen ]; then KIND="blokada systemowa"; else KIND="komunikat na pełnym ekranie"; fi
         if [ "$MINUTES" -gt 0 ]; then
           echo "✔ Ekran użytkownika $CONSOLE_USER zablokowany ($KIND, automatyczne odblokowanie za $MINUTES min)."
@@ -78,11 +97,20 @@ public extension Scripts {
     }
 
     /// Full-screen message window on every display, run by `osascript -l JavaScript` in the user's session.
-    /// Kiosk presentation options hide the Dock and menu bar and disable app switching and Force Quit.
+    /// Kiosk presentation options hide the Dock and menu bar and disable app switching and Force Quit – but
+    /// macOS applies them only while the overlay is the ACTIVE application. Since macOS 14 activation is
+    /// cooperative: a process started over SSH that asks before it has finished launching is often refused,
+    /// and the student's app keeps the keyboard. So activation is requested from a timer once `app.run` is
+    /// going (`activateIgnoringOtherApps`, which still forces it then; the newer `activate()` only asks),
+    /// repeated whenever the overlay loses it, and the result is printed once on stdout:
+    /// `CMCR:OVERLAY:active` or `CMCR:OVERLAY:inactive` (still not active after 4 s).
     /// `--dry-run` builds the windows without showing them (used to check the script on a Mac).
     static func attentionOverlayJXA(message: String) -> String {
         """
         ObjC.import('Cocoa');
+        function say(s) {
+          $.NSFileHandle.fileHandleWithStandardOutput.writeData($(s + '\\n').dataUsingEncoding($.NSUTF8StringEncoding));
+        }
         function run(argv) {
           var msg = \(jsLiteral(message));
           var dry = argv.indexOf('--dry-run') >= 0;
@@ -112,9 +140,21 @@ public extension Scripts {
             windows.push(w);
           }
           if (dry) { return 'windows=' + windows.length; }
-          for (var j = 0; j < windows.length; j++) { windows[j].makeKeyAndOrderFront(null); }
-          app.activateIgnoringOtherApps(true);
+          for (var j = 0; j < windows.length; j++) { windows[j].makeKeyAndOrderFront(null); windows[j].orderFrontRegardless; }
+          // Stored now, applied by macOS whenever the overlay is the active application.
           app.setPresentationOptions(2 | 8 | 32 | 64 | 128 | 256);
+          var ticks = 0, reported = false;
+          $.NSTimer.scheduledTimerWithTimeIntervalRepeatsBlock(0.5, true, function (t) {
+            ticks++;
+            if (!app.isActive) {
+              app.activateIgnoringOtherApps(true);
+              for (var k = 0; k < windows.length; k++) { windows[k].orderFrontRegardless; }
+            }
+            if (!reported && (app.isActive || ticks >= 8)) {
+              reported = true;
+              say(app.isActive ? 'CMCR:OVERLAY:active' : 'CMCR:OVERLAY:inactive');
+            }
+          });
           app.run;
         }
         """
@@ -178,6 +218,9 @@ public extension Scripts {
 
     /// Restart/shutdown/sleep after `minutes`, optionally warning the user first. Cancel with
     /// `cancelDelayedPower()`.
+    ///
+    /// A restart arms the FileVault unlock right away (`cmcr_arm_authrestart`): the detached timer no longer
+    /// has the password, and keeping it in a root process for up to the whole delay is not an option.
     static func delayedPower(_ action: PowerAction, minutes: Int, warning: String?) -> RemoteScript {
         let verb: String
         switch action {
@@ -196,9 +239,19 @@ public extension Scripts {
             fi
             """#
         }
+        var arm = ""
+        if action == .restart {
+            arm = #"""
+            \#(fileVaultArmFunction)
+            if cmcr_arm_authrestart "przy zaplanowanym restarcie" && [ "$(fdesetup isactive 2>/dev/null)" = "true" ]; then
+              echo "  Odblokowanie pozostaje uzbrojone do najbliższego restartu – także gdy anulujesz zaplanowany restart."
+            fi
+            """#
+        }
         return RemoteScript(#"""
         TAG="cmcr-delayed""-power"
         pkill -f "$TAG" >/dev/null 2>&1
+        \#(arm)
         \#(warn)
         ( trap '' HUP; exec /bin/bash --noprofile --norc -c 'sleep "$1"; case "$2" in restart) shutdown -r now ;; shutdown) shutdown -h now ;; sleep) pmset sleepnow ;; esac' "$TAG" \#(secs) \#(verb) ) </dev/null >/dev/null 2>&1 &
         echo "✔ \#(action.label): za \#(max(0, minutes)) min (ok. $(date -v+\#(secs)S +%H:%M)). Można to anulować przyciskiem „Anuluj zaplanowane”."
@@ -209,7 +262,12 @@ public extension Scripts {
         RemoteScript(#"""
         TAG="cmcr-delayed""-power"
         if pgrep -f "$TAG" >/dev/null 2>&1; then
+          RESTART_PENDING=0
+          pgrep -f "$TAG [0-9]+ restart" >/dev/null 2>&1 && RESTART_PENDING=1
           pkill -f "$TAG" && echo "✔ Anulowano zaplanowane wyłączenie, restart lub uśpienie."
+          if [ $RESTART_PENDING = 1 ] && [ "$(fdesetup isactive 2>/dev/null)" = "true" ]; then
+            echo "⚠︎ FileVault: jeśli przy planowaniu restartu uzbrojono jednorazowe odblokowanie dysku (fdesetup authrestart), zostaje ono uzbrojone do najbliższego restartu – macOS nie pozwala go cofnąć. Przy tym restarcie iMac uruchomi się bez pytania o hasło FileVault (okno logowania zostaje)."
+          fi
         else
           echo "Nic nie było zaplanowane."
         fi

@@ -149,6 +149,11 @@ public struct ReadinessReport: Sendable {
         return report
     }
 
+    /// macOS 15+ asks the logged-in user again from time to time whether the remote session may keep
+    /// recording the screen (replayd's "bypass the system private window picker" alert). It appears on the
+    /// student's screen and in the preview; the app cannot answer it.
+    public static let screenCaptureAlertNote = "Od macOS 15 system co jakiś czas (zwykle raz w miesiącu, na niektórych Macach przy każdym nowym połączeniu) pokazuje osobie przy komputerze okno, że „sshd-session” / „sshd-keygen-wrapper” chce mieć dostęp do ekranu z pominięciem systemowego wyboru okien. Okno widać też w podglądzie. Podgląd działa dalej po zezwoleniu (po angielsku „Allow For One Month”); po odmowie albo „Otwórz Ustawienia systemowe” pokazuje tylko tapetę, dopóki ktoś nie zezwoli przy komputerze."
+
     public static func parse(_ text: String, student: String, sharedFolder: String,
                              expectedVersion: String = SetupScript.version, date: Date = Date()) -> ReadinessReport {
         let v = Parsers.keyValues(text)
@@ -208,18 +213,24 @@ public struct ReadinessReport: Sendable {
         }
 
         let tccReadable = v["tcc"] == "readable"
+        // The preflight runs through the same process chain as the preview (launchctl asuser from the SSH
+        // session), so it is right whichever SSH binary macOS holds responsible (sshd-keygen-wrapper, or
+        // sshd-session since OpenSSH 9.8). The TCC.db rows are only the fallback.
         let screenGranted: Bool?
-        if tccReadable, let t = v["tcc_screen"] {
-            screenGranted = t == "2"
-        } else if let p = v["screen_preflight"], p == "true" || p == "false" {
+        if let p = v["screen_preflight"], p == "true" || p == "false" {
             screenGranted = p == "true"
+        } else if tccReadable, let t = v["tcc_screen"], !t.isEmpty {
+            screenGranted = t == "2"
         } else {
             screenGranted = nil
         }
+        let osMajor = Int((v["os"] ?? "").split(separator: ".").first ?? "") ?? 0
+        let alertNote = osMajor >= 15 ? " " + ReadinessReport.screenCaptureAlertNote : ""
         switch screenGranted {
-        case true?: items[.screen] = ReadinessItem(.ok, "zezwolono", "sshd-keygen-wrapper ma uprawnienie „Nagrywanie ekranu” – podgląd ekranu działa.")
+        case true?: items[.screen] = ReadinessItem(.ok, "zezwolono",
+            "Sesje SSH mają uprawnienie „Nagrywanie ekranu” – podgląd ekranu działa.\(alertNote)")
         case false?: items[.screen] = ReadinessItem(.manual, "ręcznie",
-            "Brak uprawnienia „Nagrywanie ekranu” dla /usr/libexec/sshd-keygen-wrapper – podgląd pokaże tylko tapetę. Trzeba je nadać przy komputerze (Otwórz instrukcję).")
+            "Sesje SSH nie mają uprawnienia „Nagrywanie ekranu” (/usr/libexec/sshd-keygen-wrapper, w nowszych macOS także /usr/libexec/sshd-session) – podgląd pokaże tylko tapetę. Trzeba je nadać przy komputerze (Otwórz instrukcję).\(alertNote)")
         case nil:
             let why: String
             if !sudoWorks && v["console"].map({ $0 != v["admin"] }) ?? true {
@@ -385,7 +396,8 @@ public extension Scripts {
         echo "root=ok"
         echo "folder=$(folder_state "$5" "$6")"
         DB="$R/Library/Application Support/com.apple.TCC/TCC.db"
-        tcc() { sqlite3 -readonly "$DB" "SELECT IFNULL(MAX(auth_value),-1) FROM access WHERE service='$1' AND client LIKE '%sshd-keygen-wrapper';" 2>/dev/null; }
+        # The SSH session's grant: sshd-keygen-wrapper, or sshd-session (path or bundle id) since OpenSSH 9.8.
+        tcc() { sqlite3 -readonly "$DB" "SELECT IFNULL(MAX(auth_value),-1) FROM access WHERE service='$1' AND (client LIKE '%sshd-keygen-wrapper' OR client LIKE '%sshd-session');" 2>/dev/null; }
         F="$(tcc kTCCServiceSystemPolicyAllFiles)"
         if [ -n "$F" ]; then
           echo "tcc=readable"; echo "tcc_fda=$F"; echo "tcc_screen=$(tcc kTCCServiceScreenCapture)"

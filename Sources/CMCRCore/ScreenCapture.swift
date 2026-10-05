@@ -6,6 +6,8 @@ import Foundation
 public extension ScriptCode {
     /// The capture needs sudo (`launchctl asuser`) and sudo failed: no stored password, a wrong one, or no rights.
     static let captureSudoFailed: Int32 = 6
+    /// The observed user could not be shown the "your screen is being viewed" notice, so nothing was captured.
+    static let observeNotNotified: Int32 = 8
 }
 
 /// Which display of the observed Mac is captured.
@@ -95,6 +97,8 @@ public enum ScreenIssue: Equatable, Sendable {
     case sudoPasswordWrong
     case sudoNotPermitted
     case captureFailed(String)
+    /// The observation notice could not be shown to this user, so the screen is not captured (user, detail).
+    case notifyFailed(String, String)
     case connection(Reachability, String)
     case other(String)
 
@@ -106,8 +110,12 @@ public enum ScreenIssue: Equatable, Sendable {
         }
     }
 
-    /// The image must not stay on screen (another user, or a session the restrictions exclude).
-    public var hidesImage: Bool { isIdle }
+    /// The image must not stay on screen (another user, a session the restrictions exclude, or a user who
+    /// was not told about the observation).
+    public var hidesImage: Bool {
+        if case .notifyFailed = self { return true }
+        return isIdle
+    }
 
     public var title: String {
         switch self {
@@ -117,6 +125,7 @@ public enum ScreenIssue: Equatable, Sendable {
         case .sudoPasswordWrong: return "Błędne hasło administratora"
         case .sudoNotPermitted: return "Konto bez uprawnień sudo"
         case .captureFailed: return "Brak uprawnienia do nagrywania ekranu"
+        case .notifyFailed: return "Nie udało się powiadomić ucznia"
         case .connection(let r, _): return r == .offline ? "Komputer nie odpowiada" : r == .authFailed ? "Odmowa dostępu" : "Błąd połączenia"
         case .other: return "Błąd podglądu"
         }
@@ -137,7 +146,10 @@ public enum ScreenIssue: Equatable, Sendable {
         case .sudoNotPermitted:
             return "Konto, którym łączy się aplikacja, nie może używać sudo (nie jest administratorem tego Maca)."
         case .captureFailed(let detail):
-            let base = "Zrzut ekranu nieudany. Na tym Macu nadaj uprawnienie „Nagrywanie ekranu i dźwięku systemowego” dla /usr/libexec/sshd-keygen-wrapper (Ustawienia systemowe › Prywatność i ochrona)."
+            let base = "Zrzut ekranu nieudany. Na tym Macu nadaj sesjom SSH uprawnienie „Nagrywanie ekranu i dźwięku systemowego”: Ustawienia systemowe › Prywatność i ochrona › „+” › /usr/libexec/sshd-keygen-wrapper (w nowszych macOS może być potrzebne także /usr/libexec/sshd-session). Konfiguracja › Przygotowanie iMaców pokazuje, czy działa."
+            return detail.isEmpty ? base : "\(base) (\(detail))"
+        case .notifyFailed(let user, let detail):
+            let base = "Na ekranie użytkownika \(user) nie udało się wyświetlić informacji o podglądzie, więc obraz nie jest pobierany. Kolejna próba przy następnym odświeżeniu."
             return detail.isEmpty ? base : "\(base) (\(detail))"
         case .connection(_, let message), .other(let message):
             return message
@@ -150,6 +162,7 @@ public enum ScreenIssue: Equatable, Sendable {
         case .userNotAllowed, .adminAccount: return "eye.slash"
         case .sudoPasswordMissing, .sudoPasswordWrong, .sudoNotPermitted: return "key.slash"
         case .captureFailed: return "rectangle.dashed.badge.record"
+        case .notifyFailed: return "bell.slash"
         case .connection(let r, _): return r == .offline ? "wifi.slash" : "exclamationmark.triangle"
         case .other: return "exclamationmark.triangle"
         }
@@ -162,6 +175,7 @@ public enum ScreenIssue: Equatable, Sendable {
         case .userNotAllowed, .adminAccount: return ScriptCode.observeDenied
         case .sudoPasswordMissing, .sudoPasswordWrong, .sudoNotPermitted: return ScriptCode.captureSudoFailed
         case .captureFailed: return ScriptCode.captureFailed
+        case .notifyFailed: return ScriptCode.observeNotNotified
         case .connection, .other: return 1
         }
     }
@@ -175,6 +189,7 @@ public enum ScreenIssue: Equatable, Sendable {
         case "sudo-wrong": self = .sudoPasswordWrong
         case "sudo-denied": self = .sudoNotPermitted
         case "capture": self = .captureFailed(detail)
+        case "notify": self = .notifyFailed(user.isEmpty ? "?" : user, detail)
         case "error": self = .other(detail.isEmpty ? "Błąd skryptu podglądu." : detail)
         default: return nil
         }
@@ -304,6 +319,7 @@ public extension Scripts {
         CMCR_NOTIFY=\#(o.notify ? 1 : 0)
         CMCR_LAST=\#(shQuote(o.alreadyNotifiedUser ?? ""))
         CMCR_DISPLAY=\#(shQuote(o.display.scriptValue))
+        SCR_NOTICE="$(echo \#(Data(observeNoticeJXA().utf8).base64EncodedString()) | base64 -D)"
         if [ -n "${SCR_IN_SET:-}" ]; then
           CMCR_MAXSIZE="$SCR_IN_SIZE"; CMCR_INTERVAL="$SCR_IN_INTERVAL"; CMCR_DISPLAY="$SCR_IN_DISPLAY"; CMCR_LAST="$SCR_IN_LAST"
         fi
@@ -349,12 +365,45 @@ public extension Scripts {
           fi
           return 0
         }
+        # Tells a user who was not told yet that the screen is being viewed. The notice is a small panel drawn by
+        # osascript in the user's session (Scripts.observeNoticeJXA): unlike `display notification` it needs no
+        # Notification Center permission and Focus does not hide it, and it confirms that it is on screen
+        # (CMCR:NOTICE:shown). Without that confirmation the user counts as not notified: nothing is captured
+        # (STATE notify) and the next cycle tries again.
         scr_notify() {
           [ "$CMCR_NOTIFY" = 1 ] || return 0
           [ "$CONSOLE_USER" = "$CMCR_LAST" ] && return 0
-          scr_gui_user /usr/bin/osascript -e 'display notification "Administrator rozpoczął podgląd Twojego ekranu." with title "Podgląd ekranu"' </dev/null >/dev/null 2>&1
-          CMCR_LAST="$CONSOLE_USER"
-          scr_emit NOTIFIED "$CONSOLE_USER"
+          local out="$SCR_DIR/notice.out" err="$SCR_DIR/notice.err" pid i=0 state="" rc="" detail="" why
+          : > "$out"; : > "$err"
+          scr_gui_user /usr/bin/osascript -l JavaScript -e "$SCR_NOTICE" CMCR_OBSERVE_NOTICE </dev/null >"$out" 2>"$err" &
+          pid=$!
+          # The panel stays up for a few seconds after it answers; only its answer is awaited (≤ 6 s).
+          while [ $i -lt 60 ]; do
+            state="$(sed -n 's/^CMCR:NOTICE://p' "$out" 2>/dev/null | head -n 1)"
+            [ -n "$state" ] && break
+            if ! kill -0 "$pid" 2>/dev/null; then
+              wait "$pid" 2>/dev/null; rc=$?
+              state="$(sed -n 's/^CMCR:NOTICE://p' "$out" 2>/dev/null | head -n 1)"
+              break
+            fi
+            sleep 0.1; i=$((i + 1))
+          done
+          if [ "$state" = shown ]; then
+            CMCR_LAST="$CONSOLE_USER"
+            scr_emit NOTIFIED "$CONSOLE_USER"
+            return 0
+          fi
+          if [ "$state" = hidden ]; then detail="okno komunikatu nie pojawiło się na ekranie"
+          elif [ -n "$rc" ]; then detail="osascript zakończył się kodem $rc"
+          else
+            kill "$pid" 2>/dev/null
+            detail="brak potwierdzenia wyświetlenia w ciągu 6 s"
+          fi
+          why="$(grep -v '^ *$' "$err" 2>/dev/null | head -n 1)"
+          [ -n "$why" ] && detail="$detail: $why"
+          scr_emit STATE notify "$CONSOLE_USER" "$detail"
+          SCR_RC=\#(ScriptCode.observeNotNotified)
+          return 1
         }
         scr_front() {
           local asn raw
@@ -460,10 +509,15 @@ public extension Scripts {
             if scr_allowed; then
               # Someone else is logged in: from now on the capture needs root (the caller re-executes the loop).
               if [ "${CMCR_SCREEN_ROLE:-}" != root ] && [ "$SCR_ME" != 0 ] && [ "$CONSOLE_UID" != "$SCR_ME" ]; then return 7; fi
-              scr_notify
-              scr_front
-              scr_emit INFO "$CONSOLE_USER" "$SCR_FRONT"
-              if scr_capture; then SCR_FAILS=0; else SCR_FAILS=$((SCR_FAILS + 1)); fi
+              if scr_notify; then
+                scr_front
+                scr_emit INFO "$CONSOLE_USER" "$SCR_FRONT"
+                if scr_capture; then SCR_FAILS=0; else SCR_FAILS=$((SCR_FAILS + 1)); fi
+              else
+                # Not told about the observation: neither the screen nor the frontmost app is read.
+                scr_emit INFO "$CONSOLE_USER" ""
+                SCR_FAILS=$((SCR_FAILS + 1))
+              fi
             else
               scr_emit INFO "$CONSOLE_USER" ""
             fi
@@ -479,7 +533,7 @@ public extension Scripts {
           asroot /bin/bash --noprofile --norc -c 'CMCR_TMP="$1"; export CMCR_TMP; CMCR_SCREEN_ROLE=root; SCR_IN_SET=1; SCR_IN_SIZE="$2"; SCR_IN_INTERVAL="$3"; SCR_IN_DISPLAY="$4"; SCR_IN_LAST="$5"; source "$CMCR_TMP/lib.sh"; source "$CMCR_TMP/body.sh"' \
             cmcr "$CMCR_TMP" "$CMCR_MAXSIZE" "$CMCR_INTERVAL" "$CMCR_DISPLAY" "$CMCR_LAST" 2>"$CMCR_TMP/sudo.err"
           rc=$?
-          case $rc in 0|3|4|5) return $rc ;; esac
+          case $rc in 0|3|4|5|\#(ScriptCode.observeNotNotified)) return $rc ;; esac
           if grep -qiE 'incorrect password|sorry, try again' "$CMCR_TMP/sudo.err" 2>/dev/null; then reason=sudo-wrong
           elif [ $rc = 91 ] || grep -qiE 'Brak hasła|password is required|no password was provided|terminal is required' "$CMCR_TMP/sudo.err" 2>/dev/null; then reason=sudo-missing
           elif grep -qiE 'not in the sudoers|not allowed to' "$CMCR_TMP/sudo.err" 2>/dev/null; then reason=sudo-denied
@@ -498,6 +552,68 @@ public extension Scripts {
         if [ $RC = 7 ]; then scr_run_root; exit $?; fi
         exit $RC
         """#)
+    }
+
+    static let observeNoticeTitle = "Podgląd ekranu"
+    static let observeNoticeText = "Administrator rozpoczął podgląd Twojego ekranu."
+
+    /// The observation notice: a panel in the top right corner of every display for `seconds`, drawn by
+    /// `osascript -l JavaScript` in the observed user's session. It never takes the keyboard (non-activating
+    /// panel of an accessory app, so macOS 14+ cooperative activation does not matter), ignores the mouse,
+    /// shows over full-screen apps and needs no Notification Center permission. It prints
+    /// `CMCR:NOTICE:shown` once the panel is on screen (`CMCR:NOTICE:hidden` otherwise) and quits by itself
+    /// – the timer that ends it is set up before anything is reported. `--dry-run` builds the panels
+    /// without showing them.
+    static func observeNoticeJXA(title: String = observeNoticeTitle, text: String = observeNoticeText,
+                                 seconds: Int = 8) -> String {
+        """
+        ObjC.import('Cocoa');
+        function say(s) {
+          $.NSFileHandle.fileHandleWithStandardOutput.writeData($(s + '\\n').dataUsingEncoding($.NSUTF8StringEncoding));
+        }
+        function run(argv) {
+          var dry = argv.indexOf('--dry-run') >= 0;
+          var app = $.NSApplication.sharedApplication;
+          app.setActivationPolicy(1);
+          var screens = $.NSScreen.screens;
+          var panels = [];
+          for (var i = 0; i < screens.count; i++) {
+            var vf = screens.objectAtIndex(i).visibleFrame;
+            var w = 420, h = 96, pad = 16;
+            var rect = {origin: {x: vf.origin.x + vf.size.width - w - pad, y: vf.origin.y + vf.size.height - h - pad},
+                        size: {width: w, height: h}};
+            var p = $.NSPanel.alloc.initWithContentRectStyleMaskBackingDefer(rect, 128, 2, false);
+            p.setLevel(1001);
+            p.setOpaque(false);
+            p.setHasShadow(true);
+            p.setIgnoresMouseEvents(true);
+            p.setHidesOnDeactivate(false);
+            p.setCollectionBehavior(1 | 16 | 64 | 256);
+            p.setBackgroundColor($.NSColor.colorWithSRGBRedGreenBlueAlpha(0.10, 0.12, 0.18, 0.96));
+            var t = $.NSTextField.labelWithString(\(Scripts.jsLiteral(title)));
+            t.setFont($.NSFont.boldSystemFontOfSize(16));
+            t.setTextColor($.NSColor.whiteColor);
+            t.setFrame({origin: {x: 18, y: h - 38}, size: {width: w - 36, height: 22}});
+            p.contentView.addSubview(t);
+            var m = $.NSTextField.wrappingLabelWithString(\(Scripts.jsLiteral(text)));
+            m.setFont($.NSFont.systemFontOfSize(14));
+            m.setTextColor($.NSColor.colorWithSRGBRedGreenBlueAlpha(1.0, 1.0, 1.0, 0.88));
+            m.setFrame({origin: {x: 18, y: 12}, size: {width: w - 36, height: h - 54}});
+            p.contentView.addSubview(m);
+            panels.push(p);
+          }
+          if (dry) { return 'panels=' + panels.length; }
+          $.NSTimer.scheduledTimerWithTimeIntervalTargetSelectorUserInfoRepeats(\(max(2, seconds)), app, 'terminate:', null, false);
+          var shown = false;
+          for (var j = 0; j < panels.length; j++) {
+            panels[j].orderFrontRegardless;
+            if (panels[j].isVisible) { shown = true; }
+          }
+          say(shown ? 'CMCR:NOTICE:shown' : 'CMCR:NOTICE:hidden');
+          if (!shown) { return; }
+          app.run;
+        }
+        """
     }
 
     /// Single capture with the restrictions (kept for callers of the original API).
