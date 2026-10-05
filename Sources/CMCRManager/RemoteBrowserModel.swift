@@ -26,6 +26,8 @@ final class RemoteBrowserModel: ObservableObject {
     @Published private(set) var listing: RemoteListing? { didSet { refilter() } }
     @Published private(set) var phase: Phase = .idle
     @Published var asRoot = false
+    /// A folder the administrator may not read is opened again with sudo (when a password is stored).
+    var autoElevate = true
     @Published var showHidden = false { didSet { refilter() } }
     @Published var search = "" { didSet { refilter() } }
     @Published var sortOrder = [KeyPathComparator(\RemoteEntry.name, comparator: .localizedStandard)] {
@@ -185,6 +187,9 @@ final class RemoteBrowserModel: ObservableObject {
                 self.pendingSelection = nil
             case .failure(.cancelled):
                 self.phase = self.listing == nil ? .idle : .loaded
+            case .failure(.accessDenied) where !root && self.autoElevate && !(password ?? "").isEmpty:
+                self.asRoot = true
+                self.load(target, keepSelection: keepSelection)
             case .failure(let e):
                 self.listing = nil
                 self.phase = .failed(e)

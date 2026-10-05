@@ -17,9 +17,10 @@ public extension Operations {
 
     /// Whether `path` exists as a folder on `host` (quick check used by the folder picker).
     static func folderPresence(_ path: String, on host: Machine, asRoot: Bool, password: String?,
-                               settings: SSHSettings, timeout: TimeInterval = 20) async -> FolderPresence {
+                               settings: SSHSettings, timeout: TimeInterval = 20,
+                               handle: ProcessHandle? = nil) async -> FolderPresence {
         let r = await SSH.run(Scripts.folderPresence(path, asRoot: asRoot), on: host, password: password,
-                              settings: settings, timeout: timeout)
+                              settings: settings, timeout: timeout, handle: handle)
         guard r.succeeded else {
             switch RemoteBrowseError.from(r) {
             case .noConsoleUser: return .noConsoleUser

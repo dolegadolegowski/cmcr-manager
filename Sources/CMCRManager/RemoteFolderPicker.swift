@@ -27,6 +27,9 @@ struct RemoteFolderPicker: View {
     @StateObject private var browser: RemoteBrowserModel
     @ViewState private var preferConsole = false
     @ViewState private var prompt: NamePrompt?
+    /// Whether the chosen folder exists on each selected Mac.
+    @ViewState private var presence: [UUID: FolderPresence] = [:]
+    @ViewState private var presenceChecking = false
 
     init(app: AppModel, request: RemoteFolderRequest) {
         self.request = request
@@ -53,6 +56,7 @@ struct RemoteFolderPicker: View {
             browser.open(start, on: browser.preferredHostID())
         }
         .onDisappear { browser.cancel() }
+        .task(id: browser.isLoading ? "" : "\(chosenPath)|\(browser.asRoot)") { await checkPresence() }
         .namePrompt($prompt, folder: browser.path) { _, name in browser.makeFolder(named: name) }
     }
 
@@ -163,7 +167,11 @@ struct RemoteFolderPicker: View {
 
     var footer: some View {
         HStack(spacing: 12) {
-            RemoteFolderLabel(path: chosenPath, settings: model.settings)
+            VStack(alignment: .leading, spacing: 6) {
+                RemoteFolderLabel(path: chosenPath, settings: model.settings)
+                presenceLine
+                    .font(.callout)
+            }
             Spacer(minLength: 12)
             if consoleApplies {
                 Toggle("Zawsze folder zalogowanego użytkownika", isOn: $preferConsole)
@@ -177,6 +185,117 @@ struct RemoteFolderPicker: View {
                 .disabled(browser.path.isEmpty || browser.isLoading)
         }
         .padding(16)
+    }
+
+    // MARK: Presence on the selected Macs
+
+    @ViewBuilder var presenceLine: some View {
+        let targets = model.selectedMachines
+        if presenceChecking {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Sprawdzanie, czy ten folder jest na zaznaczonych komputerach (\(targets.count))…")
+                    .foregroundStyle(.secondary)
+            }
+        } else if let summary = Self.presenceSummary(presence, targets: targets, purpose: request.purpose) {
+            Label {
+                Text(summary.text)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: summary.warning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(summary.warning ? .orange : .green)
+            }
+            .help(summary.details)
+        }
+    }
+
+    /// Checks the chosen folder on every selected Mac (only when more than one is selected).
+    func checkPresence() async {
+        presence = [:]
+        let targets = model.selectedMachines
+        let path = chosenPath
+        guard targets.count > 1, !path.isEmpty, !browser.isLoading else {
+            presenceChecking = false
+            return
+        }
+        presenceChecking = true
+        try? await Task.sleep(for: .milliseconds(600))
+        guard !Task.isCancelled else { return }
+        let resolved = model.settings.resolve(path)
+        let root = browser.asRoot
+        let settings = model.sshSettings
+        let checks = targets.map { m in
+            (machine: m, password: model.password(for: m), offline: model.status(m).reachability == .offline,
+             handle: ProcessHandle())
+        }
+        let handles = checks.map(\.handle)
+        let results = await withTaskCancellationHandler {
+            await withTaskGroup(of: (UUID, FolderPresence).self, returning: [UUID: FolderPresence].self) { group in
+                for c in checks {
+                    group.addTask {
+                        if c.offline { return (c.machine.id, .unreachable) }
+                        let p = await Operations.folderPresence(resolved, on: c.machine,
+                                                                asRoot: root && !(c.password ?? "").isEmpty,
+                                                                password: c.password, settings: settings,
+                                                                handle: c.handle)
+                        return (c.machine.id, p)
+                    }
+                }
+                var out: [UUID: FolderPresence] = [:]
+                for await (id, p) in group { out[id] = p }
+                return out
+            }
+        } onCancel: {
+            handles.forEach { $0.cancel() }
+        }
+        guard !Task.isCancelled else { return }
+        presence = results
+        presenceChecking = false
+    }
+
+    struct PresenceSummary: Equatable {
+        let text: String
+        let details: String
+        let warning: Bool
+    }
+
+    static func presenceSummary(_ results: [UUID: FolderPresence], targets: [Machine],
+                                purpose: RemoteFolderRequest.Purpose) -> PresenceSummary? {
+        guard !results.isEmpty else { return nil }
+        func list(_ names: [String]) -> String {
+            names.prefix(5).joined(separator: ", ") + (names.count > 5 ? " i \(names.count - 5) innych" : "")
+        }
+        let checked = targets.filter { results[$0.id] != nil }
+        let missing = checked.filter { results[$0.id] == .missing || results[$0.id] == .notFolder }.map(\.name)
+        let unchecked = checked.filter {
+            guard let p = results[$0.id] else { return false }
+            return p != .exists && p != .missing && p != .notFolder
+        }
+        let details = checked.map { "\($0.name): \(results[$0.id]?.label ?? "")" }.joined(separator: "\n")
+        if missing.isEmpty && unchecked.isEmpty {
+            return PresenceSummary(text: "Ten folder jest na wszystkich zaznaczonych komputerach (\(checked.count)).",
+                                   details: details, warning: false)
+        }
+        var parts: [String] = []
+        if !missing.isEmpty {
+            let consequence: String
+            switch purpose {
+            case .pushDestination: consequence = "zostanie utworzony podczas wysyłania"
+            case .collectSource: consequence = "z tych komputerów nic nie zostanie zebrane"
+            case .cleanFolder: consequence = "tam nie ma czego czyścić"
+            }
+            parts.append("Brak folderu na \(missing.count) z \(checked.count): \(list(missing)) – \(consequence).")
+        }
+        if !unchecked.isEmpty {
+            let names = unchecked.map { m -> String in
+                guard let p = results[m.id] else { return m.name }
+                if case .failed = p { return "\(m.name) (błąd)" }
+                return "\(m.name) (\(p.label))"
+            }
+            parts.append("Nie sprawdzono: \(list(names)).")
+        }
+        return PresenceSummary(text: parts.joined(separator: " "), details: details, warning: true)
     }
 
     // MARK: Choice
