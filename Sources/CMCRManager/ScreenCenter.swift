@@ -349,19 +349,27 @@ final class ScreenCenter: ObservableObject {
                 }
                 return
             }
+            // A paused remote loop sends nothing, and a new interval changes when the next message is due:
+            // after any command the watchdog counts from now.
             if s.remotePaused {
                 trace(host, "wznowienie")
                 stream.send(.resume)
                 s.remotePaused = false
-                // A paused remote loop sends nothing: the watchdog starts counting again from now.
                 s.lastMessage = now
             }
             if s.sent.pixels != merged.pixels {
                 trace(host, "rozmiar \(merged.pixels) px")
                 stream.send(.size(merged.pixels))
+                s.lastMessage = now
             }
-            if s.sent.interval != merged.interval { stream.send(.interval(merged.interval)) }
-            if s.sent.display != display { stream.send(.display(display)) }
+            if s.sent.interval != merged.interval {
+                stream.send(.interval(merged.interval))
+                s.lastMessage = now
+            }
+            if s.sent.display != display {
+                stream.send(.display(display))
+                s.lastMessage = now
+            }
             s.sent = (merged.pixels, merged.interval, display)
             if feed.phase == .paused { feed.set(\.phase, .live) }
             if let last = s.lastMessage, now.timeIntervalSince(last) > ScreenSchedule.watchdogLimit(interval: merged.interval) {
