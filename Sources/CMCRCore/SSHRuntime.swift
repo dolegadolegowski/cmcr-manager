@@ -143,6 +143,27 @@ public final class HostGate: @unchecked Sendable {
     }
 }
 
+extension SSH {
+    /// Cheap check whether a Mac's ssh port answers: a TCP connect (`nc -z`), no login and no sshd session.
+    /// A refused connection also counts (the Mac is on, Remote Login is off). nil when it cannot tell: the
+    /// connection goes through ProxyJump/ProxyCommand, or nc could not run.
+    public static func portAnswers(_ host: Machine, settings: SSHSettings, timeout: Int = 3) async -> Bool? {
+        let routed = settings.extraOptions.contains { option in
+            let name = option.lowercased().trimmingCharacters(in: .whitespaces)
+            return name.hasPrefix("proxyjump") || name.hasPrefix("proxycommand")
+        }
+        guard !routed else { return nil }
+        // Resolving a .local name that nobody answers takes a few seconds before the connect timeout starts.
+        let r = await ProcessRunner.run("/usr/bin/nc", ["-z", "-v", "-G", String(timeout), "--", host.address, String(host.port)],
+                                        timeout: TimeInterval(timeout + 6))
+        if r.succeeded { return true }
+        if r.timedOut || r.cancelled { return false }
+        let err = r.stderrText.lowercased()
+        if err.contains("connection refused") { return true }
+        return r.exitCode == 1 ? false : nil
+    }
+}
+
 /// A flag set from any thread.
 final class OutputFlag: @unchecked Sendable {
     private let lock = NSLock()
@@ -152,18 +173,24 @@ final class OutputFlag: @unchecked Sendable {
 }
 
 /// ssh's messages about shared connections ("mux_client_request_session: … refused", "ControlSocket … already
-/// exists") are not the command's output.
+/// exists") and the wrapper's start marker are not the command's output.
 enum SSHNoise {
     static let markers = ["mux_client_", "muxclient: ", "ControlSocket ", "Control socket connect("].map { Data($0.utf8) }
+    static let startLine = Data((RemoteScript.startMarker + "\n").utf8)
+
+    static func containsStartMarker(_ data: Data) -> Bool {
+        data.range(of: startLine) != nil
+    }
 
     static func filter(_ data: Data) -> Data {
-        guard !data.isEmpty, markers.contains(where: { data.range(of: $0) != nil }) else { return data }
+        guard !data.isEmpty,
+              markers.contains(where: { data.range(of: $0) != nil }) || data.range(of: startLine) != nil else { return data }
         var out = Data()
         var start = data.startIndex
         while start < data.endIndex {
             let end = data[start...].firstIndex(of: 0x0A).map { $0 + 1 } ?? data.endIndex
             let line = data[start..<end]
-            if !markers.contains(where: { line.starts(with: $0) }) { out.append(line) }
+            if !markers.contains(where: { line.starts(with: $0) }) && line != startLine { out.append(line) }
             start = end
         }
         return out

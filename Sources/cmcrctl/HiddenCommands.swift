@@ -7,6 +7,7 @@ import Foundation
 ///       runs the command as a cancellable remote job, like the app does; prints `CMCR:JOB:<id>` first
 ///       and `CMCR:RESULT …` last
 ///   cmcrctl __forget-host-key nr
+///   cmcrctl __close-master nr
 enum HiddenCommands {
     static func run(_ command: String, _ args: [String], select: (String?) -> [Machine], root: Bool,
                     settings: SSHSettings) async -> Int32 {
@@ -43,6 +44,11 @@ enum HiddenCommands {
             FileHandle.standardOutput.write(r.stdout)
             FileHandle.standardError.write(r.stderr)
             return r.exitCode
+
+        case "__close-master":
+            guard let spec = args.first, let host = select(spec).first else { return 2 }
+            await SSH.closeMaster(host, settings: settings)
+            return 0
 
         default:
             return 2

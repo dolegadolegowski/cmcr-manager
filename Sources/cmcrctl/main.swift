@@ -169,7 +169,7 @@ case "open-app", "quit-app":
         status = max(status, report(r))
     }
 
-case "__run-job", "__forget-host-key":
+case "__run-job", "__forget-host-key", "__close-master":
     status = await HiddenCommands.run(command, Array(args.dropFirst()), select: selectHosts, root: root, settings: sshSettings)
 
 default:
