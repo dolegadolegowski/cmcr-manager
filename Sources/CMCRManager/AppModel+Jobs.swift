@@ -69,6 +69,20 @@ extension AppModel {
         selection = Set(machines.map(\.id)).subtracting(selection)
     }
 
+    /// Files dropped on a host in the list: prepare them for sending in Pliki with that host as the target.
+    @discardableResult
+    func dropFiles(_ urls: [URL], on m: Machine) -> Bool {
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty else { return false }
+        for url in files where !pushItems.contains(url) { pushItems.append(url) }
+        if !selection.contains(m.id) { selection = [m.id] }
+        section = .files
+        let target = selection.count == 1 ? m.name : Polish.computers(selection.count)
+        showToast(Toast(message: "Dodano \(Polish.files(files.count)) do wysłania (cel: \(target)) – sprawdź folder docelowy i wyślij.",
+                        icon: "tray.and.arrow.up"))
+        return true
+    }
+
     /// Runs `action` (which starts batches synchronously) with `ids` turned into skipped jobs.
     func perform(skipping ids: Set<UUID>, reason: Job.SkipReason, _ action: () -> Void) {
         pendingSkip = ids.isEmpty ? nil : (ids, reason)
