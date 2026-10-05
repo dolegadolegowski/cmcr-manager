@@ -339,7 +339,7 @@ struct UpdateSettingsSection: View {
                         .buttonStyle(.borderedProminent)
                         .help("Pokazuje, co nowego, i pozwala zainstalować uaktualnienie (w głównym oknie)")
                 } label: {
-                    SettingLabel(title: "Dostępna nowa wersja \(c.manifest.version)", caption: "Kliknij, aby zobaczyć zmiany i zainstalować",
+                    SettingLabel(title: "Dostępna nowa wersja \(c.manifest.version)", caption: "Zobacz opis zmian i zainstaluj uaktualnienie",
                                  icon: "arrow.down.circle.fill", color: .accentColor)
                 }
             }
