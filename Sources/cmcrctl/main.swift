@@ -18,6 +18,8 @@ Użycie:
   cmcrctl pull all|nr [--root]              cmcr-pull: folder ucznia → ~/Public/cmcr/<host>
   cmcrctl apps nr                           uruchomione aplikacje użytkownika
   cmcrctl screenshot nr plik.jpg            zrzut ekranu zalogowanego użytkownika
+  cmcrctl screen-watch nr katalog [--frames N] [--interval S] [--display main|all|N]
+                                            podgląd na żywo (jedno połączenie, klatki do katalogu)
   cmcrctl open-app "Nazwa" [all|nr]         uruchom aplikację u zalogowanego użytkownika
   cmcrctl quit-app "Nazwa" [all|nr] [--force]  zamknij aplikację
   cmcrctl render "polecenie" [--root]       pokaż skrypt wykonywany zdalnie
@@ -158,6 +160,9 @@ case "screenshot":
     } else {
         fail(shot.message ?? "Błąd")
     }
+
+case "screen-watch":
+    status = await screenWatchCommand(Array(args.dropFirst()))
 
 case "open-app", "quit-app":
     guard args.count > 1 else { fail("Podaj nazwę aplikacji.") }
