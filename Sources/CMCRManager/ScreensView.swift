@@ -43,6 +43,7 @@ struct ScreensView: View {
                     .padding(.horizontal, 6)
             }
         }
+        .overlay(alignment: .bottom) { ScreenBatchBanner().padding(16) }
         .screenScope(pausesWhenInactive: true)
         .task {
             // Start-up hook for scripted UI checks: CMCR_OPEN_SCREEN_WALL=1 opens the screen wall window.

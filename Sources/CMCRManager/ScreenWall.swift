@@ -125,6 +125,7 @@ struct ScreenWallView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .bottom) { ScreenBatchBanner().padding(16) }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ScreenRestrictionsBar()
                 .padding(.horizontal, 14)
@@ -257,7 +258,7 @@ private struct ScreenWindowContent: View {
     @Environment(\.displayScale) private var displayScale
     let machine: Machine
     @ObservedObject var feed: ScreenFeed
-    @AppStorage("screenWindow.onTop") private var alwaysOnTop = false
+    @ViewState private var alwaysOnTop = false
     @ViewState private var window: NSWindow?
     @ViewState private var composing = false
     @ViewState private var width: Double = 1000
@@ -276,6 +277,7 @@ private struct ScreenWindowContent: View {
                 pixels: ScreenLayout.captureSize(points: width, scale: displayScale,
                                                  cap: max(1600, model.settings.screenshotMaxSize)),
                 interval: max(2, model.settings.screenshotInterval / 2)))
+            .overlay(alignment: .bottom) { ScreenBatchBanner().padding(16) }
             .toolbar { toolbar }
             .navigationTitle(machine.name)
             .navigationSubtitle(subtitle)
