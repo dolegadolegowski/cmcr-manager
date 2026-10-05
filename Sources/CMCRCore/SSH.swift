@@ -7,7 +7,8 @@ import Foundation
 /// - `asroot cmd…`          – run as root (sudo with the password supplied through SUDO_ASKPASS),
 /// - `as_console_user cmd…` – run inside the GUI session of the user logged in at the screen,
 /// - `with_askpass cmd…`    – run a tool that calls `sudo -A` itself (e.g. Homebrew),
-/// - `$CONSOLE_USER`, `$CONSOLE_UID`, `$CMCR_ADMIN_USER`, `$CMCR_TMP` (private temp dir, removed on exit).
+/// - `$CONSOLE_USER`, `$CONSOLE_UID`, `$CMCR_ADMIN_USER`, `$CMCR_TMP` (private temp dir, removed on exit),
+/// - `cmcr_pin_dir DIR` – `cd` into a folder unless the way there leads through a link a user planted.
 ///
 /// The wrapper ignores SIGHUP and SIGPIPE, so it always cleans up; the body runs in a subshell with the usual
 /// SIGPIPE behaviour. A job (`jobID`) writes through relays that outlive the connection, so it keeps running
@@ -105,6 +106,43 @@ public struct RemoteScript: Sendable {
       r="$r${1#"$p"}"
       case "$r" in //*) r="${r#/}" ;; esac
       printf '%s\n' "$r"
+    }
+    # Prints the first component of an absolute path that is a symbolic link not owned by root, i.e. one a user
+    # could have planted (a student swapping their folder for a link to another account's files). System links
+    # (/tmp, /var, /etc, "/Volumes/Macintosh HD" → /) belong to root and are allowed. Fails when there is none;
+    # stops at the first component that does not exist.
+    cmcr_user_link() {
+      local rest="${1#/}" c="" part
+      while [ -n "$rest" ]; do
+        part="${rest%%/*}"
+        if [ "$part" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+        [ -n "$part" ] || continue
+        c="$c/$part"
+        if [ -L "$c" ]; then
+          [ "$(stat -f %u "$c" 2>/dev/null)" = 0 ] || { printf '%s\n' "$c"; return 0; }
+        elif [ ! -e "$c" ]; then
+          return 1
+        fi
+      done
+      return 1
+    }
+    cmcr_link_refusal() {
+      echo "Odmowa: „$1” to dowiązanie symboliczne do „$(readlink "$1" 2>/dev/null)”, utworzone przez konto „$(stat -f %Su "$1" 2>/dev/null)”, a nie przez system. Ze względów bezpieczeństwa CMCR Manager nie zapisuje ani nie usuwa plików przez dowiązania utworzone przez użytkowników – ktoś mógł je podstawić, żeby dostać się do plików innego konta. Usuń to dowiązanie (np. w Przeglądarce plików) i utwórz w tym miejscu zwykły folder." >&2
+    }
+    # Enters folder DIR without following a link a user planted on the way and sets CMCR_PINNED to its physical
+    # path. File operations then use paths relative to the current folder: the student owns the folders on the
+    # way and could swap one for a link after the check, but that cannot move the shell out of the folder it is
+    # in. Returns 2 (message on stderr) for a user's link or a path swapped during the check, 1 when DIR cannot
+    # be entered (no message).
+    cmcr_pin_dir() {
+      local l
+      if l="$(cmcr_user_link "$1")"; then cmcr_link_refusal "$l"; return 2; fi
+      cd -P -- "$1" 2>/dev/null || return 1
+      CMCR_PINNED="$(/bin/pwd -P)"
+      if l="$(cmcr_user_link "$1")"; then cmcr_link_refusal "$l"; return 2; fi
+      if [ "$(cd -P -- "$1" 2>/dev/null && /bin/pwd -P)" != "$CMCR_PINNED" ]; then
+        echo "Odmowa: folder $1 został podmieniony w trakcie sprawdzania (dowiązanie symboliczne)." >&2; return 2
+      fi
     }
     """#
 

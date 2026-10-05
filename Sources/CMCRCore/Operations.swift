@@ -21,14 +21,16 @@ public enum Operations {
                              on: host, password: password, settings: settings, handle: handle, onOutput: onOutput)
     }
 
-    /// Uploads installers (.pkg/.dmg/.zip/.app) and installs them as root.
-    public static func install(payload: URL, on host: Machine, password: String?, settings: SSHSettings,
-                               handle: ProcessHandle? = nil, onOutput: Output? = nil) async -> CommandResult {
+    /// Uploads installers (.pkg/.dmg/.zip/.app) and installs them as root. Without `allowUnsigned`, installers
+    /// lacking a valid Apple signature and notarization are refused (see `Scripts.installLibrary`).
+    public static func install(payload: URL, on host: Machine, allowUnsigned: Bool = false, password: String?,
+                               settings: SSHSettings, handle: ProcessHandle? = nil,
+                               onOutput: Output? = nil) async -> CommandResult {
         let remoteTar = remoteTempPath()
         onOutput?(.stdout, Data("→ Wysyłanie instalatorów (\(ByteCountFormatter.string(fromByteCount: Payload.size(of: payload), countStyle: .file)))…\n".utf8))
         let up = await SSH.upload([payload], to: remoteTar, on: host, password: password, settings: settings, handle: handle)
         guard up.succeeded else { return up }
-        return await SSH.run(Scripts.installPayload(remoteTar: remoteTar), on: host, password: password,
+        return await SSH.run(Scripts.installPayload(remoteTar: remoteTar, allowUnsigned: allowUnsigned), on: host, password: password,
                              settings: settings, handle: handle, onOutput: onOutput)
     }
 

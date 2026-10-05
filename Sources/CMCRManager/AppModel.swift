@@ -284,6 +284,9 @@ final class AppModel: ObservableObject {
     @Published var commandAsRoot = false
     @Published var pushItems: [URL] = []
     @Published var installItems: [URL] = []
+    /// Installs also packages and apps without a valid Apple signature and notarization (in-house installers).
+    /// Off by default and not saved: the teacher switches it on for a trusted installer only.
+    @Published var installAllowUnsigned = false
     lazy var files = FilesState(app: self)
 
     /// Screen preview engine (ScreenCenter.swift).
@@ -842,9 +845,10 @@ final class AppModel: ObservableObject {
     func installPackages(_ items: [URL], on targets: [Machine]) {
         guard !targets.isEmpty else { return }
         let payload = SharedPayload(items)
+        let allowUnsigned = installAllowUnsigned
         runBatch("Instalacja: \(items.map(\.lastPathComponent).joined(separator: ", "))", on: targets, operation: { m, job in
             await payload.use { url in
-                await Operations.install(payload: url, on: m, password: self.password(for: m),
+                await Operations.install(payload: url, on: m, allowUnsigned: allowUnsigned, password: self.password(for: m),
                                          settings: self.sshSettings, handle: job.handle,
                                          onOutput: OutputSink(job).callback)
             }

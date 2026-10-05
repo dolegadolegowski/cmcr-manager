@@ -18,6 +18,8 @@ struct InstallView: View {
         Page {
             TargetHeader(section: .install,
                          subtitle: "Wgrywanie i instalacja nowych aplikacji na zaznaczonych iMacach (jako root).")
+            Toggle("Zezwól na instalatory bez podpisu i notaryzacji Apple (tylko z zaufanego źródła, np. przygotowane w szkole)",
+                   isOn: $model.installAllowUnsigned)
             localBox
             urlBox
             brewBox
@@ -47,14 +49,14 @@ struct InstallView: View {
             HStack {
                 TextField("https://…/Instalator.pkg lub .dmg/.zip", text: $downloadURL)
                 TargetButton(title: "Pobierz i zainstaluj", icon: "arrow.down.app") {
-                    let url = downloadURL
+                    let url = downloadURL, allowUnsigned = model.installAllowUnsigned
                     model.runScript("Instalacja z URL: \((url as NSString).lastPathComponent)", on: model.selectedMachines) { _ in
-                        Scripts.installFromURL(url)
+                        Scripts.installFromURL(url, allowUnsigned: allowUnsigned)
                     }
                 }
-                .disabled(URL(string: downloadURL)?.scheme?.hasPrefix("http") != true)
+                .disabled(!Scripts.isSecureDownloadURL(downloadURL))
             }
-            Text("Przydatne dla dużych instalatorów – każdy iMac pobiera plik sam, bez przesyłania przez ten komputer.")
+            Text("Przydatne dla dużych instalatorów – każdy iMac pobiera plik sam, bez przesyłania przez ten komputer. Tylko adresy https://.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

@@ -38,9 +38,11 @@ public extension Scripts {
     /// - `cmcr_guard_item PATH` – changes into the parent folder (symlinks resolved), sets `$CMCR_REAL` (canonical
     ///   path) and `$CMCR_BASE` (name), and refuses anything outside account folders, /tmp and external volumes,
     ///   as well as Library, dot-files directly in a home folder and the standard folders (Desktop, Documents…)
-    ///   themselves. Callers act on `./$CMCR_BASE`, so a folder swapped for a symlink after the check cannot
-    ///   redirect them.
+    ///   themselves. The way to the parent must not lead through a link a user planted (only root's own links,
+    ///   such as /tmp, are followed); with `$CMCR_JAIL` set, the parent must lie inside that folder. Callers act
+    ///   on `./$CMCR_BASE`, so a folder swapped for a symlink after the check cannot redirect them.
     internal static let browseLibrary = #"""
+    CMCR_JAIL=""
     cmcr_admin_home() {
       if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
         local h
@@ -74,14 +76,28 @@ public extension Scripts {
       exit 64
     }
     cmcr_guard_item() {
-      local p="$1" base parent real sub
+      local p="$1" base parent real sub l
       base="${p##*/}"; parent="${p%/*}"; [ -n "$parent" ] || parent="/"
       case "$base" in ""|.|..) cmcr_refuse "niepoprawna ścieżka: $p"; return ;; esac
+      # The item itself may be a link (deleting it removes only the link); the folders leading to it may not,
+      # unless root owns the link (/tmp, /Volumes/Macintosh HD).
+      if l="$(cmcr_user_link "$parent")"; then echo "CMCR:REFUSED" >&2; cmcr_link_refusal "$l"; return 65; fi
       if ! cd -P -- "$parent" 2>/dev/null; then
         if [ -d "$parent" ]; then echo "CMCR:DENIED" >&2; echo "Brak dostępu do folderu: $parent" >&2; return 63; fi
         echo "CMCR:NOT_FOUND" >&2; echo "Folder nie istnieje: $parent" >&2; return 61
       fi
-      real="$PWD"
+      # The physical folder the shell is in now: $PWD after `cd -P` is computed before the directory change,
+      # so a folder swapped for a link at that moment would not show in it.
+      real="$(/bin/pwd -P)"
+      if [ -n "$CMCR_JAIL" ]; then
+        # removeCollected: every item must still be inside the checked source folder.
+        case "$real/" in
+          "$CMCR_JAIL"/*) ;;
+          *) cmcr_refuse "$p prowadzi poza folder $CMCR_JAIL (podmienione dowiązanie?)"; return ;;
+        esac
+      elif [ "$(cd -P -- "$parent" 2>/dev/null && /bin/pwd -P)" != "$real" ] || cmcr_user_link "$parent" >/dev/null; then
+        cmcr_refuse "folder $parent został podmieniony w trakcie sprawdzania (dowiązanie symboliczne)"; return
+      fi
       [ "$real" = "/" ] && real=""
       CMCR_REAL="$real/$base"
       CMCR_BASE="$base"
@@ -206,7 +222,10 @@ public extension Scripts {
         fi
         if [ \#(asRoot ? 1 : 0) = 1 ]; then
           OWN="$(stat -f '%Su:%Sg' "$PARENT" 2>/dev/null)"
-          [ -n "$OWN" ] && chown -R "$OWN" "$TOP"
+          # From inside the new folder: if the user swapped it for a link (or a hard link to a system file) in
+          # the meantime, chown would otherwise hand over that link's target.
+          UP="$(stat -f %d:%i "$PARENT" 2>/dev/null)"
+          [ -n "$OWN" ] && ( cd -P -- "$TOP" 2>/dev/null && [ "$(stat -f %d:%i ..)" = "$UP" ] && chown -R "$OWN" . )
         fi
         echo "✔ Utworzono folder $NEW"
         """#, asRoot: asRoot)
@@ -276,7 +295,8 @@ public extension Scripts {
 
     /// After "Zbierz prace": deletes the collected files from `source` that are still exactly as collected (same
     /// size and modification time as the copy), then removes the listed folders if they became empty. Work saved
-    /// or changed after the collection stays on the Mac. Paths are relative to `source`.
+    /// or changed after the collection stays on the Mac. Paths are relative to `source`. Nothing is deleted
+    /// through a link a user planted, or outside `source`.
     static func removeCollected(in source: String, files: [CollectedFile], folders: [String],
                                 asRoot: Bool) -> RemoteScript {
         let rel = files.map(\.path), mt = files.map { $0.isLink ? "L" : String($0.modified) },
@@ -285,6 +305,15 @@ public extension Scripts {
         cmcr_resolve \#(shQuote(source)) || exit $?
         SRC="$CMCR_PATH"
         [ -d "$SRC" ] || { echo "CMCR:NOT_FOUND" >&2; echo "Folder nie istnieje: $SRC" >&2; exit 61; }
+        # Runs as root on the student's folder: the folder itself must not be a planted link, and every file is
+        # deleted only from inside it (a collected subfolder swapped for a link afterwards is skipped).
+        cmcr_pin_dir "$SRC"; X=$?
+        case $X in
+          0) ;;
+          2) echo "CMCR:REFUSED" >&2; exit 65 ;;
+          *) echo "CMCR:DENIED" >&2; echo "Brak dostępu do folderu: $SRC" >&2; exit 63 ;;
+        esac
+        CMCR_JAIL="$CMCR_PINNED"
         F=\#(shArray(rel))
         M=\#(shArray(mt))
         Z=\#(shArray(sz))

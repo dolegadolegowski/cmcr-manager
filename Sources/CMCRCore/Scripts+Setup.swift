@@ -295,7 +295,9 @@ public extension Scripts {
           fi || exit 1
         fi
         [ -L "$DIR" ] && { echo "${DIR#"$R"} jest dowiązaniem – przerwano." >&2; exit 1; }
-        chown "$OWNER" "$DIR" && chmod 777 "$DIR" && ls -ld "$DIR"
+        # chown/chmod from inside the folder: never through a link the student planted on the way.
+        cmcr_pin_dir "$DIR" || { [ $? = 2 ] || echo "Nie można otworzyć ${DIR#"$R"}" >&2; exit 1; }
+        chown "$OWNER" . && chmod 777 . && ls -ld "$DIR"
         """#, asRoot: true)
     }
 

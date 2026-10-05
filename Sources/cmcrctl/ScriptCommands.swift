@@ -6,8 +6,11 @@ import Foundation
 @MainActor
 enum ScriptCommands {
     static let usage = """
-      cmcrctl install plik… [all|nr]            zainstaluj programy (.pkg/.dmg/.zip/.app) jako root
-      cmcrctl install-url URL [all|nr]          pobierz instalator na iMacu i zainstaluj
+      cmcrctl install plik… [all|nr] [--allow-unsigned]
+                                                zainstaluj programy (.pkg/.dmg/.zip/.app) jako root; bez
+                                                --allow-unsigned tylko z ważnym podpisem i notaryzacją Apple
+      cmcrctl install-url https://… [all|nr] [--sha256 SUMA] [--allow-unsigned]
+                                                pobierz instalator na iMacu (tylko https) i zainstaluj
     """
 
     /// Exit status, or nil when `command` is not one of these.
@@ -21,14 +24,50 @@ enum ScriptCommands {
         }
     }
 
+    /// Removes `--allow-unsigned` and `--sha256 SUMA` from install arguments.
+    static func installOptions(_ args: [String], sha256Allowed: Bool) -> (rest: [String], allowUnsigned: Bool, sha256: String?) {
+        var rest: [String] = []
+        var allow = false
+        var sha: String?
+        var i = 0
+        while i < args.count {
+            let a = args[i]
+            i += 1
+            if a == "--allow-unsigned" {
+                allow = true
+            } else if a == "--yes" || a == "-y" {
+                continue
+            } else if sha256Allowed, a == "--sha256" || a.hasPrefix("--sha256=") {
+                let raw: String
+                if a == "--sha256" {
+                    guard i < args.count else { fail("Brak wartości dla --sha256.") }
+                    raw = args[i]
+                    i += 1
+                } else {
+                    raw = String(a.dropFirst("--sha256=".count))
+                }
+                guard let hex = Scripts.normalizedSHA256(raw) else {
+                    fail("--sha256: oczekiwano 64 znaków szesnastkowych (suma SHA-256), podano „\(raw)”.")
+                }
+                sha = hex
+            } else if a.hasPrefix("--") {
+                fail("Nieznana opcja: \(a)")
+            } else {
+                rest.append(a)
+            }
+        }
+        return (rest, allow, sha)
+    }
+
     static func install(_ args: [String]) async -> Int32 {
-        var files = args
+        let options = installOptions(args, sha256Allowed: false)
+        var files = options.rest
         var spec: String?
         if files.count >= 2, let last = files.last, !FileManager.default.fileExists(atPath: expandTilde(last)) {
             spec = last
             files.removeLast()
         }
-        guard !files.isEmpty else { fail("Użycie: cmcrctl install plik… [all|nr]") }
+        guard !files.isEmpty else { fail("Użycie: cmcrctl install plik… [all|nr] [--allow-unsigned]") }
         let urls = files.map { URL(fileURLWithPath: expandTilde($0)).standardizedFileURL }
         for u in urls where !FileManager.default.fileExists(atPath: u.path) { fail("Brak pliku: \(u.path)") }
         let targets = selectHosts(spec)
@@ -41,16 +80,23 @@ enum ScriptCommands {
         var status: Int32 = 0
         for h in targets {
             print("\(h.name):")
-            let r = await Operations.install(payload: payload, on: h, password: Keychain.password(for: h),
-                                             settings: sshSettings, onOutput: Console.printer)
+            let r = await Operations.install(payload: payload, on: h, allowUnsigned: options.allowUnsigned,
+                                             password: Keychain.password(for: h), settings: sshSettings,
+                                             onOutput: Console.printer)
             status = max(status, report(r))
         }
         return status
     }
 
     static func installURL(_ args: [String]) async -> Int32 {
-        guard let url = args.first, url.contains("://") else { fail("Użycie: cmcrctl install-url URL [all|nr]") }
-        return await runOnHosts(Scripts.installFromURL(url), args.count > 1 ? args[1] : nil)
+        let options = installOptions(args, sha256Allowed: true)
+        let use = "Użycie: cmcrctl install-url https://… [all|nr] [--sha256 SUMA] [--allow-unsigned]"
+        guard options.rest.count <= 2, let url = options.rest.first, url.contains("://") else { fail(use) }
+        guard Scripts.isSecureDownloadURL(url) else {
+            fail("Dozwolone są tylko adresy https:// (lub file://) – przez http:// ktoś w sieci szkolnej mógłby podmienić instalator.")
+        }
+        return await runOnHosts(Scripts.installFromURL(url, sha256: options.sha256, allowUnsigned: options.allowUnsigned),
+                                options.rest.count > 1 ? options.rest[1] : nil)
     }
 
     static func runOnHosts(_ script: RemoteScript, _ spec: String?) async -> Int32 {
@@ -108,6 +154,18 @@ enum ScriptCommands {
             guard let action = PowerAction(rawValue: arg(0)) else { fail("Nieznana akcja: \(arg(0))") }
             script = Scripts.power(action)
         case "prepare-shared": script = Scripts.prepareSharedFolder(arg(0), owner: arg(1))
+        case "install-url":
+            // No checks on this side: the remote script must refuse http:// by itself.
+            script = Scripts.installFromURL(arg(0), allowUnsigned: flag("--allow-unsigned"))
+        case "remove-collected":
+            // _builder remove-collected HOST SRC MTIME:SIZE:REL… (MTIME "L" = link) [--root]
+            let files = a.dropFirst().map { spec -> CollectedFile in
+                let parts = spec.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+                guard parts.count == 3 else { fail("Oczekiwano MTIME:SIZE:ŚCIEŻKA, podano „\(spec)”.") }
+                return CollectedFile(path: parts[2], modified: Int(parts[0]) ?? 0, size: Int64(parts[1]) ?? 0,
+                                     isLink: parts[0] == "L")
+            }
+            script = Scripts.removeCollected(in: arg(0), files: files, folders: [], asRoot: root)
         case "install-updates":
             script = Scripts.installUpdates(restart: flag("--restart"), recommendedOnly: flag("--recommended"),
                                             downloadOnly: flag("--download"), allowMajorUpgrade: flag("--major"))
