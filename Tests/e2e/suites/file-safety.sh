@@ -53,6 +53,21 @@ mkdir -p "$F2/zwykly/sub" && echo x > "$F2/zwykly/sub/x"
 out="$(ctlpw _builder clean-folder 1 "$F2/zwykly")"; code=$?
 expect_code "clean: zwykły folder (przez systemowe /tmp) – kod 0" "$code" 0 "$out"
 [ -d "$F2/zwykly" ] && [ -z "$(ls -A "$F2/zwykly")" ] && pass "clean: zwykły folder wyczyszczony" || fail "clean: zwykły folder" "$(ls -la "$F2/zwykly")"
+# The startup disk under /Volumes is root's link to /: still usable for clean and push.
+for v in /Volumes/*; do
+  if [ -L "$v" ] && [ "$(cd "$v" 2>/dev/null && /bin/pwd -P)" = / ]; then
+    PHYS="$(cd "$F2" && /bin/pwd -P)"
+    mkdir -p "$F2/przez-volumes/sub" && echo x > "$F2/przez-volumes/sub/x"
+    out="$(ctlpw _builder clean-folder 1 "$v$PHYS/przez-volumes")"; code=$?
+    expect_code "clean: przez $v (dowiązanie systemowe) – kod 0" "$code" 0 "$out"
+    [ -z "$(ls -A "$F2/przez-volumes")" ] && pass "clean: przez $v – wyczyszczono" || fail "clean: przez $v" "$out"
+    echo "plik" > "$F2/przez-volumes.txt"
+    out="$(ctlpw _builder push 1 "$v$PHYS/przez-volumes/nowy" "$ME" 644 "$F2/przez-volumes.txt" --root)"; code=$?
+    expect_code "push: przez $v do nowego folderu – kod 0" "$code" 0 "$out"
+    [ -f "$F2/przez-volumes/nowy/przez-volumes.txt" ] && pass "push: przez $v – plik na miejscu" || fail "push: przez $v" "$out"
+    break
+  fi
+done
 
 section "Bezpieczeństwo plików – Zbierz prace przez dowiązanie ucznia"
 f2_victim "$F2/ofiara/Documents"
