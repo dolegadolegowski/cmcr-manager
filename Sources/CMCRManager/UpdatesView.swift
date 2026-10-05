@@ -44,7 +44,7 @@ struct UpdatesView: View {
                     let r = restart, rec = recommendedOnly
                     confirm = ConfirmRequest(
                         title: "Zainstalować aktualizacje macOS?",
-                        message: "Na \(model.selection.count) komputerach zostanie uruchomione softwareupdate --install\(r ? " z automatycznym restartem – zalogowani użytkownicy stracą niezapisane dane" : "").",
+                        message: "\(Polish.onComputers(model.actionTargets.count).capitalizedFirst) zostanie uruchomione softwareupdate --install\(r ? " z automatycznym restartem – zalogowani użytkownicy stracą niezapisane dane" : "").",
                         button: "Instaluj", destructive: r) {
                         model.runScript("softwareupdate --install\(r ? " --restart" : "")", on: model.selectedMachines) { _ in
                             Scripts.installUpdates(restart: r, recommendedOnly: rec, downloadOnly: false)

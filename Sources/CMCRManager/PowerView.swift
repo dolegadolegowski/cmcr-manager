@@ -44,7 +44,7 @@ struct PowerView: View {
                     TargetButton(title: "Wyloguj użytkownika", icon: "rectangle.portrait.and.arrow.right", role: .destructive, prominent: false) {
                         confirm = ConfirmRequest(
                             title: "Wylogować użytkowników?",
-                            message: "Zalogowani użytkownicy na \(model.selection.count) komputerach zostaną natychmiast wylogowani – niezapisane dane przepadną.",
+                            message: "Zalogowani użytkownicy zostaną natychmiast wylogowani \(Polish.onComputers(model.actionTargets.count)) – niezapisane dane przepadną.",
                             button: "Wyloguj") {
                             model.runScript("Wylogowanie użytkownika", on: model.selectedMachines) { _ in Scripts.logoutUser() }
                         }
@@ -54,7 +54,7 @@ struct PowerView: View {
 
             SectionBox(title: "Zasilanie", icon: "power") {
                 HStack {
-                    TargetButton(title: "Obudź (Wake-on-LAN)", icon: "sunrise", prominent: false) {
+                    TargetButton(title: "Obudź (Wake-on-LAN)", icon: "sunrise", prominent: false, includeUnreachable: true) {
                         model.wake(model.selectedMachines)
                     }
                     TargetButton(title: "Uśpij", icon: "moon.zzz", prominent: false) {
@@ -79,7 +79,7 @@ struct PowerView: View {
 
     func ask(_ action: PowerAction) {
         confirm = ConfirmRequest(
-            title: "\(action.label) – \(model.selection.count) komputerów?",
+            title: "\(action.label) – \(Polish.computers(model.actionTargets.count))?",
             message: "Zalogowani użytkownicy mogą stracić niezapisane dane.",
             button: action.label) {
             model.power(action, on: model.selectedMachines)

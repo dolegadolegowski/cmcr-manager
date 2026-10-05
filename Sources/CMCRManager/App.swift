@@ -9,7 +9,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// Closing the window while jobs run keeps the app (and the jobs) going; a notification reports the end.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        (AppModel.shared?.runningJobCount ?? 0) == 0
+    }
 }
 
 @main
@@ -65,6 +68,10 @@ struct ContentView: View {
         } detail: {
             DetailView()
         }
+        .overlay(alignment: .bottom) { ActionToastOverlay() }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) { ActivityToolbarButton() }
+        }
         .task {
             model.refreshStatus()
             // Keep the overview fresh in the background.
@@ -100,63 +107,133 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) {
-            if !model.hasSharedPassword {
+            if PasswordBanner.isNeeded(model) {
                 Button {
                     model.section = .setup
                 } label: {
-                    Label("Ustaw hasło administratora", systemImage: "key.fill")
-                        .font(.caption)
+                    Label("Brak hasła administratora", systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.orange)
+                .help("Bez hasła operacje wymagające uprawnień (sudo) nie powiodą się. Kliknij, aby je ustawić.")
                 .padding(8)
             }
         }
     }
 
     func row(_ s: AppSection) -> some View {
-        HStack {
-            Label(s.title, systemImage: s.icon)
-            if s == .jobs, model.runningJobCount > 0 {
-                Spacer()
-                Text("\(model.runningJobCount)")
-                    .font(.caption.monospacedDigit())
-                    .padding(.horizontal, 6)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.25)))
-            }
+        Label(s.title, systemImage: s.icon)
+            .badge(badge(for: s))
+            .help(badgeHelp(for: s))
+            .tag(s)
+    }
+
+    func badge(for s: AppSection) -> Int {
+        switch s {
+        case .jobs:
+            return model.runningJobCount
+        case .dashboard:
+            return model.machines.filter {
+                let r = model.status($0).reachability
+                return r == .authFailed || r == .error
+            }.count
+        case .updates:
+            return model.machines.filter { !(model.updates[$0.id]?.titles.isEmpty ?? true) }.count
+        default:
+            return 0
         }
-        .tag(s)
+    }
+
+    func badgeHelp(for s: AppSection) -> String {
+        let n = badge(for: s)
+        guard n > 0 else { return s.title }
+        switch s {
+        case .jobs: return "W toku: \(Polish.jobs(n))"
+        case .dashboard: return "Wymaga uwagi (błąd logowania lub inny błąd): \(Polish.computers(n))"
+        case .updates: return "Dostępne aktualizacje \(Polish.onComputers(n))"
+        default: return s.title
+        }
     }
 }
 
+/// The target set: Macs checked here are what every action runs on.
 struct MachineListView: View {
     @EnvironmentObject var model: AppModel
+    @ViewState private var query = HostQuery()
+    @ViewState private var naming: GroupNaming?
+    @AppStorage("hostListSortByStatus") private var sortByStatus = false
+    @AppStorage("hostListDetailed") private var detailed = false
+
+    struct GroupNaming: Identifiable {
+        let id = UUID()
+        var ids: Set<UUID> = []
+        var renaming: String?
+    }
+
+    var visible: [Machine] {
+        let list = query.apply(to: model.machines, status: model.status)
+        guard sortByStatus else { return list }
+        return list.enumerated().sorted { a, b in
+            let ra = rank(model.status(a.element).reachability), rb = rank(model.status(b.element).reachability)
+            return ra != rb ? ra < rb : a.offset < b.offset
+        }.map(\.element)
+    }
+
+    func rank(_ r: Reachability) -> Int {
+        switch r {
+        case .error, .authFailed: return 0
+        case .online: return 1
+        case .checking: return 2
+        case .unknown: return 3
+        case .offline: return 4
+        }
+    }
 
     var body: some View {
+        let visible = self.visible
         List(selection: $model.selection) {
-            ForEach(model.machines) { m in
-                MachineRow(machine: m, status: model.status(m))
+            ForEach(visible) { m in
+                MachineRow(machine: m, status: model.status(m), detailed: detailed, isTarget: isTarget(m.id))
                     .tag(m.id)
-                    .contextMenu { MachineContextMenu(machine: m) }
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            HStack(spacing: 6) {
-                Text("Zaznaczono \(model.selection.count)/\(model.machines.count)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Wszystkie") { model.selection = Set(model.machines.map(\.id)) }
-                Button("Online") {
-                    model.selection = Set(model.machines.filter { model.status($0).reachability == .online }.map(\.id))
+        .contextMenu(forSelectionType: UUID.self) { ids in
+            MachineContextMenu(ids: ids) { naming = GroupNaming(ids: ids) }
+        }
+        .overlay {
+            if visible.isEmpty {
+                if model.machines.isEmpty {
+                    ContentUnavailableView {
+                        Label("Brak komputerów", systemImage: "desktopcomputer")
+                    } description: {
+                        Text("Dodaj iMaki w Konfiguracji › Komputery.")
+                    } actions: {
+                        Button("Otwórz konfigurację") { model.section = .setup }
+                    }
+                } else {
+                    ContentUnavailableView {
+                        Label("Nic nie pasuje", systemImage: "line.3.horizontal.decrease.circle")
+                    } description: {
+                        Text("Żaden komputer nie spełnia warunków wyszukiwania lub filtra.")
+                    } actions: {
+                        Button("Wyczyść filtr") { query = HostQuery() }
+                    }
                 }
-                Button("Żadne") { model.selection = [] }
             }
-            .controlSize(.small)
-            .buttonStyle(.borderless)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.bar)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) { header(visible) }
+        .safeAreaInset(edge: .bottom, spacing: 0) { footer(visible) }
+        .sheet(item: $naming) { n in
+            GroupNameSheet(title: n.renaming == nil ? "Nowa grupa (\(Polish.computers(n.ids.count)))" : "Zmień nazwę grupy",
+                           initial: n.renaming ?? "") { name in
+                if let old = n.renaming {
+                    HostGroups.rename(old, to: name, in: &model.machines)
+                    if query.group == old { query.group = name }
+                } else {
+                    HostGroups.add(name, to: n.ids, in: &model.machines)
+                }
+            }
         }
         .toolbar {
             ToolbarItem {
@@ -169,32 +246,234 @@ struct MachineListView: View {
             }
         }
     }
+
+    func isTarget(_ id: UUID) -> Binding<Bool> {
+        Binding(get: { model.selection.contains(id) },
+                set: { on in if on { model.selection.insert(id) } else { model.selection.remove(id) } })
+    }
+
+    // MARK: Header: search, filter, groups, select visible
+
+    func header(_ visible: [Machine]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                NativeSearchField(prompt: "Szukaj komputera lub użytkownika", text: $query.text)
+                filterMenu
+            }
+            if !model.groups.isEmpty { groupChips }
+            HStack(spacing: 6) {
+                Toggle(sources: visible.map { isTarget($0.id) }, isOn: \.self) {
+                    Text(query.isActive ? "Zaznacz widoczne" : "Zaznacz wszystkie")
+                }
+                .toggleStyle(.checkbox)
+                .disabled(visible.isEmpty)
+                .help("Zaznacza lub odznacza wszystkie komputery widoczne na liście")
+                Spacer()
+                if query.isActive {
+                    Text("\(visible.count) z \(model.machines.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    Button("Wyczyść filtr") { query = HostQuery() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    var filterMenu: some View {
+        let filtered = query.status != .all || query.group != nil
+        return Menu {
+            Picker("Pokaż", selection: $query.status) {
+                ForEach(HostStatusFilter.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.inline)
+            if !model.groups.isEmpty {
+                Picker("Grupa", selection: $query.group) {
+                    Text("Wszystkie grupy").tag(String?.none)
+                    ForEach(model.groups, id: \.self) { Text($0).tag(Optional($0)) }
+                }
+                .pickerStyle(.inline)
+            }
+            Picker("Kolejność", selection: $sortByStatus) {
+                Text("Według nazwy").tag(false)
+                Text("Według stanu (problemy na górze)").tag(true)
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Toggle("Pokaż szczegóły w wierszach", isOn: $detailed)
+        } label: {
+            Label("Filtr", systemImage: filtered ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .labelStyle(.iconOnly)
+        .fixedSize()
+        .help(filtered ? "Filtr włączony: \(query.status.label)\(query.group.map { ", grupa \($0)" } ?? "")"
+                       : "Filtruj i sortuj listę komputerów")
+    }
+
+    var groupChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                chip("Wszystkie", selected: query.group == nil) { query.group = nil }
+                ForEach(model.groups, id: \.self) { g in
+                    chip(g, selected: query.group.map { $0.caseInsensitiveCompare(g) == .orderedSame } ?? false) {
+                        query.group = query.group == g ? nil : g
+                    }
+                    .contextMenu {
+                        Button("Zaznacz komputery z grupy") { model.selectGroup(g) }
+                        Button("Dodaj grupę do zaznaczenia") { model.selectGroup(g, adding: true) }
+                        Divider()
+                        Button("Zmień nazwę…") { naming = GroupNaming(renaming: g) }
+                        Button("Usuń grupę", role: .destructive) {
+                            HostGroups.remove(g, from: Set(model.machines.map(\.id)), in: &model.machines)
+                            if query.group == g { query.group = nil }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.callout)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(selected ? Color.accentColor : Color.secondary.opacity(0.15)))
+                .foregroundStyle(selected ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(title == "Wszystkie" ? "Pokaż wszystkie komputery" : "Pokaż tylko grupę „\(title)” (prawy przycisk: zaznacz grupę)")
+    }
+
+    // MARK: Footer: counts and selection menu
+
+    func footer(_ visible: [Machine]) -> some View {
+        let online = model.machines.filter { model.status($0).reachability == .online }.count
+        let visibleIDs = Set(visible.map(\.id))
+        let hidden = model.selection.subtracting(visibleIDs).count
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("Zaznaczono \(model.selection.count) z \(model.machines.count) · online: \(online)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                Spacer()
+                Menu("Zaznacz") { SelectionMenuItems() }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Szybkie zaznaczanie: wszystkie, włączone, grupa, odwrócenie")
+            }
+            if hidden > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "eye.slash").accessibilityHidden(true)
+                    Text("Zaznaczone, ale ukryte przez filtr: \(hidden)")
+                    Spacer()
+                    Button("Pokaż") { query = HostQuery() }
+                        .buttonStyle(.link)
+                }
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+    }
+}
+
+/// "Zaznacz" menu items (footer menu and empty-area context menu).
+struct SelectionMenuItems: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        Button("Wszystkie") { model.selection = Set(model.machines.map(\.id)) }
+        Button("Włączone (online)") { model.selectOnline() }
+        Button("Odwróć zaznaczenie") { model.invertSelection() }
+        if !model.groups.isEmpty {
+            Menu("Grupa") {
+                ForEach(model.groups, id: \.self) { g in
+                    Button(g) { model.selectGroup(g) }
+                }
+            }
+        }
+        Divider()
+        Button("Żadne") { model.selection = [] }
+    }
 }
 
 struct MachineRow: View {
+    @EnvironmentObject var model: AppModel
     let machine: Machine
     let status: HostStatus
+    var detailed = false
+    @Binding var isTarget: Bool
+    @ViewState private var dropTargeted = false
 
     var body: some View {
         HStack(spacing: 8) {
-            StatusDot(reachability: status.reachability)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(machine.name).fontWeight(.medium)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            Toggle("Cel operacji: \(machine.name)", isOn: $isTarget)
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+                .help(isTarget ? "Zaznaczony – operacje obejmą ten komputer" : "Zaznacz, aby objąć ten komputer operacjami")
+            HStack(spacing: 8) {
+                StatusDot(reachability: status.reachability)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(machine.name).fontWeight(.medium).lineLimit(1)
+                        if !machine.groups.isEmpty {
+                            Text(machine.groups.joined(separator: ", "))
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                        }
+                    }
+                    if detailed {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                if let user = status.consoleUser {
+                    Label(user, systemImage: "person.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .labelStyle(.titleAndIcon)
+                        .lineLimit(1)
+                        .help("Zalogowany użytkownik: \(user)")
+                }
+                if status.reachability == .error || status.reachability == .authFailed {
+                    Image(systemName: "exclamationmark.bubble.fill")
+                        .foregroundStyle(.orange)
+                        .help(status.message.isEmpty ? status.reachability.label : status.message)
+                }
             }
-            Spacer()
-            if let user = status.consoleUser {
-                Label(user, systemImage: "person.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .labelStyle(.titleAndIcon)
-            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(accessibilityText)
         }
-        .padding(.vertical, 2)
-        .help(status.message.isEmpty ? machine.destination : status.message)
+        .padding(.vertical, 1)
+        .padding(.horizontal, 2)
+        .background(RoundedRectangle(cornerRadius: 5)
+            .strokeBorder(Color.accentColor, lineWidth: dropTargeted ? 2 : 0))
+        .help(status.message.isEmpty ? machine.destination : "\(machine.destination)\n\(status.message)")
+        .dropDestination(for: URL.self) { urls, _ in
+            model.dropFiles(urls, on: machine)
+        } isTargeted: { dropTargeted = $0 }
     }
 
     var subtitle: String {
@@ -207,25 +486,85 @@ struct MachineRow: View {
             return status.message.isEmpty ? status.reachability.label : status.message
         }
     }
+
+    var accessibilityText: String {
+        var parts = [machine.name, status.reachability.label]
+        parts.append(status.consoleUser.map { "zalogowany \($0)" } ?? "nikt nie jest zalogowany")
+        if !machine.groups.isEmpty { parts.append("grupy: \(machine.groups.joined(separator: ", "))") }
+        if !status.message.isEmpty, status.reachability != .online { parts.append(status.message) }
+        return parts.joined(separator: ", ")
+    }
 }
 
+/// Context menu of the host list: acts on every selected row (or on the clicked row outside the selection).
 struct MachineContextMenu: View {
     @EnvironmentObject var model: AppModel
-    let machine: Machine
+    let ids: Set<UUID>
+    /// Shows "Nowa grupa…" in the Grupy submenu when set.
+    var newGroup: (() -> Void)?
+
+    init(ids: Set<UUID>, newGroup: (() -> Void)? = nil) {
+        self.ids = ids
+        self.newGroup = newGroup
+    }
+
+    init(machine: Machine) { self.init(ids: [machine.id]) }
 
     var body: some View {
-        Button("Odśwież stan") { model.refreshStatus([machine]) }
-        Button("Sesja SSH w Terminalu (cmcr-go)") { model.openTerminal(machine) }
-        Button("Udostępnianie ekranu (VNC)") { model.openScreenSharing(machine) }
-        Button("Podgląd ekranu") {
-            model.selection = [machine.id]
-            model.section = .screens
-        }
-        Divider()
-        Button("Wake-on-LAN") { model.wake([machine]) }
-        Button("Kopiuj adres") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(machine.destination, forType: .string)
+        let targets = model.machines.filter { ids.contains($0.id) }
+        if targets.isEmpty {
+            SelectionMenuItems()
+        } else {
+            Text(targets.count == 1 ? targets[0].name : Polish.computers(targets.count))
+            Button {
+                model.refreshStatus(targets)
+            } label: {
+                Label("Odśwież stan", systemImage: "arrow.clockwise")
+            }
+            if ids != model.selection {
+                Button {
+                    model.selection = ids
+                } label: {
+                    Label(targets.count == 1 ? "Zaznacz tylko ten" : "Zaznacz tylko te", systemImage: "checklist")
+                }
+            }
+            Divider()
+            Button {
+                targets.prefix(4).forEach(model.openTerminal)
+            } label: {
+                Label(targets.count > 4 ? "Sesja SSH w Terminalu (pierwsze 4)" : "Sesja SSH w Terminalu",
+                      systemImage: "terminal")
+            }
+            Button {
+                targets.prefix(4).forEach(model.openScreenSharing)
+            } label: {
+                Label(targets.count > 4 ? "Udostępnianie ekranu (pierwsze 4)" : "Udostępnianie ekranu (VNC)",
+                      systemImage: "rectangle.on.rectangle")
+            }
+            Button {
+                if model.selection != ids { model.selection = ids }
+                model.section = .screens
+            } label: {
+                Label("Podgląd ekranu", systemImage: "eye")
+            }
+            Divider()
+            Button {
+                model.wake(targets)
+            } label: {
+                Label("Obudź (Wake-on-LAN)", systemImage: "sunrise")
+            }
+            Menu {
+                GroupMembershipMenu(ids: ids, newGroup: newGroup)
+            } label: {
+                Label("Grupy", systemImage: "tag")
+            }
+            Divider()
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(targets.map(\.destination).joined(separator: "\n"), forType: .string)
+            } label: {
+                Label(targets.count == 1 ? "Kopiuj adres" : "Kopiuj adresy", systemImage: "doc.on.doc")
+            }
         }
     }
 }
@@ -246,6 +585,11 @@ struct DetailView: View {
             case .power: PowerView()
             case .jobs: JobsView()
             case .setup: SetupView()
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if PasswordBanner.isNeeded(model), ![.setup, .jobs].contains(model.section ?? .dashboard) {
+                PasswordBanner()
             }
         }
         .navigationTitle(model.section?.title ?? "CMCR Manager")

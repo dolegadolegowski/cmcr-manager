@@ -11,9 +11,11 @@ public struct Machine: Identifiable, Codable, Hashable, Sendable {
     public var notes: String
     /// When false the host uses its own password from the Keychain instead of the shared one.
     public var usesSharedPassword: Bool
+    /// Named groups (rows, rooms, classes) used to filter and select hosts.
+    public var groups: [String] = []
 
     public init(id: UUID = UUID(), name: String, address: String, user: String, port: Int = 22,
-                macAddress: String = "", notes: String = "", usesSharedPassword: Bool = true) {
+                macAddress: String = "", notes: String = "", usesSharedPassword: Bool = true, groups: [String] = []) {
         self.id = id
         self.name = name
         self.address = address
@@ -22,6 +24,7 @@ public struct Machine: Identifiable, Codable, Hashable, Sendable {
         self.macAddress = macAddress
         self.notes = notes
         self.usesSharedPassword = usesSharedPassword
+        self.groups = groups
     }
 
     public init(from decoder: Decoder) throws {
@@ -34,6 +37,7 @@ public struct Machine: Identifiable, Codable, Hashable, Sendable {
         macAddress = try c.decodeIfPresent(String.self, forKey: .macAddress) ?? ""
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
         usesSharedPassword = try c.decodeIfPresent(Bool.self, forKey: .usesSharedPassword) ?? true
+        groups = try c.decodeIfPresent([String].self, forKey: .groups) ?? []
     }
 
     /// `user@host` as used by ssh/scp.
