@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Renders every section into PNG files without a visible window (works while the screen is locked), for UI
 /// review and documentation: CMCR_SNAPSHOT_DIR=<dir> [CMCR_SNAPSHOT_SECTIONS=files,apps] [CMCR_SNAPSHOT_WAIT=2]
-/// [CMCR_SNAPSHOT_SIZE=1440x900]. The app quits when done. Use together with CMCR_CONFIG_DIR.
+/// [CMCR_SNAPSHOT_SIZE=1440x900] [CMCR_SNAPSHOT_TEXT=1]. The app quits when done. Use together with CMCR_CONFIG_DIR.
 @MainActor
 enum SnapshotRenderer {
     static func runIfRequested() {
@@ -35,6 +35,10 @@ enum SnapshotRenderer {
                 .environmentObject(model.screens)
                 .frame(width: size.width, height: size.height))
             window.contentView = host
+            // The app's own window shares saved state (e.g. the dashboard's column widths) – give it the same size.
+            for other in NSApp.windows where other !== window && other.styleMask.contains(.titled) {
+                other.setContentSize(size)
+            }
             for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
                 window.appearance = NSAppearance(named: appearance)
                 for section in sections {
@@ -47,6 +51,10 @@ enum SnapshotRenderer {
                         continue
                     }
                     view.cacheDisplay(in: view.bounds, to: rep)
+                    if env["CMCR_SNAPSHOT_TEXT"] == "1" {
+                        try? describe(window).write(to: output.appendingPathComponent("\(section.rawValue)-\(name).txt"),
+                                                    atomically: true, encoding: .utf8)
+                    }
                     let url = output.appendingPathComponent("\(section.rawValue)-\(name).png")
                     try? rep.representation(using: .png, properties: [:])?.write(to: url)
                     print(url.path)
@@ -71,6 +79,42 @@ enum SnapshotRenderer {
         if let command = env["CMCR_SNAPSHOT_COMMAND"], !command.isEmpty {
             model.runCommand(command, asRoot: false, on: model.selectedMachines)
         }
+    }
+
+    /// CMCR_SNAPSHOT_TEXT=1: the toolbar items (with "(overflow)" for those that did not fit) and the menu bar
+    /// with keyboard shortcuts, as text next to each picture – menus cannot be photographed offscreen.
+    private static func describe(_ window: NSWindow) -> String {
+        var lines = ["Pasek narzędzi:"]
+        if let toolbar = window.toolbar {
+            let visible = Set((toolbar.visibleItems ?? []).map(\.itemIdentifier))
+            for item in toolbar.items where !item.label.isEmpty {
+                lines.append("  \(item.label)\(visible.contains(item.itemIdentifier) ? "" : " (overflow)")")
+            }
+        }
+        func tables(_ v: NSView) -> [NSTableView] {
+            (v as? NSTableView).map { [$0] } ?? v.subviews.flatMap(tables)
+        }
+        for t in tables(window.contentView?.superview ?? NSView()) where t.tableColumns.count > 1 {
+            let cols = t.tableColumns.filter { !$0.isHidden }.map { "\($0.title)=\(Int($0.width))" }
+            let frame = t.enclosingScrollView.map { $0.convert($0.bounds, to: nil) } ?? .zero
+            lines.append("Tabela (\(Int(frame.minX))…\(Int(frame.maxX)) pt, hidden \(t.isHiddenOrHasHiddenAncestor), "
+                         + "tabela \(Int(t.frame.width)) pt): " + cols.joined(separator: ", "))
+        }
+        lines.append("Menu:")
+        func walk(_ menu: NSMenu, depth: Int) {
+            for item in menu.items where !item.isSeparatorItem && !item.isHidden {
+                var key = ""
+                if !item.keyEquivalent.isEmpty {
+                    let m = item.keyEquivalentModifierMask
+                    key = (m.contains(.control) ? "⌃" : "") + (m.contains(.option) ? "⌥" : "")
+                        + (m.contains(.shift) ? "⇧" : "") + (m.contains(.command) ? "⌘" : "") + item.keyEquivalent.uppercased()
+                }
+                lines.append(String(repeating: "  ", count: depth) + item.title + (key.isEmpty ? "" : "  [\(key)]"))
+                if let sub = item.submenu, depth < 2 { walk(sub, depth: depth + 1) }
+            }
+        }
+        if let menu = NSApp.mainMenu { walk(menu, depth: 1) }
+        return lines.joined(separator: "\n") + "\n"
     }
 
     /// A sheet is not attached to a window that is never shown, so the sheet's view is rendered on its own.

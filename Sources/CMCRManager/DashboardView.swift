@@ -49,16 +49,19 @@ struct DashboardView: View {
     @AppStorage("dashboardInspector") private var showInspector = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            TargetHeader(section: .dashboard,
-                         subtitle: "Kliknij kafelek, aby zaznaczyć pasujące komputery. Dwukrotne kliknięcie wiersza pokazuje szczegóły komputera.")
-            tiles
-            VStack(alignment: .leading, spacing: 6) {
-                table
-                statusLine
+        VStack(spacing: 0) {
+            if PasswordBanner.isNeeded(model) { PasswordBanner() }
+            VStack(alignment: .leading, spacing: 14) {
+                TargetHeader(section: .dashboard,
+                             subtitle: "Kliknij kafelek, aby zaznaczyć pasujące komputery. Dwukrotne kliknięcie wiersza pokazuje szczegóły komputera.")
+                tiles
+                VStack(alignment: .leading, spacing: 6) {
+                    table
+                    statusLine
+                }
             }
+            .padding(20)
         }
-        .padding(20)
         .inspector(isPresented: $showInspector) {
             HostInspector()
                 .inspectorColumnWidth(min: 260, ideal: 310, max: 420)
@@ -249,7 +252,7 @@ struct DashboardView: View {
         TableColumn("Komputer", value: \.name) { row in
             Text(row.name).fontWeight(.medium).lineLimit(1)
         }
-        .width(min: 70, ideal: 85)
+        .width(min: 60, ideal: 75)
         .customizationID("name")
         TableColumn("Stan", value: \.stateRank) { row in
             HStack(spacing: 5) {
@@ -263,42 +266,47 @@ struct DashboardView: View {
                 }
             }
         }
-        .width(min: 100, ideal: 125)
+        .width(min: 95, ideal: 115)
         .customizationID("state")
         TableColumn("Zalogowany", value: \.user) { row in
             Text(row.user.isEmpty ? "—" : row.user).lineLimit(1)
         }
-        .width(min: 70, ideal: 90)
+        .width(min: 70, ideal: 85)
         .customizationID("user")
         TableColumn("Wolne miejsce", value: \.freeGB) { row in
             DiskCell(status: row.status)
         }
-        .width(min: 90, ideal: 105)
+        .width(min: 90, ideal: 100)
         .customizationID("disk")
         TableColumn("macOS", value: \.os) { row in
             Text(row.os.isEmpty ? "—" : row.os)
         }
-        .width(min: 50, ideal: 55)
+        .width(min: 45, ideal: 55)
         .customizationID("os")
+    }
+
+    /// Hidden at first, so the default columns (with Uwagi) fit a 1180 pt window; the inspector shows all of these,
+    /// and a right-click on the table header adds them to the table.
+    @TableColumnBuilder<DashboardRow, KeyPathComparator<DashboardRow>>
+    var detailColumns: some Column {
+        TableColumn("Ostatnio widziany", value: \.seen) { row in
+            LastSeenText(row: row)
+        }
+        .width(min: 80, ideal: 105)
+        .customizationID("lastSeen")
+        .defaultVisibility(.hidden)
         TableColumn("Włączony od", value: \.uptime) { row in
             Text(row.status.liveUptimeText ?? "—").lineLimit(1)
         }
         .width(min: 60, ideal: 75)
         .customizationID("uptime")
-        TableColumn("Ostatnio widziany", value: \.seen) { row in
-            LastSeenText(row: row)
-        }
-        .width(min: 80, ideal: 110)
-        .customizationID("lastSeen")
-    }
-
-    @TableColumnBuilder<DashboardRow, KeyPathComparator<DashboardRow>>
-    var detailColumns: some Column {
+        .defaultVisibility(.hidden)
         TableColumn("Adres IP", value: \.ip) { row in
             Text(row.ip.isEmpty ? "—" : row.ip).font(.body.monospacedDigit())
         }
         .width(min: 80, ideal: 105)
         .customizationID("ip")
+        .defaultVisibility(.hidden)
         TableColumn("Adres MAC", value: \.mac) { row in
             Text(row.mac.isEmpty ? "—" : row.mac).font(.body.monospaced())
         }
@@ -319,9 +327,11 @@ struct DashboardView: View {
         .defaultVisibility(.hidden)
         TableColumn("Uwagi", value: \.note) { row in
             Text(row.note)
+                .lineLimit(1)
                 .foregroundStyle(row.status.message.isEmpty ? Color.secondary : Color.orange)
                 .help(row.note)
         }
+        .width(min: 80)
         .customizationID("notes")
     }
 

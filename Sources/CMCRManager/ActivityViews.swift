@@ -303,6 +303,10 @@ struct PasswordBanner: View {
         }
     }
 
+    /// Sections where the window does not put the banner above the page: Konfiguracja asks for the password
+    /// itself, and the dashboard shows it above its table only (not across the inspector).
+    static let notAbove: Set<AppSection> = [.setup, .dashboard]
+
     static func isNeeded(_ model: AppModel) -> Bool {
         !model.hasSharedPassword && (ProcessInfo.processInfo.environment["CMCR_PASSWORD"] ?? "").isEmpty
     }

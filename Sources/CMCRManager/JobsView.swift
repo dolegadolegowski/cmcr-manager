@@ -52,6 +52,20 @@ struct JobsView: View {
                 }
             }
         }
+        .toolbar {
+            ToolbarItemGroup {
+                Button {
+                    model.clearFinishedBatches()
+                    history.load()
+                } label: {
+                    Label("Wyczyść zakończone", systemImage: "eraser")
+                }
+                .disabled(!model.batches.contains { $0.finished })
+                .help("Przenosi zakończone działania z listy „Ta sesja” do historii i chowa ich wyniki w działach "
+                      + "(z dysku nic nie jest usuwane)")
+                historyMenu
+            }
+        }
         .onAppear {
             history.load()
             if model.focusedBatchID == nil { model.focusedBatchID = model.batches.first?.id }
@@ -120,44 +134,37 @@ struct JobsView: View {
                     }
                 }
             }
-            Divider()
-            HStack(spacing: 8) {
-                Button {
-                    model.clearFinishedBatches()
-                    history.load()
-                } label: {
-                    Label("Wyczyść zakończone", systemImage: "eraser")
-                }
-                .disabled(!model.batches.contains { $0.finished })
-                .help("Usuwa zakończone działania z tej listy (zostają w historii na dysku)")
-                Spacer()
-                Menu {
-                    Button("Odśwież historię") { history.load() }
-                    Button("Pokaż folder historii w Finderze") {
-                        let dir = JobHistory.directory
-                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                        NSWorkspace.shared.activateFileViewerSelecting([dir])
-                    }
-                    Button("Otwórz dziennik działań") {
-                        let url = ConfigStore.logURL
-                        if FileManager.default.fileExists(atPath: url.path) {
-                            NSWorkspace.shared.open(url)
-                        } else {
-                            NSSound.beep()
-                        }
-                    }
-                } label: {
-                    Label("Więcej", systemImage: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .labelStyle(.iconOnly)
-                .help("Więcej: historia zadań i dziennik działań")
-            }
-            .controlSize(.small)
-            .padding(8)
         }
+    }
+
+    var historyMenu: some View {
+        Menu {
+            Button {
+                history.load()
+            } label: {
+                Label("Wczytaj historię ponownie", systemImage: "arrow.clockwise")
+            }
+            Button {
+                let dir = JobHistory.directory
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                NSWorkspace.shared.activateFileViewerSelecting([dir])
+            } label: {
+                Label("Pokaż folder historii w Finderze", systemImage: "folder")
+            }
+            Button {
+                let url = ConfigStore.logURL
+                if FileManager.default.fileExists(atPath: url.path) {
+                    NSWorkspace.shared.open(url)
+                } else {
+                    NSSound.beep()
+                }
+            } label: {
+                Label("Otwórz dziennik działań", systemImage: "doc.text")
+            }
+        } label: {
+            Label("Historia", systemImage: "clock.arrow.circlepath")
+        }
+        .help("Historia zadań zapisana na dysku i dziennik wszystkich działań")
     }
 
     // MARK: Detail
@@ -337,15 +344,15 @@ struct BatchDetailView: View {
             TableColumn("Komputer") { job in
                 JobCell(job: job, kind: .name)
             }
-            .width(min: 80, ideal: 100)
+            .width(min: 70, ideal: 85)
             TableColumn("Stan") { job in
                 JobCell(job: job, kind: .state)
             }
-            .width(min: 90, ideal: 110)
+            .width(min: 90, ideal: 100)
             TableColumn("Czas") { job in
                 JobCell(job: job, kind: .duration)
             }
-            .width(min: 45, ideal: 60)
+            .width(min: 45, ideal: 50)
             TableColumn("Wynik") { job in
                 JobCell(job: job, kind: .summary)
             }
@@ -510,26 +517,29 @@ struct HistoryDetailView: View {
             Divider()
             VSplitView {
                 Table(batch.records, selection: $recordID) {
-                    TableColumn("Komputer") { r in Text(r.host).fontWeight(.medium) }
-                        .width(min: 80, ideal: 100)
+                    TableColumn("Komputer") { r in Text(r.host).fontWeight(.medium).lineLimit(1) }
+                        .width(min: 70, ideal: 85)
                     TableColumn("Stan") { r in
                         let state = Job.State(historyName: r.state)
                         HStack(spacing: 6) {
                             JobStateIcon(state: state)
-                            Text(state.label)
+                            Text(state.label).lineLimit(1)
                         }
                     }
-                    .width(min: 90, ideal: 110)
+                    .width(min: 90, ideal: 100)
                     TableColumn("Kod") { r in
-                        Text(r.exitCode.map(String.init) ?? "—").monospacedDigit().foregroundStyle(.secondary)
+                        Text(r.exitCode.map(String.init) ?? "—")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .help("Kod zakończenia polecenia: 0 oznacza, że wszystko się udało")
                     }
-                    .width(min: 40, ideal: 50)
+                    .width(min: 35, ideal: 40)
                     TableColumn("Czas") { r in
                         Text(r.durationMs.map { JobDurationText.format(Double($0) / 1000) } ?? "—")
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
-                    .width(min: 45, ideal: 60)
+                    .width(min: 45, ideal: 50)
                     TableColumn("Wynik") { r in
                         Text(r.summary).lineLimit(1).help(r.summary)
                     }

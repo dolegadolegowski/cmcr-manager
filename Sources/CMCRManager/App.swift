@@ -47,19 +47,26 @@ struct CMCRManagerApp: App {
         .defaultSize(width: 1440, height: 900)
         .commands {
             UpdateCommands()
-            CommandGroup(after: .newItem) {
+            // Widok: refresh (like Reload in Safari) and Show/Hide Sidebar (⌃⌘S), which replaces the toolbar button.
+            SidebarCommands()
+            CommandGroup(before: .sidebar) {
                 Button("Odśwież stan komputerów") { model.refreshStatus() }
                     .keyboardShortcut("r", modifiers: [.command])
+                Divider()
+            }
+            // Edycja, next to "Zaznacz wszystko" (which keeps selecting text).
+            CommandGroup(after: .pasteboard) {
+                Divider()
                 Button("Zaznacz wszystkie komputery") { model.selection = Set(model.machines.map(\.id)) }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
-                Button("Zaznacz komputery online") { model.selectOnline() }
+                Button("Zaznacz włączone komputery") { model.selectOnline() }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
-                Button("Odznacz wszystkie") { model.selection = [] }
+                Button("Odznacz wszystkie komputery") { model.selection = [] }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
             }
             CommandGroup(replacing: .appSettings) {
                 Button("Konfiguracja…") { model.section = .setup }
-                    .keyboardShortcut(",", modifiers: [.command])
+                    .keyboardShortcut(AppSection.setup.keyboardShortcut)
             }
             CommandMenu("Przejdź") {
                 ForEach(AppSection.sidebar, id: \.title) { group in
@@ -139,6 +146,9 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // With titles under every toolbar icon, the sidebar button's long title does not fit above the sidebar
+        // and would end up in the overflow menu; Widok › Ukryj pasek boczny (⌃⌘S) does the same.
+        .toolbar(removing: .sidebarToggle)
     }
 
     func row(_ s: AppSection) -> some View {
@@ -164,14 +174,16 @@ struct SidebarView: View {
         }
     }
 
+    /// What the section is for, its shortcut and, with a badge, what the number means.
     func badgeHelp(for s: AppSection) -> String {
         let n = badge(for: s)
-        guard n > 0 else { return s.summary }
+        let base = "\(s.summary) (\(s.shortcutText))"
+        guard n > 0 else { return base }
         switch s {
-        case .jobs: return "W toku: \(Polish.jobs(n))"
-        case .dashboard: return "Wymaga uwagi (błąd logowania lub połączenia): \(Polish.computers(n))"
-        case .updates: return "Dostępne aktualizacje \(Polish.onComputers(n))"
-        default: return s.summary
+        case .jobs: return "\(base)\nW toku: \(Polish.jobs(n))"
+        case .dashboard: return "\(base)\nWymaga uwagi (błąd logowania lub połączenia): \(Polish.computers(n))"
+        case .updates: return "\(base)\nDostępne aktualizacje \(Polish.onComputers(n))"
+        default: return base
         }
     }
 }
@@ -204,10 +216,25 @@ extension AppSection {
         }
     }
 
-    /// ⌘1…⌘9, ⌘0 for the first ten sidebar entries (Konfiguracja has ⌘, like Settings in other apps).
-    var keyboardShortcut: KeyboardShortcut? {
-        guard let index = Self.sidebarOrder.firstIndex(of: self), index < 10 else { return nil }
-        return KeyboardShortcut(KeyEquivalent(Character(String((index + 1) % 10))), modifiers: [.command])
+    /// Every section has a shortcut, numbered in sidebar order: ⌘1…⌘9 and ⌘0 for the first ten, then ⇧⌘P for
+    /// Polecenia (like a command palette) and ⌘, for Konfiguracja (like Settings in every Mac app; also in the
+    /// application menu).
+    var keyboardShortcut: KeyboardShortcut {
+        switch self {
+        case .setup: return KeyboardShortcut(",", modifiers: .command)
+        case .commands: return KeyboardShortcut("p", modifiers: [.command, .shift])
+        default:
+            let numbered = Self.sidebarOrder.filter { $0 != .setup && $0 != .commands }
+            let index = numbered.firstIndex(of: self) ?? 0
+            assert(numbered.count <= 10, "Only ten sections can have ⌘ + digit")
+            return KeyboardShortcut(KeyEquivalent(Character(String((index + 1) % 10))), modifiers: .command)
+        }
+    }
+
+    /// The shortcut as shown in menus, e.g. "⌘2", "⇧⌘P".
+    var shortcutText: String {
+        let s = keyboardShortcut
+        return (s.modifiers.contains(.shift) ? "⇧" : "") + "⌘" + String(s.key.character).uppercased()
     }
 }
 
@@ -653,10 +680,10 @@ struct DetailView: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        // A plain stack (not a safe-area inset): sections with an inspector or a table ignore top insets, and the
-        // banner would cover their header.
+        // A plain stack (not a safe-area inset): sections with a table ignore top insets, and the banner would cover
+        // their header. Sections with an inspector show the banner in their main column themselves.
         VStack(spacing: 0) {
-            if PasswordBanner.isNeeded(model), model.section != .setup {
+            if PasswordBanner.isNeeded(model), !PasswordBanner.notAbove.contains(model.section ?? .dashboard) {
                 PasswordBanner()
             }
             section
