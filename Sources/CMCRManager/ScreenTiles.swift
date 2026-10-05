@@ -45,10 +45,13 @@ private struct ScreenScopeModifier: ViewModifier {
                 center.setScope(id, visible: visible)
                 if let window { onWindow?(window) }
             })
-            .onAppear { center.registerScope(id, pausesWhenInactive: pausesWhenInactive) }
+            .onAppear { center.registerScope(id, pausesWhenInactive: pauses) }
             .onDisappear { center.removeScope(id) }
-            .onChange(of: pausesWhenInactive) { _, value in center.registerScope(id, pausesWhenInactive: value) }
+            .onChange(of: pauses) { _, value in center.registerScope(id, pausesWhenInactive: value) }
     }
+
+    /// Off-screen snapshot windows never become active; their tiles keep running.
+    private var pauses: Bool { pausesWhenInactive && !SnapshotRenderer.isActive }
 }
 
 private struct ScreenObservation: ViewModifier {
@@ -118,7 +121,8 @@ struct WindowReader: NSViewRepresentable {
 
         private func report(closing: Bool) {
             guard let window else { return }
-            onChange?(window, !closing && window.occlusionState.contains(.visible) && !window.isMiniaturized)
+            let visible = window.occlusionState.contains(.visible) && !window.isMiniaturized
+            onChange?(window, !closing && (visible || SnapshotRenderer.isActive))
         }
     }
 }
@@ -126,9 +130,7 @@ struct WindowReader: NSViewRepresentable {
 // MARK: - Wording
 
 func polishPlural(_ n: Int, _ one: String, _ few: String, _ many: String) -> String {
-    if n == 1 { return one }
-    let d = n % 10, t = n % 100
-    return (2...4).contains(d) && !(12...14).contains(t) ? few : many
+    Polish.plural(n, one, few, many)
 }
 
 func ageText(_ age: TimeInterval) -> String {
@@ -137,6 +139,19 @@ func ageText(_ age: TimeInterval) -> String {
     if s < 60 { return "\(s) s temu" }
     if s < 3600 { return "\(s / 60) min temu" }
     return "ponad godzinę temu"
+}
+
+extension ScreenIssue {
+    /// The Mac is off, asleep or away – usual in a classroom, so it is shown calmly rather than as an error.
+    var isOffline: Bool {
+        if case .connection(.offline, _) = self { return true }
+        return false
+    }
+
+    var displaySymbol: String { isOffline ? "moon.zzz" : symbol }
+
+    /// Plain-language explanation on the tile (the technical one stays in the tooltip).
+    var displayMessage: String { isOffline ? "Może być wyłączony, uśpiony albo poza siecią." : message }
 }
 
 extension ScreenFreshness {
@@ -178,14 +193,14 @@ struct ScreenPicture: View {
             ViewThatFits(in: .vertical) {
                 issueView(issue, details: true)
                 issueView(issue, details: false)
-                Image(systemName: issue.symbol).font(.title2)
+                Image(systemName: issue.displaySymbol).font(.title2)
             }
         } else {
             switch feed.phase {
             case .paused:
                 status("pause.circle", "Podgląd wstrzymany")
             case .offline:
-                status("wifi.slash", "Komputer nie odpowiada")
+                status("moon.zzz", "Komputer nie odpowiada")
             case .waiting(let until):
                 status("clock.arrow.circlepath", "Ponowna próba \(until.formatted(date: .omitted, time: .shortened))")
             case .idle, .connecting, .live:
@@ -200,19 +215,27 @@ struct ScreenPicture: View {
 
     private func issueView(_ issue: ScreenIssue, details: Bool) -> some View {
         VStack(spacing: large ? 10 : 6) {
-            Image(systemName: issue.symbol)
+            Image(systemName: issue.displaySymbol)
                 .font(large ? .system(size: 44) : .title2)
             Text(issue.title)
                 .font(large ? .title3.weight(.semibold) : .callout.weight(.semibold))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             if details {
-                Text(issue.message)
+                Text(issue.displayMessage)
                     .font(large ? .body : .caption)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white.opacity(0.7))
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: large ? 560 : nil)
+                if large && issue.displayMessage != issue.message {
+                    Text(issue.message)
+                        .font(.callout)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white.opacity(0.5))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 560)
+                }
             }
         }
     }
@@ -341,7 +364,7 @@ struct ScreenActionBar: View {
             }
             icon("macwindow.badge.plus", "Otwórz w nowym oknie") { actions.openInWindow(machine) }
             icon("text.bubble", "Wyślij wiadomość", action: onMessage)
-            icon("moon.zzz", "Uśpij ekran") { actions.sleepDisplay([machine]) }
+            icon("moon", "Uśpij ekran") { actions.sleepDisplay([machine]) }
             icon("rectangle.on.rectangle", "Udostępnianie ekranu (VNC) – pełny podgląd i sterowanie") { actions.screenSharing(machine) }
             Menu {
                 ScreenMoreMenuItems(machine: machine, feed: feed, actions: actions)
@@ -471,7 +494,7 @@ struct ScreenTile: View {
                 }
                 Button { actions.openInWindow(machine) } label: { Label("Otwórz w nowym oknie", systemImage: "macwindow.badge.plus") }
                 Button { composing = true } label: { Label("Wyślij wiadomość…", systemImage: "text.bubble") }
-                Button { actions.sleepDisplay([machine]) } label: { Label("Uśpij ekran", systemImage: "moon.zzz") }
+                Button { actions.sleepDisplay([machine]) } label: { Label("Uśpij ekran", systemImage: "moon") }
                 Button { actions.screenSharing(machine) } label: { Label("Udostępnianie ekranu (VNC)", systemImage: "rectangle.on.rectangle") }
                 Divider()
                 ScreenMoreMenuItems(machine: machine, feed: feed, actions: actions)
@@ -520,7 +543,7 @@ struct ScreenTile: View {
 
     private func borderColor(at now: Date) -> Color {
         if isFocused || isSelected { return .accentColor }
-        if let issue = feed.issue, !issue.isIdle { return feed.image == nil ? .red.opacity(0.8) : .orange }
+        if let issue = feed.issue, !issue.isIdle, !issue.isOffline { return feed.image == nil ? .red.opacity(0.8) : .orange }
         if let f = feed.freshness(at: now), f != .fresh, feed.image != nil { return .orange }
         return Color.primary.opacity(0.12)
     }
@@ -528,7 +551,7 @@ struct ScreenTile: View {
     private var borderWidth: Double {
         if isFocused { return 3 }
         if isSelected { return 2.5 }
-        if let issue = feed.issue, !issue.isIdle { return 2 }
+        if let issue = feed.issue, !issue.isIdle, !issue.isOffline { return 2 }
         return 1
     }
 

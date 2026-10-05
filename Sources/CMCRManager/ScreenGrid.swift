@@ -10,7 +10,7 @@ enum ScreenGridLayout: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .fit: return "Dopasuj do okna"
-        case .adaptive: return "Według rozmiaru kafelka"
+        case .adaptive: return "Własny rozmiar"
         case .two: return "2 kolumny"
         case .three: return "3 kolumny"
         case .four: return "4 kolumny"
@@ -21,9 +21,11 @@ enum ScreenGridLayout: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .fit: return "rectangle.expand.vertical"
-        case .adaptive: return "square.resize"
-        default: return "square.grid.\(min(4, max(2, fixedColumns ?? 3)))x\(min(4, max(2, fixedColumns ?? 3)))"
+        case .fit: return "aspectratio"
+        case .adaptive: return "slider.horizontal.3"
+        case .two: return "square.grid.2x2"
+        case .three: return "square.grid.3x3"
+        default: return "square.grid.4x3.fill"
         }
     }
 
@@ -80,7 +82,9 @@ struct ScreenGrid: View {
                         }
                     }
                     .padding(Self.padding)
-                    .frame(maxWidth: .infinity)
+                    // "Dopasuj do okna" never scrolls: the screens sit in the middle instead of leaving an empty
+                    // band at the bottom of the window.
+                    .frame(maxWidth: .infinity, minHeight: layout == .fit ? geo.size.height : nil)
                 }
                 .onChange(of: focused) { _, id in
                     if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
@@ -113,6 +117,12 @@ struct ScreenGrid: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: zoomed)
+        .task {
+            // Start-up hook for scripted UI checks: CMCR_ZOOM_FIRST_SCREEN=1 enlarges the first screen.
+            if ProcessInfo.processInfo.environment["CMCR_ZOOM_FIRST_SCREEN"] == "1", let first = machines.first {
+                zoom(first.id)
+            }
+        }
         .onChange(of: machines.map(\.id)) { _, ids in
             if let z = zoomed, !ids.contains(z) { zoomed = nil }
         }
@@ -211,20 +221,25 @@ struct ZoomedScreen: View {
     var body: some View {
         let actions = ScreenActions(model: model, center: center, openWindow: openWindow)
         VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                ScreenTitle(machine: machine, feed: feed)
-                    .layoutPriority(1)
-                Spacer(minLength: 12)
-                Text("\(position.index) z \(position.count)")
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-                ViewThatFits(in: .horizontal) {
+            // Titled buttons next to the name, under it in narrower windows, icons only as the last resort.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    heading
                     buttons(actions).labelStyle(.titleAndIcon)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    heading
+                    HStack {
+                        Spacer(minLength: 0)
+                        buttons(actions).labelStyle(.titleAndIcon)
+                    }
+                }
+                HStack(spacing: 10) {
+                    heading
                     buttons(actions).labelStyle(.iconOnly)
                 }
-                .popover(isPresented: $composing, arrowEdge: .bottom) { MessageComposer(targets: [machine]) }
             }
+            .popover(isPresented: $composing, arrowEdge: .bottom) { MessageComposer(targets: [machine]) }
             .controlSize(.regular)
             ScreenPicture(feed: feed, large: true)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -235,7 +250,20 @@ struct ZoomedScreen: View {
                 .onTapGesture(count: 2, perform: onClose)
         }
         .padding(14)
-        .background(.regularMaterial)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var heading: some View {
+        HStack(spacing: 10) {
+            ScreenTitle(machine: machine, feed: feed)
+                .layoutPriority(1)
+            Spacer(minLength: 12)
+            Text("\(position.index) z \(position.count)")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .help("Który to komputer z widocznych; strzałki przechodzą do kolejnych")
+        }
     }
 
     private func buttons(_ actions: ScreenActions) -> some View {
@@ -247,12 +275,12 @@ struct ZoomedScreen: View {
                     .help("Następny komputer (→)")
             }
             .fixedSize()
-            Button { composing = true } label: { Label("Wiadomość", systemImage: "text.bubble") }
+            Button { composing = true } label: { Label("Wyślij wiadomość", systemImage: "text.bubble") }
                 .help("Wyślij wiadomość na ten ekran")
-            Button { actions.sleepDisplay([machine]) } label: { Label("Uśpij ekran", systemImage: "moon.zzz") }
-                .help("Wygasza monitor tego komputera (uczeń wybudzi go myszą lub klawiaturą)")
-            Button { actions.openInWindow(machine) } label: { Label("Nowe okno", systemImage: "macwindow.badge.plus") }
-                .help("Otwórz ten ekran w osobnym oknie")
+            Button { actions.sleepDisplay([machine]) } label: { Label("Uśpij ekran", systemImage: "moon") }
+                .help("Wygasza monitor tego komputera (uczeń obudzi go myszą lub klawiaturą)")
+            Button { actions.openInWindow(machine) } label: { Label("Otwórz w oknie", systemImage: "macwindow.badge.plus") }
+                .help("Otwórz ten ekran w osobnym oknie – można je zostawić obok innych okien")
             Button(action: onClose) { Label("Zamknij", systemImage: "xmark") }
                 .help("Wróć do wszystkich ekranów (Esc)")
         }
@@ -276,8 +304,9 @@ struct ScreenTitle: View {
                     .help("Aplikacja na pierwszym planie")
             }
             if let issue = feed.issue {
-                Label(issue.title, systemImage: issue.isIdle ? "info.circle" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(issue.isIdle ? Color.secondary : Color.orange)
+                let calm = issue.isIdle || issue.isOffline
+                Label(issue.title, systemImage: calm ? issue.displaySymbol : "exclamationmark.triangle.fill")
+                    .foregroundStyle(calm ? Color.secondary : Color.orange)
                     .help(issue.message)
             }
         }

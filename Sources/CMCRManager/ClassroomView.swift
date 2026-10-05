@@ -2,27 +2,81 @@ import AppKit
 import CMCRCore
 import SwiftUI
 
+/// Parts of the "Zajęcia" section, switched with a segmented control (each fits on one screen).
+enum ClassroomTab: String, CaseIterable, Identifiable {
+    case start, end, attention, questions
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .start: return "Początek lekcji"
+        case .end: return "Koniec lekcji"
+        case .attention: return "Tryb uwagi"
+        case .questions: return "Pytania"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .start: return "play.circle"
+        case .end: return "stop.circle"
+        case .attention: return "eye.slash"
+        case .questions: return "questionmark.bubble"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .start: return "Scenariusz na początek lekcji: budzenie, materiały, aplikacje, powitanie"
+        case .end: return "Scenariusz na koniec lekcji: zbieranie prac, porządki, wylogowanie, uśpienie"
+        case .attention: return "Zablokuj ekrany uczniów komunikatem, np. „Proszę patrzeć na tablicę”"
+        case .questions: return "Zadaj uczniom pytanie i zbierz odpowiedzi"
+        }
+    }
+}
+
 /// "Zajęcia": one-click lesson routines, attention mode and questions to students.
 struct ClassroomView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var classroom = ClassroomModel.shared
+    @AppStorage("classroom.tab") private var tab: ClassroomTab = .start
     @ViewState private var confirm: ConfirmRequest?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             TargetHeader(section: .classroom,
-                         subtitle: "Gotowe scenariusze na początek i koniec lekcji, tryb uwagi oraz szybkie pytania do uczniów.")
+                         subtitle: "Początek i koniec lekcji jednym przyciskiem, tryb uwagi (zablokowane ekrany) i szybkie pytania do uczniów.")
                 .padding([.horizontal, .top], 20)
+            Picker("Część", selection: $tab) {
+                ForEach(ClassroomTab.allCases) { t in
+                    Label(t.title, systemImage: t.icon).tag(t)
+                        .help(t.help)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .frame(maxWidth: .infinity)
+            .padding(.top, 8)
+            .accessibilityLabel("Część zajęć")
+            if tab != .attention && lockedCount > 0 {
+                lockedNotice
+            }
             ScrollViewReader { proxy in
                 Form {
-                    StartLessonSection(confirm: $confirm)
-                    EndLessonSection(confirm: $confirm)
-                    if let run = classroom.run {
-                        LessonProgressSection(run: run)
-                            .id("progress")
+                    switch tab {
+                    case .start:
+                        StartLessonSection(confirm: $confirm)
+                        progress(.start)
+                    case .end:
+                        EndLessonSection(confirm: $confirm)
+                        progress(.end)
+                    case .attention:
+                        AttentionSection()
+                    case .questions:
+                        QuestionSection()
                     }
-                    AttentionSection()
-                    QuestionSection()
                     if model.lastBatch[.classroom] != nil {
                         Section {
                             LastBatchView(section: .classroom)
@@ -31,12 +85,44 @@ struct ClassroomView: View {
                 }
                 .formStyle(.grouped)
                 .onChange(of: classroom.run?.id) { _, id in
-                    guard id != nil else { return }
+                    guard id != nil, let kind = classroom.run?.plan.kind else { return }
+                    tab = kind == .start ? .start : .end
                     withAnimation { proxy.scrollTo("progress", anchor: .top) }
                 }
             }
         }
+        .background {
+            // ⇧⌘L and ⇧⌘U lock and unlock the screens from every part of the section, not only from "Tryb uwagi"
+            // (where the visible buttons carry the same shortcuts).
+            if tab != .attention { AttentionShortcuts() }
+        }
         .confirmation($confirm)
+    }
+
+    private var lockedCount: Int { model.machines.filter { classroom.isLocked($0.id) }.count }
+
+    /// Reminder on the other tabs that some students still look at a locked screen.
+    private var lockedNotice: some View {
+        HStack(spacing: 10) {
+            Label {
+                Text("Tryb uwagi jest włączony – zablokowane ekrany: \(lockedCount)")
+            } icon: {
+                Image(systemName: "lock.fill").foregroundStyle(.orange)
+            }
+            Button("Pokaż") { tab = .attention }
+                .buttonStyle(.link)
+                .help("Przejdź do trybu uwagi, aby odblokować ekrany (⇧⌘U)")
+        }
+        .font(.callout)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+    }
+
+    @ViewBuilder private func progress(_ kind: LessonPlan.Kind) -> some View {
+        if let run = classroom.run, run.plan.kind == kind {
+            LessonProgressSection(run: run)
+                .id("progress")
+        }
     }
 }
 
@@ -52,7 +138,8 @@ private struct StartLessonSection: View {
     var body: some View {
         Section {
             Toggle(isOn: c.wake) {
-                StepLabel(.wake, "Obudź komputery i poczekaj, aż będą gotowe")
+                StepLabel(.wake, "Obudź komputery i poczekaj, aż będą gotowe",
+                          caption: "Uśpione komputery dostaną sygnał budzenia przez sieć (Wake-on-LAN).")
             }
             if c.wrappedValue.wake {
                 Stepper(value: c.wakeWaitMinutes, in: 1...10) {
@@ -63,7 +150,8 @@ private struct StartLessonSection: View {
             }
 
             Toggle(isOn: c.sendMaterials) {
-                StepLabel(.materials, "Wyślij materiały z folderu na Macu nauczyciela")
+                StepLabel(.materials, "Wyślij materiały z folderu na Macu nauczyciela",
+                          caption: "Zawartość wybranego folderu trafi do każdego ucznia.")
             }
             if c.wrappedValue.sendMaterials {
                 LabeledContent("Folder z materiałami") {
@@ -75,17 +163,19 @@ private struct StartLessonSection: View {
                         Button("Wybierz…") {
                             if let url = Pickers.folder() { c.wrappedValue.materialsFolder = url.path }
                         }
+                        .help("Wybierz folder z materiałami na tym Macu")
                     }
                 }
                 .padding(.leading, 28)
-                Picker("Dokąd", selection: c.destination) {
+                Picker("Dokąd wysłać", selection: c.destination) {
                     ForEach(LessonStartConfig.Destination.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
                 .padding(.leading, 28)
             }
 
             Toggle(isOn: c.openApps) {
-                StepLabel(.openApps, "Uruchom aplikacje")
+                StepLabel(.openApps, "Uruchom aplikacje",
+                          caption: "Otworzą się u zalogowanego ucznia.")
             }
             if c.wrappedValue.openApps {
                 HStack {
@@ -99,7 +189,8 @@ private struct StartLessonSection: View {
             }
 
             Toggle(isOn: c.greet) {
-                StepLabel(.greet, "Wyślij powitanie")
+                StepLabel(.greet, "Wyślij powitanie",
+                          caption: "Wiadomość pojawi się na ekranie ucznia.")
             }
             if c.wrappedValue.greet {
                 TextField("Tytuł", text: c.greetingTitle)
@@ -107,31 +198,40 @@ private struct StartLessonSection: View {
                 TextField("Treść", text: c.greetingText, prompt: Text("Treść powitania"), axis: .vertical)
                     .lineLimit(2...4)
                     .padding(.leading, 28)
-                Picker("Forma", selection: c.greetingAsDialog) {
+                Picker("Jak pokazać", selection: c.greetingAsDialog) {
                     Text("Powiadomienie").tag(false)
                     Text("Okno z przyciskiem OK").tag(true)
                 }
                 .padding(.leading, 28)
             }
 
-            HStack {
-                Text(summary)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(summary)
+                    if let note = wakeNote {
+                        Text(note)
+                    }
+                    if model.selection.isEmpty {
+                        SelectFirstHint()
+                    }
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
                 Button {
                     classroom.startLesson(model, targets: model.selectedMachines)
                 } label: {
                     Label("Rozpocznij zajęcia", systemImage: "play.fill")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.selection.isEmpty || plan.steps.isEmpty || running)
-                .help(model.selection.isEmpty ? "Zaznacz komputery na liście" : "Wykona zaznaczone kroki na \(model.selection.count) \(Plural.computersLocative(model.selection.count))")
+                .fixedSize()
+                .disabled(targetCount == 0 || plan.steps.isEmpty || running)
+                .help(buttonHelp)
             }
         } header: {
             Label("Rozpocznij zajęcia", systemImage: "play.circle")
         } footer: {
-            Text("Kroki wykonują się po kolei na każdym komputerze; postęp zobaczysz poniżej i w sekcji Zadania.")
+            Text("Kroki wykonują się po kolei na każdym komputerze; postęp zobaczysz poniżej i w dziale Zadania.")
                 .foregroundStyle(.secondary)
         }
     }
@@ -140,11 +240,31 @@ private struct StartLessonSection: View {
 
     var running: Bool { classroom.run.map { !$0.finished } ?? false }
 
+    /// A lesson that starts by waking the Macs runs on the unreachable ones too (they are woken first).
+    var targetCount: Int {
+        plan.steps.contains(.wake) ? model.selectedMachines.count : model.actionTargets.count
+    }
+
+    var wakeNote: String? {
+        guard plan.steps.contains(.wake) else { return nil }
+        let asleep = model.selectedMachines.filter { model.knownReachability($0).isUnreachable }.count
+        return asleep == 0 ? nil : "Niedostępne komputery (\(asleep)) zostaną najpierw obudzone."
+    }
+
+    var buttonHelp: String {
+        if model.selection.isEmpty { return "Najpierw zaznacz komputery na liście." }
+        if plan.steps.isEmpty { return "Włącz przynajmniej jeden krok." }
+        if targetCount == 0 {
+            return "Wszystkie zaznaczone komputery są niedostępne – włącz budzenie albo odśwież stan komputerów."
+        }
+        return "Wykona zaznaczone kroki \(Polish.onComputers(targetCount))."
+    }
+
     var materialsText: String {
         let folder = c.wrappedValue.materialsFolder
         if folder.isEmpty { return "Nie wybrano folderu" }
         let n = classroom.materialItems(folder).count
-        return "\((folder as NSString).abbreviatingWithTildeInPath) – \(n) \(Plural.form(n, one: "element", few: "elementy", many: "elementów"))"
+        return "\((folder as NSString).abbreviatingWithTildeInPath) – \(Polish.count(n, "element", "elementy", "elementów"))"
     }
 
     var summary: String {
@@ -166,7 +286,8 @@ private struct EndLessonSection: View {
     var body: some View {
         Section {
             Toggle(isOn: c.warn) {
-                StepLabel(.warn, "Uprzedź uczniów i odczekaj")
+                StepLabel(.warn, "Uprzedź uczniów i odczekaj",
+                          caption: "Uczniowie zobaczą komunikat; kolejne kroki ruszą po odliczeniu czasu.")
             }
             if c.wrappedValue.warn {
                 TextField("Komunikat", text: c.warnText, axis: .vertical)
@@ -179,10 +300,11 @@ private struct EndLessonSection: View {
             }
 
             Toggle(isOn: c.quitApps) {
-                StepLabel(.quitApps, "Zamknij aplikacje")
+                StepLabel(.quitApps, "Zamknij aplikacje",
+                          caption: "Przed zebraniem prac, aby w kopii znalazły się zapisane pliki.")
             }
             if c.wrappedValue.quitApps {
-                Picker("Które", selection: c.quitAllApps) {
+                Picker("Które aplikacje", selection: c.quitAllApps) {
                     Text("Wszystkie aplikacje ucznia").tag(true)
                     Text("Tylko wybrane").tag(false)
                 }
@@ -200,12 +322,13 @@ private struct EndLessonSection: View {
             }
 
             Toggle(isOn: c.collect) {
-                StepLabel(.collect, "Zbierz prace do nowego folderu")
+                StepLabel(.collect, "Zbierz prace do nowego folderu",
+                          caption: "Kopia folderu cmcr każdego ucznia trafi na ten Mac.")
             }
             if c.wrappedValue.collect {
                 TextField("Klasa lub temat", text: c.collectLabel, prompt: Text("opcjonalnie, np. 3A Unity"))
                     .padding(.leading, 28)
-                LabeledContent("Zapis do") {
+                LabeledContent("Zapisz w") {
                     HStack {
                         Text(collectPreview)
                             .font(.callout.monospaced())
@@ -227,17 +350,20 @@ private struct EndLessonSection: View {
 
             Toggle(isOn: Binding(get: { c.wrappedValue.collect && c.wrappedValue.cleanShared },
                                  set: { c.wrappedValue.cleanShared = $0 })) {
-                StepLabel(.cleanShared, "Wyczyść folder cmcr ucznia")
+                StepLabel(.cleanShared, "Wyczyść folder cmcr ucznia",
+                          caption: "Tylko po udanym zebraniu prac z tego komputera.")
             }
             .disabled(!c.wrappedValue.collect)
             .help(c.wrappedValue.collect
                   ? "Po zebraniu prac usuwa zawartość folderu cmcr ucznia"
                   : "Włącz „Zbierz prace” – folder ucznia jest czyszczony dopiero po zebraniu z niego prac")
             Toggle(isOn: c.cleanDownloads) {
-                StepLabel(.cleanDownloads, "Wyczyść folder Pobrane ucznia")
+                StepLabel(.cleanDownloads, "Wyczyść folder Pobrane ucznia",
+                          caption: "Usuwa pliki pobrane z internetu.")
             }
             Toggle(isOn: c.logout) {
-                StepLabel(.logout, "Wyloguj ucznia")
+                StepLabel(.logout, "Wyloguj ucznia",
+                          caption: "Niezapisane prace w otwartych aplikacjach przepadną.")
             }
             Picker(selection: c.power) {
                 ForEach(LessonEndConfig.PowerChoice.allCases, id: \.self) { Text($0.label).tag($0) }
@@ -251,18 +377,27 @@ private struct EndLessonSection: View {
                     .foregroundStyle(.orange)
             }
 
-            HStack {
-                Text(summary)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(summary)
+                    if model.selection.isEmpty {
+                        SelectFirstHint()
+                    }
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                let disruptive = c.wrappedValue.isDisruptive
+                Button(role: disruptive ? .destructive : nil) {
                     askToEnd()
                 } label: {
-                    Label("Zakończ zajęcia", systemImage: "stop.fill")
+                    Label(disruptive ? "Zakończ zajęcia…" : "Zakończ zajęcia", systemImage: "stop.fill")
                 }
-                .disabled(model.selection.isEmpty || plan.steps.isEmpty || running)
-                .help(model.selection.isEmpty ? "Zaznacz komputery na liście" : "Wykona zaznaczone kroki na \(model.selection.count) \(Plural.computersLocative(model.selection.count))")
+                .buttonStyle(.borderedProminent)
+                .tint(disruptive ? .red : nil)
+                .fixedSize()
+                .disabled(model.actionTargets.isEmpty || plan.steps.isEmpty || running)
+                .help(buttonHelp)
             }
         } header: {
             Label("Zakończ zajęcia", systemImage: "stop.circle")
@@ -275,6 +410,15 @@ private struct EndLessonSection: View {
     var plan: LessonPlan { LessonPlan.end(c.wrappedValue, settings: model.settings) }
 
     var running: Bool { classroom.run.map { !$0.finished } ?? false }
+
+    var buttonHelp: String {
+        let n = model.actionTargets.count
+        if model.selection.isEmpty { return "Najpierw zaznacz komputery na liście." }
+        if plan.steps.isEmpty { return "Włącz przynajmniej jeden krok." }
+        if n == 0 { return "Wszystkie zaznaczone komputery są niedostępne – odśwież stan komputerów." }
+        return "Wykona zaznaczone kroki \(Polish.onComputers(n))"
+            + (c.wrappedValue.isDisruptive ? " – najpierw poprosi o potwierdzenie." : ".")
+    }
 
     var collectPreview: String {
         let url = LessonPlan.collectFolder(base: model.settings.localFolder, label: c.wrappedValue.collectLabel, date: Date())
@@ -293,12 +437,13 @@ private struct EndLessonSection: View {
             classroom.endLesson(model, targets: targets)
             return
         }
-        let n = targets.count
-        let users = targets.compactMap { model.status($0).consoleUser }.count
+        let reached = model.actionTargets
+        let n = reached.count
+        let users = reached.compactMap { model.status($0).consoleUser }.count
         var lines = plan.steps.map { "• \($0.title)" }
         if users > 0 { lines.append("\nZalogowani uczniowie: \(users). Niezapisane prace w otwartych aplikacjach przepadną.") }
         confirm = ConfirmRequest(
-            title: "Zakończyć zajęcia na \(n) \(Plural.computersLocative(n))?",
+            title: "Zakończyć zajęcia \(Polish.onComputers(n))?",
             message: lines.joined(separator: "\n"),
             button: "Zakończ zajęcia") {
             classroom.endLesson(model, targets: targets)
@@ -319,12 +464,17 @@ private struct LessonProgressSection: View {
                     Image(systemName: run.failedHosts == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .foregroundStyle(run.failedHosts == 0 ? .green : .orange)
                     Text(run.failedHosts == 0 ? "Gotowe na wszystkich komputerach."
-                         : "Problemy na \(run.failedHosts) \(Plural.computersLocative(run.failedHosts)) – szczegóły w sekcji Zadania.")
+                         : "Problemy \(Polish.onComputers(run.failedHosts)) – szczegóły w dziale Zadania.")
                 } else if let end = run.countdownEnd {
                     Image(systemName: "timer")
                     Text("Kolejne kroki za ") + Text(timerInterval: Date()...end, countsDown: true).monospacedDigit()
-                    Button("Nie czekaj") { run.skipCountdown = true }
-                        .controlSize(.small)
+                    Button {
+                        run.skipCountdown = true
+                    } label: {
+                        Label("Pomiń odliczanie", systemImage: "forward.fill")
+                    }
+                    .controlSize(.small)
+                    .help("Wykonaj kolejne kroki od razu, bez czekania do końca odliczania")
                 } else {
                     ProgressView(value: run.progress)
                         .frame(maxWidth: 220)
@@ -337,6 +487,7 @@ private struct LessonProgressSection: View {
                     } label: {
                         Label("Otwórz zebrane prace", systemImage: "folder")
                     }
+                    .help("Pokaż folder z zebranymi pracami w Finderze")
                 }
                 if !run.finished {
                     Button(role: .cancel) {
@@ -344,6 +495,7 @@ private struct LessonProgressSection: View {
                     } label: {
                         Label("Przerwij", systemImage: "xmark.circle")
                     }
+                    .help("Zatrzymaj scenariusz – kroki, które już się wykonały, nie zostaną cofnięte")
                 }
             }
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
@@ -406,8 +558,9 @@ private struct AttentionSection: View {
 
     var body: some View {
         Section {
-            HStack {
-                TextField("Komunikat na ekranie", text: $classroom.config.lockMessage)
+            HStack(alignment: .firstTextBaseline) {
+                TextField("Komunikat na ekranie", text: $classroom.config.lockMessage,
+                          prompt: Text("np. Proszę patrzeć na tablicę"))
                 Menu {
                     ForEach(Self.templates, id: \.self) { t in Button(t) { classroom.config.lockMessage = t } }
                 } label: {
@@ -417,41 +570,77 @@ private struct AttentionSection: View {
                 .fixedSize()
                 .help("Wstaw gotowy komunikat")
             }
-            Picker("Sposób blokady", selection: $classroom.config.lockMode) {
-                ForEach(AttentionMode.allCases, id: \.self) { Text($0.label).tag($0) }
+            Picker(selection: $classroom.config.lockMode) {
+                ForEach(AttentionMode.allCases, id: \.self) { Text($0.displayLabel).tag($0) }
+            } label: {
+                Text("Sposób blokady")
+                Text(classroom.config.lockMode.caption)
             }
-            Picker("Odblokuj automatycznie", selection: $classroom.config.autoUnlockMinutes) {
+            Picker(selection: $classroom.config.autoUnlockMinutes) {
                 ForEach(Self.unlockChoices, id: \.self) { n in
-                    Text(n == 0 ? "Nie (tylko ręcznie)" : "po \(n) min").tag(n)
+                    Text(n == 0 ? "Nie – tylko ręcznie" : "Po \(n) min").tag(n)
                 }
+            } label: {
+                Text("Odblokuj automatycznie")
+                Text("Zabezpieczenie na wypadek utraty połączenia – ekran odblokuje się sam.")
             }
-            .help("Zabezpieczenie na wypadek utraty połączenia z komputerem – ekran odblokuje się sam.")
             if !lockedNames.isEmpty {
-                LabeledContent("Zablokowane") {
+                LabeledContent {
                     Text(lockedNames).foregroundStyle(.secondary).lineLimit(2)
+                } label: {
+                    Label("Zablokowane teraz", systemImage: "lock.fill")
                 }
             }
-            HStack {
+            HStack(spacing: 12) {
+                if model.selection.isEmpty {
+                    SelectFirstHint()
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                TargetButton(title: "Odblokuj", icon: "lock.open", prominent: false) {
+                TargetButton(title: "Odblokuj ekrany", icon: "lock.open", prominent: false) {
                     classroom.unlock(model, model.selectedMachines)
                 }
-                .help("Zdejmij blokadę z zaznaczonych komputerów")
-                TargetButton(title: "Zablokuj ekrany", icon: "lock.fill", prominent: false) {
+                .keyboardShortcut("u", modifiers: [.command, .shift])
+                .help("Zdejmij blokadę z zaznaczonych komputerów (⇧⌘U)")
+                TargetButton(title: "Zablokuj ekrany", icon: "lock.fill") {
                     classroom.lock(model, model.selectedMachines)
                 }
-                .help("Zakryj ekrany zaznaczonych komputerów komunikatem")
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+                .help("Zakryj ekrany zaznaczonych komputerów komunikatem (⇧⌘L)")
             }
         } header: {
             Label("Tryb uwagi", systemImage: "eye.slash")
         } footer: {
-            Text("Blokada systemowa używa narzędzia LockScreen wbudowanego w macOS (z Apple Remote Desktop): zakrywa wszystkie ekrany i blokuje klawiaturę. Apple go nie dokumentuje, dlatego tryb automatyczny, gdy blokada się nie uruchomi, pokazuje komunikat na pełnym ekranie. Komunikat ukrywa Dock i pasek menu oraz wyłącza przełączanie aplikacji, ale nie jest zabezpieczeniem – nie powstrzyma np. wyłączenia komputera przyciskiem.")
+            Text("Blokada systemowa korzysta z narzędzia wbudowanego w macOS (LockScreen z Apple Remote Desktop): zakrywa wszystkie ekrany i blokuje klawiaturę. Apple go nie dokumentuje, więc gdy się nie uruchomi, tryb automatyczny pokaże komunikat na pełnym ekranie. Komunikat ukrywa Dock i pasek menu, ale nie jest zabezpieczeniem – nie powstrzyma np. wyłączenia komputera przyciskiem.")
                 .foregroundStyle(.secondary)
         }
     }
 
     var lockedNames: String {
         model.machines.filter { classroom.isLocked($0.id) }.map(\.name).joined(separator: ", ")
+    }
+}
+
+/// Invisible carriers of the attention-mode shortcuts while another tab of the section is shown.
+private struct AttentionShortcuts: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var classroom = ClassroomModel.shared
+
+    var body: some View {
+        let none = model.actionTargets.isEmpty
+        ZStack {
+            Button("Zablokuj ekrany") { classroom.lock(model, model.selectedMachines) }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+                .disabled(none)
+            Button("Odblokuj ekrany") { classroom.unlock(model, model.selectedMachines) }
+                .keyboardShortcut("u", modifiers: [.command, .shift])
+                .disabled(none)
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -494,16 +683,25 @@ private struct QuestionSection: View {
                         .foregroundStyle(.orange)
                 }
             }
-            Picker("Czekaj na odpowiedź", selection: $classroom.config.questionTimeoutMinutes) {
+            Picker(selection: $classroom.config.questionTimeoutMinutes) {
                 ForEach([1, 2, 5, 10], id: \.self) { Text("\($0) min").tag($0) }
+            } label: {
+                Text("Czekaj na odpowiedź")
+                Text("Potem okno pytania zniknie z ekranu ucznia.")
             }
             HStack {
+                if model.selection.isEmpty {
+                    SelectFirstHint()
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                TargetButton(title: "Zadaj pytanie", icon: "questionmark.bubble", prominent: false) {
+                TargetButton(title: "Zadaj pytanie", icon: "questionmark.bubble") {
                     classroom.ask(model, model.selectedMachines, buttons: withButtons ? buttons : [])
                 }
                 .disabled(classroom.config.lastQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                           || buttonProblem != nil)
+                .keyboardShortcut(.return, modifiers: .command)
             }
             if let round = classroom.question {
                 AnswersView(round: round)
@@ -530,7 +728,7 @@ private struct AnswersView: View {
                 Spacer()
                 if round.pending > 0 {
                     ProgressView().controlSize(.small)
-                    Text("czeka: \(round.pending)").foregroundStyle(.secondary).monospacedDigit()
+                    Text("czeka na odpowiedź: \(round.pending)").foregroundStyle(.secondary).monospacedDigit()
                 }
                 Button {
                     NSPasteboard.general.clearContents()
@@ -545,6 +743,7 @@ private struct AnswersView: View {
                 } label: {
                     Label("Eksportuj CSV…", systemImage: "square.and.arrow.up")
                 }
+                .help("Zapisz odpowiedzi w pliku CSV (otworzysz go w Excelu lub Numbers)")
             }
             .controlSize(.small)
             ForEach(round.machines) { m in
@@ -585,17 +784,66 @@ private struct AnswersView: View {
 
 // MARK: - Shared bits
 
+/// Step of a lesson routine: its icon, a title and an optional one-line explanation under it.
 struct StepLabel: View {
     let step: LessonStepKind
     let text: String
+    var caption: String?
 
-    init(_ step: LessonStepKind, _ text: String) {
+    init(_ step: LessonStepKind, _ text: String, caption: String? = nil) {
         self.step = step
         self.text = text
+        self.caption = caption
     }
 
     var body: some View {
-        Label(text, systemImage: step.icon)
+        Label {
+            Text(text)
+            if let caption {
+                Text(caption)
+            }
+        } icon: {
+            FormRowIcon(step.icon)
+        }
+    }
+}
+
+/// Why the action button next to it is greyed out when nothing is selected.
+struct SelectFirstHint: View {
+    var body: some View {
+        Label("Najpierw zaznacz komputery na liście obok.", systemImage: "hand.point.left")
+    }
+}
+
+/// Symbol in front of a form row, in a fixed-width column so the titles of neighbouring rows line up.
+struct FormRowIcon: View {
+    let name: String
+
+    init(_ name: String) { self.name = name }
+
+    var body: some View {
+        Image(systemName: name)
+            .frame(width: 20, alignment: .center)
+            .accessibilityHidden(true)
+    }
+}
+
+extension AttentionMode {
+    /// Wording for the picker (the core label names the undocumented tool).
+    var displayLabel: String {
+        switch self {
+        case .automatic: return "Automatycznie (zalecane)"
+        case .lockScreen: return "Blokada systemowa"
+        case .overlay: return "Komunikat na pełnym ekranie"
+        }
+    }
+
+    var caption: String {
+        switch self {
+        case .automatic: return "Najpierw blokada systemowa, a gdy się nie uruchomi – komunikat na pełnym ekranie."
+        case .lockScreen: return "Zakrywa ekrany i blokuje klawiaturę narzędziem wbudowanym w macOS."
+        case .overlay: return "Okno z komunikatem zasłania ekran ucznia."
+        }
     }
 }
 
