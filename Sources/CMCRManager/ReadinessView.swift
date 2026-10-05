@@ -246,6 +246,16 @@ enum ManualStep: String, CaseIterable, Identifiable {
         }
     }
 
+    var color: Color {
+        switch self {
+        case .fullDiskAccess: return .gray
+        case .screenRecording: return .red
+        case .screenSharing: return .indigo
+        case .fileVault: return .blue
+        case .localNetwork: return .blue
+        }
+    }
+
     var summary: String {
         switch self {
         case .fullDiskAccess: return "Pobieranie prac z Biurka i Dokumentów ucznia, czyszczenie folderów, podmiana aplikacji."
@@ -320,6 +330,13 @@ struct ReadinessView: View {
     @ViewState private var passwordFor: Machine?
 
     var body: some View {
+        ScrollViewReader { proxy in
+            page
+                .onSnapshotSubpage { if $0 == "readiness+end" { proxy.scrollTo("manualSteps", anchor: .top) } }
+        }
+    }
+
+    var page: some View {
         Page {
             PageHeader(title: "Gotowość iMaców", icon: "checklist",
                        subtitle: "Co jest już przygotowane na każdym iMacu. Większość ustawień włączysz stąd zdalnie jednym przyciskiem; dwa uprawnienia prywatności macOS trzeba raz włączyć przy komputerze.") {
@@ -343,6 +360,7 @@ struct ReadinessView: View {
                 legend
             }
             ManualStepsBox(store: store)
+                .id("manualSteps")
             LastBatchView(section: .setup)
         }
         .sheet(item: $sheet) { mode in
@@ -817,10 +835,8 @@ struct ManualStepRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: step.icon)
-                .font(.title3)
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 28)
+            SettingsIcon(symbol: step.icon, color: step.color)
+                .padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
                 Text(step.title).fontWeight(.medium)
                 Text(step.summary)

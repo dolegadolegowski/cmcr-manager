@@ -61,7 +61,7 @@ Z terminala: `cmcrctl setup all --verify`, potem `cmcrctl setup all [opcje]`; st
 
 ### Lokalnie przy iMacu (pendrive lub AirDrop — np. gdy SSH jeszcze nie działa)
 
-1. W aplikacji kliknij **Zapisz skrypt konfiguracyjny…** (albo `cmcrctl setup-script [opcje] > cmcr-imac-setup.sh`). Plik zawiera klucz publiczny aplikacji i wybrane opcje; jeden plik pasuje do wszystkich iMaców — konto administratora i nazwa są wykrywane na miejscu.
+1. W aplikacji (Konfiguracja › Przygotowanie iMaców) kliknij **Zapisz skrypt do pliku…** (albo `cmcrctl setup-script [opcje] > cmcr-imac-setup.sh`). Plik zawiera klucz publiczny aplikacji i wybrane opcje; jeden plik pasuje do wszystkich iMaców — konto administratora i nazwa są wykrywane na miejscu.
 2. Skopiuj plik na iMaca, zaloguj się na konto administratora `imacNN`, otwórz Terminal i wpisz:
 
    ```bash
@@ -172,7 +172,7 @@ cmcrctl message "Przerwa" "Za 5 minut koniec zajęć" all
 
 ## Uaktualnienia aplikacji
 
-CMCR Manager sam sprawdza w [GitHub Releases](https://github.com/dolegadolegowski/cmcr-manager/releases), czy jest nowsza wersja: kilkanaście sekund po uruchomieniu i potem raz dziennie. Gdy jest, na dole paska bocznego pojawia się **„Dostępna nowa wersja X”** — kliknięcie pokazuje opis zmian i przyciski **Zainstaluj i uruchom ponownie**, **Przypomnij później** (24 h) oraz **Pomiń tę wersję**. Ręcznie: menu **CMCR Manager › Sprawdź uaktualnienia…**. Ustawienia: **Konfiguracja › Ustawienia › Uaktualnienia CMCR Manager** (sprawdzanie automatyczne — domyślnie włączone; pobieranie w tle — włączone; **Instaluj automatycznie** — domyślnie wyłączone, instaluje sprawdzone uaktualnienie przy zamykaniu aplikacji; wersje testowe).
+CMCR Manager sam sprawdza w [GitHub Releases](https://github.com/dolegadolegowski/cmcr-manager/releases), czy jest nowsza wersja: kilkanaście sekund po uruchomieniu i potem raz dziennie. Gdy jest, na dole paska bocznego pojawia się **„Dostępna nowa wersja X”** — kliknięcie pokazuje opis zmian i przyciski **Zainstaluj i uruchom ponownie**, **Przypomnij później** (24 h) oraz **Pomiń tę wersję**. Ręcznie: menu **CMCR Manager › Sprawdź uaktualnienia…**. Ustawienia: **Konfiguracja › Ustawienia › Uaktualnienia CMCR Manager** (te same ustawienia są też w oknie **CMCR Manager › Ustawienia…**, ⌘,) (sprawdzanie automatyczne — domyślnie włączone; pobieranie w tle — włączone; **Instaluj automatycznie** — domyślnie wyłączone, instaluje sprawdzone uaktualnienie przy zamykaniu aplikacji; wersje testowe).
 
 Bez Twojej zgody nic nie jest instalowane (chyba że włączysz „Instaluj automatycznie”). Przed instalacją aplikacja sprawdza:
 

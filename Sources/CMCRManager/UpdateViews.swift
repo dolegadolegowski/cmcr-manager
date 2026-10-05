@@ -188,10 +188,11 @@ struct UpdateSheet: View {
         case .ready:
             Label(updater.installOnQuit
                   ? "Pobrano i sprawdzono. Zostanie zainstalowana automatycznie przy zamknięciu aplikacji."
-                  : "Pobrano i sprawdzono (podpis Ed25519, suma SHA-256, podpis kodu).",
+                  : "Pobrano i sprawdzono – to autentyczne uaktualnienie od autora aplikacji.",
                   systemImage: "checkmark.seal.fill")
                 .foregroundStyle(.green)
                 .fixedSize(horizontal: false, vertical: true)
+                .help("Poprawne: podpis Ed25519, suma kontrolna SHA-256 i podpis kodu aplikacji.")
         case .installing:
             HStack { ProgressView().controlSize(.small); Text("Instalowanie – aplikacja zaraz uruchomi się ponownie…") }
         case .available:

@@ -123,8 +123,11 @@ struct HostsEditor: View {
         } description: {
             Text("Dodaj komputery pojedynczo albo utwórz całą listę według wzoru, np. imac01 … imac15.")
         } actions: {
-            Button("Utwórz listę…") { showGenerator = true }
-                .buttonStyle(.borderedProminent)
+            Button {
+                showGenerator = true
+            } label: {
+                Label("Utwórz listę…", systemImage: "wand.and.stars")
+            }
         }
     }
 
@@ -744,6 +747,13 @@ struct AccessSettings: View {
 /// Konfiguracja › Ustawienia: every app setting on one page (the Settings window splits them into tabs).
 struct GeneralSettings: View {
     var body: some View {
+        ScrollViewReader { proxy in
+            form
+                .onSnapshotSubpage { if $0 == "general+end" { proxy.scrollTo("settingsWindow", anchor: .bottom) } }
+        }
+    }
+
+    var form: some View {
         Form {
             StudentFolderSettings()
             ConnectionSettings()
@@ -762,6 +772,7 @@ struct GeneralSettings: View {
                                  icon: "gearshape.2", color: .gray)
                 }
             }
+            .id("settingsWindow")
         }
         .formStyle(.grouped)
     }

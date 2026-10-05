@@ -2,7 +2,7 @@ import AppKit
 import CMCRCore
 import SwiftUI
 
-/// Renders every section into PNG files without a visible window (works while the screen is locked), for UI
+/// Renders every section into PNG files from the window's own drawing (works while the screen is locked), for UI
 /// review and documentation: CMCR_SNAPSHOT_DIR=<dir> [CMCR_SNAPSHOT_SECTIONS=files,apps] [CMCR_SNAPSHOT_WAIT=2]
 /// [CMCR_SNAPSHOT_SIZE=1440x900]. The app quits when done. Use together with CMCR_CONFIG_DIR.
 ///
