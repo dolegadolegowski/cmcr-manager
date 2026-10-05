@@ -333,7 +333,7 @@ public extension Scripts {
         RemoteScript(#"""
         CN=\#(shQuote(computerName)); LHN=\#(shQuote(localHostName))
         case "$LHN" in
-          ""|-*|*[!A-Za-z0-9-]*) echo "✘ Niepoprawna nazwa sieciowa „$LHN” – dozwolone są litery bez polskich znaków, cyfry i „-”." >&2; exit 2 ;;
+          ""|-*|*[!A-Za-z0-9-]*) echo "✘ Niepoprawna nazwa sieciowa „${LHN}” – dozwolone są litery bez polskich znaków, cyfry i „-”." >&2; exit 2 ;;
         esac
         [ ${#LHN} -le 63 ] || { echo "✘ Nazwa sieciowa może mieć najwyżej 63 znaki." >&2; exit 2; }
         [ -n "$CN" ] || CN="$LHN"
@@ -368,7 +368,7 @@ public extension Scripts {
         $(find "$D" -maxdepth 5 \( -iname "$NAME.app" -print -prune \) -o \( -name '*.app' -prune \) 2>/dev/null)
         CMCR_EOF
         done
-        [ $FOUND = 1 ] || echo "Brak aplikacji „$NAME” na tym komputerze."
+        [ $FOUND = 1 ] || echo "Brak aplikacji „${NAME}” na tym komputerze."
         exit 0
         """#)
     }

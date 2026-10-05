@@ -60,7 +60,7 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$ICONSET" -o "$BUILD_DIR/AppIcon.icns"
 
-echo "• Pakiet $APP…"
+echo "• Pakiet ${APP}…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bin"
 cp "$BIN/$EXECUTABLE" "$APP/Contents/MacOS/$EXECUTABLE"

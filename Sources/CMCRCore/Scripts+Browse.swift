@@ -274,11 +274,11 @@ public extension Scripts {
           mv "$SRC" "$DST" || { echo "✘ Nie udało się zmienić nazwy $OLDREAL" >&2; exit 1; }
         else
           if [ -e "$DST" ] || [ -L "$DST" ]; then
-            echo "CMCR:EXISTS" >&2; echo "Element o nazwie „$NEWNAME” już istnieje." >&2; exit 66
+            echo "CMCR:EXISTS" >&2; echo "Element o nazwie „${NEWNAME}” już istnieje." >&2; exit 66
           fi
           mv -n "$SRC" "$DST" || { echo "✘ Nie udało się zmienić nazwy $OLDREAL" >&2; exit 1; }
           if [ -e "$SRC" ] || [ -L "$SRC" ]; then
-            echo "CMCR:EXISTS" >&2; echo "Element o nazwie „$NEWNAME” już istnieje." >&2; exit 66
+            echo "CMCR:EXISTS" >&2; echo "Element o nazwie „${NEWNAME}” już istnieje." >&2; exit 66
           fi
         fi
         echo "✔ Zmieniono nazwę: $OLDNAME → $NEWNAME"

@@ -149,9 +149,9 @@ public enum Scripts {
         APP=\#(shQuote(app))
         if [ -z "$CONSOLE_USER" ]; then echo "Brak zalogowanego użytkownika – nie ma gdzie uruchomić aplikacji." >&2; exit \#(ScriptCode.noConsoleUser); fi
         if as_console_user /usr/bin/open \#(openArgs); then
-          echo "Uruchomiono „$APP” dla użytkownika $CONSOLE_USER."
+          echo "Uruchomiono „${APP}” dla użytkownika $CONSOLE_USER."
         else
-          echo "Nie udało się uruchomić „$APP”." >&2; exit 1
+          echo "Nie udało się uruchomić „${APP}”." >&2; exit 1
         fi
         """#)
     }
@@ -750,7 +750,7 @@ public enum Scripts {
         DEST="${DEST//\{console\}/$CONSOLE_USER}"; OWNER="${OWNER//\{console\}/$CONSOLE_USER}"
         DEST="${DEST/#\~/$HOME}"
         while [ "${DEST%/}" != "$DEST" ]; do DEST="${DEST%/}"; done
-        case "$DEST" in /?*) ;; *) echo "✘ Folder docelowy musi być pełną ścieżką (np. /Users/student/Desktop): „$DEST”" >&2; exit 2 ;; esac
+        case "$DEST" in /?*) ;; *) echo "✘ Folder docelowy musi być pełną ścieżką (np. /Users/student/Desktop): „${DEST}”" >&2; exit 2 ;; esac
         case "$DEST/" in */../*|*/./*|*//*) echo "✘ Niepoprawna ścieżka docelowa: $DEST" >&2; exit 2 ;; esac
         case "$MODE" in *[!0-7ugoarwxXst=+,-]*) echo "✘ Niepoprawne uprawnienia: $MODE" >&2; exit 2 ;; esac
         if L="$(cmcr_user_link "$DEST")"; then cmcr_link_refusal "$L"; exit 2; fi

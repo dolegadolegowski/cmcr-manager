@@ -161,7 +161,8 @@ tmpdir="$(printf '%s\n' "$out" | grep -o '/tmp/cmcr\.[A-Za-z0-9]*' | head -n 1)"
 section "Uprawnienia administratora (sudo przez askpass)"
 clear_fakelog
 out="$(ctlpw exec 'echo "uid-root-body PW=${#CMCR_PW}"; asroot echo zagniezdzone' 1 --root)"; code=$?
-expect "root: poprawne hasło – ciało skryptu wykonane" "$out" "uid-root-body PW=${#PASSWORD}" "zagniezdzone"
+# The remote side counts bytes (LC_ALL=C); count them here too, whatever the local locale.
+expect "root: poprawne hasło – ciało skryptu wykonane" "$out" "uid-root-body PW=$(printf %s "$PASSWORD" | LC_ALL=C wc -c | tr -d ' ')" "zagniezdzone"
 expect_code "root: kod 0" "$code" 0 "$out"
 out="$(CMCR_PASSWORD="zle-haslo" "$CTL" exec 'echo nie-powinno' 1 --root 2>&1)"; code=$?
 expect "root: błędne hasło – komunikat" "$out" "Błędne hasło administratora"

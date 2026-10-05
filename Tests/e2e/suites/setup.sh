@@ -276,7 +276,7 @@ rm -rf "$D" && ln -s "$VICTIM" "$D"
 clear_fakelog
 out="$(sctl setup 1 --no-ssh-acl)"; code=$?
 expect_code "folder ucznia jako dowiązanie: kod 1" "$code" 1 "$out"
-expect "folder ucznia jako dowiązanie: odmowa" "$out" "✘ " "Public/cmcr jest dowiązaniem utworzonym przez konto „$ME”"
+expect "folder ucznia jako dowiązanie: odmowa" "$out" "✘ " "Public/cmcr jest dowiązaniem utworzonym przez konto „${ME}”"
 victim_intact "folder ucznia jako dowiązanie: folder innego konta nietknięty" "$VICTIM"
 expect_not "folder ucznia jako dowiązanie: bez chown w folderze innego konta" "$(fakelog)" "setup-victim"
 out="$(sctl setup 1 --no-ssh-acl --verify)"
@@ -286,7 +286,7 @@ mv "$SHOME/Public" "$SHOME/Public.real" && ln -s "$VICTIM" "$SHOME/Public"
 clear_fakelog
 out="$(sctl setup 1 --no-ssh-acl)"; code=$?
 expect_code "Public jako dowiązanie: kod 1" "$code" 1 "$out"
-expect "Public jako dowiązanie: odmowa" "$out" "Public jest dowiązaniem utworzonym przez konto „$ME”"
+expect "Public jako dowiązanie: odmowa" "$out" "Public jest dowiązaniem utworzonym przez konto „${ME}”"
 victim_intact "Public jako dowiązanie: folder cmcr innego konta nietknięty" "$VICTIM/cmcr"
 expect_not "Public jako dowiązanie: bez chown w folderze innego konta" "$(fakelog)" "setup-victim"
 rm -f "$SHOME/Public" && mv "$SHOME/Public.real" "$SHOME/Public"

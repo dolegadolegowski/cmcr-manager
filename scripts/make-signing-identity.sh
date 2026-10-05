@@ -41,7 +41,7 @@ fi
 OPENSSL=/usr/bin/openssl   # LibreSSL: its PKCS#12 encryption is the one `security import` understands
 
 if security find-identity -p codesigning "$KEYCHAIN" 2>/dev/null | grep -qF "\"$NAME\""; then
-  echo "✔ Tożsamość „$NAME” już istnieje w $KEYCHAIN – nic nie zmieniono."
+  echo "✔ Tożsamość „${NAME}” już istnieje w $KEYCHAIN – nic nie zmieniono."
   security find-identity -p codesigning "$KEYCHAIN" | grep -F "\"$NAME\""
   exit 0
 fi
@@ -70,7 +70,7 @@ P12_PASSWORD=$("$OPENSSL" rand -hex 24)
   -passout "pass:$P12_PASSWORD" -out "$TMP/identity.p12"
 # -T: codesign may use the private key without asking every time.
 security import "$TMP/identity.p12" -k "$KEYCHAIN" -f pkcs12 -P "$P12_PASSWORD" -T /usr/bin/codesign >/dev/null
-echo "✔ Utworzono tożsamość „$NAME” w $KEYCHAIN"
+echo "✔ Utworzono tożsamość „${NAME}” w $KEYCHAIN"
 openssl_fingerprint=$("$OPENSSL" x509 -in "$TMP/cert.pem" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')
 echo "  SHA-1 certyfikatu: $openssl_fingerprint"
 

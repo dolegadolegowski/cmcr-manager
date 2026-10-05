@@ -181,7 +181,7 @@ out="$(mm unlock 1-3 -j 3 --prefix)"; code=$?
 expect_code "unlock -j 3 --prefix: kod 0" "$code" 0 "$out"
 order="$(printf '%s\n' "$out" | sed -n 's/^\[\(imac0[0-9]\)\].*/\1/p' | uniq | tr '\n' ' ')"
 [ "$order" = "imac01 imac02 imac03 " ] && pass "unlock -j 3 --prefix: wiersze z nazwą, w kolejności listy" \
-  || fail "unlock -j 3 --prefix: kolejność „$order”" "$out"
+  || fail "unlock -j 3 --prefix: kolejność „${order}”" "$out"
 out="$(mm filevault all -j2 --prefix)"; code=$?
 expect "filevault -j2 --prefix" "$out" "[imac02] imac02: FileVault"
 out="$(mm exists all "$WORK/remote" --jobs 2)"; code=$?

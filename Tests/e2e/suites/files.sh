@@ -169,7 +169,7 @@ expect_code "collect: kod 0" "$code" 0 "$out"
 stamp="$(ls "$WORK/zebrane" 2>/dev/null | head -1)"
 case "$stamp" in
   [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\ [0-9][0-9].[0-9][0-9]) pass "collect: folder z datą i godziną ($stamp)" ;;
-  *) fail "collect: nazwa folderu „$stamp”" "$(ls -la "$WORK/zebrane")" ;;
+  *) fail "collect: nazwa folderu „${stamp}”" "$(ls -la "$WORK/zebrane")" ;;
 esac
 [ -f "$WORK/zebrane/$stamp/imac01/projekt 1/main.txt" ] && [ -f "$WORK/zebrane/$stamp/imac01/notatka ł.txt" ] \
   && pass "collect: prace w <data>/<host>" || fail "collect: brak plików" "$(ls -laR "$WORK/zebrane")"

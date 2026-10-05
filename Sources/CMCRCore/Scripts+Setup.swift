@@ -287,7 +287,7 @@ public extension Scripts {
         RemoteScript(#"""
         R="${CMCR_SETUP_ROOT_PREFIX:-}"
         DIR="$R"\#(shQuote(path)); OWNER=\#(shQuote(owner))
-        dscl . -read "/Users/$OWNER" UniqueID >/dev/null 2>&1 || { echo "Na tym iMacu nie ma konta ucznia „$OWNER”." >&2; exit 1; }
+        dscl . -read "/Users/$OWNER" UniqueID >/dev/null 2>&1 || { echo "Na tym iMacu nie ma konta ucznia „${OWNER}”." >&2; exit 1; }
         case "$DIR" in
           "$R"/Users/?*/*) TOP="${DIR#"$R"/Users/}"; TOP="$R/Users/${TOP%%/*}" ;;
           *) echo "Folder ucznia musi leżeć w /Users/<konto>/…" >&2; exit 2 ;;

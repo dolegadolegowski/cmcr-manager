@@ -177,7 +177,7 @@ public struct RemoteScript: Sendable {
       if [ "$who" = root ]; then
         who="konto „root”, ale leży w folderze, który może zmieniać użytkownik (podstawiona kopia dowiązania systemowego)"
       else
-        who="konto „$who”, a nie przez system"
+        who="konto „${who}”, a nie przez system"
       fi
       echo "Odmowa: „$1” to dowiązanie symboliczne do „$(readlink "$1" 2>/dev/null)”, utworzone przez $who. Ze względów bezpieczeństwa CMCR Manager nie zapisuje ani nie usuwa plików przez dowiązania utworzone przez użytkowników – ktoś mógł je podstawić, żeby dostać się do plików innego konta. Usuń to dowiązanie (np. w Przeglądarce plików) i utwórz w tym miejscu zwykły folder." >&2
     }

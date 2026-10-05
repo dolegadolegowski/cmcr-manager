@@ -381,7 +381,7 @@ step_preflight() {
     return 1
   fi
   if ! is_admin "$ADMIN"; then
-    record admin fail "Konto „$ADMIN” nie jest administratorem – aplikacja potrzebuje sudo na tym koncie."
+    record admin fail "Konto „${ADMIN}” nie jest administratorem – aplikacja potrzebuje sudo na tym koncie."
     return 1
   fi
   record admin ok "Konto administracyjne: $ADMIN."
@@ -572,7 +572,7 @@ step_shared_folder() {
   section "Folder współdzielony ucznia"
   local shome dir top anc rest rc at=. mode_now owner_now acl_ok=1 did="" plan=""
   if ! dscl . -read "/Users/$STUDENT" UniqueID >/dev/null 2>&1; then
-    record shared warn "Konto ucznia „$STUDENT” nie istnieje – pomijam folder (utwórz konto i uruchom skrypt ponownie)."
+    record shared warn "Konto ucznia „${STUDENT}” nie istnieje – pomijam folder (utwórz konto i uruchom skrypt ponownie)."
     return
   fi
   shome="$(home_of "$STUDENT")"
@@ -782,7 +782,7 @@ step_hostname() {
   [ -n "$OPT_HOSTNAME" ] || { record hostname skipped "Nazwa komputera bez zmian ($(scutil --get LocalHostName 2>/dev/null).local)."; return; }
   local name="$OPT_HOSTNAME"
   [ "$name" = auto ] && name="$ADMIN"
-  case "$name" in -*|*-|*[!A-Za-z0-9-]*|'') record hostname fail "Nazwa „$name” nie nadaje się na nazwę komputera."; return ;; esac
+  case "$name" in -*|*-|*[!A-Za-z0-9-]*|'') record hostname fail "Nazwa „${name}” nie nadaje się na nazwę komputera."; return ;; esac
   if [ "$(scutil --get ComputerName 2>/dev/null)" = "$name" ] && [ "$(scutil --get LocalHostName 2>/dev/null)" = "$name" ]; then
     record hostname ok "Nazwa komputera: $name ($name.local)."; return
   fi
