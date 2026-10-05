@@ -4,7 +4,7 @@ import Foundation
 /// `cmcrctl` commands for lesson routines, attention mode, energy schedule, names and reports.
 enum ClassroomCLI {
     static let usage = """
-    Zajęcia, zasilanie i raporty (bez KOMP: w terminalu wszystkie komputery, w skryptach trzeba podać KOMP):
+    Zajęcia, zasilanie i raporty:
       cmcrctl lesson start|end KOMP [--no-wait] [--yes]   scenariusz zajęć zapisany w aplikacji (classroom.json)
       cmcrctl lock KOMP [--message "…"] [--mode automatic|lockScreen|overlay] [--minutes N]
       cmcrctl unlock KOMP                             zdejmij blokadę ekranu

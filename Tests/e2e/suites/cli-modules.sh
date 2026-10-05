@@ -23,19 +23,32 @@ mm() { CMCR_CONFIG_DIR="$MM" CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }
 mm_tty() { CMCR_CONFIG_DIR="$MM" CMCR_PASSWORD="$PASSWORD" script -q /dev/null "$CTL" "$@" </dev/null 2>&1; }
 delayed_power() { pgrep -U "$(id -u)" -f cmcr-delayed-power 2>/dev/null; }
 # Bytes a terminal would interpret: C0 controls other than tab/LF (CR LF from the pty is fine), DEL, C1 (C2 80–9F).
+# script(1) itself echoes the EOF of its /dev/null stdin as "^D" + two backspaces, and $(…) drops the LF of the
+# last CR LF: neither comes from cmcrctl.
 term_unsafe() {
   printf '%s' "$1" | python3 -c 'import sys
-d = sys.stdin.buffer.read().replace(b"\r\n", b"\n")
+d = sys.stdin.buffer.read()
+if d.startswith(b"^D\x08\x08"): d = d[4:]
+d = d.replace(b"\r\n", b"\n")
+if d.endswith(b"\r"): d = d[:-1]
 bad = sorted({c for c in d if (c < 32 and c not in (9, 10)) or c == 127})
 c1 = [i for i in range(len(d) - 1) if d[i] == 0xC2 and 0x80 <= d[i + 1] <= 0x9F]
 print(" ".join("%02x" % c for c in bad) + (" C1" if c1 else ""))'
 }
 
+# A regression could start delayed power actions (power-later): they run in a detached bash, which must see
+# the fakes too. Without that, those checks are skipped.
+mm_bg="$(ctlpw exec '/bin/bash --noprofile --norc -c "type shutdown pmset" 2>&1 | grep -c "is a function"' 1 --root | tail -1)"
+MM_POWER=0
+if [ "$mm_bg" = 2 ]; then MM_POWER=1; else fail "atrapy nieaktywne w procesach w tle – testy power-later pominięte" "$mm_bg"; fi
+stop_delayed_power() { delayed_power | xargs kill 2>/dev/null; }
+
 section "cmcrctl – pomoc poleceń (--help, -h niczego nie wykonują)"
 clear_fakelog
-for cmd in lock unlock rename rename-computer "lesson end" "lesson start" "schedule clear" "schedule set" power-cancel \
-           "power-later shutdown 5" filevault report "ask Pytanie" "app-version Safari" rm mkdir exists collect get ls \
-           install install-url screen-watch; do
+MM_HELP=(lock unlock rename rename-computer "lesson end" "lesson start" "schedule clear" "schedule set" power-cancel
+         filevault report "ask Pytanie" "app-version Safari" rm mkdir exists collect get ls install install-url screen-watch)
+[ "$MM_POWER" = 1 ] && MM_HELP+=("power-later shutdown 5")
+for cmd in "${MM_HELP[@]}"; do
   ok=1
   for h in --help -h; do
     out="$(mm $cmd $h </dev/null)"; code=$?
@@ -78,19 +91,23 @@ expect_code "lock --mode (nieznany tryb): kod 2" "$code" 2 "$out"
 out="$(mm schedule show 1 --on MTWRF@07:45)"; code=$?
 expect "schedule show --on: tylko dla set" "$out" "dotyczy tylko polecenia schedule set"
 expect_code "schedule show --on: kod 2" "$code" 2 "$out"
-out="$(mm power-later shutdown 5 1 2)"; code=$?
-expect_code "power-later … 1 2: kod 2" "$code" 2 "$out"
+if [ "$MM_POWER" = 1 ]; then
+  out="$(mm power-later shutdown 5 1 2)"; code=$?
+  expect_code "power-later … 1 2: kod 2" "$code" 2 "$out"
+fi
 out="$(mm ls all "$WORK/remote")"; code=$?
 expect "ls all: jeden komputer" "$out" "Podaj jeden komputer"
 expect_code "ls all: kod 2" "$code" 2 "$out"
 if [ -z "$(fakelog)" ] && [ -z "$(delayed_power)" ]; then pass "błędne użycie: nic nie wykonano"
-else fail "błędne użycie: wykonano polecenia" "$(fakelog)"; fi
+else fail "błędne użycie: wykonano polecenia" "$(fakelog)"; stop_delayed_power; fi
 
 section "cmcrctl – polecenia modułów bez listy komputerów"
 echo "instalator" > "$MM/plik.pkg"
 clear_fakelog
-for cmd in lock unlock "lesson start" "lesson end --yes" "schedule clear" "schedule set --on MTWRF@07:45" power-cancel \
-           "power-later shutdown 5 --yes" "ask Pytanie" "install $MM/plik.pkg" "install-url file:///nie-ma.pkg"; do
+MM_NOHOST=(lock unlock "lesson start" "lesson end --yes" "schedule clear" "schedule set --on MTWRF@07:45" power-cancel
+           "ask Pytanie" "install $MM/plik.pkg" "install-url file:///nie-ma.pkg")
+[ "$MM_POWER" = 1 ] && MM_NOHOST+=("power-later shutdown 5 --yes")
+for cmd in "${MM_NOHOST[@]}"; do
   out="$(mm $cmd </dev/null)"; code=$?
   if [ "$code" = 2 ] && contains "" "$out" "Podaj komputery dla polecenia ${cmd%% *}"; then
     pass "$cmd bez komputerów w skrypcie: kod 2 z wyjaśnieniem"
@@ -99,10 +116,13 @@ for cmd in lock unlock "lesson start" "lesson end --yes" "schedule clear" "sched
   fi
 done
 # The unquoted #3 of the README: a comment, so the script loses the host list.
-out="$(CMCR_CONFIG_DIR="$MM" bash -c '"$0" power-later shutdown 5 --yes #3' "$CTL" </dev/null 2>&1)"; code=$?
-expect_code "power-later … #3 w skrypcie: kod 2" "$code" 2 "$out"
+if [ "$MM_POWER" = 1 ]; then
+  out="$(CMCR_CONFIG_DIR="$MM" CMCR_PASSWORD="$PASSWORD" bash -c '"$0" power-later shutdown 5 --yes #3' "$CTL" </dev/null 2>&1)"
+  code=$?
+  expect_code "power-later … #3 w skrypcie: kod 2" "$code" 2 "$out"
+fi
 if [ -z "$(fakelog)" ] && [ -z "$(delayed_power)" ]; then pass "bez komputerów: na żadnym nic nie wykonano"
-else fail "bez komputerów: wykonano polecenia" "$(fakelog)"; delayed_power | awk '{print $1}' | xargs kill 2>/dev/null; fi
+else fail "bez komputerów: wykonano polecenia" "$(fakelog)"; stop_delayed_power; fi
 out="$(mm rename --dry-run)"; code=$?
 expect_code "rename bez komputerów: kod 2" "$code" 2 "$out"
 expect "rename bez komputerów: wskazówka" "$out" "Podaj komputery dla polecenia rename"
@@ -119,9 +139,11 @@ expect "unlock bez komputerów w terminalu: informacja i wszystkie komputery" "$
 
 section "cmcrctl – potwierdzenia w poleceniach modułów"
 clear_fakelog
-out="$(mm power-later shutdown 5 1 </dev/null)"; code=$?
-expect_code "power-later bez --yes: kod 2" "$code" 2 "$out"
-expect "power-later bez --yes: pytanie z listą komputerów" "$out" "Wyłącz za 5 min: imac01" "dodaj --yes"
+if [ "$MM_POWER" = 1 ]; then
+  out="$(mm power-later shutdown 5 1 </dev/null)"; code=$?
+  expect_code "power-later bez --yes: kod 2" "$code" 2 "$out"
+  expect "power-later bez --yes: pytanie z listą komputerów" "$out" "Wyłącz za 5 min: imac01" "dodaj --yes"
+fi
 out="$(mm lesson end 1 --no-wait </dev/null)"; code=$?
 expect_code "lesson end (wylogowanie) bez --yes: kod 2" "$code" 2 "$out"
 expect "lesson end bez --yes: kroki w pytaniu" "$out" "Zakończyć zajęcia na: imac01" "dodaj --yes"
@@ -140,7 +162,7 @@ expect_code "collect --clean bez --yes: kod 2" "$code" 2 "$out"
 [ -f "$COL/a.txt" ] && [ ! -e "$WORK/mm-zebrane" ] && pass "collect --clean bez --yes: nic nie zebrano ani nie usunięto" \
   || fail "collect --clean bez --yes" "$out"
 if [ -z "$(fakelog)" ] && [ -z "$(delayed_power)" ]; then pass "bez potwierdzenia: nic nie wykonano"
-else fail "bez potwierdzenia: wykonano polecenia" "$(fakelog)"; fi
+else fail "bez potwierdzenia: wykonano polecenia" "$(fakelog)"; stop_delayed_power; fi
 out="$(mm rm 1 "$RMF" --yes)"; code=$?
 expect_code "rm --yes: kod 0" "$code" 0 "$out"
 [ ! -e "$RMF" ] && pass "rm --yes: plik usunięty" || fail "rm --yes: plik został" "$out"
@@ -231,3 +253,4 @@ bad="$(term_unsafe "$out")"
 [ -z "$bad" ] && pass "ask: brak surowych znaków sterujących" || fail "ask: surowe bajty $bad" "$out"
 rm -f "$WORK/ask.answer"
 rm -rf "$TD"
+stop_delayed_power
