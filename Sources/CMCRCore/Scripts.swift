@@ -57,37 +57,7 @@ public enum Scripts {
         """#)
     }
 
-    // MARK: - Screen preview (view only)
-
-    public static func screenshot(maxSize: Int, quality: Int, notify: Bool,
-                                  onlyStandard: Bool, allowedUsers: [String]) -> RemoteScript {
-        RemoteScript(#"""
-        MAXSIZE=\#(max(320, maxSize))
-        QUALITY=\#(min(100, max(10, quality)))
-        ALLOWED=\#(shQuote(allowedUsers.joined(separator: ",")))
-        if [ -z "$CONSOLE_USER" ]; then echo "CMCR:NO_USER" >&2; exit \#(ScriptCode.noConsoleUser); fi
-        if [ -n "$ALLOWED" ]; then
-          case ",$ALLOWED," in *",$CONSOLE_USER,"*) ;; *) echo "CMCR:DENIED:$CONSOLE_USER" >&2; exit \#(ScriptCode.observeDenied) ;; esac
-        fi
-        if [ \#(onlyStandard ? 1 : 0) = 1 ] && is_admin_user "$CONSOLE_USER"; then
-          echo "CMCR:ADMIN:$CONSOLE_USER" >&2; exit \#(ScriptCode.observeDenied)
-        fi
-        if [ \#(notify ? 1 : 0) = 1 ]; then
-          as_console_user /usr/bin/osascript -e 'display notification "Administrator rozpoczął podgląd Twojego ekranu." with title "Podgląd ekranu"' </dev/null >/dev/null 2>&1 || true
-        fi
-        RAW="$CMCR_TMP/screen.png"; OUT="$CMCR_TMP/screen.jpg"
-        if [ "$(id -u)" = "$CONSOLE_UID" ]; then
-          /usr/sbin/screencapture -x -m -C -t png "$RAW" </dev/null >/dev/null 2>&1
-        fi
-        if [ ! -s "$RAW" ]; then
-          asroot launchctl asuser "$CONSOLE_UID" /usr/sbin/screencapture -x -m -C -t png "$RAW" </dev/null >/dev/null 2>"$CMCR_TMP/err"
-        fi
-        if [ ! -s "$RAW" ]; then echo "CMCR:CAPTURE_FAILED $(cat "$CMCR_TMP/err" 2>/dev/null)" >&2; exit \#(ScriptCode.captureFailed); fi
-        echo "CMCR:USER:$CONSOLE_USER" >&2
-        if ! sips -s format jpeg -s formatOptions "$QUALITY" -Z "$MAXSIZE" "$RAW" --out "$OUT" >/dev/null 2>&1; then OUT="$RAW"; fi
-        cat "$OUT"
-        """#)
-    }
+    // Screen preview (view only): see ScreenCapture.swift.
 
     // MARK: - Applications
 

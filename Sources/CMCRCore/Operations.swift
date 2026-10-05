@@ -53,43 +53,7 @@ public enum Operations {
         return CommandResult(exitCode: 0, stdout: ls.stdout, stderr: r.stderr)
     }
 
-    public struct Screenshot: Sendable {
-        public var imageData: Data?
-        public var user: String?
-        public var message: String?
-    }
-
-    /// Captures the screen of the logged-in user, honouring the observation restrictions.
-    public static func screenshot(of host: Machine, maxSize: Int, settings appSettings: AppSettings, notify: Bool,
-                                  password: String?, sshSettings: SSHSettings) async -> Screenshot {
-        let script = Scripts.screenshot(maxSize: maxSize, quality: appSettings.screenshotQuality, notify: notify,
-                                        onlyStandard: appSettings.observeOnlyStandardAccounts,
-                                        allowedUsers: appSettings.observeAllowedUserList)
-        let r = await SSH.run(script, on: host, password: password, settings: sshSettings, timeout: 45)
-        let err = r.stderrText
-        let user = err.split(whereSeparator: \.isNewline)
-            .first { $0.hasPrefix("CMCR:USER:") }
-            .map { String($0.dropFirst("CMCR:USER:".count)) }
-        if r.succeeded, !r.stdout.isEmpty {
-            return Screenshot(imageData: r.stdout, user: user, message: nil)
-        }
-        let message: String
-        switch r.exitCode {
-        case ScriptCode.noConsoleUser:
-            message = "Nikt nie jest zalogowany (okno logowania)."
-        case ScriptCode.observeDenied:
-            let who = err.split(whereSeparator: \.isNewline).first { $0.hasPrefix("CMCR:") }?
-                .split(separator: ":").last.map(String.init) ?? "?"
-            message = err.contains("CMCR:ADMIN")
-                ? "Zalogowane konto administratora (\(who)) – podgląd zablokowany przez ograniczenia."
-                : "Konto \(who) nie jest na liście kont dozwolonych do podglądu."
-        case ScriptCode.captureFailed:
-            message = "Zrzut ekranu nieudany. Na tym Macu nadaj uprawnienie „Nagrywanie ekranu” dla /usr/libexec/sshd-keygen-wrapper (Ustawienia › Prywatność i ochrona)."
-        default:
-            message = SSH.diagnose(r).1
-        }
-        return Screenshot(imageData: nil, user: user, message: message)
-    }
+    // Screen capture (`screenshot`): see ScreenCapture.swift.
 
     /// Local folder layout from README "Prepare files moving": ~/Public/cmcr/{all,<host>}.
     public static func prepareLocalFolders(base: String, hosts: [Machine]) throws -> URL {
