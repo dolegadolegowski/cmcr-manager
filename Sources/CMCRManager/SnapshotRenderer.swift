@@ -5,6 +5,8 @@ import SwiftUI
 /// Renders every section into PNG files without a visible window (works while the screen is locked), for UI
 /// review and documentation: CMCR_SNAPSHOT_DIR=<dir> [CMCR_SNAPSHOT_SECTIONS=files,apps] [CMCR_SNAPSHOT_WAIT=2]
 /// [CMCR_SNAPSHOT_SIZE=1440x900]. The app quits when done. Use together with CMCR_CONFIG_DIR.
+/// Optional: CMCR_SNAPSHOT_BROWSE=<remote folder> opens it in the file browser first;
+/// CMCR_SNAPSHOT_SHEETS=folder-picker,… also renders those sheets on their own (see SnapshotSheets).
 @MainActor
 enum SnapshotRenderer {
     static func runIfRequested() {
@@ -24,6 +26,9 @@ enum SnapshotRenderer {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard let model = AppModel.shared else { exit(3) }
+            if let path = env["CMCR_SNAPSHOT_BROWSE"], !path.isEmpty {
+                model.files.browser.open(path, on: model.files.browser.preferredHostID())
+            }
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                   backing: .buffered, defer: false)
@@ -50,6 +55,9 @@ enum SnapshotRenderer {
                     try? rep.representation(using: .png, properties: [:])?.write(to: url)
                     print(url.path)
                 }
+            }
+            for name in (env["CMCR_SNAPSHOT_SHEETS"] ?? "").split(separator: ",").map(String.init) {
+                await SnapshotSheets.render(name, model: model, into: output, wait: wait)
             }
             exit(0)
         }
