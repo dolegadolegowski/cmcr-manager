@@ -418,7 +418,7 @@ final class AppModel: ObservableObject {
         let old = SSHSettings(oldSettings, askpassPath: askpassPath)
         let new = sshSettings
         guard old.identityFile != new.identityFile || old.extraOptions != new.extraOptions
-                || old.connectTimeout != new.connectTimeout || old.reuseConnections != new.reuseConnections else { return }
+                || old.reuseConnections != new.reuseConnections else { return }
         let hosts = machines
         Task.detached { await SSH.closeMasters(hosts, settings: old) }
     }
@@ -564,7 +564,8 @@ final class AppModel: ObservableObject {
             await withTaskGroup(of: Void.self) { group in
                 for (m, pw) in jobs {
                     group.addTask {
-                        let r = await SSH.run(Scripts.runningApps(), on: m, password: pw, settings: ss, timeout: OperationTimeout.list)
+                        let r = await SSH.run(Scripts.runningApps(), on: m, password: pw, settings: ss,
+                                              timeout: OperationTimeout.list)
                         await MainActor.run {
                             if r.succeeded {
                                 let parsed = Parsers.runningApps(r.stdoutText)
@@ -586,7 +587,8 @@ final class AppModel: ObservableObject {
             await withTaskGroup(of: Void.self) { group in
                 for (m, pw) in jobs {
                     group.addTask {
-                        let r = await SSH.run(Scripts.installedApps(), on: m, password: pw, settings: ss, timeout: OperationTimeout.list)
+                        let r = await SSH.run(Scripts.installedApps(), on: m, password: pw, settings: ss,
+                                              timeout: OperationTimeout.list)
                         await MainActor.run {
                             if r.succeeded { self.installedApps[m.id] = Parsers.lines(r.stdoutText) }
                         }

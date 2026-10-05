@@ -372,8 +372,8 @@ public enum SSH {
               let sockets = try? FileManager.default.contentsOfDirectory(atPath: dir), !sockets.isEmpty else { return }
         var s = settings
         s.reuseConnections = true
-        _ = await ProcessRunner.run(sshPath, options(s, password: nil) + ["-O", "exit", "-p", String(host.port), host.destination],
-                                    environment: ["SSH_ASKPASS_REQUIRE": "never"], timeout: 5)
+        let args = options(s, password: nil) + ["-O", "exit", "-p", String(host.port), host.destination]
+        _ = await ProcessRunner.run(sshPath, args, environment: ["SSH_ASKPASS_REQUIRE": "never"], timeout: 5)
     }
 
     public static func closeMasters(_ hosts: [Machine], settings: SSHSettings) async {
@@ -397,7 +397,7 @@ public enum SSH {
                                     settings: SSHSettings) async -> RemoteCancelOutcome {
         guard RemoteJobs.isValidID(jobID) else { return .failed("nieprawidłowy identyfikator zadania") }
         let stdin = Data(((password ?? "") + "\n").utf8)
-        // Not gated and without connection sharing limits: it must get through while the job runs.
+        // Not gated: it must get through while the job it stops still holds a session slot.
         let command = RemoteJobs.cancelScript(jobID: jobID).remoteCommand()
         let r = await runWithRetry(on: host, settings: settings, retry: .transient, handle: nil, stdoutFile: nil,
                                    onOutput: nil) { mux, output in
@@ -434,7 +434,7 @@ public enum SSH {
             if lower.contains("kex_exchange_identification") || lower.contains("banner exchange") {
                 return (.error, "Serwer SSH chwilowo odrzucił połączenie (zbyt wiele jednoczesnych połączeń) – spróbuj ponownie.")
             }
-            if lower.contains("session open refused by peer") || lower.contains("mux_client") {
+            if lower.contains("session open refused by peer") || lower.contains("mux_client_request_session") {
                 return (.error, "Przekroczono limit jednoczesnych sesji SSH na komputerze – spróbuj ponownie lub zmniejsz liczbę równoległych operacji.")
             }
             if lower.contains("timeout, server") || lower.contains("not responding") {
