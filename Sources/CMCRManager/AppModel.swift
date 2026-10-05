@@ -3,7 +3,7 @@ import CMCRCore
 import SwiftUI
 
 enum AppSection: String, CaseIterable, Identifiable, Hashable {
-    case dashboard, commands, files, apps, install, updates, screens, power, jobs, setup
+    case dashboard, commands, files, browser, apps, install, updates, screens, power, jobs, setup
 
     var id: String { rawValue }
 
@@ -12,6 +12,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .dashboard: return "Komputery"
         case .commands: return "Polecenia"
         case .files: return "Pliki"
+        case .browser: return "Przeglądarka plików"
         case .apps: return "Aplikacje"
         case .install: return "Instalacja"
         case .updates: return "Aktualizacje"
@@ -27,6 +28,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .dashboard: return "desktopcomputer"
         case .commands: return "terminal"
         case .files: return "folder"
+        case .browser: return "externaldrive.connected.to.line.below"
         case .apps: return "square.grid.2x2"
         case .install: return "shippingbox"
         case .updates: return "arrow.triangle.2.circlepath"
@@ -168,6 +170,7 @@ final class AppModel: ObservableObject {
     @Published var commandAsRoot = false
     @Published var pushItems: [URL] = []
     @Published var installItems: [URL] = []
+    lazy var files = FilesState(app: self)
 
     private var screenStates: [UUID: ScreenState] = [:]
     let askpassPath = ConfigStore.ensureAskpass()
@@ -399,6 +402,7 @@ final class AppModel: ObservableObject {
 
     func pushFiles(_ items: [URL], destination: String, owner: String, mode: String, asRoot: Bool,
                    on targets: [Machine]) {
+        guard !targets.isEmpty, !items.isEmpty else { return }
         let dest = settings.resolve(destination)
         let payloadTask = Task { await Payload.make(items) }
         runBatch("Wysyłanie \(items.count) el. → \(dest)", on: targets, operation: { m, job in
