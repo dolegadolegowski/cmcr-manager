@@ -102,6 +102,10 @@ expect "anuluj (root): zadanie zatrzymane zdalnie" "$out2" "start-root" "Zatrzym
 no_process "sleep 6.4" && pass "anuluj (root): proces na komputerze zakończony" || fail "anuluj (root): proces nadal działa"
 out3="$(ctl __run-job "sleep 6.6; echo koniec > '$WORK/cancel-3'" 1 --timeout 1.5)"
 expect "limit czasu: polecenie zatrzymane zdalnie" "$out3" "Przekroczono limit czasu" "Zatrzymano polecenie na komputerze" "timedOut=true"
+# The Mac answered (the script ran there): a slow command must not mark it offline, or later actions skip it.
+expect "limit czasu po starcie: komputer nadal online" "$out3" "started=true" "reach=online"
+out5="$("$CTL" __run-job "echo x" 99 --timeout 20 2>&1)"
+expect "brak połączenia: komputer niedostępny" "$out5" "started=false" "reach=offline"
 no_process "sleep 6.6" && pass "limit czasu: proces na komputerze zakończony" || fail "limit czasu: proces nadal działa"
 out4="$(ctl __run-job "echo szybkie" 1 --cancel-after 3)"
 expect_not "anuluj po zakończeniu: brak próby zatrzymania" "$out4" "Zatrzymano"
@@ -131,13 +135,19 @@ set_setting reuseConnections false
 survive "bez mux"
 set_setting reuseConnections true
 
-section "Klucz hosta (Zapomnij klucz hosta)"
+section "Klucz hosta (zapomnij, zaufaj ponownie)"
 out="$(ctl status 1)"
-if ssh-keygen -F "[127.0.0.1]:$PORT" -f "$WORK/known_hosts" >/dev/null 2>&1; then pass "known_hosts: wpis po połączeniu"; else fail "known_hosts: brak wpisu" "$(cat "$WORK/known_hosts" 2>&1)"; fi
+if ssh-keygen -F "[127.0.0.1]:$PORT" -f "$WORK/known_hosts" >/dev/null 2>&1; then pass "known_hosts: zaufany klucz zapisany"; else fail "known_hosts: brak wpisu" "$(cat "$WORK/known_hosts" 2>&1)"; fi
 expect "known_hosts: połączenie współdzielone przed usunięciem" "$(mux_ssh -O check)" "Master running"
 out="$(ctl __forget-host-key 1)"; code=$?
 expect_code "zapomnij klucz: kod 0" "$code" 0 "$out"
 if ssh-keygen -F "[127.0.0.1]:$PORT" -f "$WORK/known_hosts" >/dev/null 2>&1; then fail "zapomnij klucz: wpis pozostał" "$(cat "$WORK/known_hosts")"; else pass "zapomnij klucz: wpis usunięty z pliku UserKnownHostsFile"; fi
 expect_not "zapomnij klucz: połączenie współdzielone zamknięte" "$(mux_ssh -O check)" "Master running"
+out="$(ctl status 1)"; code=$?
+expect "zapomnij klucz: bez zaufanego klucza połączenie odrzucone" "$out" "nie jest jeszcze zaufany" "cmcrctl trust imac01"
+expect_code "zapomnij klucz: kod 1" "$code" 1 "$out"
+expect_not "zapomnij klucz: klucz nie został przyjęty sam" "$(cat "$WORK/known_hosts" 2>/dev/null)" "[127.0.0.1]:$PORT"
+out="$(ctl trust 1 --yes)"
+expect "zaufaj: odcisk klucza i zapis" "$out" "nowy klucz" "SHA256:" "imac01: zaufano"
 out="$(ctl status 1)"
-expect "zapomnij klucz: ponowne połączenie (nowy klucz przyjęty)" "$out" "● imac01"
+expect "zaufaj: ponowne połączenie" "$out" "● imac01"

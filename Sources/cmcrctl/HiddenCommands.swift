@@ -35,7 +35,8 @@ enum HiddenCommands {
                                       (channel == .stdout ? FileHandle.standardOutput : FileHandle.standardError).write(data)
                                   })
             await handle.cancellationFinished()
-            print("CMCR:RESULT exit=\(r.exitCode) cancelled=\(r.cancelled) timedOut=\(r.timedOut)")
+            print("CMCR:RESULT exit=\(r.exitCode) cancelled=\(r.cancelled) timedOut=\(r.timedOut) started=\(r.started) "
+                  + "reach=\(SSH.diagnose(r).0.rawValue)")
             return r.succeeded ? 0 : (r.exitCode == 0 ? 1 : r.exitCode)
 
         case "__forget-host-key":
