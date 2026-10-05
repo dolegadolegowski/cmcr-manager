@@ -97,7 +97,7 @@ struct TargetSummary: View {
 
     var body: some View {
         let selected = model.selectedMachines
-        let unreachable = selected.filter { model.status($0).reachability.isUnreachable }
+        let unreachable = selected.filter { model.knownReachability($0).isUnreachable }
         if selected.isEmpty {
             Label("Zaznacz komputery na liście", systemImage: "hand.point.left")
                 .foregroundStyle(.secondary)
@@ -135,7 +135,7 @@ struct TargetSummary: View {
 
     func names(_ machines: [Machine]) -> String {
         let list = machines.map { m in
-            model.willSkip(m) ? "\(m.name) (pominięty – \(model.status(m).reachability.label))" : m.name
+            model.willSkip(m) ? "\(m.name) (pominięty – \(model.knownReachability(m).label))" : m.name
         }
         return list.joined(separator: ", ")
     }
@@ -205,6 +205,8 @@ struct ConfirmRequest: Identifiable {
     /// Macs the action affects, listed in the confirmation sheet. nil = the current action targets; an empty
     /// list means the question is not about Macs (a plain alert is shown).
     var targets: [Machine]?
+    /// Starts with "Pomiń komputery z zalogowanym użytkownikiem" switched on (a retry of a batch that skipped them).
+    var skipLoggedIn = false
     let action: () -> Void
 }
 
@@ -250,8 +252,15 @@ struct ConfirmSheet: View {
     let request: ConfirmRequest
     let targets: [Machine]
     let close: () -> Void
-    @ViewState private var skipLoggedIn = false
+    @ViewState private var skipLoggedIn: Bool
     @ViewState private var acknowledged = false
+
+    init(request: ConfirmRequest, targets: [Machine], close: @escaping () -> Void) {
+        self.request = request
+        self.targets = targets
+        self.close = close
+        _skipLoggedIn = ViewState(initialValue: request.skipLoggedIn)
+    }
 
     /// From this many Macs on, a destructive action needs an explicit "Rozumiem".
     static let acknowledgeFrom = 5
@@ -351,8 +360,9 @@ struct ConfirmSheet: View {
     func confirm() {
         let skip = skipLoggedIn ? Set(withUser.map(\.id)) : []
         let action = request.action
+        let confirmation = BatchConfirmation(button: request.button, destructive: request.destructive)
         close()
-        model.perform(skipping: skip, reason: .loggedInUser, action)
+        model.perform(skipping: skip, reason: .loggedInUser, confirmation: confirmation, action)
     }
 }
 
@@ -449,12 +459,15 @@ struct BatchActions: View {
             .help("Przerywa operację na wszystkich komputerach tej partii")
         } else {
             let retry = batch.retryableMachines
-            if !retry.isEmpty, let rerun = batch.rerun {
-                Button { rerun(retry) } label: {
-                    Label("Powtórz na nieudanych (\(retry.count))", systemImage: "arrow.counterclockwise")
+            if !retry.isEmpty, batch.rerun != nil {
+                // The ellipsis tells that a confirmed (dangerous) operation asks again before it runs.
+                Button { model.retry(batch, on: retry) } label: {
+                    Label("Powtórz na nieudanych (\(retry.count))\(batch.confirmation == nil ? "" : "…")",
+                          systemImage: "arrow.counterclockwise")
                 }
                 .help("Uruchamia to samo ponownie \(Polish.onComputers(retry.count)): "
-                      + retry.map(\.name).joined(separator: ", "))
+                      + retry.map(\.name).joined(separator: ", ")
+                      + (batch.confirmation == nil ? "" : ". Przed uruchomieniem trzeba to ponownie potwierdzić."))
             }
             if !batch.problemMachines.isEmpty {
                 Button { model.selectProblems(of: batch) } label: {
@@ -599,7 +612,7 @@ struct JobLogButtons: View {
             }
             Button {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(job.output, forType: .string)
+                NSPasteboard.general.setString(job.fullOutput, forType: .string)
             } label: {
                 Label("Kopiuj wynik", systemImage: "doc.on.doc")
             }
@@ -778,9 +791,11 @@ struct FileListEditor: View {
                             Button {
                                 items.removeAll { $0 == url }
                             } label: {
-                                Image(systemName: "minus.circle.fill")
+                                Label("Usuń z listy", systemImage: "minus.circle.fill")
                             }
+                            .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
+                            .help("Usuń \(url.lastPathComponent) z listy (plik na dysku zostaje)")
                         }
                     }
                 }
@@ -801,10 +816,18 @@ struct FileListEditor: View {
                 return true
             }
             HStack {
-                Button("Dodaj…") {
+                Button {
                     for url in Pickers.files(types: types) where !items.contains(url) { items.append(url) }
+                } label: {
+                    Label("Dodaj…", systemImage: "plus")
                 }
-                Button("Wyczyść") { items.removeAll() }.disabled(items.isEmpty)
+                Button {
+                    items.removeAll()
+                } label: {
+                    Label("Wyczyść listę", systemImage: "xmark.circle")
+                }
+                .disabled(items.isEmpty)
+                .help("Usuwa wszystkie pozycje z listy (pliki na dysku zostają)")
             }
         }
     }

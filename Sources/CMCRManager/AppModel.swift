@@ -71,6 +71,8 @@ final class Job: ObservableObject, Identifiable, @unchecked Sendable {
     @Published var logURL: URL?
     var exitCode: Int32?
     private(set) var skipReason: SkipReason?
+    /// Digest of the whole output taken before the in-memory log was cut to its tail (`trimAfterArchive`).
+    private(set) var trimmedOutputDigest: String?
 
     // `output` is served straight from the bounded buffer: a second published copy would make every
     // append copy the whole log (copy-on-write).
@@ -119,6 +121,7 @@ final class Job: ObservableObject, Identifiable, @unchecked Sendable {
     func trimAfterArchive() {
         guard log.text.utf8.count > Self.keptAfterArchive else { return }
         objectWillChange.send()
+        trimmedOutputDigest = OutputDigest.of(log.text.trimmingCharacters(in: .whitespacesAndNewlines))
         log.keepLast(Self.keptAfterArchive, marker: "…(początek pominięty – dłuższa część wyniku: „Otwórz zapisany wynik”)…\n")
     }
 
@@ -149,8 +152,10 @@ final class Batch: ObservableObject, Identifiable, @unchecked Sendable {
     @Published var completed = 0
     @Published var finished = false
     @Published var finishedAt: Date?
-    /// Starts the same operation again on other hosts (set by `AppModel.runBatch`).
+    /// Starts the same operation again on other hosts (set by `AppModel.runBatch`); use `AppModel.retry`.
     var rerun: (([Machine]) -> Void)?
+    /// Set when the operator had to confirm the action: a retry asks again.
+    var confirmation: BatchConfirmation?
 
     init(title: String, jobs: [Job], section: AppSection? = nil) {
         self.title = title
@@ -244,7 +249,9 @@ final class AppModel: ObservableObject {
     }
     /// Problems found while loading hosts.json/settings.json (shown once at start).
     @Published var configIssues: [String] = []
-    @Published var statuses: [UUID: HostStatus] = [:]
+    @Published var statuses: [UUID: HostStatus] = [:] {
+        didSet { rememberSettledReachability() }
+    }
     @Published var selection: Set<UUID> = [] {
         didSet { if selection != oldValue { TargetUIState.selection = selection } }
     }
@@ -263,6 +270,11 @@ final class AppModel: ObservableObject {
     /// Batch the Jobs view should show (set by "Pokaż" in the toast or the activity popover).
     @Published var focusedBatchID: UUID?
     var pendingSkip: (ids: Set<UUID>, reason: Job.SkipReason)?
+    var pendingConfirmation: BatchConfirmation?
+    /// Confirmation asked before repeating a confirmed batch (presented by ContentView).
+    @Published var retryConfirmation: ConfirmRequest?
+    /// Last reachability other than `.checking`: a re-check must not make offline hosts count as reachable.
+    var settledReachability: [UUID: Reachability] = [:]
     var sleepActivity: NSObjectProtocol?
     var toastTask: Task<Void, Never>?
     @Published var runningApps: [UUID: HostApps] = [:]
@@ -333,13 +345,14 @@ final class AppModel: ObservableObject {
         for job in jobs {
             if let skip = pendingSkip, skip.ids.contains(job.machine.id) {
                 job.skip(skip.reason)
-            } else if !includeUnreachable, skipUnreachable, status(job.machine).reachability.isUnreachable {
-                job.skip(.unreachable(status(job.machine).reachability))
+            } else if !includeUnreachable, willSkip(job.machine) {
+                job.skip(.unreachable(knownReachability(job.machine)))
             }
         }
         let owner = section ?? self.section
         let batch = Batch(title: title, jobs: jobs, section: owner)
         batch.completed = batch.skipped
+        batch.confirmation = pendingConfirmation
         batch.rerun = { [weak self] hosts in
             guard let self else { return }
             let retry = self.runBatch(Self.retryTitle(title), on: hosts, section: owner,

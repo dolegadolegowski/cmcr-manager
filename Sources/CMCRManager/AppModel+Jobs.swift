@@ -36,6 +36,29 @@ extension Job.State {
     }
 }
 
+/// What the operator confirmed before a batch started (see `ConfirmSheet`); a retry of such a batch asks again.
+struct BatchConfirmation {
+    let button: String
+    let destructive: Bool
+}
+
+extension Job {
+    /// The whole saved output: once the job is archived, `output` keeps only its tail in memory.
+    var fullOutput: String {
+        logURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? output
+    }
+
+    /// Equal for jobs with the same (whitespace-trimmed) output, also after their logs were cut to the tail.
+    var outputComparisonKey: String {
+        trimmedOutputDigest.map { "sha256:" + $0 } ?? output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+extension Batch {
+    /// The operator chose to leave out Macs with a logged-in user.
+    var skippedLoggedIn: Bool { jobs.contains { $0.skipReason == .loggedInUser } }
+}
+
 extension AppModel {
     static weak var shared: AppModel?
     static let maxBatches = 100
@@ -44,10 +67,23 @@ extension AppModel {
 
     /// Selected hosts an action will actually run on (unreachable ones are left out when `skipUnreachable`).
     var actionTargets: [Machine] {
-        skipUnreachable ? selectedMachines.filter { !status($0).reachability.isUnreachable } : selectedMachines
+        skipUnreachable ? selectedMachines.filter { !knownReachability($0).isUnreachable } : selectedMachines
     }
 
-    func willSkip(_ m: Machine) -> Bool { skipUnreachable && status(m).reachability.isUnreachable }
+    func willSkip(_ m: Machine) -> Bool { skipUnreachable && knownReachability(m).isUnreachable }
+
+    /// Reachability for skip decisions: while a host is being checked again, its last settled state counts,
+    /// so an offline Mac keeps being skipped during a refresh instead of costing a connect timeout.
+    func knownReachability(_ m: Machine) -> Reachability {
+        let r = status(m).reachability
+        return r == .checking ? settledReachability[m.id] ?? .checking : r
+    }
+
+    func rememberSettledReachability() {
+        for (id, st) in statuses where st.reachability != .checking && settledReachability[id] != st.reachability {
+            settledReachability[id] = st.reachability
+        }
+    }
 
     func pruneSelection() {
         let ids = Set(machines.map(\.id))
@@ -83,11 +119,37 @@ extension AppModel {
         return true
     }
 
-    /// Runs `action` (which starts batches synchronously) with `ids` turned into skipped jobs.
-    func perform(skipping ids: Set<UUID>, reason: Job.SkipReason, _ action: () -> Void) {
+    /// Runs `action` (which starts batches synchronously) with `ids` turned into skipped jobs; the batches
+    /// remember `confirmation`, so that repeating them asks again.
+    func perform(skipping ids: Set<UUID>, reason: Job.SkipReason, confirmation: BatchConfirmation? = nil,
+                 _ action: () -> Void) {
         pendingSkip = ids.isEmpty ? nil : (ids, reason)
-        defer { pendingSkip = nil }
+        pendingConfirmation = confirmation
+        defer {
+            pendingSkip = nil
+            pendingConfirmation = nil
+        }
         action()
+    }
+
+    /// Repeats `batch` on `hosts`. A batch that had to be confirmed (restart, log out, wipe a folder…) is
+    /// confirmed again with the hosts and their logged-in users listed, never re-run straight away.
+    func retry(_ batch: Batch, on hosts: [Machine]) {
+        guard let rerun = batch.rerun, !hosts.isEmpty else { return }
+        guard let confirmation = batch.confirmation else {
+            rerun(hosts)
+            return
+        }
+        retryConfirmation = ConfirmRequest(
+            title: "Powtórzyć „\(batch.title)”?",
+            message: (confirmation.destructive
+                ? "Ta operacja wymagała potwierdzenia – może przerwać pracę zalogowanych uczniów lub usunąć dane. "
+                : "Ta operacja wymagała potwierdzenia. ")
+                + "Zostanie wykonana ponownie \(Polish.onComputers(hosts.count)).",
+            button: confirmation.button, destructive: confirmation.destructive, targets: hosts,
+            skipLoggedIn: batch.skippedLoggedIn) {
+            rerun(hosts)
+        }
     }
 
     // MARK: - Status re-checks

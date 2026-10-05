@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Collects text streamed from background threads so that the UI takes it over in batches (at most once
@@ -101,5 +102,12 @@ public struct BoundedText: Sendable {
     public mutating func replace(with s: String) {
         text = s
         generation += 1
+    }
+}
+
+/// Fingerprint of a whole output, so that logs whose memory copy was cut to the tail can still be compared.
+public enum OutputDigest {
+    public static func of(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }

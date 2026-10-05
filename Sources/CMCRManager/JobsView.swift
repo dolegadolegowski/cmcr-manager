@@ -324,14 +324,15 @@ struct BatchDetailView: View {
             let jobs = batch.jobs.filter { ids.contains($0.id) }
             if !jobs.isEmpty {
                 Button("Zaznacz na liście komputerów") { model.selection = Set(jobs.map(\.machine.id)) }
-                if batch.finished, let rerun = batch.rerun {
-                    Button("Powtórz \(jobs.count == 1 ? "na \(jobs[0].machine.name)" : Polish.onComputers(jobs.count))") {
-                        rerun(jobs.map(\.machine))
+                if batch.finished, batch.rerun != nil {
+                    let suffix = batch.confirmation == nil ? "" : "…"
+                    Button("Powtórz \(jobs.count == 1 ? "na \(jobs[0].machine.name)" : Polish.onComputers(jobs.count))\(suffix)") {
+                        model.retry(batch, on: jobs.map(\.machine))
                     }
                 }
                 Button("Kopiuj wynik") {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(jobs.map(\.output).joined(separator: "\n"), forType: .string)
+                    NSPasteboard.general.setString(jobs.map(\.fullOutput).joined(separator: "\n"), forType: .string)
                 }
             }
         }
@@ -411,7 +412,7 @@ struct GroupedResultsView: View {
     var groups: [ResultGroup] {
         let finished = batch.jobs.filter(\.isFinished)
         let byKey = Dictionary(grouping: finished) { job in
-            "\(job.state.historyName)\u{1}\(job.output.trimmingCharacters(in: .whitespacesAndNewlines))"
+            "\(job.state.historyName)\u{1}\(job.outputComparisonKey)"
         }
         return byKey.map { key, jobs in
             ResultGroup(id: key, state: jobs[0].state, output: jobs[0].output, jobs: jobs)
@@ -606,7 +607,7 @@ enum BatchExport {
         var s = "\(batch.title)\nRozpoczęto: \(batch.createdAt.formatted(date: .abbreviated, time: .standard))\n\n"
         for job in batch.jobs {
             s += "=== \(job.machine.name) – \(job.state.label)\(job.exitCode.map { ", kod \($0)" } ?? "") ===\n"
-            let full = job.logURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? job.output
+            let full = job.fullOutput
             s += full.hasSuffix("\n") || full.isEmpty ? full : full + "\n"
             s += "\n"
         }
