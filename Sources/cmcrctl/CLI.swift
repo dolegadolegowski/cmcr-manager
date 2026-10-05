@@ -277,6 +277,9 @@ struct CLI: Sendable {
                 return ExitCode.success
             }
             io.out("○ \(h.name): \(SSH.diagnose(r).1)")
+            if !r.started, HostTrust.refusal(r) != nil {
+                io.out("  W terminalu: cmcrctl trust \(h.name) – pokaże odcisk klucza i zapyta o zaufanie.")
+            }
             return ExitCode.failure
         }
         let all = results.all()
