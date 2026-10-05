@@ -267,7 +267,7 @@ private struct RemoteBrowserPage: View {
         let names = conflicts.prefix(5).map { "„\($0)”" }.joined(separator: ", ") + (conflicts.count > 5 ? "…" : "")
         confirm = ConfirmRequest(
             title: "Zastąpić istniejące elementy?",
-            message: "W tym folderze na \(browser.host?.name ?? "iMacu") są już: \(names). Wysłanie zastąpi je nowymi wersjami.",
+            message: "W tym folderze na \(browser.host?.name ?? "iMacu") są już: \(names). Pliki o tych samych nazwach zostaną zastąpione, a do folderów zostanie dodana nowa zawartość.",
             button: "Zastąp") {
             browser.upload(urls)
         }
