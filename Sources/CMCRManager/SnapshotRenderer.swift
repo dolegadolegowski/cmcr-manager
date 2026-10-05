@@ -63,6 +63,12 @@ enum SnapshotRenderer {
                         NotificationCenter.default.post(name: subpageNotification, object: sub)
                     }
                     try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                    // A system prompt (e.g. local network access) may have taken focus meanwhile.
+                    if window.attachedSheet == nil {
+                        NSApp.activate(ignoringOtherApps: true)
+                        window.makeKeyAndOrderFront(nil)
+                        try? await Task.sleep(nanoseconds: 200_000_000)
+                    }
                     capture(window, to: output.appendingPathComponent("\(file)-\(name).png"))
                     if let sheet = window.attachedSheet {
                         capture(sheet, to: output.appendingPathComponent("\(file)-sheet-\(name).png"))
@@ -96,6 +102,9 @@ enum SnapshotRenderer {
             try? await Task.sleep(nanoseconds: 400_000_000)
         }
         try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        try? await Task.sleep(nanoseconds: 200_000_000)
         capture(window, to: url)
         window.close()
         try? await Task.sleep(nanoseconds: 300_000_000)

@@ -69,12 +69,14 @@ struct HostsEditor: View {
     @ViewState private var newGroupFor: Set<UUID>?
     @ViewState private var importError: String?
     @ViewState private var showGenerator = false
+    /// Columns shown in the table (right-click the header to change); Port is hidden by default.
+    @ViewState private var columns = TableColumnCustomization<Machine>()
 
     var body: some View {
         let issues = HostValidation.issues(in: model.machines)
         VStack(alignment: .leading, spacing: 12) {
             PageHeader(title: "Komputery w pracowni", icon: "desktopcomputer",
-                       subtitle: "Lista komputerów, którymi zarządza aplikacja. Kliknij pole w tabeli, aby je poprawić – zmiany zapisują się od razu.") {
+                       subtitle: "Lista komputerów, którymi zarządza aplikacja. Kliknij pole w tabeli, aby je poprawić – zmiany zapisują się od razu. Więcej kolumn (np. Port) pokażesz prawym kliknięciem nagłówka tabeli.") {
                 Text(Polish.computers(model.machines.count))
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -134,7 +136,7 @@ struct HostsEditor: View {
     // MARK: Table
 
     func table(_ issues: [UUID: [HostIssue]]) -> some View {
-        Table(model.machines, selection: $rows) {
+        Table(model.machines, selection: $rows, columnCustomization: $columns) {
             TableColumn("Nazwa") { m in
                 HStack(spacing: 4) {
                     TextField("Nazwa", text: field(m.id, \.name), prompt: Text("imac01"))
@@ -148,19 +150,33 @@ struct HostsEditor: View {
                     }
                 }
             }
-            .width(min: 72, ideal: 90)
+            .width(min: 60, ideal: 68)
+            .customizationID("name")
+            .disabledCustomizationBehavior(.visibility)
             TableColumn("Adres w sieci") { m in
-                TextField("Adres w sieci", text: field(m.id, \.address), prompt: Text("imac01.local"))
-                    .labelsHidden()
-                    .help("Nazwa sieciowa lub adres IP komputera, np. imac01.local")
+                HStack(spacing: 2) {
+                    TextField("Adres w sieci", text: field(m.id, \.address), prompt: Text("imac01.local"))
+                        .labelsHidden()
+                        .help("Nazwa sieciowa lub adres IP komputera, np. imac01.local")
+                    // A non-standard port stays visible while the Port column is hidden.
+                    if m.port != 22, columns[visibility: "port"] != .visible {
+                        Text(":\(String(m.port))")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .help("Niestandardowy port połączenia. Zmienisz go w kolumnie Port – kliknij prawym przyciskiem nagłówek tabeli.")
+                    }
+                }
             }
-            .width(min: 96, ideal: 150)
+            .width(min: 90, ideal: 108)
+            .customizationID("address")
+            .disabledCustomizationBehavior(.visibility)
             TableColumn("Administrator") { m in
                 TextField("Konto administratora", text: field(m.id, \.user), prompt: Text("imac01"))
                     .labelsHidden()
                     .help("Konto administratora na tym komputerze, którym loguje się aplikacja")
             }
-            .width(min: 84, ideal: 110)
+            .width(min: 64, ideal: 80)
+            .customizationID("user")
             TableColumn("Hasło") { m in
                 Button {
                     passwordFor = m
@@ -171,7 +187,8 @@ struct HostsEditor: View {
                 .help(m.usesSharedPassword ? "Używa wspólnego hasła administratora. Kliknij, aby ustawić własne hasło tego komputera."
                                            : "Ma własne hasło zapisane w Pęku kluczy. Kliknij, aby je zmienić.")
             }
-            .width(min: 76, ideal: 88)
+            .width(min: 72, ideal: 76)
+            .customizationID("password")
             TableColumn("Grupy") { m in
                 Menu {
                     GroupMembershipMenu(ids: [m.id]) { newGroupFor = [m.id] }
@@ -182,14 +199,16 @@ struct HostsEditor: View {
                 .menuStyle(.borderlessButton)
                 .help("Grupy pozwalają szybko zaznaczać i filtrować komputery (np. rząd ławek)")
             }
-            .width(min: 60, ideal: 100)
+            .width(min: 60, ideal: 74)
+            .customizationID("groups")
             TableColumn("Adres MAC") { m in
                 TextField("Adres MAC", text: field(m.id, \.macAddress), prompt: Text("uzupełni się sam"))
                     .labelsHidden()
-                    .font(.callout.monospaced())
+                    .font(.callout.monospacedDigit())
                     .help("Potrzebny do budzenia komputera przez sieć (Wake-on-LAN). Uzupełnia się sam, gdy komputer jest włączony.")
             }
-            .width(min: 92, ideal: 136)
+            .width(min: 96, ideal: 112)
+            .customizationID("mac")
             TableColumn("Port") { m in
                 TextField("Port", value: portField(m.id), format: .number.grouping(.never))
                     .labelsHidden()
@@ -197,6 +216,8 @@ struct HostsEditor: View {
                     .help("Port połączenia (zwykle 22), od 1 do 65535")
             }
             .width(min: 36, ideal: 44)
+            .customizationID("port")
+            .defaultVisibility(.hidden)
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             if !ids.isEmpty {
@@ -666,9 +687,9 @@ struct AccessSettings: View {
                             keyRevision += 1
                         }
                     } label: {
-                        Label(key == nil ? "Utwórz klucz" : "Utwórz nowy klucz (ed25519)", systemImage: "plus.circle")
+                        Label(key == nil ? "Utwórz klucz" : "Utwórz nowy klucz", systemImage: "plus.circle")
                     }
-                    .help("Tworzy klucz ed25519 w ~/.ssh na tym Macu (bez hasła klucza)")
+                    .help("Tworzy nowy klucz logowania (ed25519) w ~/.ssh na tym Macu, bez dodatkowego hasła klucza")
                 }
             }
             if !keygenOutput.isEmpty {

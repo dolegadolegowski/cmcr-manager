@@ -473,11 +473,12 @@ struct ReadinessView: View {
                           icon: "wifi.slash", color: offline.isEmpty ? .secondary : .red, machines: offline),
         ]
         return VStack(alignment: .leading, spacing: 6) {
+            // One row only when every chip fits whole at the same width; otherwise two rows of two.
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { ForEach(chips.indices, id: \.self) { chips[$0] } }
-                Grid(horizontalSpacing: 8, verticalSpacing: 8) {
-                    GridRow { chips[0]; chips[1] }
-                    GridRow { chips[2]; chips[3] }
+                EqualWidthRow(spacing: 8) { ForEach(chips.indices, id: \.self) { chips[$0] } }
+                VStack(spacing: 8) {
+                    EqualWidthRow(spacing: 8) { chips[0]; chips[1] }
+                    EqualWidthRow(spacing: 8) { chips[2]; chips[3] }
                 }
             }
             checkStatus.font(.caption)
@@ -495,6 +496,38 @@ struct ReadinessView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+/// Row of equally wide views: its ideal width is the widest ideal width times the count (so `ViewThatFits`
+/// only picks it when nothing would be cut off), and it stretches evenly to the space it gets.
+struct EqualWidthRow: Layout {
+    var spacing: CGFloat = 8
+
+    private func widest(_ subviews: Subviews) -> CGSize {
+        subviews.reduce(.zero) { size, view in
+            let s = view.sizeThatFits(.unspecified)
+            return CGSize(width: max(size.width, s.width), height: max(size.height, s.height))
+        }
+    }
+
+    private func gaps(_ subviews: Subviews) -> CGFloat { spacing * CGFloat(max(subviews.count - 1, 0)) }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let cell = widest(subviews)
+        let ideal = cell.width * CGFloat(subviews.count) + gaps(subviews)
+        guard let width = proposal.width, width.isFinite else { return CGSize(width: ideal, height: cell.height) }
+        return CGSize(width: max(width, ideal), height: cell.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard !subviews.isEmpty else { return }
+        let width = (bounds.width - gaps(subviews)) / CGFloat(subviews.count)
+        var x = bounds.minX
+        for view in subviews {
+            view.place(at: CGPoint(x: x, y: bounds.minY), proposal: ProposedViewSize(width: width, height: bounds.height))
+            x += width + spacing
         }
     }
 }
