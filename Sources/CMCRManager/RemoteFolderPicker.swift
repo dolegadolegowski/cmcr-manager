@@ -80,8 +80,8 @@ struct RemoteFolderPicker: View {
 
     var subtitle: String {
         let count = model.selectedMachines.count
-        let targets = count > 1 ? "na wszystkich zaznaczonych komputerach (\(count))" : "na zaznaczonych komputerach"
-        return "Wybrany folder zostanie użyty \(targets). Lista pokazuje zawartość jednego z nich – możesz go zmienić obok."
+        let targets = count > 1 ? "na wszystkich zaznaczonych komputerach (\(count))" : "na zaznaczonym komputerze"
+        return "Wybrany folder zostanie użyty \(targets). Lista pokazuje zawartość jednego z nich – komputer możesz zmienić obok."
     }
 
     var sidebar: some View {
@@ -172,15 +172,19 @@ struct RemoteFolderPicker: View {
 
     var footer: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Wybrany folder")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 RemoteFolderLabel(path: chosenPath, settings: model.settings)
                 presenceLine
                     .font(.callout)
+                    .padding(.top, 2)
             }
             Spacer(minLength: 12)
             if consoleApplies {
                 Toggle("Zawsze folder zalogowanego użytkownika", isOn: $preferConsole)
-                    .help("Na każdym iMacu zostanie użyty folder osoby, która jest akurat zalogowana ({console}).")
+                    .help("Na każdym komputerze zostanie użyty folder osoby, która jest akurat zalogowana ({console}).")
             }
             Button("Anuluj", role: .cancel) { dismiss() }
                 .keyboardShortcut(.cancelAction)

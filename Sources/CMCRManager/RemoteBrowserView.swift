@@ -107,9 +107,8 @@ private struct RemoteBrowserPage: View {
                 } label: {
                     Label("Usuń…", systemImage: "trash")
                 }
-                .keyboardShortcut(.delete, modifiers: .command)
                 .disabled(browser.selection.isEmpty)
-                .help("Usuń zaznaczone elementy z komputera – nie trafią do Kosza (z potwierdzeniem, ⌘⌫)")
+                .help("Usuń zaznaczone elementy z komputera – nie trafią do Kosza (z potwierdzeniem; także klawisz Delete)")
                 .fixedSize()
                 Button {
                     uploadWithPanel()
