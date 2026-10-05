@@ -12,7 +12,12 @@ struct EnergyScheduleSection: View {
     var body: some View {
         Section {
             Toggle(isOn: s.powerOnEnabled) {
-                Label("Automatyczne budzenie lub włączanie", systemImage: "sunrise")
+                Label {
+                    Text("Automatyczne budzenie lub włączanie")
+                    Text("Komputery same obudzą się lub włączą o wybranej godzinie.")
+                } icon: {
+                    FormRowIcon("sunrise")
+                }
             }
             if s.wrappedValue.powerOnEnabled {
                 Picker("Rodzaj", selection: s.onType) {
@@ -26,7 +31,12 @@ struct EnergyScheduleSection: View {
             }
 
             Toggle(isOn: s.powerOffEnabled) {
-                Label("Automatyczne usypianie lub wyłączanie", systemImage: "moon.zzz")
+                Label {
+                    Text("Automatyczne usypianie lub wyłączanie")
+                    Text("Komputery same zasną lub wyłączą się o wybranej godzinie.")
+                } icon: {
+                    FormRowIcon("moon.zzz")
+                }
             }
             if s.wrappedValue.powerOffEnabled {
                 Picker("Rodzaj", selection: s.offType) {
@@ -46,26 +56,47 @@ struct EnergyScheduleSection: View {
                 }
             }
 
-            Toggle("Włącz ponownie po zaniku zasilania", isOn: $classroom.config.autoRestartAfterPowerLoss)
-                .help("pmset autorestart – przydatne, gdy listwy zasilające są wyłączane na noc.")
-            Toggle("Budź przez sieć (Wake-on-LAN)", isOn: $classroom.config.wakeOnLAN)
-                .help("pmset womp – opcja „Budź przy dostępie do sieci”.")
+            Toggle(isOn: $classroom.config.autoRestartAfterPowerLoss) {
+                Label {
+                    Text("Włącz ponownie po zaniku zasilania")
+                    Text("Przydatne, gdy listwy zasilające są wyłączane na noc.")
+                } icon: {
+                    FormRowIcon("bolt.circle")
+                }
+            }
+            .help("Ustawienie systemowe pmset autorestart")
+            Toggle(isOn: $classroom.config.wakeOnLAN) {
+                Label {
+                    Text("Budź przez sieć (Wake-on-LAN)")
+                    Text("Pozwala budzić uśpione komputery przyciskiem „Obudź”.")
+                } icon: {
+                    FormRowIcon("network")
+                }
+            }
+            .help("Opcja „Budź przy dostępie do sieci” (pmset womp)")
 
-            HStack {
+            LabeledContent {
                 Text(s.wrappedValue.validationError ?? s.wrappedValue.summary)
-                    .font(.callout)
                     .foregroundStyle(s.wrappedValue.validationError == nil ? Color.secondary : Color.orange)
+                    .multilineTextAlignment(.trailing)
                     .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-                TargetButton(title: "Pokaż obecny", icon: "calendar", prominent: false) {
+            } label: {
+                Label {
+                    Text("Podsumowanie")
+                } icon: {
+                    FormRowIcon(s.wrappedValue.validationError == nil ? "list.bullet" : "exclamationmark.triangle.fill")
+                }
+            }
+            HStack(spacing: 12) {
+                TargetButton(title: "Sprawdź obecny", icon: "calendar", prominent: false) {
                     classroom.loadSchedules(model, model.selectedMachines)
                 }
-                .help("Odczytaj harmonogram zapisany na zaznaczonych komputerach")
-                TargetButton(title: "Usuń", icon: "calendar.badge.minus", role: .destructive, prominent: false) {
+                .help("Odczytaj harmonogram zapisany teraz na zaznaczonych komputerach")
+                Spacer(minLength: 8)
+                CriticalTargetButton(title: "Usuń harmonogram…", icon: "calendar.badge.minus") {
                     confirmClear = true
                 }
-                .help("Usuń powtarzający się harmonogram z zaznaczonych komputerów")
-                TargetButton(title: "Zastosuj", icon: "calendar.badge.checkmark", prominent: false) {
+                TargetButton(title: "Zastosuj harmonogram", icon: "calendar.badge.checkmark") {
                     classroom.applySchedule(model, model.selectedMachines)
                 }
                 .disabled(s.wrappedValue.validationError != nil)
@@ -92,7 +123,7 @@ struct EnergyScheduleSection: View {
             }
             Button("Anuluj", role: .cancel) {}
         } message: {
-            Text("Komputery (\(model.selection.count)) przestaną same się włączać i wyłączać.")
+            Text("Harmonogram zostanie usunięty \(Polish.onComputers(model.actionTargets.count)) – automatyczne włączanie i wyłączanie przestanie działać.")
         }
     }
 

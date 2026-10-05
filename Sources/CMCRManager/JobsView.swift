@@ -41,15 +41,29 @@ struct JobsView: View {
                 ContentUnavailableView {
                     Label("Brak zadań", systemImage: AppSection.jobs.icon)
                 } description: {
-                    Text("Każda operacja uruchomiona na komputerach pojawi się tutaj z wynikiem dla każdego iMaca. Historia zapisuje się na dysku.")
+                    Text("Każde działanie uruchomione na komputerach pojawi się tutaj razem z wynikiem z każdego komputera. Historia zapisuje się na dysku.")
                 }
             } else {
                 HSplitView {
                     batchList
-                        .frame(minWidth: 250, idealWidth: 300, maxWidth: 440)
+                        .frame(minWidth: 200, idealWidth: 250, maxWidth: 340)
                     detail
                         .frame(minWidth: 440, maxWidth: .infinity, maxHeight: .infinity)
                 }
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup {
+                Button {
+                    model.clearFinishedBatches()
+                    history.load()
+                } label: {
+                    Label("Wyczyść zakończone", systemImage: "eraser")
+                }
+                .disabled(!model.batches.contains { $0.finished })
+                .help("Przenosi zakończone działania z listy „Ta sesja” do historii i chowa ich wyniki w działach "
+                      + "(z dysku nic nie jest usuwane)")
+                historyMenu
             }
         }
         .onAppear {
@@ -58,6 +72,10 @@ struct JobsView: View {
         }
         .onChange(of: model.batches.count) { _, _ in
             if model.focusedBatchID == nil { model.focusedBatchID = model.batches.first?.id }
+        }
+        .onChange(of: history.loaded) { _, loaded in
+            // Without anything from this session, show the newest saved result instead of an empty pane.
+            if loaded, model.focusedBatchID == nil { model.focusedBatchID = history.batches.first?.id }
         }
     }
 
@@ -87,7 +105,8 @@ struct JobsView: View {
         let live = liveIDs
         let older = history.batches.filter { !live.contains($0.id) && matches($0) }
         return VStack(spacing: 0) {
-            NativeSearchField(prompt: "Szukaj: operacja, komputer, wynik", text: $search)
+            NativeSearchField(prompt: "Szukaj w zadaniach", text: $search)
+                .help("Szukaj po nazwie działania, komputerze albo treści wyniku")
                 .padding(8)
             List(selection: $model.focusedBatchID) {
                 if !running.isEmpty {
@@ -111,47 +130,41 @@ struct JobsView: View {
                     ContentUnavailableView {
                         Label("Brak wyników", systemImage: "magnifyingglass")
                     } description: {
-                        Text("Żadna operacja nie pasuje do „\(search)”.")
+                        Text("Żadne działanie nie pasuje do „\(search)”.")
                     }
                 }
             }
-            Divider()
-            HStack(spacing: 8) {
-                Button {
-                    model.clearFinishedBatches()
-                    history.load()
-                } label: {
-                    Label("Wyczyść zakończone", systemImage: "trash")
-                }
-                .disabled(!model.batches.contains { $0.finished })
-                .help("Usuwa zakończone operacje z tej listy (zostają w historii na dysku)")
-                Spacer()
-                Menu {
-                    Button("Odśwież historię") { history.load() }
-                    Button("Pokaż folder historii w Finderze") {
-                        let dir = JobHistory.directory
-                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                        NSWorkspace.shared.activateFileViewerSelecting([dir])
-                    }
-                    Button("Otwórz dziennik działań") {
-                        let url = ConfigStore.logURL
-                        if FileManager.default.fileExists(atPath: url.path) {
-                            NSWorkspace.shared.open(url)
-                        } else {
-                            NSSound.beep()
-                        }
-                    }
-                } label: {
-                    Label("Więcej", systemImage: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Historia i dziennik działań")
-            }
-            .controlSize(.small)
-            .padding(8)
         }
+    }
+
+    var historyMenu: some View {
+        Menu {
+            Button {
+                history.load()
+            } label: {
+                Label("Wczytaj historię ponownie", systemImage: "arrow.clockwise")
+            }
+            Button {
+                let dir = JobHistory.directory
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                NSWorkspace.shared.activateFileViewerSelecting([dir])
+            } label: {
+                Label("Pokaż folder historii w Finderze", systemImage: "folder")
+            }
+            Button {
+                let url = ConfigStore.logURL
+                if FileManager.default.fileExists(atPath: url.path) {
+                    NSWorkspace.shared.open(url)
+                } else {
+                    NSSound.beep()
+                }
+            } label: {
+                Label("Otwórz dziennik działań", systemImage: "doc.text")
+            }
+        } label: {
+            Label("Historia", systemImage: "clock.arrow.circlepath")
+        }
+        .help("Historia zadań zapisana na dysku i dziennik wszystkich działań")
     }
 
     // MARK: Detail
@@ -163,9 +176,9 @@ struct JobsView: View {
             HistoryDetailView(batch: past).id(past.id)
         } else {
             ContentUnavailableView {
-                Label("Wybierz operację", systemImage: "sidebar.left")
+                Label("Wybierz działanie", systemImage: "list.bullet.rectangle")
             } description: {
-                Text("Po lewej są operacje w toku, z tej sesji i z historii.")
+                Text("Po lewej są działania w toku, z tej sesji i z historii.")
             }
         }
     }
@@ -256,7 +269,7 @@ struct BatchDetailView: View {
                     .lineLimit(2)
                     .textSelection(.enabled)
                 Spacer(minLength: 12)
-                BatchCounts(batch: batch)
+                BatchCounts(batch: batch).font(.callout)
             }
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 Text(timing)
@@ -267,32 +280,56 @@ struct BatchDetailView: View {
             if !batch.finished {
                 ProgressView(value: Double(batch.completed), total: Double(max(1, batch.jobs.count)))
             }
-            HStack(spacing: 8) {
-                BatchActions(batch: batch)
-                Spacer()
-                Picker("Widok", selection: $grouped) {
-                    Label("Komputery", systemImage: "list.bullet").tag(false)
-                    Label("Identyczne wyniki", systemImage: "square.stack.3d.up").tag(true)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    BatchActions(batch: batch).fixedSize()
+                    Spacer(minLength: 8)
+                    viewPicker
+                    exportMenu
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .help("Grupuje komputery, które zwróciły ten sam wynik")
-                Menu {
-                    Button("Kopiuj wyniki wszystkich komputerów") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(BatchExport.text(batch), forType: .string)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) { BatchActions(batch: batch).fixedSize() }
+                    HStack(spacing: 8) {
+                        viewPicker
+                        Spacer(minLength: 8)
+                        exportMenu
                     }
-                    Button("Eksportuj do pliku…") { BatchExport.save(batch) }
-                } label: {
-                    Label("Eksportuj", systemImage: "square.and.arrow.up")
                 }
-                .fixedSize()
-                .disabled(!batch.finished)
-                .help("Zapisuje wyniki wszystkich komputerów do pliku tekstowego")
+                VStack(alignment: .leading, spacing: 8) {
+                    BatchActions(batch: batch).fixedSize()
+                    HStack(spacing: 8) {
+                        viewPicker
+                        exportMenu
+                    }
+                }
             }
-            .controlSize(.regular)
         }
+    }
+
+    var viewPicker: some View {
+        Picker("Widok", selection: $grouped) {
+            Label("Każdy komputer", systemImage: "list.bullet").tag(false)
+            Label("Grupuj wyniki", systemImage: "square.stack.3d.up").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("„Grupuj wyniki” pokazuje razem komputery, które zwróciły ten sam wynik")
+    }
+
+    var exportMenu: some View {
+        Menu {
+            Button("Kopiuj wyniki wszystkich komputerów") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(BatchExport.text(batch), forType: .string)
+            }
+            Button("Zapisz do pliku…") { BatchExport.save(batch) }
+        } label: {
+            Label("Eksportuj", systemImage: "square.and.arrow.up")
+        }
+        .fixedSize()
+        .disabled(!batch.finished)
+        .help("Kopiuje wyniki wszystkich komputerów albo zapisuje je do pliku tekstowego")
     }
 
     var timing: String {
@@ -307,15 +344,15 @@ struct BatchDetailView: View {
             TableColumn("Komputer") { job in
                 JobCell(job: job, kind: .name)
             }
-            .width(min: 100, ideal: 130)
+            .width(min: 70, ideal: 85)
             TableColumn("Stan") { job in
                 JobCell(job: job, kind: .state)
             }
-            .width(min: 90, ideal: 110)
+            .width(min: 90, ideal: 100)
             TableColumn("Czas") { job in
                 JobCell(job: job, kind: .duration)
             }
-            .width(min: 55, ideal: 70)
+            .width(min: 45, ideal: 50)
             TableColumn("Wynik") { job in
                 JobCell(job: job, kind: .summary)
             }
@@ -480,26 +517,27 @@ struct HistoryDetailView: View {
             Divider()
             VSplitView {
                 Table(batch.records, selection: $recordID) {
-                    TableColumn("Komputer") { r in Text(r.host).fontWeight(.medium) }
-                        .width(min: 100, ideal: 130)
+                    TableColumn("Komputer") { r in Text(r.host).fontWeight(.medium).lineLimit(1) }
+                        .width(min: 70, ideal: 85)
                     TableColumn("Stan") { r in
                         let state = Job.State(historyName: r.state)
+                        // A non-zero exit code is shown with the state (the same columns as for a live batch).
+                        let code = r.exitCode.flatMap { $0 == 0 ? nil : $0 }
                         HStack(spacing: 6) {
                             JobStateIcon(state: state)
-                            Text(state.label)
+                            Text(code.map { "\(state.label) (kod \($0))" } ?? state.label)
+                                .lineLimit(1)
+                                .help(code.map { "Polecenie zakończyło się kodem \($0) (0 oznacza, że wszystko się udało)" }
+                                      ?? state.label)
                         }
                     }
                     .width(min: 90, ideal: 110)
-                    TableColumn("Kod") { r in
-                        Text(r.exitCode.map(String.init) ?? "—").monospacedDigit().foregroundStyle(.secondary)
-                    }
-                    .width(min: 40, ideal: 50)
                     TableColumn("Czas") { r in
                         Text(r.durationMs.map { JobDurationText.format(Double($0) / 1000) } ?? "—")
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
-                    .width(min: 55, ideal: 70)
+                    .width(min: 45, ideal: 50)
                     TableColumn("Wynik") { r in
                         Text(r.summary).lineLimit(1).help(r.summary)
                     }
@@ -534,19 +572,9 @@ struct HistoryDetailView: View {
                     .lineLimit(2)
                     .textSelection(.enabled)
                 Spacer(minLength: 12)
-                HStack(spacing: 8) {
-                    Label("\(batch.succeeded)", systemImage: Job.State.succeeded.symbol).foregroundStyle(.green)
-                    if batch.failed > 0 {
-                        Label("\(batch.failed)", systemImage: Job.State.failed.symbol).foregroundStyle(.red)
-                    }
-                    if batch.skipped + batch.cancelled > 0 {
-                        Label("\(batch.skipped + batch.cancelled)", systemImage: Job.State.skipped.symbol)
-                            .foregroundStyle(.secondary)
-                            .help("Pominięte lub przerwane")
-                    }
-                }
-                .monospacedDigit()
-                .fixedSize()
+                JobCounts(succeeded: batch.succeeded, failed: batch.failed, cancelled: batch.cancelled,
+                          skipped: batch.skipped)
+                    .font(.callout)
             }
             Text(info)
                 .font(.callout)
@@ -560,7 +588,7 @@ struct HistoryDetailView: View {
                     Label("Zaznacz nieudane", systemImage: "checklist")
                 }
                 .disabled(existing.isEmpty)
-                .help("Zaznacza na liście komputery, na których operacja się nie udała")
+                .help("Zaznacza na liście komputery, na których działanie się nie udało")
                 Spacer()
                 Button {
                     BatchExport.save(batch)

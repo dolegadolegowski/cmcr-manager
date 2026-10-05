@@ -1,3 +1,4 @@
+import AppKit
 import CMCRCore
 import SwiftUI
 
@@ -7,159 +8,401 @@ struct AppsView: View {
     @ViewState private var appArguments = ""
     @ViewState private var urlToOpen = ""
     @ViewState private var showSystem = false
+    @ViewState private var installedFilter = ""
+    @ViewState private var installedSelection: String?
+    @ViewState private var collapsed: Set<UUID> = []
     @ViewState private var confirm: ConfirmRequest?
 
     var body: some View {
-        Page {
+        VStack(alignment: .leading, spacing: 0) {
             TargetHeader(section: .apps,
-                         subtitle: "Zdalne uruchamianie i zamykanie aplikacji w sesji użytkownika zalogowanego przy komputerze.")
-            bulkBox
-            runningBox
-            installedBox
-            LastBatchView(section: .apps)
+                         subtitle: "Uruchamianie i zamykanie aplikacji u osoby zalogowanej przy komputerze, otwieranie stron i plików, lista zainstalowanych aplikacji.")
+                .alignedWithGroupedForm()
+                .padding([.horizontal, .top], 20)
+            Form {
+                bulkSection
+                openSection
+                runningSection
+                installedSection
+                if let batch = model.lastBatch[.apps] {
+                    Section {
+                        BatchResultsView(batch: batch)
+                    } header: {
+                        Label("Wynik ostatniej operacji", systemImage: "list.bullet.rectangle")
+                    }
+                    .id(batch.id)
+                }
+            }
+            .formStyle(.grouped)
         }
+        .groupedFormPageBackground()
         .onAppear {
             if !model.selectedMachines.isEmpty { model.refreshRunningApps(model.selectedMachines) }
         }
         .confirmation($confirm)
     }
 
-    // MARK: Bulk actions
+    // MARK: Launch / quit on every selected Mac
 
-    var bulkBox: some View {
-        SectionBox(title: "Na wszystkich zaznaczonych", icon: "square.stack.3d.up") {
-            HStack {
-                TextField("Nazwa aplikacji, np. Safari lub Unity Hub", text: $appName)
-                    .frame(minWidth: 260)
-                Menu {
-                    ForEach(knownAppNames, id: \.self) { name in
-                        Button(name) { appName = name }
-                    }
-                    if knownAppNames.isEmpty {
-                        Text("Użyj „Pobierz listę zainstalowanych”")
-                    }
-                } label: {
-                    Image(systemName: "list.bullet")
+    var bulkSection: some View {
+        Section {
+            LabeledContent {
+                HStack(spacing: 6) {
+                    TextField("Nazwa aplikacji", text: $appName, prompt: Text("np. Safari lub Unity Hub"))
+                        .labelsHidden()
+                    knownAppsMenu
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("Wybierz z aplikacji zainstalowanych na zaznaczonych komputerach")
-                TextField("Argumenty (opcjonalnie)", text: $appArguments)
-                    .frame(maxWidth: 200)
-                    .help("Argumenty jak w Terminalu – cudzysłowy grupują słowa. Z argumentami uruchamiana jest nowa instancja aplikacji.")
+            } label: {
+                Text("Aplikacja")
             }
-            HStack {
-                TargetButton(title: "Uruchom", icon: "play.fill") {
-                    model.launchApp(appName, arguments: appArguments, on: model.selectedMachines)
-                }
-                .disabled(appName.isEmpty)
-                TargetButton(title: "Zamknij", icon: "xmark.circle", prominent: false) {
-                    model.quitApp(appName, force: false, on: model.selectedMachines)
-                }
-                .disabled(appName.isEmpty)
-                TargetButton(title: "Wymuś zamknięcie", icon: "bolt.circle", role: .destructive, prominent: false) {
+            TextField(text: $appArguments, prompt: Text("opcjonalnie")) {
+                Text("Argumenty")
+                Text("Np. adres strony – aplikacja otworzy się w nowym oknie.")
+            }
+            .help("Argumenty jak w Terminalu – cudzysłowy grupują słowa. Z argumentami uruchamiana jest nowa instancja aplikacji.")
+            HStack(spacing: 10) {
+                TargetButton(title: "Wymuś zamknięcie…", icon: "bolt.circle", role: .destructive, prominent: false) {
                     let name = appName
                     confirm = ConfirmRequest(
                         title: "Wymusić zamknięcie „\(name)”?",
-                        message: "Aplikacja zostanie natychmiast zakończona (SIGKILL) \(Polish.onComputers(model.actionTargets.count)). Niezapisane dane użytkownika przepadną.",
+                        message: "Aplikacja zostanie natychmiast zakończona \(Polish.onComputers(model.actionTargets.count)). Niezapisana praca uczniów przepadnie.",
                         button: "Wymuś zamknięcie") {
                         model.quitApp(name, force: true, on: model.selectedMachines)
                     }
                 }
                 .disabled(appName.isEmpty)
-            }
-            HStack {
-                TextField("Adres URL lub ścieżka pliku do otwarcia u użytkownika", text: $urlToOpen)
-                TargetButton(title: "Otwórz", icon: "safari", prominent: false) {
-                    model.openURL(urlToOpen, on: model.selectedMachines)
+                Spacer(minLength: 12)
+                TargetButton(title: "Zamknij", icon: "xmark.circle", prominent: false) {
+                    model.quitApp(appName, force: false, on: model.selectedMachines)
                 }
-                .disabled(urlToOpen.isEmpty)
+                .disabled(appName.isEmpty)
+                TargetButton(title: "Uruchom", icon: "play.fill") {
+                    model.launchApp(appName, arguments: appArguments, on: model.selectedMachines)
+                }
+                .keyboardShortcut(.return, modifiers: [.command])
+                .disabled(appName.isEmpty)
             }
+        } header: {
+            Label("Aplikacja na zaznaczonych komputerach", systemImage: "macwindow.on.rectangle")
+        } footer: {
+            FormSectionNote("„Zamknij” działa jak polecenie Zakończ – aplikacja może zapytać o zapisanie zmian. „Wymuś zamknięcie” kończy ją od razu.")
         }
+    }
+
+    var knownAppsMenu: some View {
+        Menu {
+            if knownAppNames.isEmpty {
+                Text("Najpierw pobierz listę zainstalowanych aplikacji (niżej).")
+            }
+            ForEach(knownAppNames, id: \.self) { name in
+                Button(name) { appName = name }
+            }
+        } label: {
+            Label("Wybierz z listy", systemImage: "list.bullet")
+        }
+        .labelStyle(.iconOnly)
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Wybierz z aplikacji zainstalowanych na zaznaczonych komputerach")
     }
 
     var knownAppNames: [String] {
         let paths = model.selectedMachines.flatMap { model.installedApps[$0.id] ?? [] }
-        let names = Set(paths.map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension })
+        let names = Set(paths.map(Self.appName))
         return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    static func appName(_ path: String) -> String {
+        ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+    }
+
+    // MARK: Open a web page or a file
+
+    var openSection: some View {
+        Section {
+            TextField("Adres lub plik", text: $urlToOpen, prompt: Text("https://… lub /Users/Shared/plik.pdf"))
+            HStack {
+                Text("Otworzy się u osoby zalogowanej, w aplikacji domyślnej dla tego adresu lub pliku.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 12)
+                TargetButton(title: "Otwórz", icon: "arrow.up.forward.app") {
+                    model.openURL(urlToOpen, on: model.selectedMachines)
+                }
+                .disabled(urlToOpen.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        } header: {
+            Label("Otwórz stronę internetową lub plik", systemImage: "safari")
+        }
     }
 
     // MARK: Running apps
 
-    var runningBox: some View {
-        SectionBox(title: "Uruchomione aplikacje", icon: "app.badge") {
-            HStack {
-                TargetButton(title: "Odśwież", icon: "arrow.clockwise", prominent: false) {
+    var runningSection: some View {
+        let groups = runningGroups
+        return Section {
+            FormActionRow("Aplikacje otwarte przez zalogowanych użytkowników",
+                          caption: "Lista odświeża się sama po uruchomieniu lub zamknięciu aplikacji.") {
+                TargetButton(title: "Odśwież listę", icon: "arrow.clockwise", prominent: false) {
                     model.refreshRunningApps(model.selectedMachines)
                 }
-                Toggle("Pokaż procesy systemowe i agentów", isOn: $showSystem)
-                Spacer()
+            }
+            Toggle(isOn: $showSystem) {
+                Text("Pokaż także programy działające w tle")
+                Text("Np. ikony na pasku menu i usługi systemowe.")
             }
             if model.selectedMachines.isEmpty {
-                Text("Zaznacz komputery, aby zobaczyć uruchomione aplikacje.").foregroundStyle(.secondary)
+                Label("Zaznacz komputery na liście, aby zobaczyć uruchomione aplikacje.", systemImage: "hand.point.left")
+                    .foregroundStyle(.secondary)
             }
-            ForEach(model.selectedMachines) { m in
-                RunningAppsList(machine: m, info: model.runningApps[m.id], showSystem: showSystem) { app, force in
-                    if force {
-                        confirm = ConfirmRequest(title: "Wymusić zamknięcie \(app.name)?",
-                                                 message: "\(m.name): proces \(app.pid) zostanie zakończony natychmiast.",
-                                                 button: "Wymuś zamknięcie", targets: [m]) {
-                            model.kill(app, on: m, force: true)
-                        }
-                    } else {
-                        model.kill(app, on: m, force: false)
-                    }
+            ForEach(groups.machines) { m in
+                machineApps(m, info: model.runningApps[m.id])
+            }
+            ForEach(groups.notes, id: \.text) { note in
+                noteRow(note)
+            }
+        } header: {
+            Label("Uruchomione aplikacje", systemImage: "app.badge")
+        }
+    }
+
+    struct MachineNote {
+        let text: String
+        let icon: String
+        let color: Color
+        let names: [String]
+    }
+
+    /// Macs with a list of apps get their own expandable row; the rest (loading, nobody logged in, errors) are
+    /// summed up in one row per message, so fifteen identical "unreachable" lines do not drown the list.
+    var runningGroups: (machines: [Machine], notes: [MachineNote]) {
+        var machines: [Machine] = []
+        var notes: [String: MachineNote] = [:]
+        var order: [String] = []
+        func add(_ text: String, _ icon: String, _ color: Color, _ m: Machine) {
+            if let n = notes[text] {
+                notes[text] = MachineNote(text: text, icon: icon, color: color, names: n.names + [m.name])
+            } else {
+                notes[text] = MachineNote(text: text, icon: icon, color: color, names: [m.name])
+                order.append(text)
+            }
+        }
+        for m in model.selectedMachines {
+            guard let info = model.runningApps[m.id] else {
+                add("Wczytywanie listy…", "hourglass", .secondary, m)
+                continue
+            }
+            if let error = info.error {
+                add(error, "exclamationmark.triangle.fill", .orange, m)
+            } else if info.user == nil {
+                add("Nikt nie jest zalogowany.", "person.crop.circle.badge.questionmark", .secondary, m)
+            } else {
+                machines.append(m)
+            }
+        }
+        return (machines, order.compactMap { notes[$0] })
+    }
+
+    func noteRow(_ note: MachineNote) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: note.icon)
+                .foregroundStyle(note.color)
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(note.names.joined(separator: ", "))
+                    .fontWeight(.medium)
+                    .lineLimit(2)
+                Text(note.text)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    func machineApps(_ m: Machine, info: HostApps?) -> some View {
+        let apps = (info?.apps ?? []).filter { showSystem || !$0.isSystem }
+        let expanded = Binding(get: { !collapsed.contains(m.id) },
+                               set: { if $0 { collapsed.remove(m.id) } else { collapsed.insert(m.id) } })
+        return DisclosureGroup(isExpanded: expanded) {
+            if apps.isEmpty {
+                Text("Brak otwartych aplikacji.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(apps) { app in
+                RunningAppRow(app: app) { force in quit(app, on: m, force: force) }
+                    .padding(.vertical, 2)
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "desktopcomputer")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text(m.name).fontWeight(.semibold)
+                if let user = info?.user {
+                    Label(user, systemImage: "person.fill")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .help("Zalogowany użytkownik: \(user)")
+                }
+                Spacer(minLength: 8)
+                Text("\(Polish.count(apps.count, "aplikacja", "aplikacje", "aplikacji"))")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                if let info {
+                    Text(info.updatedAt.formatted(date: .omitted, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .help("Stan z godziny \(info.updatedAt.formatted(date: .omitted, time: .standard))")
                 }
             }
+        }
+    }
+
+    func quit(_ app: RunningApp, on m: Machine, force: Bool) {
+        guard force else {
+            model.kill(app, on: m, force: false)
+            return
+        }
+        confirm = ConfirmRequest(title: "Wymusić zamknięcie „\(app.name)”?",
+                                 message: "Na komputerze \(m.name) aplikacja zostanie zakończona natychmiast – niezapisana praca przepadnie.",
+                                 button: "Wymuś zamknięcie", targets: [m]) {
+            model.kill(app, on: m, force: true)
         }
     }
 
     // MARK: Installed apps
 
-    var installedBox: some View {
-        SectionBox(title: "Zainstalowane aplikacje", icon: "square.grid.3x3") {
-            HStack {
-                TargetButton(title: "Pobierz listę zainstalowanych", icon: "arrow.down.circle", prominent: false) {
+    var installedSection: some View {
+        let checked = model.selectedMachines.filter { model.installedApps[$0.id] != nil }.count
+        let rows = installedRows
+        let filter = installedFilter.trimmingCharacters(in: .whitespaces)
+        let shown = filter.isEmpty ? rows : rows.filter { Self.appName($0.path).localizedStandardContains(filter) }
+        let selected = shown.first { $0.id == installedSelection }
+        return Section {
+            FormActionRow("Aplikacje w folderach Programy",
+                          caption: checked == 0
+                              ? "Pobierz listę, aby zobaczyć, na ilu komputerach jest każda aplikacja."
+                              : "Sprawdzono \(Polish.computers(checked)). Pomarańczowa liczba – aplikacji brakuje na części z nich.") {
+                TargetButton(title: checked == 0 ? "Pobierz listę" : "Odśwież listę",
+                             icon: "arrow.down.circle", prominent: false) {
                     model.refreshInstalledApps(model.selectedMachines)
                 }
-                Spacer()
             }
-            let rows = installedRows
             if !rows.isEmpty {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(rows, id: \.path) { row in
-                        HStack {
-                            Text(((row.path as NSString).lastPathComponent as NSString).deletingPathExtension)
-                                .frame(width: 220, alignment: .leading)
-                            Text(row.path).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
-                            Spacer()
-                            Text("\(row.count)/\(model.selectedMachines.count)")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(row.count == model.selectedMachines.count ? Color.secondary : Color.orange)
-                                .help("Na ilu zaznaczonych komputerach jest zainstalowana")
-                            Button("Uruchom") { model.launchApp(row.path, on: model.selectedMachines) }
-                                .controlSize(.small)
-                            if row.path.hasPrefix("/Applications/") {
-                                Button("Odinstaluj") {
-                                    confirm = ConfirmRequest(
-                                        title: "Odinstalować \((row.path as NSString).lastPathComponent)?",
-                                        message: "Pakiet aplikacji zostanie usunięty z \(Polish.ofComputers(model.actionTargets.count)).",
-                                        button: "Odinstaluj") {
-                                        model.uninstall(row.path, on: model.selectedMachines)
-                                    }
-                                }
-                                .controlSize(.small)
-                            }
-                        }
-                        .padding(.vertical, 3)
-                        Divider()
+                SearchField(text: $installedFilter, prompt: "Szukaj aplikacji")
+                    .accessibilityLabel("Szukaj aplikacji")
+                installedTable(shown, checked: checked, filter: filter)
+                    .frame(height: 300)
+                HStack(spacing: 10) {
+                    Text(selected.map { "Zaznaczona: \(Self.appName($0.path))" } ?? "Zaznacz aplikację na liście.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 12)
+                    Button(role: .destructive) {
+                        if let selected { confirmUninstall(selected) }
+                    } label: {
+                        Label("Odinstaluj…", systemImage: "trash")
+                            .destructiveLabel()
                     }
+                    .disabled(selected.map(Self.canUninstall) != true || model.actionTargets.isEmpty)
+                    .help(selected.map { Self.canUninstall($0)
+                        ? "Usuń \(Self.appName($0.path)) z folderu Programy na zaznaczonych komputerach (z potwierdzeniem)"
+                        : "Aplikacji systemowych i spoza folderu Programy nie można tu odinstalować." }
+                        ?? "Zaznacz aplikację na liście.")
+                    Button {
+                        if let selected { model.launchApp(selected.path, on: model.selectedMachines) }
+                    } label: {
+                        Label("Uruchom", systemImage: "play.fill")
+                    }
+                    .disabled(selected == nil || model.actionTargets.isEmpty)
+                    .help(selected.map { "Uruchom \(Self.appName($0.path)) na zaznaczonych komputerach" }
+                          ?? "Zaznacz aplikację na liście.")
                 }
             }
+        } header: {
+            Label("Zainstalowane aplikacje", systemImage: "square.grid.3x3")
         }
     }
 
-    struct InstalledRow { let path: String; let count: Int }
+    func installedTable(_ shown: [InstalledRow], checked: Int, filter: String) -> some View {
+        Table(shown, selection: $installedSelection) {
+            TableColumn("Aplikacja") { row in
+                HStack(spacing: 8) {
+                    Image(nsImage: AppIcons.icon(forBundlePath: row.path))
+                        .resizable()
+                        .frame(width: 18, height: 18)
+                        .accessibilityHidden(true)
+                    Text(Self.appName(row.path))
+                        .lineLimit(1)
+                }
+                .help(row.path)
+            }
+            .width(min: 150, ideal: 220)
+            TableColumn("Zainstalowana") { row in
+                Text("na \(row.count) z \(checked)")
+                    .monospacedDigit()
+                    .foregroundStyle(row.count == checked ? Color.secondary : Color.orange)
+                    .help("Zainstalowana \(Polish.onComputers(row.count)) z \(checked) sprawdzonych")
+            }
+            .width(min: 90, ideal: 100, max: 130)
+            TableColumn("Folder") { row in
+                Text((row.path as NSString).deletingLastPathComponent)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(row.path)
+            }
+            .width(min: 120, ideal: 220)
+        }
+        .tableStyle(.bordered(alternatesRowBackgrounds: true))
+        .contextMenu(forSelectionType: String.self) { ids in
+            if let row = shown.first(where: { ids.contains($0.id) }) {
+                Button { model.launchApp(row.path, on: model.selectedMachines) } label: {
+                    Label("Uruchom na zaznaczonych komputerach", systemImage: "play.fill")
+                }
+                .disabled(model.actionTargets.isEmpty)
+                if Self.canUninstall(row) {
+                    Divider()
+                    Button(role: .destructive) { confirmUninstall(row) } label: {
+                        Label("Odinstaluj…", systemImage: "trash")
+                    }
+                    .disabled(model.actionTargets.isEmpty)
+                }
+            }
+        }
+        .overlay {
+            if shown.isEmpty {
+                ContentUnavailableView.search(text: filter)
+            }
+        }
+        .accessibilityLabel("Zainstalowane aplikacje")
+    }
+
+    func confirmUninstall(_ row: InstalledRow) {
+        let name = Self.appName(row.path)
+        confirm = ConfirmRequest(
+            title: "Odinstalować \(name)?",
+            message: "Aplikacja \((row.path as NSString).lastPathComponent) zostanie usunięta z \(Polish.ofComputers(model.actionTargets.count)).",
+            button: "Odinstaluj") {
+            model.uninstall(row.path, on: model.selectedMachines)
+        }
+    }
+
+    /// Only apps in /Applications can be removed from here (system apps are protected anyway).
+    static func canUninstall(_ row: InstalledRow) -> Bool { row.path.hasPrefix("/Applications/") }
+
+    struct InstalledRow: Identifiable {
+        let path: String
+        let count: Int
+        var id: String { path }
+    }
 
     var installedRows: [InstalledRow] {
         var counts: [String: Int] = [:]
@@ -171,46 +414,58 @@ struct AppsView: View {
     }
 }
 
-struct RunningAppsList: View {
-    let machine: Machine
-    let info: HostApps?
-    let showSystem: Bool
-    let onQuit: (RunningApp, Bool) -> Void
+/// One app open on a Mac: icon, name, process number and the quit buttons.
+struct RunningAppRow: View {
+    let app: RunningApp
+    let onQuit: (_ force: Bool) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(machine.name).font(.headline)
-                if let user = info?.user {
-                    Label(user, systemImage: "person.fill").font(.caption).foregroundStyle(.secondary)
-                }
-                if let info { Text(info.updatedAt.formatted(date: .omitted, time: .standard)).font(.caption).foregroundStyle(.secondary) }
+        HStack(spacing: 10) {
+            Image(nsImage: AppIcons.icon(forBundlePath: app.bundlePath))
+                .resizable()
+                .frame(width: 22, height: 22)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(app.name).lineLimit(1)
+                Text(app.bundlePath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help("Proces nr \(app.pid): \(app.bundlePath)")
             }
-            if info == nil {
-                Text("Ładowanie…").foregroundStyle(.secondary).font(.caption)
-            } else if let error = info?.error {
-                Text(error).foregroundStyle(.red).font(.caption)
-            } else if info?.user == nil {
-                Text("Nikt nie jest zalogowany.").foregroundStyle(.secondary).font(.caption)
-            } else {
-                let apps = (info?.apps ?? []).filter { showSystem || !$0.isSystem }
-                if apps.isEmpty {
-                    Text("Brak uruchomionych aplikacji.").foregroundStyle(.secondary).font(.caption)
-                }
-                ForEach(apps) { app in
-                    HStack {
-                        Image(systemName: app.isSystem ? "gearshape" : "app")
-                            .foregroundStyle(.secondary)
-                        Text(app.name).frame(width: 200, alignment: .leading)
-                        Text("PID \(app.pid)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                        Text(app.bundlePath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Button("Zamknij") { onQuit(app, false) }.controlSize(.small)
-                        Button("Wymuś") { onQuit(app, true) }.controlSize(.small)
-                    }
-                }
+            Spacer(minLength: 8)
+            Button {
+                onQuit(false)
+            } label: {
+                Label("Zamknij", systemImage: "xmark.circle")
             }
-            Divider()
+            .controlSize(.small)
+            .help("Zamknij \(app.name) – aplikacja może zapytać o zapisanie zmian")
+            Button(role: .destructive) {
+                onQuit(true)
+            } label: {
+                Label("Wymuś zamknięcie…", systemImage: "bolt.circle")
+                    .destructiveLabel()
+            }
+            .controlSize(.small)
+            .help("Wymuś zamknięcie \(app.name) od razu (z potwierdzeniem) – niezapisane zmiany przepadną")
         }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// Icons of apps on the iMacs, taken from the same app on this Mac when it has one (cached).
+@MainActor
+enum AppIcons {
+    private static var cache: [String: NSImage] = [:]
+
+    static func icon(forBundlePath path: String) -> NSImage {
+        if let cached = cache[path] { return cached }
+        let image = FileManager.default.fileExists(atPath: path)
+            ? NSWorkspace.shared.icon(forFile: path)
+            : NSWorkspace.shared.icon(for: .applicationBundle)
+        cache[path] = image
+        return image
     }
 }

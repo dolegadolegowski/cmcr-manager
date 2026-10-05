@@ -9,106 +9,161 @@ struct UpdatesView: View {
     @ViewState private var confirm: ConfirmRequest?
 
     var body: some View {
-        Page {
+        VStack(alignment: .leading, spacing: 0) {
             TargetHeader(section: .updates,
-                         subtitle: "Zdalne aktualizacje systemu macOS (softwareupdate), pakietów Homebrew i aplikacji z App Store.")
-            macOSBox
-            otherBox
-            LastBatchView(section: .updates)
+                         subtitle: "Aktualizacje systemu macOS oraz programów z Homebrew i App Store na zaznaczonych komputerach.")
+                .alignedWithGroupedForm()
+                .padding([.horizontal, .top], 20)
+            Form {
+                checkSection
+                installSection
+                appsSection
+                if let batch = model.lastBatch[.updates] {
+                    Section {
+                        BatchResultsView(batch: batch)
+                    } header: {
+                        Label("Wynik ostatniej operacji", systemImage: "list.bullet.rectangle")
+                    }
+                    .id(batch.id)
+                }
+            }
+            .formStyle(.grouped)
         }
+        .groupedFormPageBackground()
         .confirmation($confirm)
     }
 
-    var macOSBox: some View {
-        SectionBox(title: "macOS – Uaktualnienia oprogramowania", icon: "apple.logo") {
-            HStack {
-                TargetButton(title: "Sprawdź dostępne", icon: "magnifyingglass", prominent: false) {
-                    model.checkUpdates(model.selectedMachines)
-                }
+    // MARK: Check
+
+    var checkSection: some View {
+        let rows = model.selectedMachines.filter { model.updates[$0.id] != nil }
+        return Section {
+            FormActionRow("Dostępne aktualizacje", caption: "Sprawdzenie niczego nie instaluje i nie przeszkadza uczniom.") {
                 TargetButton(title: "Historia instalacji", icon: "clock.arrow.circlepath", prominent: false) {
                     model.runScript("Historia aktualizacji", on: model.selectedMachines) { _ in Scripts.updateHistory() }
                 }
+                TargetButton(title: "Sprawdź aktualizacje", icon: "magnifyingglass") {
+                    model.checkUpdates(model.selectedMachines)
+                }
+                .keyboardShortcut(.return, modifiers: [.command])
             }
-            updatesTable
-            Divider()
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("Uruchom ponownie, jeśli wymagane (-R)", isOn: $restart)
-                Toggle("Tylko zalecane (-r)", isOn: $recommendedOnly)
-                Toggle("Pozwól na nową wersję macOS", isOn: $allowMajor)
-                    .help("Bez tego zaznaczenia instalowane są tylko poprawki bieżącej wersji systemu – przejście np. z macOS 26 na 27 jest pomijane.")
+            ForEach(rows) { m in
+                if let info = model.updates[m.id] { updateRow(m, info) }
             }
-            HStack {
-                TargetButton(title: "Pobierz (bez instalacji)", icon: "arrow.down.circle", prominent: false) {
+        } header: {
+            Label("Aktualizacje macOS", systemImage: "apple.logo")
+        }
+    }
+
+    func updateRow(_ m: Machine, _ info: UpdateInfo) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: info.titles.isEmpty ? "checkmark.seal.fill" : "arrow.down.circle.fill")
+                .foregroundStyle(info.titles.isEmpty ? Color.green : Color.orange)
+                .frame(width: 18)
+                .accessibilityHidden(true)
+            Text(m.name)
+                .fontWeight(.medium)
+                .frame(minWidth: 80, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                if info.titles.isEmpty {
+                    Text("System jest aktualny")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(info.titles, id: \.self) { Text($0) }
+                }
+            }
+            Spacer(minLength: 8)
+            Text(info.checkedAt.formatted(date: .omitted, time: .shortened))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("Sprawdzono o \(info.checkedAt.formatted(date: .abbreviated, time: .standard))")
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: Install
+
+    var installSection: some View {
+        Section {
+            Toggle(isOn: $restart) {
+                Text("Uruchom ponownie, jeśli to potrzebne")
+                Text("Część aktualizacji wymaga restartu – zalogowani uczniowie stracą niezapisaną pracę.")
+            }
+            .help("softwareupdate -R")
+            Toggle(isOn: $recommendedOnly) {
+                Text("Tylko zalecane aktualizacje")
+                Text("Pomija aktualizacje, które Apple oznacza jako dodatkowe.")
+            }
+            .help("softwareupdate -r")
+            Toggle(isOn: $allowMajor) {
+                Text("Pozwól na nową wersję macOS")
+                Text("Bez tego instalowane są tylko poprawki obecnej wersji – przejście np. z macOS 26 na 27 jest pomijane.")
+            }
+            HStack(spacing: 10) {
+                Spacer()
+                TargetButton(title: "Tylko pobierz", icon: "arrow.down.circle", prominent: false) {
                     model.runScript("softwareupdate --download", on: model.selectedMachines) { _ in
                         Scripts.installUpdates(restart: false, recommendedOnly: recommendedOnly, downloadOnly: true,
                                                allowMajorUpgrade: allowMajor)
                     }
                 }
                 TargetButton(title: "Zainstaluj aktualizacje", icon: "arrow.triangle.2.circlepath") {
-                    let r = restart, rec = recommendedOnly, major = allowMajor
-                    let majorNote = major ? " Uwaga: także przejście na nową wersję macOS (długa instalacja, restart)." : ""
-                    confirm = ConfirmRequest(
-                        title: major ? "Zainstalować aktualizacje i nową wersję macOS?" : "Zainstalować aktualizacje macOS?",
-                        message: "\(Polish.onComputers(model.actionTargets.count).capitalizedFirst) zostanie uruchomione softwareupdate --install\(r ? " z automatycznym restartem – zalogowani użytkownicy stracą niezapisane dane" : "").\(majorNote)",
-                        button: "Instaluj", destructive: r || major) {
-                        model.runScript("softwareupdate --install\(r ? " --restart" : "")", on: model.selectedMachines) { _ in
-                            Scripts.installUpdates(restart: r, recommendedOnly: rec, downloadOnly: false,
-                                                   allowMajorUpgrade: major)
-                        }
-                    }
+                    confirmInstall()
                 }
             }
-            Text("Na Macach z Apple Silicon aktualizacje systemu wymagają uwierzytelnienia właściciela woluminu – aplikacja przekazuje hasło administratora (--user/--stdinpass).")
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        } header: {
+            Label("Instalacja aktualizacji macOS", systemImage: "arrow.down.app")
+        } footer: {
+            FormSectionNote("Komputery z procesorem Apple wymagają do instalacji hasła administratora – aplikacja poda je sama.")
+                .help("softwareupdate --user/--stdinpass")
         }
     }
 
-    @ViewBuilder var updatesTable: some View {
-        let rows = model.selectedMachines.filter { model.updates[$0.id] != nil }
-        if !rows.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(rows) { m in
-                    let info = model.updates[m.id]!
-                    HStack(alignment: .top) {
-                        Text(m.name).fontWeight(.medium).frame(width: 90, alignment: .leading)
-                        if info.titles.isEmpty {
-                            Label("Brak aktualizacji", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
-                        } else {
-                            VStack(alignment: .leading, spacing: 2) {
-                                ForEach(info.titles, id: \.self) { Text("• \($0)") }
-                            }
-                        }
-                        Spacer()
-                        Text(info.checkedAt.formatted(date: .omitted, time: .shortened))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Divider()
-                }
+    func confirmInstall() {
+        let r = restart, rec = recommendedOnly, major = allowMajor
+        var message = "Aktualizacje macOS zostaną zainstalowane \(Polish.onComputers(model.actionTargets.count))."
+        if r { message += " Komputery uruchomią się ponownie, jeśli aktualizacja tego wymaga – zalogowani uczniowie stracą niezapisaną pracę." }
+        if major { message += " Uwaga: także przejście na nową wersję macOS (długa instalacja i restart)." }
+        confirm = ConfirmRequest(
+            title: major ? "Zainstalować aktualizacje i nową wersję macOS?" : "Zainstalować aktualizacje macOS?",
+            message: message,
+            button: "Zainstaluj", destructive: r || major) {
+            model.runScript("softwareupdate --install\(r ? " --restart" : "")", on: model.selectedMachines) { _ in
+                Scripts.installUpdates(restart: r, recommendedOnly: rec, downloadOnly: false, allowMajorUpgrade: major)
             }
         }
     }
 
-    var otherBox: some View {
-        SectionBox(title: "Aplikacje", icon: "app.badge.checkmark") {
-            HStack {
-                TargetButton(title: "Homebrew: update + upgrade", icon: "mug", prominent: false) {
+    // MARK: Apps
+
+    var appsSection: some View {
+        Section {
+            FormActionRow("Programy z Homebrew",
+                          caption: "Aktualizuje programy zainstalowane przez Homebrew (brew update i brew upgrade).") {
+                TargetButton(title: "Aktualizuj programy", icon: "mug", prominent: false) {
                     model.runScript("brew update && brew upgrade", on: model.selectedMachines) { _ in
                         Scripts.brew("update && with_askpass brew upgrade")
                     }
                 }
-                TargetButton(title: "Homebrew: także aplikacje (--greedy)", icon: "mug.fill", prominent: false) {
+            }
+            FormActionRow("Także aplikacje z własnym aktualizatorem",
+                          caption: "Np. przeglądarki zainstalowane z Homebrew, które zwykle aktualizują się same (--greedy).") {
+                TargetButton(title: "Aktualizuj wszystkie", icon: "mug.fill", prominent: false) {
                     model.runScript("brew upgrade --cask --greedy", on: model.selectedMachines) { _ in
                         Scripts.brew("upgrade --cask --greedy")
                     }
                 }
-                TargetButton(title: "App Store (mas upgrade)", icon: "bag", prominent: false) {
+            }
+            FormActionRow("Aplikacje z App Store",
+                          caption: "Wymaga zalogowania do App Store na koncie administratora (raz, przy komputerze).") {
+                TargetButton(title: "Aktualizuj z App Store", icon: "bag", prominent: false) {
                     model.runScript("mas upgrade", on: model.selectedMachines) { _ in Scripts.masUpgrade() }
                 }
             }
-            Text("App Store (mas) aktualizuje aplikacje konta Apple ID zalogowanego w App Store na koncie administratora (raz, przy komputerze). Aktualizacje Unity i Android SDK: dział Instalacja › Unity Hub i Android SDK.")
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        } header: {
+            Label("Aktualizacje aplikacji", systemImage: "app.badge.checkmark")
+        } footer: {
+            FormSectionNote("Unity i Android SDK aktualizuje się w dziale Instalacja.")
         }
     }
 }

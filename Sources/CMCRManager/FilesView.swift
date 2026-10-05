@@ -19,22 +19,26 @@ private struct FilesPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             TargetHeader(section: .files,
-                         subtitle: "Wysyłanie plików na iMaki, zbieranie prac uczniów i porządki w folderach.")
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
+                         subtitle: "Wysyłanie plików na komputery uczniów, zbieranie prac i porządki w folderach.")
+                .alignedWithGroupedForm()
+                .padding([.horizontal, .top], 20)
             Form {
                 pushSection
                 collectSection
                 cleanSection
                 conventionSection
                 if let batch = model.lastBatch[.files] {
-                    Section("Wynik ostatniej operacji") {
+                    Section {
                         BatchResultsView(batch: batch)
+                    } header: {
+                        Label("Wynik ostatniej operacji", systemImage: "list.bullet.rectangle")
                     }
+                    .id(batch.id)
                 }
             }
             .formStyle(.grouped)
         }
+        .groupedFormPageBackground()
         .sheet(item: $picker) { request in
             RemoteFolderPicker(app: model, request: request)
                 .environmentObject(model)
@@ -42,10 +46,18 @@ private struct FilesPage: View {
         .confirmation($confirm)
     }
 
+    /// Macs the actions run on (selected ones, without the unreachable ones when they are skipped) – the same
+    /// count as in the header.
     var targets: [Machine] { model.selectedMachines }
+    var reachable: [Machine] { model.actionTargets }
 
-    func targetCount(_ n: Int) -> String {
-        "\(n) \(Operations.plural(n, "komputer", "komputery", "komputerów"))"
+    /// Tooltip of an action button: on how many Macs it runs and which ones are left out.
+    func targetHelp(_ action: String) -> String {
+        let selected = targets.count, count = reachable.count
+        if selected == 0 { return "Najpierw zaznacz komputery na liście." }
+        if count == 0 { return "Wszystkie zaznaczone komputery są niedostępne. Odśwież ich stan albo wyłącz „Pomiń niedostępne”." }
+        if count == selected { return "\(action) – \(Polish.onComputers(count))." }
+        return "\(action) – \(Polish.onComputers(count)) z \(selected) zaznaczonych (niedostępne zostaną pominięte)."
     }
 
     // MARK: Push
@@ -53,49 +65,31 @@ private struct FilesPage: View {
     var pushSection: some View {
         Section {
             FileListEditor(items: $model.pushItems)
-            HStack(spacing: 12) {
-                RemoteFolderLabel(path: state.destination, settings: model.settings)
-                Spacer(minLength: 12)
+            folderRow("Dokąd wysłać", path: state.destination) {
                 favoritesMenu { state.useDestination($0) }
                 Button {
                     picker = RemoteFolderRequest(purpose: .pushDestination, initialPath: state.destination) {
                         state.useDestination($0)
                     }
                 } label: {
-                    Label("Wybierz folder na iMacu…", systemImage: "folder.badge.gearshape")
+                    Label("Wybierz folder…", systemImage: "folder.badge.gearshape")
                 }
-                .controlSize(.large)
-                .help("Przeglądaj foldery na iMacu i wskaż, gdzie mają trafić pliki")
+                .help("Przeglądaj foldery na komputerze ucznia i wskaż, dokąd mają trafić pliki")
             }
-            .padding(.vertical, 4)
             if RemotePaths.usesConsoleUser(state.destination) {
-                Label("Pliki trafią do osoby zalogowanej na danym iMacu; komputery bez zalogowanego użytkownika zostaną pominięte.",
+                Label("Pliki trafią do osoby zalogowanej na danym komputerze; komputery, na których nikt nie jest zalogowany, zostaną pominięte.",
                       systemImage: "info.circle")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            DisclosureGroup("Zaawansowane", isExpanded: $state.showAdvanced) {
-                TextField("Ścieżka na iMacu",
-                          text: Binding(get: { state.destination }, set: { state.editDestination($0) }),
-                          prompt: Text("/Users/{student}/Desktop"))
-                    .font(.body.monospaced())
-                    .onSubmit { state.rememberFolder(state.destination) }
-                Picker("Właściciel plików", selection: Binding(get: { state.owner }, set: { state.setOwner($0) })) {
-                    ForEach(OwnerChoice.allCases) { Text($0.label).tag($0) }
-                }
-                if state.owner == .custom {
-                    TextField("Konto", text: $state.customOwner, prompt: Text("użytkownik[:grupa]"))
-                }
-                Picker("Uprawnienia", selection: Binding(get: { state.mode }, set: { state.setMode($0) })) {
-                    ForEach(PushMode.allCases) { Text($0.label).tag($0) }
-                }
-                Toggle("Z uprawnieniami administratora (sudo)",
-                       isOn: Binding(get: { state.pushAsRoot || state.owner != .keep }, set: { state.pushAsRoot = $0 }))
-                    .disabled(state.owner != .keep)
-                    .help(state.owner != .keep ? "Zmiana właściciela zawsze wymaga sudo." : "Potrzebne, gdy folder należy do innego konta.")
-                Text("W ścieżce można użyć {student} (konto ucznia: \(model.settings.studentUser)), {console} (osoba zalogowana na iMacu) i ~ (katalog administratora).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            // The options follow as ordinary form rows (inside the group they would be squeezed into one row).
+            DisclosureGroup(isExpanded: $state.showAdvanced) {
+                EmptyView()
+            } label: {
+                Label("Zaawansowane: ścieżka, właściciel i uprawnienia", systemImage: "slider.horizontal.3")
+            }
+            if state.showAdvanced {
+                advancedPush
             }
             HStack(spacing: 12) {
                 Text(pushHint)
@@ -105,24 +99,72 @@ private struct FilesPage: View {
                 Button {
                     state.push(to: targets)
                 } label: {
-                    Label(targets.isEmpty ? "Wyślij pliki" : "Wyślij na \(targetCount(targets.count))",
+                    Label(reachable.isEmpty ? "Wyślij pliki" : "Wyślij na \(Polish.computers(reachable.count))",
                           systemImage: "paperplane.fill")
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(targets.isEmpty || model.pushItems.isEmpty || state.destination.isEmpty)
+                .keyboardShortcut(.return, modifiers: [.command])
+                .disabled(reachable.isEmpty || model.pushItems.isEmpty || state.destination.isEmpty)
+                .help(targetHelp("Wyślij pliki do folderu „\(RemotePaths.friendlyName(state.destination, settings: model.settings).title)”"))
             }
         } header: {
-            Label("Wyślij pliki na iMaki", systemImage: "paperplane")
+            Label("Wyślij pliki", systemImage: "paperplane")
         }
+    }
+
+    @ViewBuilder var advancedPush: some View {
+        LabeledContent {
+            TextField("Ścieżka na komputerze",
+                      text: Binding(get: { state.destination }, set: { state.editDestination($0) }),
+                      prompt: Text("/Users/{student}/Desktop"))
+                .labelsHidden()
+                .multilineTextAlignment(.trailing)
+                .font(.body.monospaced())
+                .onSubmit { state.rememberFolder(state.destination) }
+        } label: {
+            Text("Ścieżka na komputerze")
+            Text("{student} – konto ucznia (\(model.settings.studentUser)), {console} – osoba zalogowana, ~ – katalog administratora.")
+        }
+        Picker("Właściciel plików", selection: Binding(get: { state.owner }, set: { state.setOwner($0) })) {
+            ForEach(OwnerChoice.allCases) { Text($0.label).tag($0) }
+        }
+        if state.owner == .custom {
+            TextField("Konto właściciela", text: $state.customOwner, prompt: Text("użytkownik[:grupa]"))
+        }
+        Picker("Uprawnienia", selection: Binding(get: { state.mode }, set: { state.setMode($0) })) {
+            ForEach(PushMode.allCases) { Text($0.label).tag($0) }
+        }
+        Toggle(isOn: Binding(get: { state.pushAsRoot || state.owner != .keep }, set: { state.pushAsRoot = $0 })) {
+            Text("Z uprawnieniami administratora")
+            Text(state.owner != .keep
+                 ? "Wymagane, bo zmieniany jest właściciel plików."
+                 : "Potrzebne, gdy folder należy do innego konta (sudo).")
+        }
+        .disabled(state.owner != .keep)
+    }
+
+    /// A remote folder with what it is for ("Dokąd wysłać") and the buttons that change it.
+    func folderRow<Buttons: View>(_ caption: String, path: String,
+                                  @ViewBuilder buttons: () -> Buttons) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                RemoteFolderLabel(path: path, settings: model.settings)
+            }
+            Spacer(minLength: 12)
+            buttons()
+        }
+        .padding(.vertical, 2)
     }
 
     var pushHint: String {
         if model.pushItems.isEmpty { return "Dodaj pliki lub foldery do wysłania." }
         if targets.isEmpty { return "Zaznacz komputery na liście." }
-        if state.destination.isEmpty { return "Wybierz folder na iMacu." }
+        if state.destination.isEmpty { return "Wybierz folder docelowy." }
         let n = model.pushItems.count
-        return "\(n) \(Operations.plural(n, "element", "elementy", "elementów")) → \(RemotePaths.friendlyName(state.destination, settings: model.settings).title)"
+        return "\(Polish.count(n, "element", "elementy", "elementów")) → \(RemotePaths.friendlyName(state.destination, settings: model.settings).title)"
     }
 
     func favoritesMenu(_ action: @escaping (String) -> Void) -> some View {
@@ -137,7 +179,9 @@ private struct FilesPage: View {
             if !recents.isEmpty {
                 Section("Ostatnio używane") {
                     ForEach(recents, id: \.self) { path in
-                        Button(RemotePaths.friendlyName(path, settings: model.settings).title) { action(path) }
+                        Button { action(path) } label: {
+                            Label(RemotePaths.friendlyName(path, settings: model.settings).title, systemImage: "clock")
+                        }
                     }
                 }
             }
@@ -152,9 +196,7 @@ private struct FilesPage: View {
 
     var collectSection: some View {
         Section {
-            HStack(spacing: 12) {
-                RemoteFolderLabel(path: state.collectSource, settings: model.settings)
-                Spacer(minLength: 12)
+            folderRow("Skąd zebrać", path: state.collectSource) {
                 Button {
                     picker = RemoteFolderRequest(purpose: .collectSource, initialPath: state.collectSource) {
                         state.useCollectSource($0)
@@ -162,15 +204,15 @@ private struct FilesPage: View {
                 } label: {
                     Label("Zmień folder…", systemImage: "folder")
                 }
-                .help("Wskaż folder na iMacach, z którego mają zostać zebrane prace")
+                .help("Wskaż folder na komputerach uczniów, z którego mają zostać zebrane prace")
             }
-            .padding(.vertical, 4)
             HStack(spacing: 10) {
                 let local = expandTilde(state.collectBase)
                 Image(nsImage: NSWorkspace.shared.icon(forFile: FileManager.default.fileExists(atPath: local)
                                                        ? local : NSHomeDirectory()))
                     .resizable()
                     .frame(width: 30, height: 30)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Zapisz na tym Macu w")
                     Text((local as NSString).abbreviatingWithTildeInPath)
@@ -181,8 +223,10 @@ private struct FilesPage: View {
                         .textSelection(.enabled)
                 }
                 Spacer(minLength: 12)
-                Button("Zmień…") {
+                Button {
                     if let url = Pickers.folder() { state.collectBase = (url.path as NSString).abbreviatingWithTildeInPath }
+                } label: {
+                    Label("Zmień…", systemImage: "folder")
                 }
                 .help("Wybierz folder na tym Macu, do którego trafią zebrane prace")
             }
@@ -190,26 +234,35 @@ private struct FilesPage: View {
                 Text("Osobny folder z datą i godziną dla każdego zbierania")
                 Text("Prace trafią do: \(state.nextCollectionExample)")
             }
-            Toggle("Z uprawnieniami administratora (prywatne foldery ucznia)", isOn: $state.collectAsRoot)
+            Toggle(isOn: $state.collectAsRoot) {
+                Text("Z uprawnieniami administratora")
+                Text("Potrzebne do prywatnych folderów ucznia, np. Biurka lub Dokumentów.")
+            }
             Toggle(isOn: $state.collectClean) {
                 Text("Po zebraniu wyczyść folder ucznia")
-                Text("Usuwane są tylko pliki skopiowane na ten Mac i niezmienione od tej chwili – praca zapisana w międzyczasie zostaje.")
+                Text("Usuwa tylko zebrane pliki, których nikt potem nie zmienił.")
             }
+            .help("Usuwane są tylko pliki skopiowane na ten Mac i niezmienione od tej chwili – praca zapisana w międzyczasie zostaje.")
             HStack(spacing: 12) {
-                Spacer()
                 Button {
                     state.revealLastCollection()
                 } label: {
-                    Label("Pokaż w Finderze", systemImage: "folder")
+                    Label("Pokaż zebrane prace", systemImage: "folder")
                 }
+                .help("Otwiera w Finderze folder z ostatnio zebranymi pracami")
+                Spacer(minLength: 12)
                 Button(role: state.collectClean ? .destructive : nil) {
                     collect()
                 } label: {
-                    Label(targets.isEmpty ? "Zbierz prace" : "Zbierz z \(targets.count) \(Operations.plural(targets.count, "komputera", "komputerów", "komputerów"))",
+                    // The ellipsis: with cleaning on, a confirmation comes first.
+                    Label((reachable.isEmpty ? "Zbierz prace" : "Zbierz z \(Polish.ofComputers(reachable.count))")
+                          + (state.collectClean ? "…" : ""),
                           systemImage: "tray.and.arrow.down.fill")
                 }
-                .controlSize(.large)
-                .disabled(targets.isEmpty || state.collectSource.isEmpty)
+                .buttonStyle(.borderedProminent)
+                .tint(state.collectClean ? .red : nil)
+                .disabled(reachable.isEmpty || state.collectSource.isEmpty)
+                .help(targetHelp(state.collectClean ? "Zbierz prace i wyczyść folder (z potwierdzeniem)" : "Zbierz prace"))
             }
         } header: {
             Label("Zbierz prace uczniów", systemImage: "tray.and.arrow.down")
@@ -223,9 +276,10 @@ private struct FilesPage: View {
             return
         }
         let place = RemotePaths.friendlyName(state.collectSource, settings: model.settings).title
+        let affected = reachable
         confirm = ConfirmRequest(
             title: "Zebrać prace i wyczyścić folder?",
-            message: "Po skopiowaniu na ten Mac zebrane pliki zostaną trwale usunięte z folderu „\(place)” na \(targetCount(list.count)): \(names(list)).",
+            message: "Po skopiowaniu na ten Mac zebrane pliki zostaną trwale usunięte z folderu „\(place)” \(Polish.onComputers(affected.count)): \(names(affected)).",
             button: "Zbierz i wyczyść") {
             state.collect(from: list)
         }
@@ -239,54 +293,48 @@ private struct FilesPage: View {
 
     var cleanSection: some View {
         Section {
-            HStack(spacing: 12) {
-                RemoteFolderLabel(path: state.cleanPath, settings: model.settings)
-                Spacer(minLength: 12)
+            folderRow("Folder na komputerach uczniów", path: state.cleanPath) {
                 Button {
                     picker = RemoteFolderRequest(purpose: .cleanFolder, initialPath: state.cleanPath) { state.cleanPath = $0 }
                 } label: {
                     Label("Zmień folder…", systemImage: "folder")
                 }
+                .help("Wskaż folder na komputerach uczniów")
             }
-            .padding(.vertical, 4)
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Button {
                     state.browse(state.cleanPath)
                 } label: {
-                    Label("Przeglądaj na iMacu", systemImage: "externaldrive.connected.to.line.below")
+                    Label("Otwórz w Przeglądarce plików", systemImage: AppSection.browser.icon)
                 }
-                .help("Otwórz ten folder w Przeglądarce plików (pierwszy zaznaczony komputer)")
-                Button {
+                .help("Pokazuje ten folder w dziale Przeglądarka plików (na pierwszym zaznaczonym komputerze)")
+                TargetButton(title: "Pokaż listę plików", icon: "list.bullet", prominent: false) {
                     let path = model.settings.resolve(state.cleanPath)
                     model.runScript("Zawartość \(path)", on: targets, section: .files) { _ in
                         Scripts.listFolder(path, asRoot: true)
                     }
-                } label: {
-                    Label("Pokaż zawartość na zaznaczonych", systemImage: "list.bullet")
                 }
-                .disabled(targets.isEmpty)
-                .help("Lista plików z każdego zaznaczonego komputera (wynik poniżej)")
                 Spacer(minLength: 12)
-                Button(role: .destructive) {
+                TargetButton(title: "Wyczyść folder…", icon: "trash", role: .destructive, prominent: false) {
                     confirmClean()
-                } label: {
-                    Label("Wyczyść folder…", systemImage: "trash")
                 }
-                .disabled(targets.isEmpty || state.cleanPath.isEmpty)
-                .help("Usuń całą zawartość folderu na zaznaczonych komputerach")
+                .disabled(state.cleanPath.isEmpty)
             }
         } header: {
             Label("Przeglądanie i porządki", systemImage: "folder.badge.minus")
+        } footer: {
+            FormSectionNote("„Pokaż listę plików” wypisze zawartość folderu z każdego komputera w wyniku poniżej. „Wyczyść folder” usuwa całą jego zawartość – z potwierdzeniem.")
         }
     }
 
     func confirmClean() {
         let list = targets
+        let affected = reachable
         let path = model.settings.resolve(state.cleanPath)
         let title = RemotePaths.friendlyName(state.cleanPath, settings: model.settings).title
         confirm = ConfirmRequest(
             title: "Wyczyścić folder „\(title)”?",
-            message: "Cała zawartość \(path) zostanie trwale usunięta na \(targetCount(list.count)): \(names(list)). Tej operacji nie można cofnąć.",
+            message: "Cała zawartość \(path) zostanie trwale usunięta \(Polish.onComputers(affected.count)): \(names(affected)). Tej operacji nie można cofnąć.",
             button: "Usuń zawartość") {
             model.runScript("Wyczyść \(path)", on: list, section: .files) { _ in Scripts.cleanFolder(path) }
         }
@@ -298,60 +346,41 @@ private struct FilesPage: View {
         let local = (expandTilde(model.settings.localFolder) as NSString).abbreviatingWithTildeInPath
         let shared = RemotePaths.friendlyName(model.settings.sharedFolder, settings: model.settings).title
         return Section {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Foldery na tym Macu")
-                    Text("\(local)/all → na wszystkie komputery, \(local)/<host> → tylko na dany komputer")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 12)
-                Button("Przygotuj foldery") { model.prepareLocalFolders() }
-                    .help("Utwórz \(local)/all oraz foldery wszystkich komputerów i pokaż je w Finderze")
-                Button("Otwórz w Finderze") { model.openLocalFolder(model.settings.localFolder) }
-            }
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Wyślij do: \(shared)")
-                    Text("cmcr-push – właściciel \(model.settings.studentUser), wszyscy mogą zmieniać")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 12)
+            FormActionRow("Foldery na tym Macu",
+                          caption: "\(local)/all – dla wszystkich komputerów, \(local)/<nazwa komputera> – tylko dla niego.") {
                 Button {
-                    model.pushConvention(on: targets, includeAll: true)
+                    model.prepareLocalFolders()
                 } label: {
-                    Label("Wszystko", systemImage: "arrow.up.circle")
+                    Label("Przygotuj foldery", systemImage: "folder.badge.plus")
                 }
-                .disabled(targets.isEmpty)
-                .help("Wyślij pliki z folderu all oraz z folderu danego komputera")
+                .help("Utwórz \(local)/all oraz foldery wszystkich komputerów i pokaż je w Finderze")
                 Button {
+                    model.openLocalFolder(model.settings.localFolder)
+                } label: {
+                    Label("Pokaż w Finderze", systemImage: "folder")
+                }
+                .help("Otwórz \(local) w Finderze")
+            }
+            FormActionRow("Wyślij do: \(shared)",
+                          caption: "Jak cmcr-push: właściciel \(model.settings.studentUser), wszyscy mogą zmieniać pliki.") {
+                TargetButton(title: "Tylko foldery komputerów", icon: "arrow.up.circle", prominent: false) {
                     model.pushConvention(on: targets, includeAll: false)
-                } label: {
-                    Label("Tylko foldery komputerów", systemImage: "arrow.up.circle")
                 }
-                .disabled(targets.isEmpty)
-                .help("Wyślij tylko pliki z folderów <host> (bez folderu all)")
+                TargetButton(title: "Wyślij wszystko", icon: "arrow.up.circle.fill", prominent: false) {
+                    model.pushConvention(on: targets, includeAll: true)
+                }
             }
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Pobierz z: \(shared)")
-                    Text("cmcr-pull – do \(local)/<host>; pliki o tych samych nazwach są nadpisywane")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 12)
-                Button {
+            FormActionRow("Pobierz z: \(shared)",
+                          caption: "Jak cmcr-pull: do \(local)/<nazwa komputera>; pliki o tych samych nazwach zostaną zastąpione.") {
+                TargetButton(title: "Pobierz", icon: "arrow.down.circle", prominent: false) {
                     model.pullFiles(source: model.settings.sharedFolder, localBase: model.settings.localFolder,
                                     asRoot: false, on: targets)
-                } label: {
-                    Label("Pobierz", systemImage: "arrow.down.circle")
                 }
-                .disabled(targets.isEmpty)
-                .help("Do zbierania prac lepiej użyć „Zbierz prace uczniów” – niczego nie nadpisuje")
             }
         } header: {
-            Label("Konwencja cmcr-helpers", systemImage: "folder.badge.gearshape")
+            Label("Foldery „all” i komputerów (jak w cmcr-helpers)", systemImage: "folder.badge.gearshape")
+        } footer: {
+            FormSectionNote("Do zbierania prac lepiej użyć „Zbierz prace uczniów” – niczego nie nadpisuje.")
         }
     }
 }

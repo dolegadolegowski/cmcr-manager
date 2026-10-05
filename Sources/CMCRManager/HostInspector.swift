@@ -11,9 +11,9 @@ struct HostInspector: View {
         if model.selection.count == 1, let id = model.selection.first, let m = model.machine(id) {
             details(m)
         } else {
-            ContentUnavailableView(model.selection.isEmpty ? "Nie zaznaczono komputera" : "Zaznaczono \(model.selection.count) \(Plural.computers(model.selection.count))",
-                                   systemImage: "sidebar.trailing",
-                                   description: Text("Zaznacz jeden komputer w tabeli, aby zobaczyć jego szczegóły i notatki."))
+            ContentUnavailableView(model.selection.isEmpty ? "Nie zaznaczono komputera" : "Zaznaczone: \(Polish.computers(model.selection.count))",
+                                   systemImage: "info.circle",
+                                   description: Text("Kliknij jeden komputer w tabeli, aby zobaczyć jego szczegóły i notatki."))
         }
     }
 
@@ -29,7 +29,7 @@ struct HostInspector: View {
                         Text(m.name).font(.title3.weight(.semibold))
                         HStack(spacing: 6) {
                             StatusDot(reachability: st.reachability)
-                            Text(st.reachability.label).foregroundStyle(.secondary)
+                            Text(st.reachability.displayName).foregroundStyle(.secondary)
                         }
                         Text(m.destination).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                     }
@@ -42,12 +42,12 @@ struct HostInspector: View {
             }
 
             Section("Stan") {
-                LabeledContent("Zalogowany", value: st.consoleUser ?? "nikt")
+                LabeledContent("Zalogowany", value: st.consoleUser ?? (st.reachability == .online ? "nikt" : "—"))
                 LabeledContent("macOS", value: [st.osVersion, st.info["build"].map { "(\($0))" }].compactMap { $0 }.joined(separator: " ").ifEmpty("—"))
                 LabeledContent("Model", value: st.model ?? "—")
                 if let chip = st.info["chip"], !chip.isEmpty { LabeledContent("Procesor", value: chip) }
                 if let mem = st.info["mem"], !mem.isEmpty { LabeledContent("Pamięć", value: "\(mem) GB") }
-                LabeledContent("Czas pracy", value: st.liveUptimeText ?? "—")
+                LabeledContent("Włączony od", value: st.liveUptimeText ?? "—")
                 LabeledContent("Ostatnio widziany") {
                     if st.reachability == .online {
                         Text("teraz")
@@ -74,22 +74,22 @@ struct HostInspector: View {
             }
 
             Section("Sieć") {
-                CopyRow(title: "IP", value: st.ip)
-                CopyRow(title: "MAC (Wake-on-LAN)", value: classroom.wakeMACs(m, status: st).first)
+                CopyRow(title: "Adres IP", value: st.ip)
+                CopyRow(title: "Adres MAC", value: classroom.wakeMACs(m, status: st).first)
                 if let lhn = classroom.names[m.id]?.localHostName, !lhn.isEmpty {
                     CopyRow(title: "Nazwa w sieci", value: "\(lhn).local")
                 }
             }
 
             Section("Bezpieczeństwo i zasilanie") {
-                LabeledContent("FileVault") {
+                LabeledContent("Szyfrowanie dysku") {
                     switch st.fileVaultOn ?? classroom.fileVault[m.id] {
                     case .some(true): Label("włączony", systemImage: "lock.shield").foregroundStyle(.orange)
                     case .some(false): Text("wyłączony")
                     case .none: Text("nie sprawdzono").foregroundStyle(.secondary)
                     }
                 }
-                LabeledContent("Harmonogram") {
+                LabeledContent("Harmonogram zasilania") {
                     Text(scheduleText(m)).multilineTextAlignment(.trailing)
                 }
                 if classroom.isLocked(m.id), let lock = classroom.locks[m.id] {
@@ -97,13 +97,15 @@ struct HostInspector: View {
                 }
                 HStack {
                     Spacer()
-                    Button("Sprawdź") {
+                    Button {
                         classroom.checkFileVault(model, [m])
                         classroom.loadSchedules(model, [m])
                         classroom.loadNames(model, [m])
+                    } label: {
+                        Label("Sprawdź teraz", systemImage: "arrow.clockwise")
                     }
                     .controlSize(.small)
-                    .help("Odczytaj FileVault, harmonogram zasilania i nazwę w sieci")
+                    .help("Odczytaj szyfrowanie dysku (FileVault), harmonogram zasilania i nazwę w sieci")
                 }
             }
 
@@ -114,14 +116,19 @@ struct HostInspector: View {
             }
 
             Section("Działania") {
-                InspectorAction(title: "Sesja SSH w Terminalu", icon: "terminal") { model.openTerminal(m) }
-                InspectorAction(title: "Udostępnianie ekranu (VNC)", icon: "rectangle.on.rectangle") { model.openScreenSharing(m) }
-                InspectorAction(title: "Podgląd ekranu", icon: "eye") {
+                InspectorAction(title: "Podgląd ekranu", icon: "eye",
+                                help: "Pokaż ekran tego komputera na żywo (bez sterowania)") {
                     model.selection = [m.id]
                     model.section = .screens
                 }
-                InspectorAction(title: "Obudź (Wake-on-LAN)", icon: "sunrise") { model.wake([m]) }
-                InspectorAction(title: "Odśwież stan", icon: "arrow.clockwise") { model.refreshStatus([m]) }
+                InspectorAction(title: "Steruj ekranem", icon: "rectangle.on.rectangle",
+                                help: "Otwórz aplikację Udostępnianie ekranu i przejmij mysz i klawiaturę") { model.openScreenSharing(m) }
+                InspectorAction(title: "Obudź komputer", icon: "sunrise",
+                                help: "Wyślij sygnał budzenia (Wake-on-LAN) – działa, gdy komputer jest uśpiony") { model.wake([m]) }
+                InspectorAction(title: "Odśwież stan", icon: "arrow.clockwise",
+                                help: "Sprawdź jeszcze raz ten komputer") { model.refreshStatus([m]) }
+                InspectorAction(title: "Otwórz w Terminalu", icon: "terminal",
+                                help: "Sesja SSH w aplikacji Terminal (dla zaawansowanych)") { model.openTerminal(m) }
             }
         }
         .formStyle(.grouped)
@@ -171,6 +178,7 @@ private struct CopyRow: View {
 private struct InspectorAction: View {
     let title: String
     let icon: String
+    var help: String
     let action: () -> Void
 
     var body: some View {
@@ -180,6 +188,7 @@ private struct InspectorAction: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
+        .help(help)
     }
 }
 
@@ -205,7 +214,7 @@ struct RenameComputersSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Zmień nazwy komputerów", systemImage: "character.cursor.ibeam")
+            Label("Zmień nazwy komputerów", systemImage: "pencil")
                 .font(.title3.weight(.semibold))
             Text("Na każdym Macu zostanie ustawiona nazwa komputera, nazwa w sieci (adres .local) i nazwa hosta. Domyślnie to nazwy z listy w aplikacji – pozwala to też naprawić konflikty nazw (np. imac04-2.local).")
                 .foregroundStyle(.secondary)

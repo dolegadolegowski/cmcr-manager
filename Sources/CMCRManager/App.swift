@@ -48,20 +48,39 @@ struct CMCRManagerApp: App {
         .defaultSize(width: 1440, height: 900)
         .commands {
             UpdateCommands()
-            CommandGroup(after: .newItem) {
+            // Widok: refresh (like Reload in Safari) and Show/Hide Sidebar (⌃⌘S), which replaces the toolbar button.
+            SidebarCommands()
+            CommandGroup(before: .sidebar) {
                 Button("Odśwież stan komputerów") { model.refreshStatus() }
                     .keyboardShortcut("r", modifiers: [.command])
+                Divider()
+            }
+            // Edycja, next to "Zaznacz wszystko" (which keeps selecting text).
+            CommandGroup(after: .pasteboard) {
+                Divider()
                 Button("Zaznacz wszystkie komputery") { model.selection = Set(model.machines.map(\.id)) }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
-                Button("Zaznacz komputery online") { model.selectOnline() }
+                Button("Zaznacz włączone komputery") { model.selectOnline() }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
-                Button("Odznacz wszystkie") { model.selection = [] }
+                Button("Odznacz wszystkie komputery") { model.selection = [] }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
             }
+            CommandGroup(replacing: .appSettings) {
+                Button("Konfiguracja…") { model.section = .setup }
+                    .keyboardShortcut(AppSection.setup.keyboardShortcut)
+            }
             CommandMenu("Przejdź") {
-                ForEach(Array(AppSection.allCases.enumerated()), id: \.element) { index, section in
-                    Button(section.title) { model.section = section }
-                        .keyboardShortcut(index < 10 ? KeyboardShortcut(KeyEquivalent(Character(String((index + 1) % 10))), modifiers: [.command]) : nil)
+                ForEach(AppSection.sidebar, id: \.title) { group in
+                    Section(group.title) {
+                        ForEach(group.sections) { section in
+                            Button {
+                                model.section = section
+                            } label: {
+                                Label(section.title, systemImage: section.icon)
+                            }
+                            .keyboardShortcut(section.keyboardShortcut)
+                        }
+                    }
                 }
             }
             ScreenCommands(center: model.screens)
@@ -100,12 +119,8 @@ struct ContentView: View {
         } detail: {
             DetailView()
         }
-        .overlay(alignment: .bottom) { ActionToastOverlay() }
         .confirmation($model.retryConfirmation)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) { OpenScreenWallButton() }
-            ToolbarItem(placement: .primaryAction) { ActivityToolbarButton() }
-        }
+        .background(ToolbarTitlesShown())
         .updaterUI(model: model)
         .task {
             ClassroomModel.shared.attach(model)
@@ -126,40 +141,16 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: $model.section) {
-            Section("Zarządzanie") {
-                row(.dashboard)
-                row(.commands)
-                row(.files)
-                row(.browser)
-                row(.apps)
-                row(.install)
-                row(.updates)
-            }
-            Section("Nadzór") {
-                row(.classroom)
-                row(.screens)
-                row(.power)
-            }
-            Section("System") {
-                row(.jobs)
-                row(.setup)
+            ForEach(AppSection.sidebar, id: \.title) { group in
+                Section(group.title) {
+                    ForEach(group.sections) { row($0) }
+                }
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom) {
-            if PasswordBanner.isNeeded(model) {
-                Button {
-                    model.section = .setup
-                } label: {
-                    Label("Brak hasła administratora", systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.orange)
-                .help("Bez hasła operacje wymagające uprawnień (sudo) nie powiodą się. Kliknij, aby je ustawić.")
-                .padding(8)
-            }
-        }
+        // With titles under every toolbar icon, the sidebar button's long title does not fit above the sidebar
+        // and would end up in the overflow menu; Widok › Ukryj pasek boczny (⌃⌘S) does the same.
+        .toolbar(removing: .sidebarToggle)
     }
 
     func row(_ s: AppSection) -> some View {
@@ -185,15 +176,67 @@ struct SidebarView: View {
         }
     }
 
+    /// What the section is for, its shortcut and, with a badge, what the number means.
     func badgeHelp(for s: AppSection) -> String {
         let n = badge(for: s)
-        guard n > 0 else { return s.title }
+        let base = "\(s.summary) (\(s.shortcutText))"
+        guard n > 0 else { return base }
         switch s {
-        case .jobs: return "W toku: \(Polish.jobs(n))"
-        case .dashboard: return "Wymaga uwagi (błąd logowania lub inny błąd): \(Polish.computers(n))"
-        case .updates: return "Dostępne aktualizacje \(Polish.onComputers(n))"
-        default: return s.title
+        case .jobs: return "\(base)\nW toku: \(Polish.jobs(n))"
+        case .dashboard: return "\(base)\nWymaga uwagi (błąd logowania lub połączenia): \(Polish.computers(n))"
+        case .updates: return "\(base)\nDostępne aktualizacje \(Polish.onComputers(n))"
+        default: return base
         }
+    }
+}
+
+extension AppSection {
+    /// Sidebar groups in display order; the Przejdź menu numbers the sections (⌘1…⌘0) in the same order.
+    static let sidebar: [(title: String, sections: [AppSection])] = [
+        ("Pracownia", [.dashboard, .classroom, .screens, .power]),
+        ("Pliki i programy", [.files, .browser, .apps, .install, .updates]),
+        ("Administracja", [.jobs, .commands, .setup]),
+    ]
+
+    static var sidebarOrder: [AppSection] { sidebar.flatMap(\.sections) }
+
+    /// What the section is for, in one sentence (sidebar tooltip).
+    var summary: String {
+        switch self {
+        case .dashboard: return "Stan wszystkich komputerów w pracowni"
+        case .classroom: return "Rozpoczęcie i zakończenie lekcji, blokada ekranów, pytania do uczniów"
+        case .screens: return "Podgląd ekranów uczniów na żywo"
+        case .power: return "Wiadomości, wylogowanie, uśpienie, ponowne uruchomienie i wyłączanie"
+        case .files: return "Wysyłanie materiałów i zbieranie prac uczniów"
+        case .browser: return "Przeglądanie plików na jednym komputerze, jak w Finderze"
+        case .apps: return "Uruchamianie i zamykanie aplikacji na komputerach"
+        case .install: return "Instalowanie programów na komputerach"
+        case .updates: return "Aktualizacje systemu macOS i programów"
+        case .jobs: return "Wyniki i historia wszystkich działań"
+        case .commands: return "Polecenia Terminala dla zaawansowanych"
+        case .setup: return "Lista komputerów, hasła, ustawienia i przygotowanie iMaców"
+        }
+    }
+
+    /// Every section has a shortcut, numbered in sidebar order: ⌘1…⌘9 and ⌘0 for the first ten, then ⇧⌘P for
+    /// Polecenia (like a command palette) and ⌘, for Konfiguracja (like Settings in every Mac app; also in the
+    /// application menu).
+    var keyboardShortcut: KeyboardShortcut {
+        switch self {
+        case .setup: return KeyboardShortcut(",", modifiers: .command)
+        case .commands: return KeyboardShortcut("p", modifiers: [.command, .shift])
+        default:
+            let numbered = Self.sidebarOrder.filter { $0 != .setup && $0 != .commands }
+            let index = numbered.firstIndex(of: self) ?? 0
+            assert(numbered.count <= 10, "Only ten sections can have ⌘ + digit")
+            return KeyboardShortcut(KeyEquivalent(Character(String((index + 1) % 10))), modifiers: .command)
+        }
+    }
+
+    /// The shortcut as shown in menus, e.g. "⌘2", "⇧⌘P".
+    var shortcutText: String {
+        let s = keyboardShortcut
+        return (s.modifiers.contains(.shift) ? "⇧" : "") + "⌘" + String(s.key.character).uppercased()
     }
 }
 
@@ -284,16 +327,6 @@ struct MachineListView: View {
                 }
             }
         }
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    model.refreshStatus()
-                } label: {
-                    Label("Odśwież stan", systemImage: "arrow.clockwise")
-                }
-                .help("Odśwież stan wszystkich komputerów (⌘R)")
-            }
-        }
     }
 
     func isTarget(_ id: UUID) -> Binding<Bool> {
@@ -316,7 +349,8 @@ struct MachineListView: View {
     func header(_ visible: [Machine]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                NativeSearchField(prompt: "Szukaj komputera lub użytkownika", text: $query.text)
+                NativeSearchField(prompt: "Szukaj komputera lub ucznia", text: $query.text)
+                    .help("Szukaj po nazwie komputera, adresie, grupie lub nazwie zalogowanego użytkownika")
                 filterMenu
             }
             if !model.groups.isEmpty { groupChips }
@@ -349,7 +383,7 @@ struct MachineListView: View {
         let filtered = query.status != .all || query.group != nil
         return Menu {
             Picker("Pokaż", selection: $query.status) {
-                ForEach(HostStatusFilter.allCases) { Text($0.label).tag($0) }
+                ForEach(HostStatusFilter.allCases) { Text($0.displayName).tag($0) }
             }
             .pickerStyle(.inline)
             if !model.groups.isEmpty {
@@ -373,13 +407,18 @@ struct MachineListView: View {
         .menuIndicator(.hidden)
         .labelStyle(.iconOnly)
         .fixedSize()
-        .help(filtered ? "Filtr włączony: \(query.status.label)\(query.group.map { ", grupa \($0)" } ?? "")"
+        .help(filtered ? "Filtr włączony: \(query.status.displayName)\(query.group.map { ", grupa \($0)" } ?? "")"
                        : "Filtruj i sortuj listę komputerów")
     }
 
+    /// Filters the list by group (it does not check anything; the context menu of a group can).
     var groupChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
+                Text("Pokaż:")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
                 chip("Wszystkie", selected: query.group == nil) { query.group = nil }
                 ForEach(model.groups, id: \.self) { g in
                     chip(g, selected: query.group.map { $0.caseInsensitiveCompare(g) == .orderedSame } ?? false) {
@@ -411,8 +450,10 @@ struct MachineListView: View {
                 .foregroundStyle(selected ? Color.white : Color.primary)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title == "Wszystkie" ? "Pokaż wszystkie grupy" : "Pokaż grupę \(title)")
         .accessibilityAddTraits(selected ? .isSelected : [])
-        .help(title == "Wszystkie" ? "Pokaż wszystkie komputery" : "Pokaż tylko grupę „\(title)” (prawy przycisk: zaznacz grupę)")
+        .help(title == "Wszystkie" ? "Pokaż na liście komputery ze wszystkich grup"
+                                   : "Pokaż na liście tylko grupę „\(title)”. Prawy przycisk: zaznacz jej komputery.")
     }
 
     // MARK: Footer: counts and selection menu
@@ -423,7 +464,7 @@ struct MachineListView: View {
         let hidden = model.selection.subtracting(visibleIDs).count
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text("Zaznaczono \(model.selection.count) z \(model.machines.count) · online: \(online)")
+                Text("Zaznaczone: \(model.selection.count) z \(model.machines.count) · włączone: \(online)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -454,13 +495,18 @@ struct MachineListView: View {
     }
 }
 
+extension HostStatusFilter {
+    /// The filter's name in the window ("Włączone", like everywhere else; the CLI keeps "online").
+    var displayName: String { self == .online ? "Włączone" : label }
+}
+
 /// "Zaznacz" menu items (footer menu and empty-area context menu).
 struct SelectionMenuItems: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
         Button("Wszystkie") { model.selection = Set(model.machines.map(\.id)) }
-        Button("Włączone (online)") { model.selectOnline() }
+        Button("Włączone") { model.selectOnline() }
         Button("Odwróć zaznaczenie") { model.invertSelection() }
         if !model.groups.isEmpty {
             Menu("Grupa") {
@@ -484,10 +530,10 @@ struct MachineRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Toggle("Cel operacji: \(machine.name)", isOn: $isTarget)
+            Toggle("Zaznacz \(machine.name)", isOn: $isTarget)
                 .toggleStyle(.checkbox)
                 .labelsHidden()
-                .help(isTarget ? "Zaznaczony – operacje obejmą ten komputer" : "Zaznacz, aby objąć ten komputer operacjami")
+                .help(isTarget ? "Zaznaczony – działania obejmą ten komputer" : "Zaznacz, aby działania objęły ten komputer")
             HStack(spacing: 8) {
                 StatusDot(reachability: status.reachability)
                 VStack(alignment: .leading, spacing: 1) {
@@ -516,11 +562,6 @@ struct MachineRow: View {
                         .lineLimit(1)
                         .help("Zalogowany użytkownik: \(user)")
                 }
-                if status.reachability == .error || status.reachability == .authFailed {
-                    Image(systemName: "exclamationmark.bubble.fill")
-                        .foregroundStyle(.orange)
-                        .help(status.message.isEmpty ? status.reachability.label : status.message)
-                }
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityText)
@@ -542,12 +583,12 @@ struct MachineRow: View {
         case .unknown, .checking:
             return machine.address
         default:
-            return status.message.isEmpty ? status.reachability.label : status.message
+            return status.message.isEmpty ? status.reachability.displayName : status.message
         }
     }
 
     var accessibilityText: String {
-        var parts = [machine.name, status.reachability.label]
+        var parts = [machine.name, status.reachability.displayName]
         parts.append(status.consoleUser.map { "zalogowany \($0)" } ?? "nikt nie jest zalogowany")
         if !machine.groups.isEmpty { parts.append("grupy: \(machine.groups.joined(separator: ", "))") }
         if !status.message.isEmpty, status.reachability != .online { parts.append(status.message) }
@@ -602,18 +643,6 @@ struct MachineContextMenu: View {
             }
             Divider()
             Button {
-                targets.prefix(4).forEach(model.openTerminal)
-            } label: {
-                Label(targets.count > 4 ? "Sesja SSH w Terminalu (pierwsze 4)" : "Sesja SSH w Terminalu",
-                      systemImage: "terminal")
-            }
-            Button {
-                targets.prefix(4).forEach(model.openScreenSharing)
-            } label: {
-                Label(targets.count > 4 ? "Udostępnianie ekranu (pierwsze 4)" : "Udostępnianie ekranu (VNC)",
-                      systemImage: "rectangle.on.rectangle")
-            }
-            Button {
                 if model.selection != ids { model.selection = ids }
                 model.section = .screens
             } label: {
@@ -622,11 +651,23 @@ struct MachineContextMenu: View {
             if targets.count == 1 {
                 OpenScreenWindowMenuItem(machine: targets[0])
             }
+            Button {
+                targets.prefix(4).forEach(model.openScreenSharing)
+            } label: {
+                Label(targets.count > 4 ? "Steruj ekranem (pierwsze 4)" : "Steruj ekranem (Udostępnianie ekranu)",
+                      systemImage: "rectangle.on.rectangle")
+            }
+            Button {
+                targets.prefix(4).forEach(model.openTerminal)
+            } label: {
+                Label(targets.count > 4 ? "Otwórz w Terminalu (pierwsze 4)" : "Otwórz w Terminalu (SSH)",
+                      systemImage: "terminal")
+            }
             Divider()
             Button {
                 model.wake(targets)
             } label: {
-                Label("Obudź (Wake-on-LAN)", systemImage: "sunrise")
+                Label(targets.count == 1 ? "Obudź komputer" : "Obudź komputery", systemImage: "sunrise")
             }
             Menu {
                 GroupMembershipMenu(ids: ids, newGroup: newGroup)
@@ -648,6 +689,22 @@ struct DetailView: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
+        // A plain stack (not a safe-area inset): sections with a table ignore top insets, and the banner would cover
+        // their header. Sections with an inspector show the banner in their main column themselves.
+        VStack(spacing: 0) {
+            if PasswordBanner.isNeeded(model), !PasswordBanner.notAbove.contains(model.section ?? .dashboard) {
+                PasswordBanner()
+            }
+            section
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .navigationTitle(model.section?.title ?? "CMCR Manager")
+        .overlay(alignment: .bottom) { ActionToastOverlay() }
+        // Declared after the section's own items, so the window-wide ones stay at the trailing end.
+        .overlay { Color.clear.allowsHitTesting(false).toolbar { MainToolbar() } }
+    }
+
+    @ViewBuilder var section: some View {
         Group {
             switch model.section ?? .dashboard {
             case .dashboard: DashboardView()
@@ -664,12 +721,6 @@ struct DetailView: View {
             case .classroom: ClassroomView()
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if PasswordBanner.isNeeded(model), ![.setup, .jobs].contains(model.section ?? .dashboard) {
-                PasswordBanner()
-            }
-        }
-        .navigationTitle(model.section?.title ?? "CMCR Manager")
     }
 }
 

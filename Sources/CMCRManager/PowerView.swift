@@ -21,7 +21,7 @@ struct PowerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             TargetHeader(section: .power,
-                         subtitle: "Komunikaty dla uczniów, wylogowanie, usypianie, restart, wyłączanie i harmonogram zasilania.")
+                         subtitle: "Wiadomości dla uczniów, wylogowanie, usypianie, ponowne uruchamianie i wyłączanie komputerów oraz harmonogram zasilania.")
                 .padding([.horizontal, .top], 20)
             Form {
                 messageSection
@@ -56,11 +56,16 @@ struct PowerView: View {
                 .fixedSize()
                 .help("Wstaw gotową wiadomość")
             }
-            Picker("Forma", selection: $asDialog) {
+            Picker("Jak pokazać", selection: $asDialog) {
                 Text("Okno z przyciskiem OK").tag(true)
                 Text("Powiadomienie").tag(false)
             }
             HStack {
+                if model.selection.isEmpty {
+                    SelectFirstHint()
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 TargetButton(title: "Wyślij wiadomość", icon: "paperplane.fill") {
                     let t = title, m = text, d = asDialog
@@ -69,9 +74,13 @@ struct PowerView: View {
                     }
                 }
                 .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .keyboardShortcut(.return, modifiers: .command)
             }
         } header: {
             Label("Wiadomość dla uczniów", systemImage: "text.bubble")
+        } footer: {
+            Text("Wiadomość zobaczą uczniowie zalogowani na zaznaczonych komputerach. ⌘↩ wysyła.")
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -79,27 +88,28 @@ struct PowerView: View {
 
     var sessionSection: some View {
         Section {
-            HStack {
-                TargetButton(title: "Uśpij ekran", icon: "moon", prominent: false) {
+            PowerActionRow(title: "Wygaszenie ekranów", icon: "moon",
+                           caption: "Monitory zgasną – uczeń obudzi je myszą lub klawiaturą.") {
+                TargetButton(title: "Uśpij ekrany", icon: "moon", prominent: false) {
                     model.power(.displaySleep, on: model.selectedMachines)
                 }
-                .help("Wyłącza tylko monitor – uczeń obudzi go myszą lub klawiaturą.")
-                Spacer()
+            }
+            PowerActionRow(title: "Wylogowanie", icon: "rectangle.portrait.and.arrow.right",
+                           caption: "Jak „Wyloguj” w menu Apple – aplikacje zapytają ucznia o zapisanie zmian.") {
                 TargetButton(title: "Wyloguj", icon: "rectangle.portrait.and.arrow.right", prominent: false) {
                     model.runScript("Wylogowanie (z pytaniem o zapis)", on: model.selectedMachines, section: .power) { _ in
                         Scripts.logoutUser(force: false)
                     }
                 }
-                .help("Jak „Wyloguj” w menu Apple: aplikacje mogą zapytać ucznia o zapisanie zmian i wstrzymać wylogowanie.")
-                TargetButton(title: "Wyloguj natychmiast", icon: "rectangle.portrait.and.arrow.right.fill", role: .destructive,
-                             prominent: false) {
+            }
+            PowerActionRow(title: "Natychmiastowe wylogowanie", icon: "rectangle.portrait.and.arrow.right.fill",
+                           caption: "Sesja kończy się od razu – niezapisane prace przepadną.") {
+                CriticalTargetButton(title: "Wyloguj natychmiast…", icon: "rectangle.portrait.and.arrow.right.fill") {
                     request = PowerRequest(kind: .logout, machines: model.selectedMachines)
                 }
-                .tint(.red)
-                .help("Kończy sesję ucznia od razu – aplikacje nie zapytają o zapisanie zmian.")
             }
         } header: {
-            Label("Sesja użytkownika", systemImage: "person.crop.circle")
+            Label("Sesja ucznia", systemImage: "person.crop.circle")
         }
     }
 
@@ -107,43 +117,114 @@ struct PowerView: View {
 
     var powerSection: some View {
         Section {
-            Picker("Kiedy", selection: $delay) {
-                Text("Teraz").tag(0)
-                ForEach([1, 5, 10, 15], id: \.self) { Text("Za \($0) min").tag($0) }
-            }
-            if delay > 0 {
-                Toggle("Uprzedź zalogowanych uczniów komunikatem", isOn: $warnUsers)
-            }
-            HStack {
+            PowerActionRow(title: "Budzenie przez sieć", icon: "sunrise",
+                           caption: "Budzi uśpione komputery (Wake-on-LAN) i czeka, aż odpowiedzą. Wyłączonych nie włączy.") {
                 TargetButton(title: "Obudź", icon: "sunrise", prominent: false, includeUnreachable: true) {
                     model.wake(model.selectedMachines)
                 }
-                .help("Wyślij pakiet Wake-on-LAN i poczekaj, aż komputery odpowiedzą (działa tylko z uśpienia).")
-                TargetButton(title: "Uśpij", icon: "moon.zzz", prominent: false) {
+            }
+            Picker(selection: $delay) {
+                Text("Teraz").tag(0)
+                ForEach([1, 5, 10, 15], id: \.self) { Text("Za \($0) min").tag($0) }
+            } label: {
+                Label {
+                    Text("Kiedy uśpić, uruchomić ponownie lub wyłączyć")
+                    Text(delay == 0 ? "Od razu po potwierdzeniu." : "Do tego czasu możesz to odwołać na dole tej sekcji.")
+                } icon: {
+                    FormRowIcon("clock")
+                }
+            }
+            if delay > 0 {
+                Toggle(isOn: $warnUsers) {
+                    Label {
+                        Text("Uprzedź zalogowanych uczniów")
+                        Text("Na ekranie pojawi się komunikat z prośbą o zapisanie pracy.")
+                    } icon: {
+                        FormRowIcon("exclamationmark.bubble")
+                    }
+                }
+            }
+            PowerActionRow(title: "Uśpienie", icon: "moon.zzz",
+                           caption: "Komputery zasną – obudzisz je przyciskiem „Obudź”.") {
+                TargetButton(title: "Uśpij…", icon: "moon.zzz", prominent: false) {
                     request = PowerRequest(kind: .sleep, machines: model.selectedMachines, delay: delay, warn: warnUsers)
                 }
-                Spacer()
-                TargetButton(title: "Uruchom ponownie", icon: "arrow.clockwise.circle", role: .destructive, prominent: false) {
+            }
+            PowerActionRow(title: "Ponowne uruchomienie", icon: "arrow.clockwise.circle",
+                           caption: "Zalogowani uczniowie stracą niezapisane prace.") {
+                CriticalTargetButton(title: "Uruchom ponownie…", icon: "arrow.clockwise.circle") {
                     request = PowerRequest(kind: .restart, machines: model.selectedMachines, delay: delay, warn: warnUsers)
                 }
-                .tint(.red)
-                TargetButton(title: "Wyłącz", icon: "power", role: .destructive, prominent: false) {
+            }
+            PowerActionRow(title: "Wyłączenie", icon: "power",
+                           caption: "Wyłączonych komputerów nie obudzisz przez sieć – włączy je harmonogram albo przycisk.") {
+                CriticalTargetButton(title: "Wyłącz…", icon: "power") {
                     request = PowerRequest(kind: .shutdown, machines: model.selectedMachines, delay: delay, warn: warnUsers)
                 }
-                .tint(.red)
             }
-            HStack {
-                Spacer()
-                TargetButton(title: "Anuluj zaplanowane", icon: "clock.badge.xmark", prominent: false) {
+            PowerActionRow(title: "Zaplanowane na później", icon: "clock.badge.xmark",
+                           caption: "Odwołuje uśpienie, ponowne uruchomienie lub wyłączenie ustawione z opóźnieniem.") {
+                TargetButton(title: "Odwołaj", icon: "clock.badge.xmark", prominent: false) {
                     classroom.cancelDelayedPower(model, model.selectedMachines)
                 }
-                .help("Odwołaj restart, wyłączenie lub uśpienie zaplanowane z opóźnieniem.")
             }
         } header: {
             Label("Zasilanie", systemImage: "power")
         } footer: {
-            Text("Wake-on-LAN budzi komputery tylko z uśpienia – wyłączonego komputera nie włączy. Wymaga adresu MAC (zbierany przy odświeżaniu stanu), połączenia Ethernet i opcji „Budź przy dostępie do sieci”.")
+            Text("Budzenie przez sieć wymaga adresu MAC (aplikacja zapamiętuje go przy odświeżaniu stanu), połączenia kablem Ethernet i włączonej opcji „Budź przy dostępie do sieci” (harmonogram poniżej).")
                 .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// `TargetButton` for actions that end sessions, delete or switch Macs off: red title and icon, same targets.
+struct CriticalTargetButton: View {
+    @EnvironmentObject var model: AppModel
+    let title: String
+    let icon: String
+    let action: () -> Void
+
+    var body: some View {
+        let selected = model.selectedMachines.count
+        let count = model.actionTargets.count
+        Button(role: .destructive, action: action) {
+            CriticalLabel(title: title, icon: icon)
+        }
+        .buttonStyle(.bordered)
+        .disabled(count == 0)
+        .help(TargetButton(title: title.replacingOccurrences(of: "…", with: ""), action: {}).help(selected: selected, count: count))
+    }
+}
+
+private struct CriticalLabel: View {
+    @Environment(\.isEnabled) private var isEnabled
+    let title: String
+    let icon: String
+
+    var body: some View {
+        Label(title, systemImage: icon)
+            .foregroundStyle(isEnabled ? AnyShapeStyle(Color.red) : AnyShapeStyle(.tertiary))
+    }
+}
+
+/// Row in the style of System Settings: what an action does on the left, its button on the right.
+struct PowerActionRow<Action: View>: View {
+    let title: String
+    let icon: String
+    let caption: String
+    @ViewBuilder var action: Action
+
+    var body: some View {
+        LabeledContent {
+            action
+                .fixedSize()
+        } label: {
+            Label {
+                Text(title)
+                Text(caption)
+            } icon: {
+                FormRowIcon(icon)
+            }
         }
     }
 }
@@ -170,18 +251,18 @@ struct PowerRequest: Identifiable {
 
     var verb: String {
         switch kind {
-        case .logout: return "Wyloguj"
+        case .logout: return "Wyloguj natychmiast"
         case .sleep: return "Uśpij"
         case .restart: return "Uruchom ponownie"
         case .shutdown: return "Wyłącz"
         }
     }
 
-    var question: String {
-        let n = machines.count
-        let what = "\(n) \(Plural.computers(n))"
+    /// The question for the `n` Macs the action will really reach.
+    func question(_ n: Int) -> String {
+        let what = Polish.computers(n)
         switch kind {
-        case .logout: return "Wylogować użytkowników na \(n) \(Plural.computersLocative(n))?"
+        case .logout: return "Wylogować uczniów \(Polish.onComputers(n))?"
         case .sleep: return "Uśpić \(what)?"
         case .restart: return "Uruchomić ponownie \(what)?"
         case .shutdown: return "Wyłączyć \(what)?"
@@ -200,48 +281,37 @@ struct PowerConfirmSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 14) {
                 Image(systemName: icon)
-                    .font(.system(size: 30))
+                    .font(.system(size: 34))
                     .foregroundStyle(request.kind == .sleep ? Color.accentColor : .red)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(request.question).font(.headline)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(request.question(effective.count)).font(.headline)
                     Text(subtitle).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
-            List(request.machines) { m in
-                HStack {
-                    StatusDot(reachability: model.status(m).reachability)
-                    Text(m.name).fontWeight(.medium)
-                    Spacer()
-                    if request.kind == .restart, classroom.fileVault[m.id] == true {
-                        Label("FileVault", systemImage: "lock.shield")
-                            .foregroundStyle(.orange)
-                            .help("Po restarcie komputer zatrzyma się na ekranie odblokowania dysku.")
-                    }
-                    if let user = model.status(m).consoleUser {
-                        Label(user, systemImage: "person.fill").foregroundStyle(.orange)
-                            .help("Zalogowany użytkownik")
-                    } else {
-                        Text("nikt nie jest zalogowany").foregroundStyle(.secondary)
-                    }
-                }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Dotyczy: \(Polish.computers(effective.count))")
+                    .font(.subheadline.weight(.semibold))
+                List(request.machines) { m in row(m) }
+                    .listStyle(.bordered(alternatesRowBackgrounds: true))
+                    .frame(height: min(220, CGFloat(request.machines.count) * 26 + 10))
             }
-            .frame(minHeight: 120, idealHeight: 220)
             if request.kind == .restart && fileVaultCount > 0 {
-                Label("FileVault jest włączony na \(fileVaultCount) \(Plural.computersLocative(fileVaultCount)). Po restarcie pojawi się ekran odblokowania dysku – dopóki ktoś nie wpisze hasła przy komputerze, nie połączysz się z nim (SSH, podgląd, Wake-on-LAN).",
+                Label("FileVault jest włączony \(Polish.onComputers(fileVaultCount)). Po ponownym uruchomieniu pojawi się ekran odblokowania dysku – dopóki ktoś nie wpisze hasła przy komputerze, nie połączysz się z nim (ani podglądem, ani budzeniem przez sieć).",
                       systemImage: "lock.shield")
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if request.kind == .shutdown {
-                Label("Wyłączonych komputerów nie obudzisz przez sieć. Jeśli mają się same włączyć rano, użyj harmonogramu zasilania albo wybierz Uśpij.",
+                Label("Wyłączonych komputerów nie obudzisz przez sieć. Jeśli mają się same włączyć rano, użyj harmonogramu zasilania albo wybierz „Uśpij”.",
                       systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if loggedIn > 0 {
-                Toggle("Pomiń komputery z zalogowanym użytkownikiem (\(loggedIn))", isOn: $skipLoggedIn)
+                Toggle("Pomiń komputery z zalogowanym uczniem (\(loggedIn))", isOn: $skipLoggedIn)
             }
             if needsAcknowledgement {
                 Toggle("Rozumiem, że niezapisane prace uczniów przepadną", isOn: $understood)
@@ -250,15 +320,16 @@ struct PowerConfirmSheet: View {
                 Spacer()
                 Button("Anuluj", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button(role: .destructive) {
+                // Never the default action: Return must not restart a classroom.
+                Button(role: request.kind == .sleep ? nil : .destructive) {
                     perform()
                     dismiss()
                 } label: {
-                    Text(buttonTitle)
+                    Text("\(request.verb) (\(effective.count))")
                 }
                 .tint(request.kind == .sleep ? nil : .red)
                 .buttonStyle(.borderedProminent)
-                .disabled(targets.isEmpty || (needsAcknowledgement && !understood))
+                .disabled(effective.isEmpty || (needsAcknowledgement && !understood))
             }
         }
         .padding(20)
@@ -266,6 +337,39 @@ struct PowerConfirmSheet: View {
         .onAppear {
             if request.kind == .restart { classroom.checkFileVault(model, request.machines) }
         }
+    }
+
+    private func row(_ m: Machine) -> some View {
+        let reachability = model.status(m).reachability
+        let user = model.status(m).consoleUser
+        let unreachable = model.willSkip(m)
+        let skipped = unreachable || (skipLoggedIn && user != nil)
+        return HStack(spacing: 8) {
+            StatusDot(reachability: reachability)
+            Text(m.name)
+                .fontWeight(.medium)
+                .strikethrough(skipped)
+            Spacer()
+            if unreachable {
+                Text("pominięty – \(model.knownReachability(m).label)")
+                    .foregroundStyle(.secondary)
+            } else {
+                if request.kind == .restart, classroom.fileVault[m.id] == true {
+                    Label("FileVault", systemImage: "lock.shield")
+                        .foregroundStyle(.orange)
+                        .help("Po ponownym uruchomieniu komputer zatrzyma się na ekranie odblokowania dysku.")
+                }
+                if let user {
+                    Label(skipped ? "\(user) – pominięty" : "zalogowany: \(user)", systemImage: "person.fill")
+                        .foregroundStyle(skipped ? Color.secondary : Color.orange)
+                } else {
+                    Text("nikt nie jest zalogowany").foregroundStyle(.secondary)
+                }
+            }
+        }
+        .font(.callout)
+        .opacity(skipped ? 0.6 : 1)
+        .accessibilityElement(children: .combine)
     }
 
     var icon: String {
@@ -280,32 +384,35 @@ struct PowerConfirmSheet: View {
     var subtitle: String {
         if request.kind == .logout { return "Sesje zostaną zakończone natychmiast – aplikacje nie zapytają o zapisanie zmian." }
         if request.delay > 0 {
-            return "Za \(request.delay) min\(request.warn ? ", po wcześniejszym komunikacie na ekranie" : ""). Do tego czasu możesz to odwołać przyciskiem „Anuluj zaplanowane”."
+            return "Za \(request.delay) min\(request.warn ? ", po wcześniejszym komunikacie na ekranie" : ""). Do tego czasu możesz to odwołać przyciskiem „Odwołaj” (Zaplanowane na później)."
         }
-        return request.kind == .sleep ? "Komputery zasną od razu; obudzisz je przez Wake-on-LAN."
-            : "Zalogowani użytkownicy stracą niezapisane prace."
+        return request.kind == .sleep ? "Komputery zasną od razu; obudzisz je przyciskiem „Obudź”."
+            : "Zalogowani uczniowie stracą niezapisane prace."
     }
 
-    var loggedIn: Int { request.machines.filter { model.status($0).consoleUser != nil }.count }
+    /// Macs the action really reaches: unreachable ones are skipped as in the header ("Pomiń niedostępne").
+    var reached: [Machine] { request.machines.filter { !model.willSkip($0) } }
 
-    var fileVaultCount: Int { request.machines.filter { classroom.fileVault[$0.id] == true }.count }
+    var loggedIn: Int { reached.filter { model.status($0).consoleUser != nil }.count }
+
+    var fileVaultCount: Int { reached.filter { classroom.fileVault[$0.id] == true }.count }
 
     var needsAcknowledgement: Bool {
-        request.kind != .sleep && request.delay == 0 && targets.filter { model.status($0).consoleUser != nil }.count >= 5
+        request.kind != .sleep && request.delay == 0 && effective.filter { model.status($0).consoleUser != nil }.count >= 5
     }
 
+    var effective: [Machine] {
+        skipLoggedIn ? reached.filter { model.status($0).consoleUser == nil } : reached
+    }
+
+    /// What is handed to the batch: unreachable Macs stay in it (as skipped jobs, so they can be retried).
     var targets: [Machine] {
         skipLoggedIn ? request.machines.filter { model.status($0).consoleUser == nil } : request.machines
     }
 
-    var buttonTitle: String {
-        let n = targets.count
-        return "\(request.verb) (\(n))"
-    }
-
     func perform() {
         let list = targets
-        guard !list.isEmpty else { return }
+        guard !effective.isEmpty else { return }
         switch request.kind {
         case .logout:
             model.runScript("Wylogowanie użytkownika", on: list, section: .power) { _ in Scripts.logoutUser() }
