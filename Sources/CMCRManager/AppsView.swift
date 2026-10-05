@@ -60,7 +60,7 @@ struct AppsView: View {
                     let name = appName
                     confirm = ConfirmRequest(
                         title: "Wymusić zamknięcie „\(name)”?",
-                        message: "Aplikacja zostanie natychmiast zakończona (SIGKILL) na \(model.selection.count) komputerach. Niezapisane dane użytkownika przepadną.",
+                        message: "Aplikacja zostanie natychmiast zakończona (SIGKILL) \(Polish.onComputers(model.actionTargets.count)). Niezapisane dane użytkownika przepadną.",
                         button: "Wymuś zamknięcie") {
                         model.quitApp(name, force: true, on: model.selectedMachines)
                     }
@@ -102,7 +102,7 @@ struct AppsView: View {
                     if force {
                         confirm = ConfirmRequest(title: "Wymusić zamknięcie \(app.name)?",
                                                  message: "\(m.name): proces \(app.pid) zostanie zakończony natychmiast.",
-                                                 button: "Wymuś zamknięcie") {
+                                                 button: "Wymuś zamknięcie", targets: [m]) {
                             model.kill(app, on: m, force: true)
                         }
                     } else {
@@ -142,7 +142,7 @@ struct AppsView: View {
                                 Button("Odinstaluj") {
                                     confirm = ConfirmRequest(
                                         title: "Odinstalować \((row.path as NSString).lastPathComponent)?",
-                                        message: "Pakiet aplikacji zostanie usunięty z \(model.selection.count) komputerów.",
+                                        message: "Pakiet aplikacji zostanie usunięty z \(Polish.ofComputers(model.actionTargets.count)).",
                                         button: "Odinstaluj") {
                                         model.uninstall(row.path, on: model.selectedMachines)
                                     }

@@ -200,7 +200,7 @@ struct FilesView: View {
                     let path = model.settings.resolve(cleanPath)
                     confirm = ConfirmRequest(
                         title: "Wyczyścić folder?",
-                        message: "Cała zawartość \(path) zostanie trwale usunięta na \(model.selection.count) komputerach.",
+                        message: "Cała zawartość \(path) zostanie trwale usunięta \(Polish.onComputers(model.actionTargets.count)).",
                         button: "Usuń zawartość") {
                         model.runScript("Wyczyść \(path)", on: model.selectedMachines) { _ in Scripts.cleanFolder(path) }
                     }

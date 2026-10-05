@@ -261,3 +261,17 @@ private func record(_ host: String, batch: UUID, start: Date, state: String = "s
     #expect(HostValidation.nextMachine(after: Machine.generate(count: 15)).name == "imac16")
     #expect(HostValidation.nextMachine(after: []).name == "imac01")
 }
+
+// MARK: - Risky root commands
+
+@Test func commandRiskRecognisesDestructiveCommands() {
+    #expect(CommandRisk.risks(in: "rm -rf /Users/student/Desktop/*").count == 1)
+    #expect(!CommandRisk.risks(in: "asroot diskutil list").isEmpty)
+    #expect(!CommandRisk.risks(in: "dscl . -delete /Users/gosc").isEmpty)
+    #expect(!CommandRisk.risks(in: "shutdown -r now").isEmpty)
+    #expect(!CommandRisk.risks(in: "pmset -a womp 1").isEmpty)
+    #expect(CommandRisk.risks(in: "ls -la ~/; rm plik.txt; df -h; echo reboots").isEmpty)
+    #expect(CommandRisk.usesRoot("asroot ls", asRoot: false))
+    #expect(CommandRisk.usesRoot("ls", asRoot: true))
+    #expect(!CommandRisk.usesRoot("ls ~/sudoku", asRoot: false))
+}

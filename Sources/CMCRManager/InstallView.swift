@@ -71,9 +71,14 @@ struct InstallView: View {
                     model.runScript("brew \(args)", on: model.selectedMachines) { _ in Scripts.brew(args) }
                 }
                 .disabled(brewName.isEmpty)
-                TargetButton(title: "Odinstaluj", icon: "minus.circle", prominent: false) {
+                TargetButton(title: "Odinstaluj", icon: "minus.circle", role: .destructive, prominent: false) {
                     let args = "uninstall \(brewCask ? "--cask " : "")\(brewName.split(separator: " ").map { shQuote(String($0)) }.joined(separator: " "))"
-                    model.runScript("brew \(args)", on: model.selectedMachines) { _ in Scripts.brew(args) }
+                    confirm = ConfirmRequest(
+                        title: "Odinstalować „\(brewName)” (Homebrew)?",
+                        message: "Pakiet zostanie usunięty \(Polish.onComputers(model.actionTargets.count)).",
+                        button: "Odinstaluj") {
+                        model.runScript("brew \(args)", on: model.selectedMachines) { _ in Scripts.brew(args) }
+                    }
                 }
                 .disabled(brewName.isEmpty)
                 Spacer()

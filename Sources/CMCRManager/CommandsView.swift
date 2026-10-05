@@ -6,6 +6,7 @@ struct CommandsView: View {
     @ViewState private var savingSnippet = false
     @ViewState private var snippetName = ""
     @ViewState private var snippetCategory = "Moje"
+    @ViewState private var confirm: ConfirmRequest?
 
     var body: some View {
         Page {
@@ -24,7 +25,18 @@ struct CommandsView: View {
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
                 HStack {
                     TargetButton(title: "Uruchom na zaznaczonych") {
-                        model.runCommand(model.commandDraft, asRoot: model.commandAsRoot, on: model.selectedMachines)
+                        let text = model.commandDraft, root = model.commandAsRoot
+                        let risks = CommandRisk.risks(in: text)
+                        if CommandRisk.usesRoot(text, asRoot: root) && !risks.isEmpty {
+                            confirm = ConfirmRequest(
+                                title: "Uruchomić jako root ryzykowne polecenie?",
+                                message: "Skrypt zawiera: \(risks.joined(separator: ", ")). Zostanie wykonany z uprawnieniami administratora \(Polish.onComputers(model.actionTargets.count)).",
+                                button: "Uruchom") {
+                                model.runCommand(text, asRoot: root, on: model.selectedMachines)
+                            }
+                        } else {
+                            model.runCommand(text, asRoot: root, on: model.selectedMachines)
+                        }
                     }
                     .keyboardShortcut(.return, modifiers: [.command])
                     Button("Zapisz jako fragment…") {
@@ -57,11 +69,17 @@ struct CommandsView: View {
                             Spacer()
                             Button("Wstaw") { use(s) }
                             Button {
-                                model.settings.snippets.removeAll { $0.id == s.id }
+                                confirm = ConfirmRequest(title: "Usunąć fragment „\(s.name)”?",
+                                                         message: "Zapisane polecenie zniknie z listy „Moje fragmenty”.",
+                                                         button: "Usuń", targets: []) {
+                                    model.settings.snippets.removeAll { $0.id == s.id }
+                                }
                             } label: {
-                                Image(systemName: "trash")
+                                Label("Usuń fragment", systemImage: "trash")
                             }
+                            .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
+                            .help("Usuń zapisany fragment")
                         }
                     }
                 }
@@ -70,6 +88,7 @@ struct CommandsView: View {
             LastBatchView(section: .commands)
         }
         .sheet(isPresented: $savingSnippet) { saveSheet }
+        .confirmation($confirm)
     }
 
     var snippetMenu: some View {
