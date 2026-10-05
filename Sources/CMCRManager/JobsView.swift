@@ -7,6 +7,7 @@ import SwiftUI
 final class HistoryStore: ObservableObject {
     @Published private(set) var batches: [HistoryBatch] = []
     @Published private(set) var loading = false
+    @Published private(set) var loaded = false
 
     func load() {
         guard !loading else { return }
@@ -16,6 +17,7 @@ final class HistoryStore: ObservableObject {
             await MainActor.run {
                 self.batches = loaded
                 self.loading = false
+                self.loaded = true
             }
         }
     }
@@ -32,7 +34,10 @@ struct JobsView: View {
 
     var body: some View {
         Group {
-            if model.batches.isEmpty && history.batches.isEmpty {
+            if model.batches.isEmpty && history.batches.isEmpty && !history.loaded {
+                ProgressView("Wczytywanie historii…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if model.batches.isEmpty && history.batches.isEmpty {
                 ContentUnavailableView {
                     Label("Brak zadań", systemImage: AppSection.jobs.icon)
                 } description: {
@@ -103,13 +108,18 @@ struct JobsView: View {
             }
             .overlay {
                 if running.isEmpty && done.isEmpty && older.isEmpty {
-                    ContentUnavailableView.search(text: search)
+                    ContentUnavailableView {
+                        Label("Brak wyników", systemImage: "magnifyingglass")
+                    } description: {
+                        Text("Żadna operacja nie pasuje do „\(search)”.")
+                    }
                 }
             }
             Divider()
             HStack(spacing: 8) {
                 Button {
                     model.clearFinishedBatches()
+                    history.load()
                 } label: {
                     Label("Wyczyść zakończone", systemImage: "trash")
                 }
@@ -315,7 +325,7 @@ struct BatchDetailView: View {
             if !jobs.isEmpty {
                 Button("Zaznacz na liście komputerów") { model.selection = Set(jobs.map(\.machine.id)) }
                 if batch.finished, let rerun = batch.rerun {
-                    Button("Powtórz na \(jobs.count == 1 ? jobs[0].machine.name : Polish.ofComputers(jobs.count))") {
+                    Button("Powtórz \(jobs.count == 1 ? "na \(jobs[0].machine.name)" : Polish.onComputers(jobs.count))") {
                         rerun(jobs.map(\.machine))
                     }
                 }
@@ -502,7 +512,8 @@ struct HistoryDetailView: View {
                             Text("Zaznacz wiersz powyżej, aby zobaczyć zapisany wynik.")
                         }
                     } else {
-                        LogView(text: output, generation: recordID?.hashValue ?? 0)
+                        // Loaded asynchronously, so the text is not an extension of the previous one.
+                        LogView(text: output, generation: output.hashValue)
                     }
                 }
                 .frame(minHeight: 120, idealHeight: 320, maxHeight: .infinity)

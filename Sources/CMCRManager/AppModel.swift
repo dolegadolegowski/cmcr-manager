@@ -357,6 +357,8 @@ final class AppModel: ObservableObject {
             }
             batch.finishedAt = Date()
             batch.finished = true
+            // Views that only observe the model (sidebar sections, "Wyczyść zakończone") must see the change.
+            objectWillChange.send()
             completion?(batch)
             batchFinished(batch)
         }
