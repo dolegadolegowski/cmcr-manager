@@ -69,13 +69,13 @@ Zaznaczenie komputerów na liście (środkowa kolumna) jest wspólne dla wszystk
 | dystrybucja klucza (README) | Konfiguracja › Dostęp i hasła | — |
 | Unity Hub / sdkmanager / Homebrew (notes.md) | Instalacja, Polecenia › Gotowe polecenia | `cmcrctl exec` |
 
-`cmcrctl` (w `build/cmcrctl` i w pakiecie aplikacji: `Contents/Resources/bin/cmcrctl`) korzysta z tej samej konfiguracji i Pęku kluczy co aplikacja. Dodatkowo: `status`, `apps`, `screenshot`, `open-app`, `quit-app`, `render` (pokazuje dokładnie skrypt wykonywany zdalnie). Hasło można też podać zmienną `CMCR_PASSWORD`.
+`cmcrctl` (w `build/cmcrctl` i w pakiecie aplikacji: `Contents/Resources/bin/cmcrctl`) korzysta z tej samej konfiguracji i Pęku kluczy co aplikacja. Dodatkowo: `status`, `apps`, `screenshot`, `open-app`, `quit-app`, `install plik… [all|nr]` (`.pkg`/`.dmg`/`.zip`/`.app`), `install-url URL [all|nr]`, `render` (pokazuje dokładnie skrypt wykonywany zdalnie). Hasło można też podać zmienną `CMCR_PASSWORD`.
 
 ## Jak to działa i bezpieczeństwo
 
 - Każda operacja to skrypt bash przesyłany w linii poleceń `ssh` w base64 (brak problemów z cudzysłowami) i wykonywany na koncie administracyjnym.
-- Hasło administratora jest trzymane w Pęku kluczy i przekazywane wyłącznie przez szyfrowany kanał SSH (pierwsza linia stdin) do pomocnika `SUDO_ASKPASS` w prywatnym katalogu tymczasowym (usuwanym po zakończeniu). Nigdy nie trafia do argumentów procesów ani na dysk iMaca. Błędne hasło kosztuje tylko jedną nieudaną próbę sudo.
-- Działania w sesji ucznia (uruchamianie aplikacji, wiadomości, zrzuty) wykonywane są przez `launchctl asuser` w sesji aktualnie zalogowanego użytkownika.
+- Hasło administratora jest trzymane w Pęku kluczy i przekazywane wyłącznie przez szyfrowany kanał SSH (pierwsza linia stdin) do pomocnika `SUDO_ASKPASS` w prywatnym katalogu tymczasowym (usuwanym po zakończeniu). Nigdy nie trafia do argumentów procesów. Wyjątek dotyczy Homebrew i `mas` (`with_askpass`): Homebrew czyści zmienne środowiska, więc na czas działania polecenia hasło leży w pliku 0600 w prywatnym katalogu tymczasowym administratora i jest usuwane zaraz po nim. Błędne hasło kosztuje tylko jedną nieudaną próbę sudo.
+- Działania w sesji ucznia (uruchamianie aplikacji, wiadomości, zrzuty) wykonywane są przez `launchctl asuser` w sesji aktualnie zalogowanego użytkownika (z jego `HOME`). „Zamknij” i „Wyloguj” wysyłają standardowe polecenie „Zakończ” (Apple Event, bez pytań o zgodę na automatyzację) – uczeń może zapisać pracę; „Wymuś zamknięcie” i „Wyloguj natychmiast” kończą bez pytania.
 - Pliki są pakowane do jednego archiwum `tar` (zachowuje pakiety `.app`, dowiązania i uprawnienia), wysyłane `scp` do `/tmp` i rozpakowywane na miejscu.
 - W skryptach dostępne są: `asroot`, `as_console_user`, `with_askpass`, `$CONSOLE_USER`, `$CONSOLE_UID`, `$CMCR_ADMIN_USER`, `$CMCR_TMP`.
 - Konfiguracja: `~/Library/Application Support/CMCRManager/` (`hosts.json`, `settings.json`; katalog można zmienić zmienną `CMCR_CONFIG_DIR`).

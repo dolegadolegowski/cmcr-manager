@@ -664,7 +664,10 @@ public enum Scripts {
           fi
         fi
         [ -d "$DEST" ] || { echo "✘ $DEST nie jest folderem" >&2; exit 2; }
-        STAGE="$(mktemp -d "$DEST/.cmcr-push.XXXXXX")" || { echo "✘ Brak prawa zapisu w $DEST" >&2; exit 2; }
+        STAGE="$(mktemp -d "$DEST/.cmcr-push.XXXXXX" 2>/dev/null)" || {
+          echo "✘ Nie można zapisać w $DEST – brak uprawnień. Biurko, Dokumenty i Pobrane ucznia wymagają „Pełnego dostępu do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie)." >&2
+          exit 2
+        }
         cmcr_on_exit 'rm -rf "$STAGE"'
         tar -xf "$TAR" --no-same-owner -C "$STAGE"; X=$?
         rm -f "$TAR"
