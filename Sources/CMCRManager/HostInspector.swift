@@ -220,11 +220,15 @@ struct RenameComputersSheet: View {
                 }
                 .width(min: 120, ideal: 150)
                 TableColumn("Nowy adres") { $e in
-                    if ComputerNames.isValidLocalHostName(e.localHostName) {
+                    if !ComputerNames.isValidLocalHostName(e.localHostName) {
+                        Label("niepoprawna nazwa", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                    } else if duplicates.contains(e.localHostName.lowercased()) {
+                        Label("\(e.localHostName).local powtarza się", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                            .help("Dwa komputery nie mogą mieć tego samego adresu w sieci")
+                    } else {
                         Text("\(e.localHostName).local").font(.body.monospaced())
                             .foregroundStyle(isUnchanged(e) ? .secondary : .primary)
-                    } else {
-                        Label("niepoprawna nazwa", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                     }
                 }
                 .width(min: 140, ideal: 170)
@@ -250,7 +254,8 @@ struct RenameComputersSheet: View {
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(changes.isEmpty || entries.contains { !ComputerNames.isValidLocalHostName($0.localHostName) })
+                .disabled(changes.isEmpty || !duplicates.isEmpty
+                          || entries.contains { !ComputerNames.isValidLocalHostName($0.localHostName) })
             }
         }
         .padding(20)
@@ -263,6 +268,16 @@ struct RenameComputersSheet: View {
     }
 
     var changes: [Entry] { entries.filter { !isUnchanged($0) } }
+
+    /// `.local` names (lowercased) given to more than one of the Macs; Bonjour would rename the extra ones.
+    var duplicates: Set<String> {
+        var seen: Set<String> = [], twice: Set<String> = []
+        for e in entries {
+            let name = e.localHostName.lowercased()
+            if !seen.insert(name).inserted { twice.insert(name) }
+        }
+        return twice
+    }
 
     func isUnchanged(_ e: Entry) -> Bool {
         guard let cur = classroom.names[e.id] else { return false }

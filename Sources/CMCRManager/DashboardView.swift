@@ -62,6 +62,9 @@ struct DashboardView: View {
         }
         .toolbar {
             ToolbarItemGroup {
+                quickActions
+            }
+            ToolbarItemGroup {
                 Menu {
                     Button {
                         classroom.exportInventory(model)
@@ -96,6 +99,45 @@ struct DashboardView: View {
         .sheet(isPresented: $showVersions) { AppVersionsSheet() }
         .onAppear(perform: loadColumns)
         .onChange(of: columns) { _, new in saveColumns(new) }
+    }
+
+    // MARK: Quick actions
+
+    /// Terminal and Screen Sharing open one window per Mac, so they act on at most this many selected Macs.
+    static let windowLimit = 4
+
+    @ViewBuilder var quickActions: some View {
+        let selected = model.selectedMachines
+        let windows = Array(selected.prefix(Self.windowLimit))
+        let more = selected.count > Self.windowLimit ? " (pierwsze \(Self.windowLimit) z \(selected.count))" : ""
+        Button {
+            model.refreshStatus(selected)
+        } label: {
+            Label("Odśwież zaznaczone", systemImage: "arrow.clockwise")
+        }
+        .disabled(selected.isEmpty)
+        .help("Sprawdź stan tylko zaznaczonych komputerów")
+        Button {
+            windows.forEach(model.openTerminal)
+        } label: {
+            Label("Terminal SSH", systemImage: "terminal")
+        }
+        .disabled(selected.isEmpty)
+        .help("Otwórz sesję SSH w Terminalu dla zaznaczonych komputerów\(more)")
+        Button {
+            windows.forEach(model.openScreenSharing)
+        } label: {
+            Label("Udostępnianie ekranu", systemImage: "rectangle.on.rectangle")
+        }
+        .disabled(selected.isEmpty)
+        .help("Przejmij ekran w aplikacji Udostępnianie ekranu (VNC)\(more)")
+        Button {
+            model.section = .screens
+        } label: {
+            Label("Podgląd ekranów", systemImage: "eye")
+        }
+        .disabled(selected.isEmpty)
+        .help("Pokaż zrzuty ekranów zaznaczonych komputerów")
     }
 
     // MARK: Tiles

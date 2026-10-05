@@ -214,6 +214,70 @@ import Testing
     #expect(e.collectFolder != nil)
     #expect(end.isDisruptive)
     #expect(!LessonEndConfig().isDisruptive)
+
+    // Apps are closed before the work is collected.
+    end.quitApps = true
+    end.quitAllApps = true
+    #expect(LessonPlan.end(end, settings: AppSettings()).steps == [.warn, .quitApps, .collect, .cleanShared, .logout, .shutdown])
+}
+
+@Test func studentFolderIsNeverCleanedWithoutCollecting() {
+    var end = LessonEndConfig()
+    end.collect = false
+    end.cleanShared = true
+    end.cleanDownloads = true
+    let plan = LessonPlan.end(end, settings: AppSettings())
+    #expect(plan.steps == [.cleanDownloads])
+    #expect(plan.collectFolder == nil)
+    end.cleanDownloads = false
+    #expect(!end.isDisruptive)
+}
+
+@Test func cleaningStepWithoutCollectIsSkippedAtRunTime() async {
+    // A hand-made plan (not from LessonPlan.end) must still never empty the folder without collecting.
+    var plan = LessonPlan.end(LessonEndConfig(), settings: AppSettings())
+    plan.steps = [.cleanShared]
+    let host = LessonRunner.Host(machine: Machine(name: "x", address: "192.0.2.1", user: "admin"), password: nil, macs: [])
+    let states = StepRecorder()
+    let r = await LessonRunner.run(plan, on: host, ssh: SSHSettings(askpassPath: "/usr/bin/false"), materials: nil) { i, st in states.add(i, st) }
+    #expect(r.succeeded)
+    #expect(states.all == [StepRecord(index: 0, state: .skipped("nie zebrano prac – folder pozostawiono"))])
+}
+
+private struct StepRecord: Equatable {
+    var index: Int
+    var state: StepState
+}
+
+private final class StepRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var records: [StepRecord] = []
+    func add(_ i: Int, _ s: StepState) { lock.lock(); records.append(StepRecord(index: i, state: s)); lock.unlock() }
+    var all: [StepRecord] { lock.lock(); defer { lock.unlock() }; return records }
+}
+
+@Test func concurrencyLimiterNeverExceedsItsLimit() async {
+    let limiter = ConcurrencyLimiter(limit: 3)
+    let counter = PeakCounter()
+    await withTaskGroup(of: Void.self) { group in
+        for _ in 0..<12 {
+            group.addTask {
+                await limiter.acquire()
+                await counter.enter()
+                try? await Task.sleep(nanoseconds: 5_000_000)
+                await counter.leave()
+                await limiter.release()
+            }
+        }
+    }
+    #expect(await counter.peak == 3)
+    #expect(await counter.done == 12)
+}
+
+private actor PeakCounter {
+    var current = 0, peak = 0, done = 0
+    func enter() { current += 1; peak = max(peak, current) }
+    func leave() { current -= 1; done += 1 }
 }
 
 @Test func collectFolderIsTimestampedAndLabelled() {
@@ -238,6 +302,19 @@ import Testing
     #expect(again == c)
 }
 
+@Test func questionButtonsSurviveTextMode() throws {
+    // Configs saved before questionWithButtons existed: saved buttons meant "answer with buttons".
+    let old = try JSONDecoder().decode(ClassroomConfig.self, from: Data(#"{"questionButtons":"Tak, Nie ,,Pomocy"}"#.utf8))
+    #expect(old.questionWithButtons)
+    #expect(old.questionButtonList == ["Tak", "Nie", "Pomocy"])
+    var c = old
+    c.questionWithButtons = false
+    let back = try JSONDecoder().decode(ClassroomConfig.self, from: JSONEncoder().encode(c))
+    #expect(!back.questionWithButtons)
+    #expect(back.questionButtons == "Tak, Nie ,,Pomocy")
+    #expect(!ClassroomConfig().questionWithButtons)
+}
+
 @Test func hostSnapshotRestoresInfoButNotReachability() throws {
     var st = HostStatus()
     st.reachability = .online
@@ -255,6 +332,20 @@ import Testing
     #expect(restored.osVersion == "26.1")
     #expect(restored.fileVaultOn == true)
     #expect(restored.consoleUser == nil)
+}
+
+@Test func uptimeIsShownOnlyWhileTheMacAnswers() throws {
+    var st = HostStatus()
+    st.info = ["boot": String(Int(Date().timeIntervalSince1970) - 3 * 86_400 - 2 * 3600)]
+    st.reachability = .online
+    #expect(st.liveUptimeText == "3 d 2 h")
+    #expect((st.liveUptime ?? 0) > 3 * 86_400)
+    st.reachability = .offline
+    #expect(st.liveUptimeText == nil)
+    #expect(st.liveUptime == nil)
+    st.reachability = .online
+    let restored = HostSnapshot(st, lastSeen: Date()).restored
+    #expect(restored.bootDate == nil)
 }
 
 // MARK: - Generated scripts

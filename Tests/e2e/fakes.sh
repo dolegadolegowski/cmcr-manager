@@ -1,6 +1,8 @@
 # Fakes for privileged or disruptive macOS commands used by the end-to-end tests.
 # Loaded through BASH_ENV by the test sshd (see run.sh), so every remote `bash` – including the
 # root re-exec – sees these functions instead of the real tools. Nothing here needs or uses root.
+# The classroom block at the end wraps launchctl, replaces pmset (a superset of the fake below) and adds
+# pgrep/pkill/kill/killall/ioreg/fdesetup/dscacheutil – look there when one of these behaves unexpectedly.
 
 CMCR_E2E_LOG="${CMCR_E2E_LOG:-/tmp/cmcr-e2e.log}"
 _e2e_log() { printf '%s\n' "$*" >> "$CMCR_E2E_LOG"; }
@@ -203,7 +205,7 @@ pgrep() {
   esac
 }
 pkill() {
-  local p rc=1
+  local p rc=1 sig="" pids
   p="$(_e2e_pattern "$@")"
   _e2e_log "pkill $*"
   case "$p" in
@@ -212,6 +214,10 @@ pkill() {
       [ -e "$(_e2e_state attention.running)" ] && rc=0; rm -f "$(_e2e_state attention.running)"
       command pkill -U "$(id -u)" -f CMCR_ATTENTION && rc=0 ;;
     cmcr-delayed-power) command pkill -U "$(id -u)" -f cmcr-delayed-power && rc=0 ;;
+    *)
+      # Anything else really signals the matching processes, but through the guarded kill below.
+      case "${1:-}" in -[0-9]*|-[A-Z][A-Z]*) sig="$1"; shift ;; esac
+      pids="$(command pgrep "$@")" && [ -n "$pids" ] && kill ${sig:+"$sig"} $pids && rc=0 ;;
   esac
   return $rc
 }
@@ -300,7 +306,20 @@ fdesetup() {
     *) _e2e_log "fdesetup $*" ;;
   esac
 }
-killall() { _e2e_log "killall $*"; return 0; }
+# killall: `shutdown` (pending shutdown +N) and mDNSResponder (root daemon) are simulated; other names go
+# through the guarded kill, limited to this user's processes.
+killall() {
+  _e2e_log "killall $*"
+  local a sig="" name="" pids
+  for a in "$@"; do
+    case "$a" in -[0-9]*|-[A-Z][A-Z]*) sig="$a" ;; -*) ;; *) name="$a" ;; esac
+  done
+  case "$name" in
+    shutdown|mDNSResponder) return 0 ;;
+  esac
+  pids="$(command pgrep -U "$(id -u)" -x "$name")" && [ -n "$pids" ] || return 1
+  kill ${sig:+"$sig"} $pids
+}
 dscacheutil() { _e2e_log "dscacheutil $*"; return 0; }
 export -f _e2e_state _e2e_launchctl_base launchctl _e2e_pattern pgrep pkill kill ioreg pmset fdesetup killall \
   dscacheutil 2>/dev/null
