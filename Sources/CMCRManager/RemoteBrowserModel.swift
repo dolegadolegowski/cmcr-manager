@@ -23,12 +23,16 @@ final class RemoteBrowserModel: ObservableObject {
     @Published private(set) var hostID: UUID?
     /// Folder shown (placeholders resolved once loaded).
     @Published private(set) var path = ""
-    @Published private(set) var listing: RemoteListing?
+    @Published private(set) var listing: RemoteListing? { didSet { refilter() } }
     @Published private(set) var phase: Phase = .idle
     @Published var asRoot = false
-    @Published var showHidden = false
-    @Published var search = ""
-    @Published var sortOrder = [KeyPathComparator(\RemoteEntry.name, comparator: .localizedStandard)]
+    @Published var showHidden = false { didSet { refilter() } }
+    @Published var search = "" { didSet { refilter() } }
+    @Published var sortOrder = [KeyPathComparator(\RemoteEntry.name, comparator: .localizedStandard)] {
+        didSet { refilter() }
+    }
+    /// Entries after the hidden/search filters, sorted, folders first (like Finder's "Keep folders on top").
+    @Published private(set) var visibleEntries: [RemoteEntry] = []
     @Published var selection = Set<RemoteEntry.ID>()
     /// A change that is running right now ("Wysyłanie…").
     @Published private(set) var activity: String?
@@ -55,14 +59,16 @@ final class RemoteBrowserModel: ObservableObject {
     var canGoForward: Bool { !future.isEmpty }
     var canGoUp: Bool { !path.isEmpty && RemotePaths.parent(of: path) != path }
 
-    /// Entries after the hidden/search filters, sorted, folders first (like Finder's "Keep folders on top").
-    var visibleEntries: [RemoteEntry] {
-        guard let l = listing else { return [] }
+    private func refilter() {
+        guard let l = listing else {
+            visibleEntries = []
+            return
+        }
         var items = l.entries.filter { showHidden || !$0.isHidden }
         let q = search.trimmingCharacters(in: .whitespaces)
         if !q.isEmpty { items = items.filter { $0.name.localizedStandardContains(q) } }
         items.sort(using: sortOrder)
-        return items.filter(\.isFolder) + items.filter { !$0.isFolder }
+        visibleEntries = items.filter(\.isFolder) + items.filter { !$0.isFolder }
     }
 
     var hiddenCount: Int { showHidden ? 0 : (listing?.entries.filter(\.isHidden).count ?? 0) }

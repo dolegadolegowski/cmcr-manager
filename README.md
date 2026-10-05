@@ -8,7 +8,8 @@ Natywna aplikacja okienkowa macOS (SwiftUI) do zdalnego zarządzania pracownią 
 |---|---|
 | **Komputery** | Stan pracowni (online, zalogowany użytkownik, macOS, model, IP/MAC, czas pracy, dysk), odświeżanie co 2 min, sesja SSH w Terminalu (`cmcr-go`), Udostępnianie ekranu (VNC) |
 | **Polecenia** | Skrypt bash na wielu iMacach naraz (`cmcr-exec`), opcjonalnie jako root, gotowe polecenia z README/notes.md, własne zapisane fragmenty |
-| **Pliki** | Wgrywanie plików i folderów do wskazanego folderu (presety: folder cmcr ucznia, Biurko, Dokumenty, `/Users/Shared`, `/Applications`, dowolna ścieżka) z ustawieniem właściciela i uprawnień; zbieranie prac (`cmcr-pull`) do `~/Public/cmcr/<host>`; konwencja `all` + `<host>` (`cmcr-push`); podgląd i czyszczenie folderów |
+| **Pliki** | Wysyłanie plików i folderów na iMaki – folder docelowy wybiera się w okienku jak w Finderze (ulubione: folder cmcr ucznia, Biurko, Dokumenty, Pobrane, `/Users/Shared`, Programy, Biurko zalogowanego użytkownika, katalog administratora; ostatnio używane; nowy folder), ścieżka działa na wszystkich zaznaczonych komputerach (`{student}`, `{console}`, `~`); właściciel i uprawnienia dobierane automatycznie; **Zbierz prace** do `~/Public/cmcr/zebrane/<data godzina>/<host>` (nic nie jest nadpisywane, opcjonalnie z wyczyszczeniem zebranych plików u ucznia); konwencja `all` + `<host>` (`cmcr-push`/`cmcr-pull`); czyszczenie folderów |
+| **Przeglądarka plików** | Przeglądanie jednego iMaca jak w Finderze (ikony, sortowanie, szukanie, ukryte pliki, tryb administratora): pobieranie zaznaczonych elementów, wysyłanie przeciągnięciem z Findera, nowy folder, zmiana nazwy, usuwanie z potwierdzeniem; kliknięcie innego komputera na liście pokazuje ten sam folder na nim |
 | **Aplikacje** | Lista uruchomionych aplikacji zalogowanego użytkownika; uruchamianie (z argumentami), zamykanie i wymuszanie zamknięcia na jednym lub wszystkich iMacach; otwieranie URL/plików; lista zainstalowanych i odinstalowywanie |
 | **Instalacja** | `.pkg`, `.dmg`, `.zip`, `.app` z tego Maca lub pobierane z URL bezpośrednio na iMacach; Homebrew (formuły i `--cask`), instalacja Homebrew i Oracle JDK; Unity Hub headless (edytor + moduły) i Android SDK (`sdkmanager`) — wg notes.md |
 | **Aktualizacje** | `softwareupdate` (lista, pobieranie, instalacja, restart; na Apple Silicon z `--user/--stdinpass`), historia, `brew upgrade`, `mas upgrade` |
@@ -65,7 +66,9 @@ Zaznaczenie komputerów na liście (środkowa kolumna) jest wspólne dla wszystk
 | `cmcr-exec "cmd" [nr]` | Polecenia | `cmcrctl exec "cmd" [all\|nr] [--root]` |
 | `cmcr-go nr` | menu kontekstowe › Sesja SSH w Terminalu | `cmcrctl go nr` |
 | `cmcr-push all\|nr` | Pliki › Konwencja cmcr-helpers | `cmcrctl push all\|nr [--root]` |
-| `cmcr-pull all\|nr` | Pliki › Pobierz pliki | `cmcrctl pull all\|nr [--root]` |
+| `cmcr-pull all\|nr` | Pliki › Konwencja cmcr-helpers › Pobierz | `cmcrctl pull all\|nr [--root]` |
+| — | Pliki › Zbierz prace uczniów | `cmcrctl collect all\|nr [--from folder] [--to katalog] [--clean]` |
+| — | Przeglądarka plików | `cmcrctl ls`, `mkdir`, `rename`, `rm`, `get` |
 | dystrybucja klucza (README) | Konfiguracja › Dostęp i hasła | — |
 | Unity Hub / sdkmanager / Homebrew (notes.md) | Instalacja, Polecenia › Gotowe polecenia | `cmcrctl exec` |
 
@@ -77,6 +80,8 @@ Zaznaczenie komputerów na liście (środkowa kolumna) jest wspólne dla wszystk
 - Hasło administratora jest trzymane w Pęku kluczy i przekazywane wyłącznie przez szyfrowany kanał SSH (pierwsza linia stdin) do pomocnika `SUDO_ASKPASS` w prywatnym katalogu tymczasowym (usuwanym po zakończeniu). Nigdy nie trafia do argumentów procesów ani na dysk iMaca. Błędne hasło kosztuje tylko jedną nieudaną próbę sudo.
 - Działania w sesji ucznia (uruchamianie aplikacji, wiadomości, zrzuty) wykonywane są przez `launchctl asuser` w sesji aktualnie zalogowanego użytkownika.
 - Pliki są pakowane do jednego archiwum `tar` (zachowuje pakiety `.app`, dowiązania i uprawnienia), wysyłane `scp` do `/tmp` i rozpakowywane na miejscu.
+- Usuwanie i zmiana nazw w Przeglądarce plików (i czyszczenie po „Zbierz prace”) działa tylko w folderach kont (`/Users/…`), w `/tmp` i na dyskach zewnętrznych – po rozwinięciu dowiązań; chronione są katalogi domowe, `Library`, ukryte pliki w katalogu domowym i standardowe foldery (Biurko, Dokumenty…). `cmcrctl rm --dry-run` pokazuje, co zostałoby usunięte.
+- Przeglądanie Biurka, Dokumentów i Pobranych ucznia wymaga na iMacu: Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie (ⓘ) › „Zezwalaj zdalnym użytkownikom na pełny dostęp do dysku”.
 - W skryptach dostępne są: `asroot`, `as_console_user`, `with_askpass`, `$CONSOLE_USER`, `$CONSOLE_UID`, `$CMCR_ADMIN_USER`, `$CMCR_TMP`.
 - Konfiguracja: `~/Library/Application Support/CMCRManager/` (`hosts.json`, `settings.json`; katalog można zmienić zmienną `CMCR_CONFIG_DIR`).
 

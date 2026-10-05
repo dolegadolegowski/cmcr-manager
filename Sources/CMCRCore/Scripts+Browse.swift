@@ -49,6 +49,11 @@ public extension Scripts {
       esac
     }
     cmcr_refuse() { echo "CMCR:REFUSED" >&2; echo "Odmowa: $1" >&2; return 65; }
+    cmcr_privacy() {
+      echo "CMCR:PRIVACY" >&2
+      echo "macOS blokuje dostęp do $1 (ochrona prywatności) – włącz pełny dostęp do dysku dla Zdalnego logowania." >&2
+      exit 64
+    }
     cmcr_guard_item() {
       local p="$1" base parent real sub
       base="${p##*/}"; parent="${p%/*}"; [ -n "$parent" ] || parent="/"
@@ -92,15 +97,14 @@ public extension Scripts {
         DIR="$CMCR_PATH"
         if [ ! -e "$DIR" ]; then echo "CMCR:NOT_FOUND" >&2; echo "Folder nie istnieje: $DIR" >&2; exit 61; fi
         if [ ! -d "$DIR" ]; then echo "CMCR:NOT_DIR" >&2; echo "To nie jest folder: $DIR" >&2; exit 62; fi
-        cd "$DIR" 2>/dev/null || { echo "CMCR:DENIED" >&2; echo "Brak dostępu do folderu: $DIR" >&2; exit 63; }
+        if ! cd "$DIR" 2>"$CMCR_TMP/cd.err"; then
+          grep -q "Operation not permitted" "$CMCR_TMP/cd.err" && cmcr_privacy "$DIR"
+          echo "CMCR:DENIED" >&2; echo "Brak dostępu do folderu: $DIR" >&2; exit 63
+        fi
         N=0
         while IFS= read -r -d '' f; do P[N]="$f"; N=$((N + 1)); done < <(find . -mindepth 1 -maxdepth 1 -print0 2>"$CMCR_TMP/find.err")
         if [ "$N" -eq 0 ] && [ -s "$CMCR_TMP/find.err" ]; then
-          if grep -q "Operation not permitted" "$CMCR_TMP/find.err"; then
-            echo "CMCR:PRIVACY" >&2
-            echo "macOS blokuje dostęp do $DIR (ochrona prywatności) – nadaj „Pełny dostęp do dysku” dla Zdalnego logowania." >&2
-            exit 64
-          fi
+          grep -q "Operation not permitted" "$CMCR_TMP/find.err" && cmcr_privacy "$DIR"
           echo "CMCR:DENIED" >&2; echo "Brak dostępu do folderu: $DIR" >&2; exit 63
         fi
         TOTAL=$N

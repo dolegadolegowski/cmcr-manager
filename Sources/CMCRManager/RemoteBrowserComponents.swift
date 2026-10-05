@@ -240,16 +240,19 @@ struct RemoteNavigationButtons: View {
         ControlGroup {
             Button { browser.goBack() } label: { Label("Wstecz", systemImage: "chevron.left") }
                 .disabled(!browser.canGoBack)
-                .help("Poprzedni folder")
+                .keyboardShortcut("[", modifiers: .command)
+                .help("Poprzedni folder (⌘[)")
             Button { browser.goForward() } label: { Label("Dalej", systemImage: "chevron.right") }
                 .disabled(!browser.canGoForward)
-                .help("Następny folder")
+                .keyboardShortcut("]", modifiers: .command)
+                .help("Następny folder (⌘])")
         }
         .controlGroupStyle(.navigation)
         .fixedSize()
         Button { browser.goUp() } label: { Label("Folder nadrzędny", systemImage: "arrow.up") }
             .disabled(!browser.canGoUp)
-            .help("Przejdź do folderu nadrzędnego")
+            .keyboardShortcut(.upArrow, modifiers: .command)
+            .help("Przejdź do folderu nadrzędnego (⌘↑)")
     }
 }
 
