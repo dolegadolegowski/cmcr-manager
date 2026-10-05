@@ -21,6 +21,7 @@ Użycie:
   cmcrctl open-app "Nazwa" [all|nr]         uruchom aplikację u zalogowanego użytkownika
   cmcrctl quit-app "Nazwa" [all|nr] [--force]  zamknij aplikację
   cmcrctl render "polecenie" [--root]       pokaż skrypt wykonywany zdalnie
+\(ScriptCommands.usage)
 
 Konfiguracja: \(ConfigStore.directory.path)
 Hasło administratora: Pęk kluczy (ustawiane w aplikacji) lub zmienna CMCR_PASSWORD.
@@ -169,7 +170,11 @@ case "open-app", "quit-app":
     }
 
 default:
-    print(usage)
-    status = 2
+    if let code = await ScriptCommands.run(command, args) {
+        status = code
+    } else {
+        print(usage)
+        status = 2
+    }
 }
 exit(status)

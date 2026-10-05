@@ -91,9 +91,9 @@ public extension Snippet {
         Snippet(category: "Unity Hub (notes.md)", name: "Lista zainstalowanych edytorów",
                 command: "\(unityHub) -- --headless editors --all"),
         Snippet(category: "Unity Hub (notes.md)", name: "Instalacja edytora 6000.3.7f1",
-                command: "\(unityHub) -- --headless install --version 6000.3.7f1"),
+                command: "\(unityHub) -- --headless install --version 6000.3.7f1 --architecture $(uname -m)"),
         Snippet(category: "Unity Hub (notes.md)", name: "Moduł Android dla 6000.3.7f1",
-                command: "\(unityHub) -- --headless install-modules --version 6000.3.7f1 -m android"),
+                command: "\(unityHub) -- --headless install-modules --version 6000.3.7f1 -m android --childModules"),
         Snippet(category: "Android SDK (notes.md)", name: "sdkmanager – API 32",
                 command: "yes | /Applications/Unity/Hub/Editor/6000.3.7f1/PlaybackEngines/AndroidPlayer/SDK/cmdline-tools/16.0/bin/sdkmanager \"platform-tools\" \"platforms;android-32\""),
         Snippet(category: "Android SDK (notes.md)", name: "sdkmanager – API 34",
@@ -198,9 +198,64 @@ public struct HostStatus: Sendable {
     public var consoleUser: String? { info["console"].flatMap { $0.isEmpty ? nil : $0 } }
     public var model: String? { info["model"] }
     public var ip: String? { info["ip"].flatMap { $0.isEmpty ? nil : $0 } }
-    public var mac: String? { info["mac"].flatMap { $0.isEmpty ? nil : $0 } }
+    /// MAC for Wake-on-LAN: the wired (Ethernet) port when there is one, otherwise the interface of the
+    /// default route (which may be Wi-Fi).
+    public var mac: String? { ethernetMAC ?? primaryMAC }
+    /// MAC of the interface that carries the default route.
+    public var primaryMAC: String? { value("mac") }
+    public var ethernetMAC: String? { value("mac_ethernet") }
+    /// All hardware ports as (device, MAC), from `macs=en0:aa:bb:…,en1:…`.
+    public var macAddresses: [(device: String, mac: String)] {
+        (info["macs"] ?? "").split(separator: ",").compactMap { item -> (device: String, mac: String)? in
+            let parts = item.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2 else { return nil }
+            return (String(parts[0]), String(parts[1]))
+        }
+    }
     public var arch: String? { info["arch"] }
     public var isAdmin: Bool { info["admin"] == "yes" }
+
+    public var serialNumber: String? { value("serial") }
+    /// Bonjour name (`imac04` → imac04.local); a conflict shows up as `imac04-2`.
+    public var localHostName: String? { value("lhn") }
+    public var fileVaultOn: Bool? { flag("filevault") }
+    public var sipEnabled: Bool? { flag("sip") }
+    /// `on`, `off` or `blockall` (blocks all incoming connections, including SSH).
+    public var firewall: String? { value("firewall") }
+    public var wakeOnLANEnabled: Bool? { info["womp"].map { $0 == "1" } }
+    public var autoRestartEnabled: Bool? { info["autorestart"].map { $0 == "1" } }
+    /// Repeating `pmset` events, e.g. "wakepoweron at 7:30AM weekdays only; shutdown at 5:00PM weekdays only".
+    public var powerSchedule: String? { value("power_schedule") }
+    public var lastConsoleUser: String? { value("last_user") }
+    public var lastConsoleLogin: Date? {
+        guard let s = value("last_login") else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f.date(from: s)
+    }
+    public var loadAverage: String? { value("load") }
+    public var unityEditors: [String] {
+        (info["unity"] ?? "").split(separator: ",").map(String.init)
+    }
+    public var hasHomebrew: Bool? { info["brew"].map { $0 == "yes" } }
+    /// Version of the setup script recorded in /Library/Application Support/CMCR/setup.json.
+    public var setupVersion: String? { value("setup_version") }
+    public var setupResult: String? { value("setup_result") }
+    public var setupTodo: Int? { value("setup_todo").flatMap { Int($0) } }
+    /// Whether the SSH session has "Full Disk Access for remote users" (needed for Desktop/Documents).
+    public var remoteFullDiskAccess: Bool? { info["fda"].map { $0 == "yes" } }
+    /// Only reported by `Scripts.status(checkSudo: true)`.
+    public var sudoWithoutPassword: Bool? { info["sudo_nopass"].map { $0 == "yes" } }
+
+    private func value(_ key: String) -> String? { info[key].flatMap { $0.isEmpty ? nil : $0 } }
+    private func flag(_ key: String) -> Bool? {
+        switch info[key] {
+        case "on": return true
+        case "off": return false
+        default: return nil
+        }
+    }
 
     public var bootDate: Date? {
         guard let s = info["boot"], let t = TimeInterval(s) else { return nil }
