@@ -77,9 +77,10 @@ public extension Scripts {
       local p="$1" base parent real sub
       base="${p##*/}"; parent="${p%/*}"; [ -n "$parent" ] || parent="/"
       case "$base" in ""|.|..) cmcr_refuse "niepoprawna ścieżka: $p"; return ;; esac
-      cd -P -- "$parent" 2>/dev/null || {
+      if ! cd -P -- "$parent" 2>/dev/null; then
+        if [ -d "$parent" ]; then echo "CMCR:DENIED" >&2; echo "Brak dostępu do folderu: $parent" >&2; return 63; fi
         echo "CMCR:NOT_FOUND" >&2; echo "Folder nie istnieje: $parent" >&2; return 61
-      }
+      fi
       real="$PWD"
       [ "$real" = "/" ] && real=""
       CMCR_REAL="$real/$base"

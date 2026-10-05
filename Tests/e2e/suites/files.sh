@@ -56,6 +56,8 @@ out="$(ctl ls 1 "$B/rozmiar.bin")"
 expect "ls: plik zamiast folderu" "$out" "To nie jest folder"
 out="$(ctl ls 1 "$B/zablokowany")"
 expect "ls: brak uprawnień" "$out" "Brak dostępu do folderu"
+out="$(ctl rm 1 "$B/zablokowany/plik" --dry-run)"; code=$?
+expect_code "rm: folder bez dostępu – kod 63" "$code" 63 "$out"
 chmod 755 "$B/zablokowany"
 out="$(ctl ls 1 "/Users/{console}/.cmcr-e2e-brak")"
 expect "ls: {console} → zalogowany użytkownik" "$out" "Folder nie istnieje: /Users/$ME/.cmcr-e2e-brak"

@@ -48,6 +48,8 @@ final class RemoteBrowserModel: ObservableObject {
     private var loadHandle: ProcessHandle?
     private var generation = 0
     private var pendingSelection: String?
+    /// Recent listings, shown at once on back/forward/up while the folder is read again.
+    private var cache: [String: RemoteListing] = [:]
 
     init(app: AppModel) {
         self.app = app
@@ -139,9 +141,8 @@ final class RemoteBrowserModel: ObservableObject {
 
     func goUp() {
         guard canGoUp else { return }
-        let current = RemotePaths.lastComponent(path)
+        pendingSelection = RemotePaths.lastComponent(path)
         open(RemotePaths.parent(of: path))
-        pendingSelection = current
     }
 
     func reload() {
@@ -165,19 +166,24 @@ final class RemoteBrowserModel: ObservableObject {
         generation += 1
         let gen = generation
         let target = app.settings.resolve(requested)
-        if target != path { listing = nil }
+        let root = asRoot
+        let cached = target == path ? nil : cache[cacheKey(target, m.id, root)]
+        if target != path { listing = cached }
         path = target
         phase = .loading
         if !keepSelection { selection = [] }
+        if let cached, let p = pendingSelection, cached.entries.contains(where: { $0.id == p }) { selection = [p] }
         let password = app.password(for: m)
         let settings = app.sshSettings
-        let root = asRoot
         Task {
             let result = await Operations.browse(target, on: m, asRoot: root, password: password, settings: settings,
                                                  handle: handle)
             guard gen == self.generation else { return }
             switch result {
             case .success(let l):
+                if self.cache.count > 60 { self.cache.removeAll() }
+                self.cache[self.cacheKey(target, m.id, root)] = l
+                self.cache[self.cacheKey(l.path, m.id, root)] = l
                 self.listing = l
                 self.path = l.path
                 self.phase = .loaded
@@ -196,6 +202,8 @@ final class RemoteBrowserModel: ObservableObject {
             }
         }
     }
+
+    private func cacheKey(_ path: String, _ host: UUID, _ root: Bool) -> String { "\(host)|\(root)|\(path)" }
 
     // MARK: - Changes
 
