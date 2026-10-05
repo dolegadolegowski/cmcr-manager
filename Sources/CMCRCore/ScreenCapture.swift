@@ -341,7 +341,7 @@ public extension Scripts {
             esac
           fi
           if [ "$CMCR_ONLYSTD" = 1 ]; then
-            if [ "${SCR_ADMIN_FOR-x}" != "$CONSOLE_USER" ]; then
+            if [ "${SCR_ADMIN_FOR-x}" != "$CONSOLE_USER" ] || [ $((SCR_N % 30)) = 0 ]; then
               SCR_ADMIN_FOR="$CONSOLE_USER"; SCR_IS_ADMIN=0
               if is_admin_user "$CONSOLE_USER"; then SCR_IS_ADMIN=1; fi
             fi
