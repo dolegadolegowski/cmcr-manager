@@ -381,7 +381,7 @@ struct MachineListView: View {
         let filtered = query.status != .all || query.group != nil
         return Menu {
             Picker("Pokaż", selection: $query.status) {
-                ForEach(HostStatusFilter.allCases) { Text($0.label).tag($0) }
+                ForEach(HostStatusFilter.allCases) { Text($0.displayName).tag($0) }
             }
             .pickerStyle(.inline)
             if !model.groups.isEmpty {
@@ -405,7 +405,7 @@ struct MachineListView: View {
         .menuIndicator(.hidden)
         .labelStyle(.iconOnly)
         .fixedSize()
-        .help(filtered ? "Filtr włączony: \(query.status.label)\(query.group.map { ", grupa \($0)" } ?? "")"
+        .help(filtered ? "Filtr włączony: \(query.status.displayName)\(query.group.map { ", grupa \($0)" } ?? "")"
                        : "Filtruj i sortuj listę komputerów")
     }
 
@@ -493,6 +493,11 @@ struct MachineListView: View {
     }
 }
 
+extension HostStatusFilter {
+    /// The filter's name in the window ("Włączone", like everywhere else; the CLI keeps "online").
+    var displayName: String { self == .online ? "Włączone" : label }
+}
+
 /// "Zaznacz" menu items (footer menu and empty-area context menu).
 struct SelectionMenuItems: View {
     @EnvironmentObject var model: AppModel
@@ -576,12 +581,12 @@ struct MachineRow: View {
         case .unknown, .checking:
             return machine.address
         default:
-            return status.message.isEmpty ? status.reachability.label : status.message
+            return status.message.isEmpty ? status.reachability.displayName : status.message
         }
     }
 
     var accessibilityText: String {
-        var parts = [machine.name, status.reachability.label]
+        var parts = [machine.name, status.reachability.displayName]
         parts.append(status.consoleUser.map { "zalogowany \($0)" } ?? "nikt nie jest zalogowany")
         if !machine.groups.isEmpty { parts.append("grupy: \(machine.groups.joined(separator: ", "))") }
         if !status.message.isEmpty, status.reachability != .online { parts.append(status.message) }

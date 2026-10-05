@@ -170,7 +170,7 @@ struct TargetSummary: View {
         guard unreachable > 0 else { return nil }
         let count = Polish.count(unreachable, "niedostępny", "niedostępne", "niedostępnych")
         return model.skipUnreachable ? "Pominięte: \(count) z \(selected) \(selected == 1 ? "zaznaczonego" : "zaznaczonych")"
-                                     : "W tym \(count) – trzeba będzie poczekać na ich odpowiedź"
+                                     : "W tym \(count) – trzeba będzie poczekać na \(unreachable == 1 ? "jego" : "ich") odpowiedź"
     }
 
     func names(_ machines: [Machine]) -> String {
@@ -408,7 +408,7 @@ struct ConfirmSheet: View {
                 Label("nie wiadomo, czy ktoś jest zalogowany", systemImage: "questionmark.circle")
                     .foregroundStyle(.secondary)
                     .font(.callout)
-                    .help("Stan komputera: \(reachability.label). Odśwież stan komputerów, aby to sprawdzić.")
+                    .help("Stan komputera: \(reachability.displayName.lowercased()). Odśwież stan komputerów, aby to sprawdzić.")
             }
         }
         .opacity(skipped ? 0.6 : 1)

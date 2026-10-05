@@ -125,8 +125,10 @@ enum SnapshotRenderer {
         let request = ConfirmRequest(title: "Uruchomić ponownie zaznaczone komputery?",
                                      message: "Niezapisana praca uczniów zostanie utracona.",
                                      button: "Uruchom ponownie", targets: targets) {}
+        // The sheet's background comes from its window, which is not drawn here.
         let host = NSHostingView(rootView: ConfirmSheet(request: request, targets: targets) {}
-            .environmentObject(model))
+            .environmentObject(model)
+            .background(Color(nsColor: .windowBackgroundColor)))
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
