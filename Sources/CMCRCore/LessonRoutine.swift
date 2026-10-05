@@ -89,9 +89,11 @@ public struct LessonPlan: Sendable {
     public static func end(_ c: LessonEndConfig, settings: AppSettings, date: Date = Date()) -> LessonPlan {
         var steps: [LessonStepKind] = []
         if c.warn { steps.append(.warn) }
-        if c.collect { steps.append(.collect) }
+        // Apps are closed before collecting, so a graceful quit (autosave) lands in the collected copy.
         if c.quitApps && (c.quitAllApps || !c.appList.isEmpty) { steps.append(.quitApps) }
-        if c.cleanShared { steps.append(.cleanShared) }
+        if c.collect { steps.append(.collect) }
+        // The student's cmcr folder is only ever emptied after its contents were collected.
+        if c.cleanShared && c.collect { steps.append(.cleanShared) }
         if c.cleanDownloads { steps.append(.cleanDownloads) }
         if c.logout { steps.append(.logout) }
         switch c.power {
@@ -147,18 +149,25 @@ public enum LessonRunner {
     }
 
     /// Runs `plan.steps[range]` (all by default). `materials` is the payload archive made from the materials
-    /// folder (see `Payload.make`); `nil` skips the materials step.
+    /// folder (see `Payload.make`); `nil` skips the materials step. With a `limiter`, every step except waking
+    /// runs inside one of its slots, so Macs that are still waking up do not hold back the others.
     public static func run(_ plan: LessonPlan, on host: Host, ssh: SSHSettings, materials: URL?,
-                           range: Range<Int>? = nil, handle: ProcessHandle? = nil,
+                           range: Range<Int>? = nil, limiter: ConcurrencyLimiter? = nil, handle: ProcessHandle? = nil,
                            onOutput: Operations.Output? = nil, onStep: StepUpdate? = nil) async -> CommandResult {
         let indices = range ?? 0..<plan.steps.count
         var failures: [String] = []
+        var collected = false
         var collectFailed = false
         var unreachable = false
+        var holdsSlot = false
         func say(_ s: String) { onOutput?(.stdout, Data((s + "\n").utf8)) }
 
         for i in indices {
             let step = plan.steps[i]
+            if step != .wake, let limiter, !holdsSlot, !unreachable, handle?.isCancelled != true {
+                await limiter.acquire()
+                holdsSlot = true
+            }
             if handle?.isCancelled == true {
                 onStep?(i, .skipped("anulowano"))
                 continue
@@ -167,7 +176,13 @@ public enum LessonRunner {
                 onStep?(i, .skipped("komputer niedostępny"))
                 continue
             }
-            if (step == .cleanShared || step == .cleanDownloads) && collectFailed {
+            if step == .cleanShared && !collected {
+                let why = collectFailed ? "zbieranie prac się nie udało" : "prace nie były zbierane"
+                onStep?(i, .skipped("nie zebrano prac – folder pozostawiono"))
+                say("▸ \(step.title): pominięto, bo \(why) (pliki uczniów pozostają na miejscu).")
+                continue
+            }
+            if step == .cleanDownloads && collectFailed {
                 onStep?(i, .skipped("nie zebrano prac – folder pozostawiono"))
                 say("▸ \(step.title): pominięto, bo zbieranie prac się nie udało (pliki uczniów pozostają na miejscu).")
                 continue
@@ -187,10 +202,12 @@ public enum LessonRunner {
                 say("– \(why)")
             case .done(let what):
                 say("✔ \(what)")
+                if step == .collect { collected = true }
             default:
                 break
             }
         }
+        if holdsSlot { await limiter?.release() }
         if handle?.isCancelled == true { return CommandResult(exitCode: 130, cancelled: true) }
         if failures.isEmpty { return CommandResult(exitCode: 0, stdout: Data("Wszystkie kroki wykonane.\n".utf8)) }
         return CommandResult(exitCode: 1, stderr: Data((failures.joined(separator: "\n") + "\n").utf8))
@@ -320,6 +337,32 @@ public enum LessonRunner {
             if url.lastPathComponent != ".DS_Store" { n += 1 }
         }
         return n
+    }
+}
+
+/// Counting semaphore for async code: at most `limit` holders at a time, the others wait in FIFO order.
+public actor ConcurrencyLimiter {
+    private let limit: Int
+    private var active = 0
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    public init(limit: Int) { self.limit = max(1, limit) }
+
+    public func acquire() async {
+        if active < limit {
+            active += 1
+            return
+        }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    /// Hands the slot to the next waiter (which then counts as active) or frees it.
+    public func release() {
+        if waiting.isEmpty {
+            active = max(0, active - 1)
+        } else {
+            waiting.removeFirst().resume()
+        }
     }
 }
 

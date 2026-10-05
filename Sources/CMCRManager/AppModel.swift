@@ -213,8 +213,9 @@ final class AppModel: ObservableObject {
     // MARK: - Batch execution
 
     /// Runs `operation` on every target with limited parallelism and records the results as a batch.
+    /// `maxParallel` overrides the setting for jobs that mostly wait (questions, waking up).
     @discardableResult
-    func runBatch(_ title: String, on targets: [Machine], section: AppSection? = nil,
+    func runBatch(_ title: String, on targets: [Machine], section: AppSection? = nil, maxParallel: Int? = nil,
                   operation: @escaping @MainActor (Machine, Job) async -> CommandResult,
                   completion: (@MainActor (Batch) -> Void)? = nil) -> Batch? {
         guard !targets.isEmpty else { return nil }
@@ -224,7 +225,7 @@ final class AppModel: ObservableObject {
         if batches.count > 200 { batches.removeLast(batches.count - 200) }
         if let s = section ?? self.section { lastBatch[s] = batch }
         ConfigStore.log("\(title) → \(targets.map(\.name).joined(separator: ", "))")
-        let limit = max(1, settings.maxParallel)
+        let limit = max(1, maxParallel ?? settings.maxParallel)
 
         Task { @MainActor in
             await withTaskGroup(of: Void.self) { group in
