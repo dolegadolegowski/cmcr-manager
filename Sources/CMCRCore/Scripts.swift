@@ -807,7 +807,7 @@ public enum Scripts {
     }
 
     /// `force` ends the session at once (`launchctl bootout`, unsaved work is lost). Otherwise loginwindow is
-    /// asked to log out (like  › Wyloguj without the confirmation): apps may ask to save and can cancel;
+    /// asked to log out (like Apple menu › Log Out without the confirmation): apps may ask to save and can cancel;
     /// the script waits up to `wait` seconds for the session to end.
     public static func logoutUser(force: Bool = true, wait: Int = 30) -> RemoteScript {
         if force {

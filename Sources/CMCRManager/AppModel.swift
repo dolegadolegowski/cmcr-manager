@@ -525,7 +525,7 @@ final class AppModel: ObservableObject {
 
     func kill(_ app: RunningApp, on m: Machine, force: Bool) {
         runScript("\(force ? "Wymuś zamknięcie" : "Zamknij"): \(app.name) (PID \(app.pid))", on: [m],
-                  script: { _ in Scripts.killProcess(app.pid, force: force) }) { m, _ in
+                  script: { _ in force ? Scripts.killProcess(app.pid, force: true) : Scripts.quitApp(app.bundlePath, force: false) }) { m, _ in
             self.scheduleAppsRefresh(m)
         }
     }

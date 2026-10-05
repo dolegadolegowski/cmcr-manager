@@ -41,14 +41,19 @@ struct PowerView: View {
                     TargetButton(title: "Uśpij ekran", icon: "moon", prominent: false) {
                         model.power(.displaySleep, on: model.selectedMachines)
                     }
-                    TargetButton(title: "Wyloguj użytkownika", icon: "rectangle.portrait.and.arrow.right", role: .destructive, prominent: false) {
+                    TargetButton(title: "Wyloguj", icon: "rectangle.portrait.and.arrow.right", prominent: false) {
+                        model.runScript("Wylogowanie (z zapisem)", on: model.selectedMachines) { _ in Scripts.logoutUser(force: false) }
+                    }
+                    .help("Jak „Wyloguj” w menu Apple: aplikacje mogą zapytać ucznia o zapisanie zmian i wstrzymać wylogowanie.")
+                    TargetButton(title: "Wyloguj natychmiast", icon: "rectangle.portrait.and.arrow.right.fill", role: .destructive, prominent: false) {
                         confirm = ConfirmRequest(
-                            title: "Wylogować użytkowników?",
+                            title: "Wylogować użytkowników natychmiast?",
                             message: "Zalogowani użytkownicy na \(model.selection.count) komputerach zostaną natychmiast wylogowani – niezapisane dane przepadną.",
                             button: "Wyloguj") {
                             model.runScript("Wylogowanie użytkownika", on: model.selectedMachines) { _ in Scripts.logoutUser() }
                         }
                     }
+                    .help("Kończy sesję od razu, bez pytania o zapisanie dokumentów.")
                 }
             }
 
