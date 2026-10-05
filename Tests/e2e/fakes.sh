@@ -153,7 +153,8 @@ installer() {
   echo "installer: The install was successful."
 }
 
-chown() { _e2e_log "chown $*"; return 0; }
+# chown: logged only. The working directory is logged too: scripts change owners from inside a folder ("chown x .").
+chown() { _e2e_log "chown $* (cwd $PWD)"; return 0; }
 systemsetup() { _e2e_log "systemsetup $*"; echo "Remote Login: On"; }
 scutil() {
   case "${1:-}" in
@@ -168,7 +169,21 @@ dseditgroup() {
   esac
 }
 visudo() { _e2e_log "visudo $*"; return 0; }
-spctl() { _e2e_log "spctl $*"; return 0; }
+# spctl: an assessment (--assess/-a, read-only) asks the real Gatekeeper, so installers are checked for real;
+# anything that would change the policy is only logged.
+# With $CMCR_E2E_WORK/spctl.override it answers like a Mac with Gatekeeper switched off.
+spctl() {
+  case "${1:-}" in
+    --assess|-a)
+      _e2e_log "spctl $*"
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/spctl.override" ]; then
+        local last=""; for last in "$@"; do :; done
+        printf '%s: accepted\noverride=security disabled\n' "$last" >&2; return 0
+      fi
+      command spctl "$@" ;;
+    *) _e2e_log "spctl $*"; return 0 ;;
+  esac
+}
 defaults() {
   case " $* " in
     *" write "*|*" delete "*) _e2e_log "defaults $*"; return 0 ;;

@@ -38,9 +38,13 @@ public extension Scripts {
     /// - `cmcr_guard_item PATH` – changes into the parent folder (symlinks resolved), sets `$CMCR_REAL` (canonical
     ///   path) and `$CMCR_BASE` (name), and refuses anything outside account folders, /tmp and external volumes,
     ///   as well as Library, dot-files directly in a home folder and the standard folders (Desktop, Documents…)
-    ///   themselves. Callers act on `./$CMCR_BASE`, so a folder swapped for a symlink after the check cannot
-    ///   redirect them.
+    ///   themselves. The parent is entered one folder at a time (`cmcr_walk`): never through a link a user planted
+    ///   (only root's own links in root's folders, such as /tmp, are followed) and never into a folder swapped
+    ///   meanwhile. With `$CMCR_JAIL` set (removeCollected), PATH is relative to that pinned folder, which is
+    ///   re-entered by its device:inode (`$CMCR_JAIL_ID`) first, and the parent must lie inside it. Callers act
+    ///   on `./$CMCR_BASE`, so a folder swapped for a symlink after the check cannot redirect them.
     internal static let browseLibrary = #"""
+    CMCR_JAIL=""; CMCR_JAIL_ID=""
     cmcr_admin_home() {
       if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
         local h
@@ -75,13 +79,35 @@ public extension Scripts {
     }
     cmcr_guard_item() {
       local p="$1" base parent real sub
-      base="${p##*/}"; parent="${p%/*}"; [ -n "$parent" ] || parent="/"
+      base="${p##*/}"; parent="${p%/*}"
+      [ "$parent" = "$p" ] && parent="."
+      [ -n "$parent" ] || parent="/"
       case "$base" in ""|.|..) cmcr_refuse "niepoprawna ścieżka: $p"; return ;; esac
-      if ! cd -P -- "$parent" 2>/dev/null; then
-        if [ -d "$parent" ]; then echo "CMCR:DENIED" >&2; echo "Brak dostępu do folderu: $parent" >&2; return 63; fi
-        echo "CMCR:NOT_FOUND" >&2; echo "Folder nie istnieje: $parent" >&2; return 61
+      if [ -n "$CMCR_JAIL" ]; then
+        # removeCollected: back into exactly the folder that was checked, whatever its path leads to now.
+        if ! cd -P -- "$CMCR_JAIL" 2>/dev/null || [ "$(stat -f %d:%i .)" != "$CMCR_JAIL_ID" ]; then
+          cd /; cmcr_refuse "folder $CMCR_JAIL został podmieniony w trakcie usuwania (dowiązanie symboliczne)"; return
+        fi
       fi
-      real="$PWD"
+      # The item itself may be a link (deleting it removes only the link); the folders leading to it may not,
+      # unless root owns the link and its folder (/tmp, /Volumes/Macintosh HD).
+      cmcr_walk "$parent"
+      case $? in
+        0) ;;
+        2) echo "CMCR:REFUSED" >&2; cmcr_walk_refusal "$parent"; return 65 ;;
+        *)
+          if [ -z "$CMCR_JAIL" ] && [ -d "$parent" ]; then
+            echo "CMCR:DENIED" >&2; echo "Brak dostępu do folderu: $parent" >&2; return 63
+          fi
+          echo "CMCR:NOT_FOUND" >&2; echo "Folder nie istnieje: $parent" >&2; return 61 ;;
+      esac
+      real="$(/bin/pwd -P)"
+      if [ -n "$CMCR_JAIL" ]; then
+        case "$real/" in
+          "$CMCR_JAIL"/*) ;;
+          *) cmcr_refuse "$p prowadzi poza folder $CMCR_JAIL (podmienione dowiązanie?)"; return ;;
+        esac
+      fi
       [ "$real" = "/" ] && real=""
       CMCR_REAL="$real/$base"
       CMCR_BASE="$base"
@@ -198,15 +224,35 @@ public extension Scripts {
         fi
         TOP="$NEW"; PARENT="${TOP%/*}"; [ -n "$PARENT" ] || PARENT="/"
         if [ \#(intermediate ? 1 : 0) = 1 ]; then
-          while [ ! -e "$PARENT" ]; do TOP="$PARENT"; PARENT="${TOP%/*}"; [ -n "$PARENT" ] || PARENT="/"; done
-          mkdir -p "$NEW" || { echo "✘ Nie można utworzyć folderu $NEW" >&2; exit 1; }
-        else
-          if [ ! -d "$PARENT" ]; then echo "CMCR:NOT_FOUND" >&2; echo "Folder nie istnieje: $PARENT" >&2; exit 61; fi
-          mkdir "$NEW" || { echo "✘ Nie można utworzyć folderu $NEW" >&2; exit 1; }
+          while [ ! -e "$PARENT" ] && [ ! -L "$PARENT" ]; do TOP="$PARENT"; PARENT="${TOP%/*}"; [ -n "$PARENT" ] || PARENT="/"; done
+        elif [ ! -d "$PARENT" ]; then
+          echo "CMCR:NOT_FOUND" >&2; echo "Folder nie istnieje: $PARENT" >&2; exit 61
         fi
         if [ \#(asRoot ? 1 : 0) = 1 ]; then
-          OWN="$(stat -f '%Su:%Sg' "$PARENT" 2>/dev/null)"
-          [ -n "$OWN" ] && chown -R "$OWN" "$TOP"
+          # As root: into the deepest existing folder one folder at a time, never through a link a user planted
+          # (cmcr_walk), then the new folders one at a time from inside their parent, owned like that folder. A
+          # name the user takes meanwhile with a link is refused, not followed (chown would hand over its target).
+          cmcr_walk "$PARENT"
+          case $? in
+            0) ;;
+            2) echo "CMCR:REFUSED" >&2; cmcr_walk_refusal "$PARENT"; exit 65 ;;
+            *) echo "CMCR:DENIED" >&2; echo "Brak dostępu do folderu: $PARENT" >&2; exit 63 ;;
+          esac
+          OWN="$(stat -f '%Su:%Sg' . 2>/dev/null)"
+          REST="${NEW#"$PARENT"}"; REST="${REST#/}"
+          if [ \#(intermediate ? 1 : 0) = 0 ] && { [ -e "./$REST" ] || [ -L "./$REST" ]; }; then
+            echo "CMCR:EXISTS" >&2; echo "Element o tej nazwie już istnieje: $NEW" >&2; exit 66
+          fi
+          cmcr_walk "$REST" create "$OWN"
+          case $? in
+            0) ;;
+            2) echo "CMCR:REFUSED" >&2; cmcr_walk_refusal "$NEW"; exit 65 ;;
+            *) echo "✘ Nie można utworzyć folderu $NEW" >&2; exit 1 ;;
+          esac
+        elif [ \#(intermediate ? 1 : 0) = 1 ]; then
+          mkdir -p "$NEW" || { echo "✘ Nie można utworzyć folderu $NEW" >&2; exit 1; }
+        else
+          mkdir "$NEW" || { echo "✘ Nie można utworzyć folderu $NEW" >&2; exit 1; }
         fi
         echo "✔ Utworzono folder $NEW"
         """#, asRoot: asRoot)
@@ -276,7 +322,8 @@ public extension Scripts {
 
     /// After "Zbierz prace": deletes the collected files from `source` that are still exactly as collected (same
     /// size and modification time as the copy), then removes the listed folders if they became empty. Work saved
-    /// or changed after the collection stays on the Mac. Paths are relative to `source`.
+    /// or changed after the collection stays on the Mac. Paths are relative to `source`. Nothing is deleted
+    /// through a link a user planted, or outside `source`.
     static func removeCollected(in source: String, files: [CollectedFile], folders: [String],
                                 asRoot: Bool) -> RemoteScript {
         let rel = files.map(\.path), mt = files.map { $0.isLink ? "L" : String($0.modified) },
@@ -285,6 +332,16 @@ public extension Scripts {
         cmcr_resolve \#(shQuote(source)) || exit $?
         SRC="$CMCR_PATH"
         [ -d "$SRC" ] || { echo "CMCR:NOT_FOUND" >&2; echo "Folder nie istnieje: $SRC" >&2; exit 61; }
+        # Runs as root on the student's folder: the folder itself must not be a planted link, and every file is
+        # deleted only from inside it (a collected subfolder swapped for a link afterwards is skipped).
+        cmcr_pin_dir "$SRC"; X=$?
+        case $X in
+          0) ;;
+          2) echo "CMCR:REFUSED" >&2; exit 65 ;;
+          *) echo "CMCR:DENIED" >&2; echo "Brak dostępu do folderu: $SRC" >&2; exit 63 ;;
+        esac
+        # From here on the paths are relative to the pinned folder (cmcr_guard_item re-enters it by device:inode).
+        CMCR_JAIL="$CMCR_PINNED"; CMCR_JAIL_ID="$CMCR_PINNED_ID"
         F=\#(shArray(rel))
         M=\#(shArray(mt))
         Z=\#(shArray(sz))
@@ -293,7 +350,7 @@ public extension Scripts {
         while [ "$i" -lt "${#F[@]}" ]; do
           rel="${F[$i]}"; mt="${M[$i]}"; sz="${Z[$i]}"; i=$((i + 1))
           case "/$rel/" in */../*|*/./*|*//*) echo "Pominięto niepoprawną ścieżkę: $rel" >&2; continue ;; esac
-          cmcr_guard_item "$SRC/$rel" || { RC=$?; continue; }
+          cmcr_guard_item "$rel" || { RC=$?; continue; }
           f="./$CMCR_BASE"
           if [ "$mt" = L ]; then
             [ -L "$f" ] || continue
@@ -308,7 +365,7 @@ public extension Scripts {
         done
         for rel in "${D[@]}"; do
           case "/$rel/" in */../*|*/./*|*//*) continue ;; esac
-          cmcr_guard_item "$SRC/$rel" 2>/dev/null || continue
+          cmcr_guard_item "$rel" 2>/dev/null || continue
           [ -d "./$CMCR_BASE" ] && [ ! -L "./$CMCR_BASE" ] && rmdir "./$CMCR_BASE" 2>/dev/null
         done
         cd /

@@ -6,14 +6,17 @@ import Foundation
 @MainActor
 enum ScriptCommands {
     nonisolated static let usage = """
-      cmcrctl install plik… KOMP                zainstaluj programy (.pkg/.dmg/.zip/.app) jako root
-      cmcrctl install-url URL KOMP              pobierz instalator na iMacu i zainstaluj
+      cmcrctl install plik… KOMP [--allow-unsigned]
+                                                zainstaluj programy (.pkg/.dmg/.zip/.app) jako root; bez
+                                                --allow-unsigned tylko z ważnym podpisem i notaryzacją Apple
+      cmcrctl install-url https://… KOMP [--sha256 SUMA] [--allow-unsigned]
+                                                pobierz instalator na iMacu (tylko https) i zainstaluj
     """
 
     /// `--root` is accepted for compatibility: installing always runs as root.
     nonisolated static let specs: [String: ModuleSpec] = [
-        "install": ModuleSpec(flags: ["--root"], parallel: true),
-        "install-url": ModuleSpec(flags: ["--root"], maxPositional: 2, parallel: true),
+        "install": ModuleSpec(flags: ["--root", "--allow-unsigned"], parallel: true),
+        "install-url": ModuleSpec(flags: ["--root", "--allow-unsigned"], values: ["--sha256"], maxPositional: 2, parallel: true),
     ]
 
     /// Exit status, or nil when `command` is not one of these (`args` without the command word).
@@ -31,7 +34,7 @@ enum ScriptCommands {
             spec = last
             files.removeLast()
         }
-        guard !files.isEmpty else { moduleUsageError(a.command, "Użycie: cmcrctl install plik… KOMP") }
+        guard !files.isEmpty else { moduleUsageError(a.command, "Użycie: cmcrctl install plik… KOMP [--allow-unsigned]") }
         let urls = files.map { URL(fileURLWithPath: expandTilde($0)).standardizedFileURL }
         for u in urls where !FileManager.default.fileExists(atPath: u.path) {
             moduleUsageError(a.command, "Brak pliku: \(u.path)")
@@ -44,17 +47,33 @@ enum ScriptCommands {
         }
         defer { try? FileManager.default.removeItem(at: payload) }
         let ssh = sshSettings
+        let allowUnsigned = a.has("--allow-unsigned")
         return await eachHost(targets, a) { io in
-            let r = await Operations.install(payload: payload, on: io.host, password: Keychain.password(for: io.host),
-                                             settings: ssh, onOutput: io.stream)
+            let r = await Operations.install(payload: payload, on: io.host, allowUnsigned: allowUnsigned,
+                                             password: Keychain.password(for: io.host), settings: ssh, onOutput: io.stream)
             return io.report(r)
         }
     }
 
     static func installURL(_ a: ModuleArguments) async -> Int32 {
-        guard let url = a[0], url.contains("://") else { moduleUsageError(a.command, "Użycie: cmcrctl install-url URL KOMP") }
+        guard let url = a[0], url.contains("://") else {
+            moduleUsageError(a.command, "Użycie: cmcrctl install-url https://… KOMP [--sha256 SUMA] [--allow-unsigned]")
+        }
+        guard Scripts.isSecureDownloadURL(url) else {
+            moduleUsageError(a.command, "Dozwolone są tylko adresy https:// (lub file://) – przez http:// ktoś w sieci "
+                             + "szkolnej mógłby podmienić instalator.")
+        }
+        let sha256: String? = a.value("--sha256").map { raw in
+            guard let hex = Scripts.normalizedSHA256(raw) else {
+                moduleUsageError(a.command, "--sha256: oczekiwano 64 znaków szesnastkowych (suma SHA-256), podano „\(raw)”.")
+            }
+            return hex
+        }
+        let allowUnsigned = a.has("--allow-unsigned")
         let targets = ModuleHosts.changing(a[1], a.command)
-        return await runEach(targets, a, ssh: sshSettings) { _ in Scripts.installFromURL(url) }
+        return await runEach(targets, a, ssh: sshSettings) { _ in
+            Scripts.installFromURL(url, sha256: sha256, allowUnsigned: allowUnsigned)
+        }
     }
 
     /// `_builder` only: the remote exit code is kept, the e2e suites check the codes of the script builders.
@@ -118,6 +137,18 @@ enum ScriptCommands {
             guard let action = PowerAction(rawValue: arg(0)) else { fail("Nieznana akcja: \(arg(0))") }
             script = Scripts.power(action)
         case "prepare-shared": script = Scripts.prepareSharedFolder(arg(0), owner: arg(1))
+        case "install-url":
+            // No checks on this side: the remote script must refuse http:// by itself.
+            script = Scripts.installFromURL(arg(0), allowUnsigned: flag("--allow-unsigned"))
+        case "remove-collected":
+            // _builder remove-collected HOST SRC MTIME:SIZE:REL… (MTIME "L" = link) [--root]
+            let files = a.dropFirst().map { spec -> CollectedFile in
+                let parts = spec.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+                guard parts.count == 3 else { fail("Oczekiwano MTIME:SIZE:ŚCIEŻKA, podano „\(spec)”.") }
+                return CollectedFile(path: parts[2], modified: Int(parts[0]) ?? 0, size: Int64(parts[1]) ?? 0,
+                                     isLink: parts[0] == "L")
+            }
+            script = Scripts.removeCollected(in: arg(0), files: files, folders: [], asRoot: root)
         case "install-updates":
             script = Scripts.installUpdates(restart: flag("--restart"), recommendedOnly: flag("--recommended"),
                                             downloadOnly: flag("--download"), allowMajorUpgrade: flag("--major"))

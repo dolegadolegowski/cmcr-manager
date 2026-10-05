@@ -29,6 +29,7 @@ struct InstallView: View {
                 urlSection
                 brewSection
                 unitySection
+                signatureSection
                 if let batch = model.lastBatch[.install] {
                     Section {
                         BatchResultsView(batch: batch)
@@ -67,23 +68,37 @@ struct InstallView: View {
         }
     }
 
+    // MARK: Signature check
+
+    var signatureSection: some View {
+        Section {
+            Toggle(isOn: $model.installAllowUnsigned) {
+                Text("Zezwalaj na instalatory bez podpisu Apple")
+                Text("Domyślnie instalowane są tylko programy z ważnym podpisem i notaryzacją Apple. Włącz tylko dla "
+                     + "zaufanych plików, np. przygotowanych w szkole.")
+            }
+        } header: {
+            Label("Bezpieczeństwo", systemImage: "checkmark.shield")
+        }
+    }
+
     // MARK: From a web address
 
     var urlSection: some View {
         Section {
             TextField("Adres instalatora", text: $downloadURL, prompt: Text("https://…/Instalator.pkg"))
             HStack(spacing: 12) {
-                Text("Każdy komputer pobierze plik sam – wygodne przy dużych instalatorach (.pkg, .dmg lub .zip).")
+                Text("Każdy komputer pobierze plik sam – wygodne przy dużych instalatorach (.pkg, .dmg lub .zip). Tylko adresy https://.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 12)
                 TargetButton(title: "Pobierz i zainstaluj", icon: "arrow.down.app") {
-                    let url = downloadURL
+                    let url = downloadURL, allowUnsigned = model.installAllowUnsigned
                     model.runScript("Instalacja z URL: \((url as NSString).lastPathComponent)", on: model.selectedMachines) { _ in
-                        Scripts.installFromURL(url)
+                        Scripts.installFromURL(url, allowUnsigned: allowUnsigned)
                     }
                 }
-                .disabled(URL(string: downloadURL)?.scheme?.hasPrefix("http") != true)
+                .disabled(!Scripts.isSecureDownloadURL(downloadURL))
             }
         } header: {
             Label("Z internetu", systemImage: "link")

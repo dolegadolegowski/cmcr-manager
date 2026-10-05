@@ -113,6 +113,7 @@ struct ModuleArguments {
         "--message", "--mode", "--minutes", "--buttons", "--timeout", "--on", "--off", "--on-type", "--off-type",
         "--no-autorestart", "--no-womp", "--name", "--update-list", "--warn", "--no-wait", "--all", "-p", "--from",
         "--to", "--no-date", "--clean", "--frames", "--interval", "--size", "--display", "--notified-user",
+        "--allow-unsigned", "--sha256",
     ])
 }
 

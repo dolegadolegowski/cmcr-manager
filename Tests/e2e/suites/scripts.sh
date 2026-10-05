@@ -40,22 +40,23 @@ out="$(ctlpw _builder mas-upgrade 1)"
 expect "mas upgrade: askpass i DISPLAY dla sudo w mas ≥ 4" "$(fakelog)" "mas upgrade" "mas: askpass+DISPLAY ok"
 
 section "Skrypty – instalacja programów (install / install-url)"
+# The test installers are unsigned, hence --allow-unsigned; the signature check itself: suites/file-safety.sh.
 mkdir -p "$WORK/pkgroot/cmcr" "$WORK/dmgsrc" "$WORK/zipsrc"
 echo x > "$WORK/pkgroot/cmcr/plik.txt"
 if pkgbuild --quiet --root "$WORK/pkgroot" --identifier pl.cmcr.e2e --version 1.0 --install-location /tmp/cmcr-e2e-never \
     "$WORK/in/Test Pakiet.pkg" >/dev/null 2>&1; then
   clear_fakelog
-  out="$(ctlpw install "$WORK/in/Test Pakiet.pkg" 1)"; code=$?
+  out="$(ctlpw install "$WORK/in/Test Pakiet.pkg" 1 --allow-unsigned)"; code=$?
   expect_code "install .pkg: kod 0" "$code" 0 "$out"
   expect "install .pkg: installer -pkg … -target /" "$(fakelog)" "installer -pkg" "Test Pakiet.pkg -target /"
   expect "install .pkg: komunikat" "$out" "Zainstalowano pakiet Test Pakiet.pkg"
   cp "$WORK/in/Test Pakiet.pkg" "$WORK/in/pobrany-bez-rozszerzenia"
   clear_fakelog
-  out="$(ctlpw install-url "file://$WORK/in/Test%20Pakiet.pkg" 1)"; code=$?
+  out="$(ctlpw install-url "file://$WORK/in/Test%20Pakiet.pkg" 1 --allow-unsigned)"; code=$?
   expect_code "install-url: kod 0 (file://)" "$code" 0 "$out"
   expect "install-url: pobrany pakiet zainstalowany" "$(fakelog)" "installer -pkg" "Test%20Pakiet.pkg"
   clear_fakelog
-  out="$(ctlpw install-url "file://$WORK/in/pobrany-bez-rozszerzenia?token=abc" 1)"
+  out="$(ctlpw install-url "file://$WORK/in/pobrany-bez-rozszerzenia?token=abc" 1 --allow-unsigned)"
   expect "install-url: typ rozpoznany po zawartości (xar → .pkg)" "$(fakelog)" "pobrany-bez-rozszerzenia.pkg -target /"
   cp "$WORK/in/Test Pakiet.pkg" "$WORK/dmgsrc/Uninstall CMCR.pkg"
 else
@@ -69,7 +70,7 @@ expect_code "install-url: kod 1 przy błędzie pobierania" "$code" 1 "$out"
 mkb "$WORK/dmgsrc" CMCRDmgApp pl.cmcr.e2e.dmg
 if hdiutil create -quiet -srcfolder "$WORK/dmgsrc" -volname "CMCR E2E" -format UDZO "$WORK/in/Test.dmg" 2>/dev/null; then
   clear_fakelog
-  out="$(ctlpw install "$WORK/in/Test.dmg" 1)"; code=$?
+  out="$(ctlpw install "$WORK/in/Test.dmg" 1 --allow-unsigned)"; code=$?
   expect_code "install .dmg: kod 0" "$code" 0 "$out"
   [ -x "$WORK/Applications/CMCRDmgApp.app/Contents/MacOS/CMCRDmgApp" ] && pass "install .dmg: aplikacja skopiowana do Applications" \
     || fail "install .dmg: brak aplikacji" "$out"
@@ -87,7 +88,7 @@ xattr -w com.apple.quarantine "0081;00000000;Safari;" "$WORK/zipsrc/CMCRZipApp.a
 (cd "$WORK/zipsrc" && ditto -c -k --keepParent CMCRZipApp.app "$WORK/in/CMCRZipApp.zip")
 mkdir -p "$WORK/Applications/CMCRZipApp.app/Contents/Frameworks/Old.framework"
 echo stare > "$WORK/Applications/CMCRZipApp.app/Contents/Frameworks/Old.framework/Old"
-out="$(ctlpw install "$WORK/in/CMCRZipApp.zip" 1)"; code=$?
+out="$(ctlpw install "$WORK/in/CMCRZipApp.zip" 1 --allow-unsigned)"; code=$?
 expect_code "install .zip: kod 0" "$code" 0 "$out"
 [ -x "$WORK/Applications/CMCRZipApp.app/Contents/MacOS/CMCRZipApp" ] && pass "install .zip: aplikacja zainstalowana" \
   || fail "install .zip: brak aplikacji" "$out"

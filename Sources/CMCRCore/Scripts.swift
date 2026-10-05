@@ -310,10 +310,64 @@ public enum Scripts {
 
     /// Shell functions that install .pkg/.mpkg/.dmg/.zip/.app items (run as root). Applications go to
     /// `$CMCR_APPS_DIR` (default /Applications; real sudo resets the environment, so only the tests use it).
+    ///
+    /// Every package and application is checked by Gatekeeper first (`spctl --assess`: a valid signature of an
+    /// identified developer and Apple's notarization, or Apple / App Store software) and refused otherwise,
+    /// unless the script sets `CMCR_ALLOW_UNSIGNED=1` (the teacher's explicit choice for in-house installers;
+    /// see `installPrelude`). `installer` itself still refuses broken or untrusted signatures (no `-allowUntrusted`).
     static let installLibrary = #"""
     CMCR_APPS="${CMCR_APPS_DIR:-/Applications}"
     cmcr_fda_hint() {
       echo "  Wskazówka: jeśli aplikacja nie jest uruchomiona, włącz „Pełny dostęp do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie) – bez tego macOS nie pozwala podmieniać aplikacji." >&2
+    }
+    # Apple's own software, Mac App Store apps or a Developer ID certificate issued by Apple (chain checked).
+    CMCR_APPLE_REQ='anchor apple or (anchor apple generic and (certificate leaf[field.1.2.840.113635.100.6.1.9] or certificate leaf[field.1.2.840.113635.100.6.1.13]))'
+    # cmcr_verify_signature ITEM install|execute – Gatekeeper's verdict on a package (install) or an application
+    # (execute) before root installs it. When Gatekeeper is switched off on the Mac (spctl answers "override"),
+    # the signature itself is checked: Developer ID or Apple, without the notarization.
+    cmcr_verify_signature() {
+      local item="$1" type="$2" name out rc src origin why=""
+      name="$(basename "$item")"
+      echo "→ Sprawdzanie podpisu: $name"
+      out="$(spctl --assess --type "$type" -vv "$item" 2>&1)"; rc=$?
+      src="$(printf '%s\n' "$out" | sed -n 's/^source=//p' | head -n 1)"
+      origin="$(printf '%s\n' "$out" | sed -n 's/^origin=//p' | head -n 1)"
+      case "$out" in
+        *override=*)
+          rc=1; src=""
+          if [ "$type" = install ]; then
+            out="$(pkgutil --check-signature "$item" 2>&1)"
+            origin="$(printf '%s\n' "$out" | sed -n 's/^ *1\. //p' | head -n 1)"
+            case "$(printf '%s\n' "$out" | sed -n 's/^ *Status: //p' | head -n 1)" in
+              "signed by a developer certificate issued by Apple"*|"signed Apple Software"*) rc=0; src="Developer ID (Gatekeeper wyłączony – bez sprawdzenia notaryzacji)" ;;
+              "no signature"*) why="brak podpisu" ;;
+            esac
+          elif codesign --verify --deep --strict -R "=$CMCR_APPLE_REQ" "$item" >/dev/null 2>&1; then
+            # The requirement checks the certificate chain up to Apple's root; a certificate merely named
+            # "Developer ID Application: …" (self-signed) does not satisfy it. Authority is only for the log.
+            origin="$(codesign -dvv "$item" 2>&1 | sed -n 's/^Authority=//p' | head -n 1)"
+            rc=0; src="Developer ID (Gatekeeper wyłączony – bez sprawdzenia notaryzacji)"
+          else
+            why="brak ważnego podpisu Apple lub Developer ID"
+          fi ;;
+      esac
+      if [ $rc -eq 0 ]; then
+        echo "✔ Podpis sprawdzony: $name – ${origin:-$src}${origin:+${src:+ ($src)}}"
+        return 0
+      fi
+      if [ -z "$why" ]; then
+        case "$src$out" in
+          *"no usable signature"*|*"not signed at all"*) why="brak podpisu" ;;
+          *Unnotarized*) why="podpisany${origin:+ ($origin)}, ale bez notaryzacji Apple" ;;
+          *) why="podpis nieuznawany przez macOS${src:+ ($src)}" ;;
+        esac
+      fi
+      if [ "${CMCR_ALLOW_UNSIGNED:-0}" = 1 ]; then
+        echo "⚠︎ $name: $why – instaluję mimo to (zezwolono na instalatory bez podpisu)." >&2
+        return 0
+      fi
+      echo "✘ $name: $why – nie instaluję. Programy bez ważnego podpisu i notaryzacji Apple mogą być podrobione albo zmienione po drodze. Jeśli to zaufany instalator (np. przygotowany w szkole), zaznacz „Zezwól na instalatory bez podpisu” w dziale Instalacja (cmcrctl: --allow-unsigned)." >&2
+      return 1
     }
     cmcr_skip_uninstaller() {
       case "$(basename "$1")" in *[Uu]ninstall*) echo "↷ Pomijam $(basename "$1")"; return 0 ;; esac
@@ -324,6 +378,7 @@ public enum Scripts {
     cmcr_install_app_bundle() {
       local src="$1" name; name="$(basename "$src")"
       local dst="$CMCR_APPS/$name" new="$CMCR_APPS/.$name.cmcr-new" old="$CMCR_APPS/.$name.cmcr-old"
+      cmcr_verify_signature "$src" execute || return 1
       echo "→ Kopiowanie $name do $CMCR_APPS"
       rm -rf "$new" "$old" 2>/dev/null
       if ! ditto "$src" "$new"; then rm -rf "$new"; echo "✘ Nie udało się skopiować $name" >&2; return 1; fi
@@ -344,6 +399,7 @@ public enum Scripts {
       echo "✔ Zainstalowano $name"
     }
     cmcr_install_pkg() {
+      cmcr_verify_signature "$1" install || return 1
       echo "→ installer -pkg $(basename "$1")"
       installer -pkg "$1" -target / && echo "✔ Zainstalowano pakiet $(basename "$1")"
     }
@@ -416,9 +472,32 @@ public enum Scripts {
     }
     """#
 
-    /// Installs everything contained in an uploaded payload archive.
-    public static func installPayload(remoteTar: String) -> RemoteScript {
-        RemoteScript(installLibrary + "\n" + #"""
+    /// First lines of every install script: whether installers without a valid Apple signature may be installed.
+    /// Always set explicitly, so nothing in the remote environment can switch the check off.
+    static func installPrelude(allowUnsigned: Bool) -> String {
+        "CMCR_ALLOW_UNSIGNED=\(allowUnsigned ? 1 : 0)\n" + installLibrary + "\n"
+    }
+
+    /// `https://` (or a local `file://`) address: the only ones `installFromURL` downloads, since a plain
+    /// `http://` download could be swapped on the school network before root installs it.
+    public static func isSecureDownloadURL(_ text: String) -> Bool {
+        guard let url = URL(string: text.trimmingCharacters(in: .whitespaces)),
+              let scheme = url.scheme?.lowercased() else { return false }
+        if scheme == "file" { return true }
+        return scheme == "https" && !(url.host ?? "").isEmpty
+    }
+
+    /// A SHA-256 checksum as 64 lowercase hex digits (spaces and letter case ignored), or nil when malformed.
+    public static func normalizedSHA256(_ text: String) -> String? {
+        let hex = text.filter { !$0.isWhitespace }.lowercased()
+        guard hex.count == 64, hex.allSatisfy({ ("0"..."9").contains($0) || ("a"..."f").contains($0) }) else { return nil }
+        return hex
+    }
+
+    /// Installs everything contained in an uploaded payload archive. Items without a valid Apple signature and
+    /// notarization are refused unless `allowUnsigned` (see `installLibrary`).
+    public static func installPayload(remoteTar: String, allowUnsigned: Bool = false) -> RemoteScript {
+        RemoteScript(installPrelude(allowUnsigned: allowUnsigned) + #"""
         TAR=\#(shQuote(remoteTar))
         STAGE="$CMCR_TMP/payload"; mkdir -p "$STAGE"
         tar -xf "$TAR" --no-same-owner -C "$STAGE"; X=$?
@@ -434,14 +513,36 @@ public enum Scripts {
     }
 
     /// Downloads an installer on the target Mac and installs it.
-    public static func installFromURL(_ url: String) -> RemoteScript {
-        RemoteScript(installLibrary + "\n" + #"""
-        URL=\#(shQuote(url))
+    ///
+    /// Only over https (also after redirects; `file://` for a file already on the Mac): the download goes
+    /// straight into a root installer on every selected Mac. With `sha256` the file must have exactly that
+    /// checksum. Then the same signature check as for uploaded installers (`allowUnsigned`).
+    public static func installFromURL(_ url: String, sha256: String? = nil, allowUnsigned: Bool = false) -> RemoteScript {
+        RemoteScript(installPrelude(allowUnsigned: allowUnsigned) + #"""
+        URL=\#(shQuote(url)); SHA=\#(shQuote((sha256 ?? "").lowercased()))
+        case "$(printf '%s' "$URL" | tr '[:upper:]' '[:lower:]')" in
+          https://?*|file://*) ;;
+          *) echo "✘ Instalator można pobrać tylko przez https:// (połączenie szyfrowane) – przez http:// ktoś w sieci mógłby podmienić plik. Podano: $URL" >&2; exit 2 ;;
+        esac
+        case "$SHA" in
+          "") ;;
+          *[!0-9a-f]*) echo "✘ Niepoprawna suma SHA-256: $SHA" >&2; exit 2 ;;
+          *) [ ${#SHA} = 64 ] || { echo "✘ Suma SHA-256 musi mieć 64 znaki (podano ${#SHA})" >&2; exit 2; } ;;
+        esac
         NAME="$(basename "${URL%%[?#]*}")"
         case "$NAME" in ""|/|.|..|*:*) NAME="download" ;; esac
         mkdir -p "$CMCR_TMP/dl"; F="$CMCR_TMP/dl/$NAME"
         echo "→ Pobieranie $URL"
-        curl -fL --retry 2 --connect-timeout 20 -o "$F" "$URL" || { echo "✘ Pobieranie nie powiodło się" >&2; exit 2; }
+        curl -fL --proto '=https,file' --proto-redir '=https' --retry 2 --connect-timeout 20 -o "$F" "$URL" \
+          || { echo "✘ Pobieranie nie powiodło się" >&2; exit 2; }
+        if [ -n "$SHA" ]; then
+          GOT="$(shasum -a 256 "$F" | awk '{print $1}')"
+          if [ "$GOT" != "$SHA" ]; then
+            echo "✘ Suma kontrolna SHA-256 pobranego pliku się nie zgadza – plik mógł zostać podmieniony, nie instaluję. Oczekiwano $SHA, jest $GOT." >&2
+            rm -f "$F"; exit 2
+          fi
+          echo "✔ Suma SHA-256 zgodna"
+        fi
         cmcr_install_item "$F"
         """#, asRoot: true)
     }
@@ -614,9 +715,14 @@ public enum Scripts {
 
     /// Moves an uploaded archive into its destination and fixes owner and permissions (cmcr-push).
     ///
-    /// - The archive is unpacked into a hidden folder inside the destination, then each item is renamed into
-    ///   place: no second copy, and a file or `.app` bundle replaces the old one as a whole (a merged bundle
-    ///   has stale files and a broken signature). Existing folders are merged, like `scp -r`.
+    /// - The archive is unpacked into the private temporary folder (`$CMCR_TMP`, out of the students' reach),
+    ///   owner and mode are set there, then each item is renamed into place: a file or `.app` bundle replaces the
+    ///   old one as a whole (a merged bundle has stale files and a broken signature). Existing folders are merged,
+    ///   like `scp -r`; their old contents keep their owner and mode (a student could have planted hard links to
+    ///   other accounts' or system files there, and root's `chown -R`/`chmod -R` would hand those over).
+    /// - The destination usually belongs to the student, who could swap it (or a folder on the way) for a link to
+    ///   another account: a link not owned by root is refused, and everything after the check runs inside the
+    ///   checked folder with relative paths (`cmcr_pin_dir`), so a later swap cannot redirect root.
     /// - An empty `owner` as root means "like the destination folder", so pushed files never stay root-owned.
     /// - `{console}` with nobody logged in stops with code 3; a missing home folder is never created.
     public static func pushFinalize(remoteTar: String, destination: String, owner: String, mode: String,
@@ -631,6 +737,7 @@ public enum Scripts {
         case "$DEST" in /?*) ;; *) echo "✘ Folder docelowy musi być pełną ścieżką (np. /Users/student/Desktop): „$DEST”" >&2; exit 2 ;; esac
         case "$DEST/" in */../*|*/./*|*//*) echo "✘ Niepoprawna ścieżka docelowa: $DEST" >&2; exit 2 ;; esac
         case "$MODE" in *[!0-7ugoarwxXst=+,-]*) echo "✘ Niepoprawne uprawnienia: $MODE" >&2; exit 2 ;; esac
+        if L="$(cmcr_user_link "$DEST")"; then cmcr_link_refusal "$L"; exit 2; fi
         P="$DEST"
         while [ ! -e "$P" ] && [ ! -L "$P" ]; do P="$(dirname "$P")"; done
         [ -d "$P" ] || { echo "✘ $P nie jest folderem" >&2; exit 2; }
@@ -641,49 +748,72 @@ public enum Scripts {
               echo "✘ Folder $(dirname "$DEST") nie istnieje na tym Macu (np. konto bez katalogu domowego) – nie tworzę go." >&2; exit 2 ;;
           esac
         fi
+        # From here on: relative paths inside the checked folder only.
+        cmcr_pin_dir "$P"; X=$?
+        case $X in
+          0) ;;
+          2) exit 2 ;;
+          *) echo "✘ Nie można otworzyć folderu $P – brak uprawnień." >&2; exit 2 ;;
+        esac
         if [ -z "$OWNER" ] && [ "$EUID" -eq 0 ]; then
-          OWNER="$(stat -f '%Su:%Sg' "$P")"
+          OWNER="$(stat -f '%Su:%Sg' .)"
           echo "→ Właściciel jak w folderze docelowym: $OWNER"
         fi
+        # Missing folders are created one at a time from inside their parent (cmcr_walk): a name taken meanwhile
+        # by a link is refused, not followed.
         if [ "$P" != "$DEST" ]; then
-          mkdir -p "$DEST" || { echo "✘ Nie można utworzyć $DEST" >&2; exit 2; }
-          if [ -n "$OWNER" ]; then
-            D="$DEST"; while [ "$D" != "$P" ]; do chown "$OWNER" "$D" 2>/dev/null; D="$(dirname "$D")"; done
-          fi
+          REST="${DEST#"$P"}"; REST="${REST#/}"
+          cmcr_walk "$REST" create "$OWNER"
+          case $? in
+            0) ;;
+            2) cmcr_walk_refusal "$DEST"; exit 2 ;;
+            *) echo "✘ Nie można utworzyć $DEST" >&2; exit 2 ;;
+          esac
         fi
-        [ -d "$DEST" ] || { echo "✘ $DEST nie jest folderem" >&2; exit 2; }
-        STAGE="$(mktemp -d "$DEST/.cmcr-push.XXXXXX" 2>/dev/null)" || {
+        HERE="$(stat -f %d:%i .)"
+        PROBE="$(mktemp -d ./.cmcr-push.XXXXXX 2>/dev/null)" || {
           echo "✘ Nie można zapisać w $DEST – brak uprawnień. Biurko, Dokumenty i Pobrane ucznia wymagają „Pełnego dostępu do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie)." >&2
           exit 2
         }
+        rmdir "$PROBE"
+        STAGE="$(mktemp -d "$CMCR_TMP/push.XXXXXX")" || { echo "✘ Nie można przygotować folderu tymczasowego" >&2; exit 2; }
         cmcr_on_exit 'rm -rf "$STAGE"'
-        tar -xf "$TAR" --no-same-owner -C "$STAGE"; X=$?
+        mkdir "$STAGE/new" "$STAGE/old"
+        tar -xf "$TAR" --no-same-owner -C "$STAGE/new"; X=$?
         rm -f "$TAR"
         [ $X = 0 ] || { echo "✘ Nie udało się rozpakować przesłanych plików" >&2; exit 2; }
         RC=0; DONE=()
-        for item in "$STAGE"/* "$STAGE"/.[!.]* "$STAGE"/..?*; do
+        for item in "$STAGE/new"/* "$STAGE/new"/.[!.]* "$STAGE/new"/..?*; do
           [ -e "$item" ] || [ -L "$item" ] || continue
-          n="$(basename "$item")"; t="$DEST/$n"
+          n="$(basename "$item")"; t="./$n"
+          if [ -n "$OWNER" ]; then chown -R "$OWNER" "$item" || echo "⚠︎ chown $OWNER nie powiódł się dla $n" >&2; fi
+          if [ -n "$MODE" ]; then chmod -R "$MODE" "$item" || echo "⚠︎ chmod $MODE nie powiódł się dla $n" >&2; fi
+          case "$n" in *.app) xattr -dr com.apple.quarantine "$item" 2>/dev/null ;; esac
           if [ -d "$item" ] && [ ! -L "$item" ] && [ -d "$t" ] && [ ! -L "$t" ] && [ "${n%.app}" = "$n" ]; then
-            ditto "$item" "$t" || { echo "✘ Kopiowanie $n do $DEST nie powiodło się" >&2; RC=1; continue; }
+            # Merged from inside the existing folder, so a folder swapped for a link meanwhile is not followed
+            # (ditto never follows links in the destination and replaces files rather than writing into them).
+            if ! ( { cd -P -- "$t" 2>/dev/null && [ "$(stat -f %d:%i ..)" = "$HERE" ]; } || exit 1
+                   ditto "$item" . || exit 1
+                   if [ -n "$OWNER" ]; then chown "$OWNER" . || echo "⚠︎ chown $OWNER nie powiódł się dla $n" >&2; fi
+                   if [ -n "$MODE" ]; then chmod "$MODE" . || echo "⚠︎ chmod $MODE nie powiódł się dla $n" >&2; fi ); then
+              echo "✘ Kopiowanie $n do $DEST nie powiodło się" >&2; RC=1; continue
+            fi
           else
             if [ -e "$t" ] || [ -L "$t" ]; then
-              if ! mv "$t" "$STAGE/.cmcr-old-$n" 2>/dev/null; then
-                echo "✘ Nie można zastąpić $t" >&2
+              if ! /bin/mv "$t" "$STAGE/old/$n" 2>/dev/null; then
+                echo "✘ Nie można zastąpić $DEST/$n" >&2
                 case "$n" in *.app) echo "  Jeśli aplikacja nie jest uruchomiona: włącz „Pełny dostęp do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie)." >&2 ;; esac
                 RC=1; continue
               fi
             fi
-            if ! mv "$item" "$t"; then
-              mv "$STAGE/.cmcr-old-$n" "$t" 2>/dev/null
-              echo "✘ Nie można zapisać $t" >&2; RC=1; continue
+            # -h: a link put in place of the old item meanwhile is replaced, not entered.
+            if ! /bin/mv -h "$item" "$t"; then
+              if [ -e "$STAGE/old/$n" ] || [ -L "$STAGE/old/$n" ]; then /bin/mv "$STAGE/old/$n" "$t" 2>/dev/null; fi
+              echo "✘ Nie można zapisać $DEST/$n" >&2; RC=1; continue
             fi
           fi
-          if [ -n "$OWNER" ]; then chown -R "$OWNER" "$t" || echo "⚠︎ chown $OWNER nie powiódł się dla $n" >&2; fi
-          if [ -n "$MODE" ]; then chmod -R "$MODE" "$t" || echo "⚠︎ chmod $MODE nie powiódł się dla $n" >&2; fi
-          case "$n" in *.app) xattr -dr com.apple.quarantine "$t" 2>/dev/null ;; esac
           DONE+=("$t")
-          echo "✔ $t"
+          echo "✔ $DEST/$n"
         done
         rm -rf "$STAGE"
         if [ ${#DONE[@]} -gt 0 ]; then echo "---"; ls -ld "${DONE[@]}"; fi
@@ -691,22 +821,33 @@ public enum Scripts {
         """#, asRoot: asRoot)
     }
 
-    /// Streams a remote folder as tar to stdout (cmcr-pull transport).
+    /// Streams a remote folder as tar to stdout (cmcr-pull transport). A folder reached through a link a user
+    /// planted is refused: as root that would copy another account's files to the teacher (lesson "Zbierz prace").
     public static func pullArchive(source: String, asRoot: Bool) -> RemoteScript {
         RemoteScript(#"""
         SRC=\#(shQuote(source))
         cmcr_require_console "$SRC"
         SRC="${SRC//\{console\}/$CONSOLE_USER}"; SRC="${SRC/#\~/$HOME}"
         [ -d "$SRC" ] || { echo "Brak folderu: $SRC" >&2; exit 2; }
+        cmcr_pin_dir "$SRC"; X=$?
+        case $X in
+          0) ;;
+          2) exit 2 ;;
+          *) echo "Brak dostępu do folderu: $SRC" >&2; exit 2 ;;
+        esac
         echo "remote: ls -l $SRC" >&2
-        ls -l "$SRC" >&2
-        cd "$SRC" && COPYFILE_DISABLE=1 tar -cf - .
+        ls -l . >&2
+        COPYFILE_DISABLE=1 tar -cf - .
         """#, asRoot: asRoot)
     }
 
     /// Empties a folder inside a user account, /tmp or an external volume. The path is resolved first
     /// (`/Volumes/Macintosh HD` is a link to `/`), and Library, hidden folders (e.g. `.ssh`) and the
     /// administrator's home are refused. `dryRun` only lists what would be removed.
+    ///
+    /// Runs as root on a folder the student owns (lesson end), so a link the student planted anywhere on the way
+    /// (e.g. `~/Public/cmcr` → another account's Documents) is refused, and the deletion runs inside the folder
+    /// it checked (`cmcr_pin_dir`), never by path.
     public static func cleanFolder(_ path: String, dryRun: Bool = false) -> RemoteScript {
         RemoteScript(#"""
         DIR=\#(shQuote(path)); DRY=\#(dryRun ? 1 : 0)
@@ -723,7 +864,13 @@ public enum Scripts {
         esac
         shopt -u nocasematch
         [ -d "$DIR" ] || { echo "Brak folderu: $DIR"; exit 0; }
-        REAL="$(cmcr_realdir "$DIR")"
+        cmcr_pin_dir "$DIR"; X=$?
+        case $X in
+          0) ;;
+          2) exit 2 ;;
+          *) echo "Odmowa: nie można otworzyć $DIR" >&2; exit 2 ;;
+        esac
+        REAL="$CMCR_PINNED"
         [ -n "$REAL" ] || { echo "Odmowa: nie można otworzyć $DIR" >&2; exit 2; }
         # cmcr_realdir already returns the on-disk case; nocasematch also covers case-insensitive volumes.
         shopt -s nocasematch
@@ -747,16 +894,19 @@ public enum Scripts {
             esac ;;
         esac
         shopt -u nocasematch
+        # From here on only paths relative to the checked folder (the current directory).
         if [ $DRY = 1 ]; then
-          echo "Do usunięcia z $REAL:"; find "$REAL" -mindepth 1 -maxdepth 1 -print; exit 0
+          echo "Do usunięcia z $REAL:"
+          find . -mindepth 1 -maxdepth 1 -print | while IFS= read -r f; do printf '%s/%s\n' "$REAL" "${f#./}"; done
+          exit 0
         fi
-        if find "$REAL" -mindepth 1 -maxdepth 1 -exec rm -rf {} +; then
+        if find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +; then
           echo "Wyczyszczono $REAL"
         else
           echo "⚠︎ Nie wszystko udało się usunąć. Foldery Biurko/Dokumenty wymagają „Pełnego dostępu do dysku dla zdalnych użytkowników”." >&2
           RC=1
         fi
-        ls -la "$REAL"
+        ls -la .
         exit ${RC:-0}
         """#, asRoot: true)
     }
@@ -771,7 +921,8 @@ public enum Scripts {
     }
 
     /// README "Prepare files moving" on the remote side: shared folder writable by everyone. A missing home
-    /// folder of the account is not created (macOS builds it from the template at the first login).
+    /// folder of the account is not created (macOS builds it from the template at the first login). A folder
+    /// the student swapped for a link is refused (root would chown and open up the link's target).
     public static func prepareSharedFolder(_ path: String, owner: String) -> RemoteScript {
         RemoteScript(#"""
         DIR=\#(shQuote(path)); OWNER=\#(shQuote(owner))
@@ -796,7 +947,15 @@ public enum Scripts {
               echo "✘ Folder $(dirname "$DIR") nie istnieje – nie tworzę go." >&2; exit 2 ;;
           esac
         fi
-        mkdir -p "$DIR" && chown "$OWNER" "$DIR" && chmod 777 "$DIR" && ls -ld "$DIR"
+        # chown/chmod 777 as root: never through a link the student planted, and on the folder itself (.).
+        # Missing folders are created one at a time from inside their parent (cmcr_pin_create).
+        cmcr_pin_create "$DIR"; X=$?
+        case $X in
+          0) ;;
+          2) exit 2 ;;
+          *) echo "✘ Nie można utworzyć ani otworzyć $DIR" >&2; exit 2 ;;
+        esac
+        chown "$OWNER" . && chmod 777 . && ls -ld "$CMCR_PINNED"
         """#, asRoot: true)
     }
 

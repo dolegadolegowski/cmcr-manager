@@ -7,7 +7,9 @@ import Foundation
 /// - `asroot cmd…`          – run as root (sudo with the password supplied through SUDO_ASKPASS),
 /// - `as_console_user cmd…` – run inside the GUI session of the user logged in at the screen,
 /// - `with_askpass cmd…`    – run a tool that calls `sudo -A` itself (e.g. Homebrew),
-/// - `$CONSOLE_USER`, `$CONSOLE_UID`, `$CMCR_ADMIN_USER`, `$CMCR_TMP` (private temp dir, removed on exit).
+/// - `$CONSOLE_USER`, `$CONSOLE_UID`, `$CMCR_ADMIN_USER`, `$CMCR_TMP` (private temp dir, removed on exit),
+/// - `cmcr_pin_dir DIR` / `cmcr_pin_create DIR` – `cd` into a folder one component at a time, refusing a link a
+///   user planted on the way (`cmcr_walk`).
 ///
 /// The wrapper ignores SIGHUP and SIGPIPE, so it always cleans up; the body runs in a subshell with the usual
 /// SIGPIPE behaviour. A job (`jobID`) writes through relays that outlive the connection, so it keeps running
@@ -105,6 +107,106 @@ public struct RemoteScript: Sendable {
       r="$r${1#"$p"}"
       case "$r" in //*) r="${r#/}" ;; esac
       printf '%s\n' "$r"
+    }
+    # cmcr_walk PATH [create [OWNER]] – enters folder PATH one component at a time (from / when PATH is absolute,
+    # otherwise from the current folder), so neither a link a user planted nor a folder swapped meanwhile can
+    # redirect the shell. Each component is looked at without following it (stat does not follow links) and, after
+    # the `cd`, the folder entered must be that same folder (device:inode); a student who swaps their folder and a
+    # link back and forth (an atomic rename) only gets a refusal. A link is followed only when root owns it AND
+    # it lies in a folder only root can change (/tmp, /var, /etc in /, "/Volumes/Macintosh HD" in /Volumes); its
+    # target is walked the same way. Root owning the link is not enough: a student can hard-link root's link into
+    # their own folder (macOS allows it), where a relative target (MacOSX.sdk → MacOSX27.0.sdk) names something
+    # the student controls, and "/Volumes/Macintosh HD" → / leads to the whole disk.
+    # With "create", missing folders are made from inside their parent (owned by OWNER when given).
+    # Returns 0 (the shell is in PATH), 2 for a user's link ($CMCR_LINK: where it is) or a swap ($CMCR_LINK
+    # empty), 1 when a component is missing, not a folder, not accessible or cannot be created. On failure the
+    # shell is back in /.
+    cmcr_walk() {
+      local todo="$1" mode="${2:-}" owner="${3:-}" c t made hops=0 IFS=$' \t\n'
+      CMCR_LINK=""
+      case "$todo" in /*) cd / || return 1 ;; esac
+      while :; do
+        while [ "${todo#/}" != "$todo" ]; do todo="${todo#/}"; done
+        [ -n "$todo" ] || return 0
+        c="${todo%%/*}"
+        if [ "$c" = "$todo" ]; then todo=""; else todo="${todo#*/}"; fi
+        case "$c" in
+          .) continue ;;
+          ..) t="$(/bin/pwd -P)" || { cd /; return 1; }
+              t="${t%/*}"; todo="${t:-/}/$todo"; cd /; continue ;;
+        esac
+        made=0
+        set -- $(stat -f '%Sp %u %d:%i' -- "./$c" 2>/dev/null)
+        if [ $# -lt 3 ] && [ "$mode" = create ] && mkdir -- "./$c" 2>/dev/null; then
+          made=1
+          set -- $(stat -f '%Sp %u %d:%i' -- "./$c" 2>/dev/null)
+        fi
+        case "${1:-}" in
+          d*)
+            if ! cd -P -- "./$c" 2>/dev/null; then cd /; return 1; fi
+            if [ "$(stat -f %d:%i . 2>/dev/null)" != "$3" ]; then cd /; return 2; fi
+            if [ $made = 1 ] && [ -n "$owner" ]; then chown "$owner" . 2>/dev/null; fi ;;
+          l*)
+            t="$(/bin/pwd -P)"; [ "$t" = / ] && t=""
+            set -- "$@" $(stat -f '%u %Lp' . 2>/dev/null)
+            if [ "$2" != 0 ] || [ "${4:-}" != 0 ] || [ $(( 0${5:-2} & 022 )) != 0 ]; then
+              CMCR_LINK="$t/$c"; cd /; return 2
+            fi
+            hops=$((hops + 1))
+            t="$(readlink "./$c")"
+            if [ -z "$t" ] || [ $hops -gt 32 ]; then cd /; return 1; fi
+            case "$t" in /*) cd / ;; esac
+            todo="$t/$todo" ;;
+          *) cd /; return 1 ;;
+        esac
+      done
+    }
+    # Prints where the way to PATH leads through a link a user could have planted (see cmcr_walk); fails when it
+    # does not (also when a component is missing: nothing beyond it can be a link).
+    cmcr_user_link() {
+      ( cmcr_walk "$1" >/dev/null 2>&1; [ $? = 2 ] && [ -n "$CMCR_LINK" ] && printf '%s\n' "$CMCR_LINK" )
+    }
+    cmcr_link_refusal() {
+      local who; who="$(stat -f %Su "$1" 2>/dev/null)"
+      if [ "$who" = root ]; then
+        who="konto „root”, ale leży w folderze, który może zmieniać użytkownik (podstawiona kopia dowiązania systemowego)"
+      else
+        who="konto „$who”, a nie przez system"
+      fi
+      echo "Odmowa: „$1” to dowiązanie symboliczne do „$(readlink "$1" 2>/dev/null)”, utworzone przez $who. Ze względów bezpieczeństwa CMCR Manager nie zapisuje ani nie usuwa plików przez dowiązania utworzone przez użytkowników – ktoś mógł je podstawić, żeby dostać się do plików innego konta. Usuń to dowiązanie (np. w Przeglądarce plików) i utwórz w tym miejscu zwykły folder." >&2
+    }
+    # The refusal after cmcr_walk returned 2 for PATH.
+    cmcr_walk_refusal() {
+      if [ -n "$CMCR_LINK" ]; then cmcr_link_refusal "$CMCR_LINK"
+      else echo "Odmowa: folder $1 został podmieniony w trakcie sprawdzania (dowiązanie symboliczne)." >&2; fi
+    }
+    # Enters folder DIR through cmcr_walk and sets CMCR_PINNED (physical path) and CMCR_PINNED_ID (device:inode).
+    # File operations then use paths relative to the current folder: the student owns the folders on the way and
+    # could swap one for a link afterwards, but that cannot move the shell out of the folder it is in. Returns 2
+    # (message on stderr) for a user's link or a swap, 1 when DIR cannot be entered (no message).
+    cmcr_pin_dir() {
+      cmcr_walk "$1"
+      case $? in
+        0) CMCR_PINNED="$(/bin/pwd -P)"; CMCR_PINNED_ID="$(stat -f %d:%i .)" ;;
+        2) cmcr_walk_refusal "$1"; return 2 ;;
+        *) return 1 ;;
+      esac
+    }
+    # cmcr_pin_create DIR [OWNER] – cmcr_pin_dir for a folder that may not exist yet: enters the deepest existing
+    # folder on the way, then creates the missing ones one at a time from inside their parent (owned by OWNER).
+    cmcr_pin_create() {
+      local p="$1" rest
+      while [ ! -e "$p" ] && [ ! -L "$p" ]; do p="$(dirname "$p")"; done
+      cmcr_pin_dir "$p" || return $?
+      rest="${1#"$p"}"
+      while [ "${rest#/}" != "$rest" ]; do rest="${rest#/}"; done
+      [ -n "$rest" ] || return 0
+      cmcr_walk "$rest" create "${2:-}"
+      case $? in
+        0) CMCR_PINNED="$(/bin/pwd -P)"; CMCR_PINNED_ID="$(stat -f %d:%i .)" ;;
+        2) cmcr_walk_refusal "$1"; return 2 ;;
+        *) return 1 ;;
+      esac
     }
     """#
 

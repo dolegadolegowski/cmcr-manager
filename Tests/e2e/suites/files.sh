@@ -102,7 +102,9 @@ expect_code "mkdir -p: istniejący folder – kod 0" "$code" 0 "$out"
 clear_fakelog
 out="$(ctlpw mkdir 1 "$B/jako root/w środku" -p --root)"; code=$?
 expect_code "mkdir --root: kod 0" "$code" 0 "$out"
-expect "mkdir --root: właściciel jak folder nadrzędny" "$(fakelog)" "chown -R $ME:" "$B/jako root"
+# Each new folder is chowned from inside itself (never `chown -R` by path as root).
+expect "mkdir --root: właściciel jak folder nadrzędny" "$(fakelog)" "chown $ME:" "$B/jako root/w środku"
+expect_not "mkdir --root: bez chown -R" "$(fakelog)" "chown -R"
 out="$(ctl rename 1 "$B/nowa
 linia.txt" "bez nowej linii.txt")"; code=$?
 expect_code "rename: kod 0" "$code" 0 "$out"

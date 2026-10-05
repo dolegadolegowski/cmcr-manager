@@ -288,14 +288,16 @@ public extension Scripts {
         if [ ! -d "$DIR" ]; then
           A="$(dirname "$DIR")"
           while [ ! -d "$A" ] && [ "$A" != / ]; do A="$(dirname "$A")"; done
+          # As the student when the folder above is theirs (their own permissions); otherwise as root below.
           if [ "$(stat -f %Su "$A" 2>/dev/null)" = "$OWNER" ] && [ "$(id -un)" != "$OWNER" ]; then
-            sudo -u "$OWNER" /bin/mkdir -p "$DIR"
-          else
-            /bin/mkdir -p "$DIR"
-          fi || exit 1
+            sudo -u "$OWNER" /bin/mkdir -p "$DIR" || exit 1
+          fi
         fi
         [ -L "$DIR" ] && { echo "${DIR#"$R"} jest dowiązaniem – przerwano." >&2; exit 1; }
-        chown "$OWNER" "$DIR" && chmod 777 "$DIR" && ls -ld "$DIR"
+        # chown/chmod from inside the folder, reached (and created) one folder at a time: never through a link the
+        # student planted on the way (cmcr_pin_create).
+        cmcr_pin_create "$DIR" || { [ $? = 2 ] || echo "Nie można utworzyć ani otworzyć ${DIR#"$R"}" >&2; exit 1; }
+        chown "$OWNER" . && chmod 777 . && ls -ld "$DIR"
         """#, asRoot: true)
     }
 
