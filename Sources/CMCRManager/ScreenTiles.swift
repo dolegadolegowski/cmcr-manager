@@ -45,10 +45,13 @@ private struct ScreenScopeModifier: ViewModifier {
                 center.setScope(id, visible: visible)
                 if let window { onWindow?(window) }
             })
-            .onAppear { center.registerScope(id, pausesWhenInactive: pausesWhenInactive) }
+            .onAppear { center.registerScope(id, pausesWhenInactive: pauses) }
             .onDisappear { center.removeScope(id) }
-            .onChange(of: pausesWhenInactive) { _, value in center.registerScope(id, pausesWhenInactive: value) }
+            .onChange(of: pauses) { _, value in center.registerScope(id, pausesWhenInactive: value) }
     }
+
+    /// Off-screen snapshot windows never become active; their tiles keep running.
+    private var pauses: Bool { pausesWhenInactive && !SnapshotRenderer.isActive }
 }
 
 private struct ScreenObservation: ViewModifier {
@@ -118,7 +121,8 @@ struct WindowReader: NSViewRepresentable {
 
         private func report(closing: Bool) {
             guard let window else { return }
-            onChange?(window, !closing && window.occlusionState.contains(.visible) && !window.isMiniaturized)
+            let visible = window.occlusionState.contains(.visible) && !window.isMiniaturized
+            onChange?(window, !closing && (visible || SnapshotRenderer.isActive))
         }
     }
 }
