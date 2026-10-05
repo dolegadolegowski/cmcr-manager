@@ -586,6 +586,9 @@ public enum SSH {
             if lower.contains("kex_exchange_identification") || lower.contains("banner exchange") {
                 return (.error, "Serwer SSH chwilowo odrzucił połączenie (zbyt wiele jednoczesnych połączeń) – spróbuj ponownie.")
             }
+            if lower.contains("mm_send_fd") || lower.contains("send fds failed") {
+                return (.error, "Nie udało się przekazać sesji przez wspólne połączenie SSH – spróbuj ponownie.")
+            }
             if lower.contains("session open refused by peer") || lower.contains("mux_client_request_session") {
                 return (.error, "Przekroczono limit jednoczesnych sesji SSH na komputerze – spróbuj ponownie lub zmniejsz liczbę równoległych operacji.")
             }

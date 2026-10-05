@@ -164,6 +164,8 @@ struct MuxDescriptorTests {
     @Test func aRefusedDescriptorHandOverKeepsTheSharedConnection() {
         let r = failure(255, "mm_send_fd: sendmsg(2): Message too long\nmux_client_request_session: send fds failed\n")
         #expect(SSH.connectFailure(r) == .sharedConnection)
+        // Without a retry the raw message stays, but the teacher reads Polish, not ssh's English.
+        #expect(SSH.diagnose(r).1 == "Nie udało się przekazać sesji przez wspólne połączenie SSH – spróbuj ponownie.")
     }
 
     @Test func commandsNearAn8KiBBoundaryArePaddedPastIt() {
