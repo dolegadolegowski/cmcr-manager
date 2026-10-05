@@ -365,6 +365,14 @@ public extension Scripts {
           fi
           return 0
         }
+        # Stops a process and everything it started, children first: the wrapper subshell of a notice, the
+        # launchctl/sudo under it and the osascript itself. They stay in the script's process group, so a job
+        # cancel still reaches them too.
+        scr_kill_tree() {
+          local c
+          for c in $(pgrep -P "$1" 2>/dev/null); do scr_kill_tree "$c"; done
+          kill "$1" 2>/dev/null
+        }
         # Tells a user who was not told yet that the screen is being viewed. The notice is a small panel drawn by
         # osascript in the user's session (Scripts.observeNoticeJXA): unlike `display notification` it needs no
         # Notification Center permission and Focus does not hide it, and it confirms that it is on screen
@@ -373,7 +381,11 @@ public extension Scripts {
         scr_notify() {
           [ "$CMCR_NOTIFY" = 1 ] || return 0
           [ "$CONSOLE_USER" = "$CMCR_LAST" ] && return 0
-          local out="$SCR_DIR/notice.out" err="$SCR_DIR/notice.err" pid i=0 state="" rc="" detail="" why
+          local out err pid i=0 state="" rc="" detail="" why
+          # Fresh files per attempt: a late answer of an earlier attempt must not count for this one.
+          SCR_NOTICE_N=$((${SCR_NOTICE_N:-0} + 1))
+          rm -f "$SCR_DIR"/notice.* 2>/dev/null
+          out="$SCR_DIR/notice.$SCR_NOTICE_N.out"; err="$SCR_DIR/notice.$SCR_NOTICE_N.err"
           : > "$out"; : > "$err"
           scr_gui_user /usr/bin/osascript -l JavaScript -e "$SCR_NOTICE" CMCR_OBSERVE_NOTICE </dev/null >"$out" 2>"$err" &
           pid=$!
@@ -396,7 +408,8 @@ public extension Scripts {
           if [ "$state" = hidden ]; then detail="okno komunikatu nie pojawiło się na ekranie"
           elif [ -n "$rc" ]; then detail="osascript zakończył się kodem $rc"
           else
-            kill "$pid" 2>/dev/null
+            # A hung osascript must not outlive the attempt (each cycle would leave one more behind).
+            scr_kill_tree "$pid"; wait "$pid" 2>/dev/null
             detail="brak potwierdzenia wyświetlenia w ciągu 6 s"
           fi
           why="$(grep -v '^ *$' "$err" 2>/dev/null | head -n 1)"

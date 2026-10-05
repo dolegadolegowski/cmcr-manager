@@ -108,6 +108,29 @@ expect "setup po zmianie harmonogramu: pmset repeat" "$(fakelog)" "pmset repeat 
 out="$(setup_run --verify)"
 expect "setup --verify po przywróceniu: nic do zmiany" "$out" "✔ Harmonogram: pn wt śr cz pt" '"pending_count": 0,'
 
+# pmset refuses the schedule while the app's schedule is in place: the step fails and the marker keeps no
+# fingerprint, so neither --verify nor the next run takes the app's events for the script's.
+out="$(ctlpw schedule set 1 --on MTWRF@08:15 --off MTWRF@15:00 --no-autorestart --no-womp)"
+: > "$WORK/pmset-repeat.fail"
+clear_fakelog
+out="$(setup_run)"; code=$?
+rm -f "$WORK/pmset-repeat.fail"
+expect_code "setup: pmset repeat odrzuca harmonogram – kod 1" "$code" 1 "$out"
+expect "setup: pmset repeat odrzuca harmonogram – błąd w raporcie" "$out" "✘ pmset nie przyjął harmonogramu"
+expect_not "setup: pmset repeat odrzuca harmonogram – nie udaje zmiany" "$out" "Harmonogram ustawiony"
+expect "setup: pmset repeat wywołany" "$(fakelog)" "pmset repeat wakeorpoweron MTWRF 07:30:00 shutdown MTWRF 17:00:00 (odmowa)"
+marker="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("sched=[%s] fail=%s" % (d.get("power_schedule_sched", "-"), d["fail_count"]))' "$MARK" 2>&1)"
+expect "setup: po odmowie pmset znacznik bez odcisku harmonogramu" "$marker" "sched=[]" "fail=1"
+out="$(setup_run --verify)"
+expect "setup --verify po odmowie pmset: harmonogram do zmiany" "$out" \
+  "Wymaga zmiany: ustawić harmonogram (pn wt śr cz pt: włączenie 07:30, wyłączenie 17:00)"
+expect_not "setup --verify po odmowie pmset: nie udaje, że jest dobrze" "$out" "✔ Harmonogram:"
+out="$(setup_run)"; code=$?
+expect_code "setup po odmowie pmset: kolejne uruchomienie – kod 0" "$code" 0 "$out"
+expect "setup po odmowie pmset: harmonogram ustawiony ponownie" "$out" "Harmonogram ustawiony: pn wt śr cz pt"
+out="$(setup_run --verify)"
+expect "setup --verify po ponowieniu: nic do zmiany" "$out" "✔ Harmonogram: pn wt śr cz pt" '"pending_count": 0,'
+
 cp -p "$SR/etc/ssh/sshd_config.d/050-cmcr-manager.conf" "$WORK/sshd-before.conf"
 : > "$SS/sshd-t-fails"
 out="$(setup_run --ssh-key-only)"; code=$?
@@ -185,6 +208,12 @@ sqlite3 "$TCCDIR/TCC.db" "CREATE TABLE access (service TEXT, client TEXT, auth_v
 out="$(sctl readiness 1)"; code=$?
 expect "readiness: wpis w TCC.db, ale sesja SSH bez uprawnienia – ręcznie" "$out" "☐ Nagrywanie ekranu" "/usr/libexec/sshd-session"
 expect_not "readiness: nieaktualny wpis TCC nie udaje gotowości" "$out" "● imac01 – gotowy"
+clear_fakelog
+out="$(setup_run --verify)"
+expect "setup --verify: nieaktualny wpis TCC – rozstrzyga sprawdzenie w sesji (jak Gotowość)" "$out" \
+  '"screen_capture_remote": "no"' "☐ Ustawienia › Prywatność i ochrona › Nagrywanie ekranu"
+expect_not "setup --verify: nieaktualny wpis TCC nie udaje zgody" "$out" "Nagrywanie ekranu dla sesji SSH: zezwolono"
+expect "setup --verify: sprawdzenie nagrywania bez pytania o zgodę" "$(fakelog)" "osascript: screen-capture preflight"
 echo true > "$SS/screen-preflight"
 out="$(sctl readiness 1)"; code=$?
 expect_code "readiness: wszystko gotowe – kod 0" "$code" 0 "$out"
@@ -197,6 +226,14 @@ sqlite3 "$TCCDIR/TCC.db" "DELETE FROM access WHERE service='kTCCServiceScreenCap
 out="$(setup_run --verify)"
 expect "setup --verify: uprawnienie dla sshd-session rozpoznane" "$out" '"screen_capture_remote": "yes"' \
   "Nagrywanie ekranu dla sesji SSH: zezwolono"
+# Nobody logged in: only the TCC row speaks, and the report says so.
+: > "$WORK/fake-no-console"
+clear_fakelog
+out="$(setup_run --verify)"
+rm -f "$WORK/fake-no-console"
+expect "setup --verify bez zalogowanego użytkownika: tylko wpis w TCC" "$out" '"screen_capture_remote": "yes"' \
+  "Nagrywanie ekranu dla sesji SSH: wpis w TCC zezwala – sprawdź w Gotowości (nikt nie jest zalogowany przy komputerze)"
+expect_not "setup --verify bez zalogowanego użytkownika: bez sprawdzenia w sesji" "$(fakelog)" "screen-capture preflight"
 echo false > "$SS/screen-preflight"
 rm -rf "$TCCDIR"
 out="$(CMCR_CONFIG_DIR="$SCONF" CMCR_PASSWORD="zle-haslo" "$CTL" readiness 1 2>&1)"
@@ -225,5 +262,33 @@ out="$(sctl setup 1 --no-ssh-acl)"
 D="$SHOME/Public/cmcr"
 if [ "$(stat -f %Lp "$D" 2>/dev/null)" = 777 ] && [ -d "$SHOME/Public" ]; then pass "folder ucznia: utworzony z folderami pośrednimi"
 else fail "folder ucznia: nie utworzono $D" "$out"; fi
+
+section "Folder ucznia – dowiązanie podstawione przez ucznia"
+# The "student" (the test user) swaps the shared folder, or Public above it, for a link to a folder of another
+# account. Root must refuse instead of giving that folder to the student (chown only logs here; chmod is real).
+VICTIM="$WORK/setup-victim"
+mkdir -p "$VICTIM/cmcr" && chmod 700 "$VICTIM" "$VICTIM/cmcr"
+victim_intact() { # victim_intact NAME DIR
+  if [ "$(stat -f '%Su %Lp' "$2")" = "$ME 700" ] && ! ls -led "$2" | grep -q ' allow '; then pass "$1"
+  else fail "$1" "$(ls -led "$2" 2>&1)"; fi
+}
+rm -rf "$D" && ln -s "$VICTIM" "$D"
+clear_fakelog
+out="$(sctl setup 1 --no-ssh-acl)"; code=$?
+expect_code "folder ucznia jako dowiązanie: kod 1" "$code" 1 "$out"
+expect "folder ucznia jako dowiązanie: odmowa" "$out" "✘ " "Public/cmcr jest dowiązaniem utworzonym przez konto „$ME”"
+victim_intact "folder ucznia jako dowiązanie: folder innego konta nietknięty" "$VICTIM"
+expect_not "folder ucznia jako dowiązanie: bez chown w folderze innego konta" "$(fakelog)" "setup-victim"
+out="$(sctl setup 1 --no-ssh-acl --verify)"
+expect "folder ucznia jako dowiązanie: --verify też odmawia" "$out" "Public/cmcr jest dowiązaniem"
+rm -f "$D"
+mv "$SHOME/Public" "$SHOME/Public.real" && ln -s "$VICTIM" "$SHOME/Public"
+clear_fakelog
+out="$(sctl setup 1 --no-ssh-acl)"; code=$?
+expect_code "Public jako dowiązanie: kod 1" "$code" 1 "$out"
+expect "Public jako dowiązanie: odmowa" "$out" "Public jest dowiązaniem utworzonym przez konto „$ME”"
+victim_intact "Public jako dowiązanie: folder cmcr innego konta nietknięty" "$VICTIM/cmcr"
+expect_not "Public jako dowiązanie: bez chown w folderze innego konta" "$(fakelog)" "setup-victim"
+rm -f "$SHOME/Public" && mv "$SHOME/Public.real" "$SHOME/Public"
 
 rm -rf "$SS"

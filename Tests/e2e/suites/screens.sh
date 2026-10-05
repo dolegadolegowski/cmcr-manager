@@ -207,6 +207,26 @@ expect "powiadomienie bez potwierdzenia: limit czasu" "$out" "brak potwierdzenia
 expect_not "powiadomienie bez potwierdzenia: ekran nie został przechwycony" "$(fakelog)" "screencapture"
 rm -f "$WORK/fake-notify-silent"
 
+# A hung osascript (no answer, never quits): after the 6 s the attempt stops it with everything under it
+# (launchctl asuser, sudo -u), instead of leaving one more behind on every cycle.
+scr_hung() { pgrep -f "cmcr-fake-osascript $WORK/" 2>/dev/null | wc -l | tr -d ' '; }
+scr_no_hung() { # scr_no_hung NAME – no hung fake osascript is left (signals may take a moment)
+  local i
+  for i in $(seq 1 20); do [ "$(scr_hung)" = 0 ] && break; sleep 0.1; done
+  expect_code "$1" "$(scr_hung)" 0 "$(pgrep -lf "cmcr-fake-osascript $WORK/" 2>&1)"
+}
+touch "$WORK/fake-notify-hang"
+out="$(ctlpw screenshot 1 "$WORK/scr-hang.jpg")"
+expect "powiadomienie zawieszone (sesja ucznia): limit czasu" "$out" "brak potwierdzenia wyświetlenia"
+scr_no_hung "powiadomienie zawieszone (sesja ucznia): po limicie czasu nie zostaje osascript"
+rm -f "$WORK/console_user"
+out="$(ctlpw screenshot 1 "$WORK/scr-hang-own.jpg")"
+expect "powiadomienie zawieszone (własna sesja): limit czasu" "$out" "brak potwierdzenia wyświetlenia"
+scr_no_hung "powiadomienie zawieszone (własna sesja): po limicie czasu nie zostaje osascript"
+rm -f "$WORK/fake-notify-hang"
+pkill -f "cmcr-fake-osascript $WORK/" 2>/dev/null
+scr_console daemon
+
 # Own session of the SSH account (no sudo): the same rule.
 rm -f "$WORK/console_user"
 touch "$WORK/fake-notify-fail"
