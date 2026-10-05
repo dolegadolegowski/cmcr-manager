@@ -15,7 +15,7 @@ fi
 UNIT_HOME="$(mktemp -d /tmp/cmcr-unit.XXXXXX)"
 trap 'rm -rf "$UNIT_HOME"' EXIT
 CMCR_CONFIG_DIR="$UNIT_HOME/config" CMCR_KEYCHAIN_SERVICE="pl.cmcr.manager.unit-tests" \
-  CMCR_PASSWORD="unit-test-password" CMCR_UPDATE_STATE_DIR="$UNIT_HOME/update" \
+  CMCR_PASSWORD="unit-test-password" CMCR_UPDATE_STATE_DIR="$UNIT_HOME/update" CMCR_SSH_CONTROL_DIR="$UNIT_HOME/mux" \
   swift test ${EXTRA[@]+"${EXTRA[@]}"}
 if [ "${1:-}" != "--unit" ]; then
   CMCR_E2E_NOBUILD=0 Tests/e2e/run.sh

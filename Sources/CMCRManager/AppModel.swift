@@ -272,6 +272,8 @@ final class AppModel: ObservableObject {
     var hostTrustPostponed = Set<UUID>()
     /// Macs whose last status check was refused because their key was never trusted.
     var untrustedHosts = Set<UUID>()
+    /// Of those, the ones found since the last offer (`offerTrustForNewHosts`).
+    var newlyUntrustedHosts = Set<UUID>()
     /// Skip hosts known to be offline or failing to log in instead of waiting for their timeouts.
     @Published var skipUnreachable = TargetUIState.skipUnreachable {
         didSet { TargetUIState.skipUnreachable = skipUnreachable }
@@ -525,7 +527,7 @@ final class AppModel: ObservableObject {
         let timeout = OperationTimeout.status(connectTimeout: settings.connectTimeout)
         let jobs = list.map { ($0, password(for: $0)) }
         Task {
-            defer { if !quietly { offerTrustForNewHosts(list) } }
+            defer { offerTrustForNewHosts() }
             await withTaskGroup(of: Void.self) { group in
                 var active = 0
                 for (m, pw) in jobs {
@@ -555,18 +557,24 @@ final class AppModel: ObservableObject {
         return true
     }
 
-    /// After an explicit check (and at start): Macs refused because their key was never trusted are offered in
-    /// HostTrustSheet – once per session, never for a changed key (that one needs a deliberate look in
-    /// Konfiguracja › Przygotowanie iMaców).
-    private func offerTrustForNewHosts(_ checked: [Machine]) {
-        let candidates = checked.filter { untrustedHosts.contains($0.id) && !hostTrustPostponed.contains($0.id) }
+    /// After a status check: Macs that have just been refused because their key was never trusted (first contact
+    /// at start, a Mac added to the list) are offered in HostTrustSheet – once, and not again after "Nie teraz"
+    /// in this session. A changed key is never offered by itself: it needs a deliberate look in
+    /// Konfiguracja › Przygotowanie iMaców.
+    private func offerTrustForNewHosts() {
+        let candidates = machines.filter { newlyUntrustedHosts.contains($0.id) && !hostTrustPostponed.contains($0.id) }
+        newlyUntrustedHosts = []
         guard !candidates.isEmpty else { return }
         reviewHostKeys(candidates, automatic: true)
     }
 
     private func applyStatus(_ m: Machine, _ r: CommandResult) {
         statusInFlight.remove(m.id)
-        if !r.started, HostTrust.refusal(r) == .unknown { untrustedHosts.insert(m.id) } else { untrustedHosts.remove(m.id) }
+        if !r.started, HostTrust.refusal(r) == .unknown {
+            if untrustedHosts.insert(m.id).inserted { newlyUntrustedHosts.insert(m.id) }
+        } else {
+            untrustedHosts.remove(m.id)
+        }
         var st = HostStatus()
         st.updatedAt = Date()
         if r.succeeded {

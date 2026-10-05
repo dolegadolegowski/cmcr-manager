@@ -247,7 +247,37 @@ struct AppLogicTests {
                                            environment: ["CMCR_CONFIG_DIR": "/tmp/x"]))
     }
 
-    // tofu-password-disclosure-spoofed-mdns (app side)
+    // tofu-password-disclosure-spoofed-mdns (app side): "Zaufaj" stores exactly the key the sheet showed.
+    @Test func trustingStoresExactlyTheShownKey() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        let file = AppTestEnvironment.knownHostsFile
+        try? FileManager.default.removeItem(at: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cmcr-key-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let key = dir.appendingPathComponent("hostkey")
+        #expect(await ProcessRunner.run("/usr/bin/ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", key.path]).succeeded)
+        let pub = try String(contentsOf: URL(fileURLWithPath: key.path + ".pub"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let listing = await ProcessRunner.run("/usr/bin/ssh-keygen", ["-l", "-f", key.path + ".pub"]).stdoutText
+        let fp = try #require(listing.split(separator: " ").first { $0.hasPrefix("SHA256:") }.map(String.init))
+
+        let review = HostTrustReview(machines: [a])
+        var scan = HostTrust.Scan(host: a)
+        scan.keys = [HostTrust.Key(type: "ED25519", fingerprint: fp, line: "[127.0.0.1]:1 \(pub)")]
+        review.setScan(scan)
+        model.hostTrustReview = review
+        await model.trustHostKeys(in: review)
+        #expect(model.hostTrustReview == nil)
+        #expect(try String(contentsOf: file, encoding: .utf8) == "[127.0.0.1]:1 \(pub)\n")
+        let trusted = await HostTrust.trustedKeys(for: a, settings: model.sshSettings)
+        #expect(trusted.map(\.fingerprint) == [fp])
+        scan.trusted = trusted
+        #expect(scan.state == .trusted)
+    }
+
     @Test func aRefusedUnknownKeyIsOfferedForTrustNotAccepted() async throws {
         let a = AppTestEnvironment.closedHost("imac01")
         let model = AppTestEnvironment.makeModel([a])

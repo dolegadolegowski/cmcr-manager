@@ -12,11 +12,15 @@ enum AppTestEnvironment {
     static var isIsolated: Bool {
         let env = ProcessInfo.processInfo.environment
         guard let config = env["CMCR_CONFIG_DIR"], let service = env["CMCR_KEYCHAIN_SERVICE"],
-              let state = env["CMCR_UPDATE_STATE_DIR"], env["CMCR_PASSWORD"]?.isEmpty == false else { return false }
+              let state = env["CMCR_UPDATE_STATE_DIR"], let mux = env["CMCR_SSH_CONTROL_DIR"],
+              env["CMCR_PASSWORD"]?.isEmpty == false else { return false }
         let temporary = [NSTemporaryDirectory(), "/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/"]
         return service != "pl.cmcr.manager" && service.hasPrefix("pl.cmcr.manager.")
-            && [config, state].allSatisfy { path in temporary.contains { path.hasPrefix($0) } }
+            && [config, state, mux].allSatisfy { path in temporary.contains { path.hasPrefix($0) } }
     }
+
+    /// Host keys the tests trust: a file in the test configuration (never ~/.ssh/known_hosts).
+    static var knownHostsFile: URL { ConfigStore.directory.appendingPathComponent("test_known_hosts") }
 
     /// A Mac that refuses every connection at once (nothing listens on port 1).
     static func closedHost(_ name: String, mac: String = "") -> Machine {
@@ -28,6 +32,8 @@ enum AppTestEnvironment {
         _ = NSApplication.shared          // NSApp is used for the Dock badge and notifications
         precondition(Keychain.service != "pl.cmcr.manager", "testy nie mogą używać prawdziwego Pęku kluczy")
         let model = AppModel()
+        model.settings.extraSSHOptions = "UserKnownHostsFile=\(knownHostsFile.path)"
+        precondition(HostTrust.files(model.sshSettings) == [knownHostsFile.path])
         model.machines = hosts
         model.statuses = [:]
         return model
