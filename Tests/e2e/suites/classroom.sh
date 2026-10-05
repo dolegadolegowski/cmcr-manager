@@ -128,7 +128,7 @@ if [ "$U8_BG_OK" = 1 ]; then
   # FileVault: the delayed restart arms the one-time unlock while it still has the password.
   touch "$WORK/fake-filevault"
   clear_fakelog
-  out="$(ctlpw power-later restart 5 1)"; code=$?
+  out="$(ctlpw power-later restart 5 1 --yes)"; code=$?
   expect_code "power-later restart z FileVault: kod 0" "$code" 0 "$out"
   expect "power-later restart z FileVault: odblokowanie uzbrojone od razu" "$(fakelog)" \
     "fdesetup authrestart -delayminutes -1 -inputplist password ok"
@@ -141,26 +141,26 @@ if [ "$U8_BG_OK" = 1 ]; then
   # Other test runs on this Mac (same account) cancel delayed actions too; schedule again if one got there first.
   for _ in 1 2 3; do
     contains "" "$out" "Anulowano zaplanowane" && break
-    ctlpw power-later restart 5 1 >/dev/null
+    ctlpw power-later restart 5 1 --yes >/dev/null
     out="$(ctlpw power-cancel 1)"
   done
   expect "power-cancel po restarcie z FileVault: uprzedza o uzbrojonym odblokowaniu" "$out" "Anulowano zaplanowane" \
     "uzbrojone do najbliższego restartu" "nie pozwala go cofnąć"
   touch "$WORK/fake-fde-refuse"
-  out="$(ctlpw power-later restart 5 1)"
+  out="$(ctlpw power-later restart 5 1 --yes)"
   expect "power-later restart: odmowa authrestart zgłoszona nauczycielowi" "$out" "fdesetup authrestart odmówił" \
     "ekranie odblokowania"
   ctlpw power-cancel 1 >/dev/null
   rm -f "$WORK/fake-fde-refuse"
   clear_fakelog
-  out="$(ctlpw power-later restart 0 1)"
+  out="$(ctlpw power-later restart 0 1 --yes)"
   for _ in $(seq 1 50); do grep -q "shutdown -r now" "$WORK/fake.log" 2>/dev/null && break; sleep 0.1; done
   fv_order="$(grep -e "fdesetup authrestart" -e "shutdown -r now" "$WORK/fake.log" | cut -c1-20 | tr '\n' '|')"
   case "$fv_order" in "fdesetup authrestart|shutdown -r now|") pass "power-later restart 0: odblokowanie przed restartem" ;;
     *) fail "power-later restart 0: kolejność odblokowania i restartu ($fv_order)" "$(fakelog)" ;; esac
   rm -f "$WORK/fake-filevault"
   clear_fakelog
-  out="$(ctlpw power-later restart 5 1)"
+  out="$(ctlpw power-later restart 5 1 --yes)"
   expect_not "power-later restart bez FileVault: nic nie uzbrojono" "$(fakelog)" "fdesetup authrestart"
   out="$(ctlpw power-cancel 1)"
   expect_not "power-cancel bez FileVault: bez ostrzeżenia o odblokowaniu" "$out" "FileVault"

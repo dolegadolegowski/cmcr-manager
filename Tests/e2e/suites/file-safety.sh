@@ -71,8 +71,8 @@ done
 
 section "Bezpieczeństwo plików – Zbierz prace przez dowiązanie ucznia"
 f2_victim "$F2/ofiara/Documents"
-out="$(ctlpw collect 1 --from "$F2/uczen/Public/cmcr" --to "$F2/zebrane" --no-date --clean --root)"; code=$?
-[ "$code" != 0 ] && pass "collect --clean --root: odmowa (kod $code)" || fail "collect --clean --root: zebrano przez dowiązanie" "$out"
+out="$(ctlpw collect 1 --from "$F2/uczen/Public/cmcr" --to "$F2/zebrane" --no-date --clean --root --yes)"; code=$?
+[ "$code" = 1 ] && pass "collect --clean --root: odmowa (kod $code)" || fail "collect --clean --root: zebrano przez dowiązanie" "$out"
 expect "collect: komunikat o dowiązaniu" "$out" "dowiązanie"
 f2_intact "collect --clean: pliki innego konta nietknięte" "$F2/ofiara/Documents"
 [ -z "$(find "$F2/zebrane" -name 'dokument.txt' 2>/dev/null)" ] && pass "collect: cudze pliki nie trafiły do nauczyciela" \
@@ -101,11 +101,12 @@ expect_code "removeCollected: zwykły folder – kod 0" "$code" 0 "$out"
 
 section "Bezpieczeństwo plików – Przeglądarka: usuwanie przez dowiązanie"
 f2_victim "$F2/ofiara/Documents"
-out="$(ctl rm 1 "$F2/uczen/Public/cmcr/dokument.txt")"; code=$?
-expect_code "rm: element za dowiązaniem ucznia – kod 65" "$code" 65 "$out"
+out="$(ctl rm 1 "$F2/uczen/Public/cmcr/dokument.txt" --yes)"; code=$?
+expect_code "rm: element za dowiązaniem ucznia – kod 1" "$code" 1 "$out"
+expect "rm: komunikat o dowiązaniu" "$out" "dowiązanie"
 f2_intact "rm: pliki innego konta nietknięte" "$F2/ofiara/Documents"
 ln -s "$F2/ofiara/Documents" "$F2/zwykly/skrot"
-out="$(ctl rm 1 "$F2/zwykly/skrot")"; code=$?
+out="$(ctl rm 1 "$F2/zwykly/skrot" --yes)"; code=$?
 expect_code "rm: samo dowiązanie można usunąć – kod 0" "$code" 0 "$out"
 [ ! -L "$F2/zwykly/skrot" ] && pass "rm: dowiązanie usunięte" || fail "rm: dowiązanie zostało" "$out"
 f2_intact "rm: cel dowiązania nietknięty" "$F2/ofiara/Documents"
@@ -186,15 +187,17 @@ if [ -n "$SDKT" ] && [ "${SDKT#/}" = "$SDKT" ] && ln -P "$SDKLINK" "$F2/uczen7/P
   out="$(ctlpw _builder push 1 "$S7" "$ME" 777 "$F2/wyslij/plan.txt" --root)"; code=$?
   expect_code "kopia dowiązania: push – kod 2" "$code" 2 "$out"
   f2_intact "kopia dowiązania: push – pliki nietknięte" "$F2/ofiara7"
-  out="$(ctlpw collect 1 --from "$S7" --to "$F2/zebrane7" --no-date --clean --root)"; code=$?
-  [ "$code" != 0 ] && pass "kopia dowiązania: collect --clean odrzucony (kod $code)" || fail "kopia dowiązania: collect" "$out"
+  out="$(ctlpw collect 1 --from "$S7" --to "$F2/zebrane7" --no-date --clean --root --yes)"; code=$?
+  [ "$code" = 1 ] && pass "kopia dowiązania: collect --clean odrzucony (kod $code)" || fail "kopia dowiązania: collect" "$out"
   f2_intact "kopia dowiązania: collect – pliki nietknięte" "$F2/ofiara7"
   [ -z "$(find "$F2/zebrane7" -name 'plan.txt' 2>/dev/null)" ] && pass "kopia dowiązania: nic nie zebrano" \
     || fail "kopia dowiązania: zebrano pliki innego konta" "$(find "$F2/zebrane7" 2>&1)"
-  out="$(ctl rm 1 "$S7/plan.txt")"; code=$?
-  expect_code "kopia dowiązania: rm – kod 65" "$code" 65 "$out"
+  out="$(ctl rm 1 "$S7/plan.txt" --yes)"; code=$?
+  expect_code "kopia dowiązania: rm – kod 1" "$code" 1 "$out"
+  expect "kopia dowiązania: rm – komunikat" "$out" "dowiązanie"
   out="$(ctlpw mkdir 1 "$S7/nowy" --root)"; code=$?
-  expect_code "kopia dowiązania: mkdir --root – kod 65" "$code" 65 "$out"
+  expect_code "kopia dowiązania: mkdir --root – kod 1" "$code" 1 "$out"
+  expect "kopia dowiązania: mkdir --root – komunikat" "$out" "dowiązanie"
   f2_intact "kopia dowiązania: rm i mkdir – pliki nietknięte" "$F2/ofiara7"
   chmod 700 "$F2/ofiara7"
   out="$(ctlpw _builder prepare-shared 1 "$S7" "$ME")"; code=$?
@@ -207,8 +210,8 @@ fi
 if ln -P "/Volumes/Macintosh HD" "$F2/uczen7/dysk" 2>/dev/null; then
   f2_victim "$F2/ofiara8"
   V8="$F2/uczen7/dysk$(cd "$F2" && /bin/pwd -P)/ofiara8"
-  out="$(ctlpw collect 1 --from "$V8" --to "$F2/zebrane8" --no-date --clean --root)"; code=$?
-  [ "$code" != 0 ] && pass "kopia /Volumes/Macintosh HD: collect odrzucony (kod $code)" || fail "kopia /Volumes/Macintosh HD: collect" "$out"
+  out="$(ctlpw collect 1 --from "$V8" --to "$F2/zebrane8" --no-date --clean --root --yes)"; code=$?
+  [ "$code" = 1 ] && pass "kopia /Volumes/Macintosh HD: collect odrzucony (kod $code)" || fail "kopia /Volumes/Macintosh HD: collect" "$out"
   f2_intact "kopia /Volumes/Macintosh HD: pliki nietknięte" "$F2/ofiara8"
   out="$(ctlpw clean "$V8" 1 --yes)"; code=$?
   [ "$code" != 0 ] && pass "kopia /Volumes/Macintosh HD: clean odrzucony (kod $code)" || fail "kopia /Volumes/Macintosh HD: clean" "$out"
@@ -258,7 +261,7 @@ if pkgbuild --quiet --root "$F2/pkgroot" --identifier pl.cmcr.e2e.f2 --version 1
   SUM="$(shasum -a 256 "$F2/in/Niepodpisany.pkg" | awk '{print $1}')"
   clear_fakelog
   out="$(ctlpw install-url "file://$F2/in/Niepodpisany.pkg" 1 --allow-unsigned --sha256 0000000000000000000000000000000000000000000000000000000000000000)"; code=$?
-  expect_code "install-url --sha256: zła suma – kod 2" "$code" 2 "$out"
+  expect_code "install-url --sha256: zła suma – kod 1" "$code" 1 "$out"
   expect "install-url --sha256: komunikat" "$out" "SHA-256"
   expect_not "install-url --sha256: zła suma – installer nie uruchomiony" "$(fakelog)" "installer -pkg"
   clear_fakelog
