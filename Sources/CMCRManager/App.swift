@@ -67,6 +67,7 @@ struct ContentView: View {
             DetailView()
         }
         .overlay(alignment: .bottom) { ActionToastOverlay() }
+        .confirmation($model.retryConfirmation)
         .toolbar {
             ToolbarItem(placement: .primaryAction) { ActivityToolbarButton() }
         }
@@ -155,9 +156,11 @@ struct SidebarView: View {
     }
 }
 
-/// The target set: Macs checked here are what every action runs on.
+/// The target set: Macs checked here are what every action runs on. The list's own (highlight) selection is
+/// transient and only picks rows for the context menu, so clicking a row never replaces the checked targets.
 struct MachineListView: View {
     @EnvironmentObject var model: AppModel
+    @ViewState private var highlighted: Set<UUID> = []
     @ViewState private var query = HostQuery()
     @ViewState private var naming: GroupNaming?
     @AppStorage("hostListSortByStatus") private var sortByStatus = false
@@ -190,7 +193,7 @@ struct MachineListView: View {
 
     var body: some View {
         let visible = self.visible
-        List(selection: $model.selection) {
+        List(selection: $highlighted) {
             ForEach(visible) { m in
                 MachineRow(machine: m, status: model.status(m), detailed: detailed, isTarget: isTarget(m.id))
                     .tag(m.id)
@@ -198,6 +201,13 @@ struct MachineListView: View {
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             MachineContextMenu(ids: ids) { naming = GroupNaming(ids: ids) }
+        } primaryAction: { ids in
+            toggleTargets(ids)
+        }
+        .onKeyPress(.space) {
+            guard !highlighted.isEmpty else { return .ignored }
+            toggleTargets(highlighted)
+            return .handled
         }
         .overlay {
             if visible.isEmpty {
@@ -248,6 +258,16 @@ struct MachineListView: View {
     func isTarget(_ id: UUID) -> Binding<Bool> {
         Binding(get: { model.selection.contains(id) },
                 set: { on in if on { model.selection.insert(id) } else { model.selection.remove(id) } })
+    }
+
+    /// Double-click, Return or Space on highlighted rows: check them, or uncheck them when all are checked.
+    func toggleTargets(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        if ids.isSubset(of: model.selection) {
+            model.selection.subtract(ids)
+        } else {
+            model.selection.formUnion(ids)
+        }
     }
 
     // MARK: Header: search, filter, groups, select visible
@@ -494,7 +514,7 @@ struct MachineRow: View {
     }
 }
 
-/// Context menu of the host list: acts on every selected row (or on the clicked row outside the selection).
+/// Context menu of the host list: acts on every highlighted row (or on the clicked row outside them).
 struct MachineContextMenu: View {
     @EnvironmentObject var model: AppModel
     let ids: Set<UUID>
@@ -518,6 +538,19 @@ struct MachineContextMenu: View {
                 model.refreshStatus(targets)
             } label: {
                 Label("Odśwież stan", systemImage: "arrow.clockwise")
+            }
+            if ids.isSubset(of: model.selection) {
+                Button {
+                    model.selection.subtract(ids)
+                } label: {
+                    Label("Odznacz", systemImage: "square")
+                }
+            } else {
+                Button {
+                    model.selection.formUnion(ids)
+                } label: {
+                    Label("Zaznacz", systemImage: "checkmark.square")
+                }
             }
             if ids != model.selection {
                 Button {
