@@ -9,13 +9,11 @@ public enum UpdateKeys {
 
     /// Raw Ed25519 public keys (32 bytes, base64) trusted to sign `cmcr-update.json`.
     ///
-    /// PLACEHOLDER: the entry below is deliberately not valid base64, so no signature verifies and the app
-    /// reports updates as "not configured" (fail closed). Replace it with the output of
-    /// `swift scripts/update-signing.swift keygen` before the first release.
+    /// Generated with `swift scripts/update-signing.swift keygen` (2026-10-05).
     ///
     /// Rotation: ship one release that lists both the old and the new key (signed with the old one),
     /// then sign later releases with the new key and drop the old one.
     public static let trustedPublicKeys: [String] = [
-        "PLACEHOLDER_REPLACE_WITH_update-signing.swift_keygen_OUTPUT",
+        "te1xZZbpM8p1XTB5pYykDp6laTwz99J4IW+E997Q5yw=",
     ]
 }
