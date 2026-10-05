@@ -40,18 +40,20 @@ enum ScreenWallSource: String, CaseIterable, Identifiable {
     }
 }
 
-/// Refresh interval picker shared by the section and the wall.
+/// Refresh interval picker shared by the section and the wall (in their bottom bars).
 struct ScreenRefreshMenu: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var center: ScreenCenter
     @Binding var interval: Int
     var backgroundToggle: Binding<Bool>?
+    /// "Co 10 s" instead of "Odświeżanie co 10 s", for narrow windows.
+    var compact = false
 
     static let choices = [3, 5, 10, 30, 60]
 
     var body: some View {
         Menu {
-            Picker("Odświeżanie", selection: $interval) {
+            Picker("Odświeżaj obrazy", selection: $interval) {
                 Text("Jak w Konfiguracji (co \(model.settings.screenshotInterval) s)").tag(0)
                 Divider()
                 ForEach(Self.choices, id: \.self) { s in Text("Co \(s) s").tag(s) }
@@ -63,11 +65,19 @@ struct ScreenRefreshMenu: View {
             }
             Toggle("Wstrzymaj cały podgląd", isOn: $center.paused)
         } label: {
-            Label(center.paused ? "Wstrzymano" : "Co \(interval == 0 ? model.settings.screenshotInterval : interval) s",
-                  systemImage: center.paused ? "pause.circle" : "timer")
+            if center.paused {
+                Label(compact ? "Wstrzymano" : "Podgląd wstrzymany", systemImage: "pause.circle.fill")
+                    .foregroundStyle(.orange)
+            } else {
+                let seconds = interval == 0 ? model.settings.screenshotInterval : interval
+                Label(compact ? "Co \(seconds) s" : "Odświeżanie co \(seconds) s", systemImage: "timer")
+            }
         }
+        .menuStyle(.borderlessButton)
+        .labelStyle(.titleAndIcon)
+        .font(.callout)
         .fixedSize()
-        .help("Jak często odświeżać obrazy; wstrzymanie zatrzymuje wszystkie połączenia podglądu")
+        .help("Jak często pobierać nowe obrazy; „Wstrzymaj cały podgląd” (⌥⌘P) zatrzymuje wszystkie połączenia podglądu")
     }
 }
 
@@ -127,16 +137,12 @@ struct ScreenWallView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) { ScreenBatchBanner().padding(16) }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ScreenRestrictionsBar()
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.bar)
+            ScreenStatusBar(interval: $interval, backgroundToggle: $refreshInBackground)
         }
         .toolbar { toolbar }
-        .searchable(text: $search, placement: .toolbar, prompt: "Komputer, użytkownik, aplikacja")
+        .searchable(text: $search, placement: .toolbar, prompt: "Szukaj komputera lub ucznia")
         .navigationTitle("Ściana ekranów")
-        .navigationSubtitle("\(list.count) \(polishPlural(list.count, "komputer", "komputery", "komputerów")) · \(source.label.lowercased())")
+        .navigationSubtitle(subtitle(list))
         .screenScope(pausesWhenInactive: !refreshInBackground) { w in
             ScreenWindowRegistry.add(w)
             if window !== w { window = w }
@@ -146,65 +152,72 @@ struct ScreenWallView: View {
         .frame(minWidth: 640, minHeight: 420)
     }
 
+    private func subtitle(_ list: [Machine]) -> String {
+        let shown = Polish.computers(list.count)
+        guard !selection.isEmpty else { return "\(shown) · kliknij ekran, aby go zaznaczyć" }
+        return "\(shown) · zaznaczone: \(selection.count)"
+    }
+
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            Picker(selection: $source) {
-                ForEach(ScreenWallSource.allCases) { s in Label(s.label, systemImage: s.symbol).tag(s) }
+            Menu {
+                Picker("Pokaż", selection: $source) {
+                    ForEach(ScreenWallSource.allCases) { s in Label(s.label, systemImage: s.symbol).tag(s) }
+                }
+                .pickerStyle(.inline)
             } label: {
-                Label("Komputery", systemImage: source.symbol)
+                Label(source.label, systemImage: source.symbol)
+                    .labelStyle(.titleAndIcon)
             }
-            .pickerStyle(.menu)
             .fixedSize()
-            .help("Które komputery pokazać na ścianie")
-        }
-        if !selection.isEmpty {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button { composing = true } label: {
-                    Label("Wiadomość (\(selection.count))", systemImage: "text.bubble")
-                }
-                .help("Wyślij wiadomość na zaznaczone ekrany (zaznaczaj z ⌘)")
-                Button {
-                    ScreenActions(model: model, center: center, openWindow: openWindow).sleepDisplay(selectedMachines)
-                } label: {
-                    Label("Uśpij ekrany (\(selection.count))", systemImage: "moon.zzz")
-                }
-                .help("Wygasza monitory zaznaczonych komputerów")
-            }
+            .help("Które komputery pokazać na ścianie ekranów")
         }
         ToolbarItemGroup(placement: .primaryAction) {
-            Picker(selection: $layout) {
-                ForEach(ScreenGridLayout.allCases) { l in Label(l.label, systemImage: l.symbol).tag(l) }
+            let n = selection.count
+            Button { composing = true } label: {
+                Label(n == 0 ? "Wiadomość" : "Wiadomość (\(n))", systemImage: "text.bubble")
+                    .labelStyle(.titleAndIcon)
+            }
+            .disabled(n == 0)
+            .help(n == 0 ? "Najpierw zaznacz ekrany: kliknij ekran, z klawiszem ⌘ – kilka, ⌘A – wszystkie"
+                  : "Wyślij wiadomość na zaznaczone ekrany (\(n))")
+            Button {
+                ScreenActions(model: model, center: center, openWindow: openWindow).sleepDisplay(selectedMachines)
             } label: {
-                Label("Układ", systemImage: layout.symbol)
+                Label(n == 0 ? "Uśpij ekrany" : "Uśpij ekrany (\(n))", systemImage: "moon.zzz")
+                    .labelStyle(.titleAndIcon)
             }
-            .pickerStyle(.menu)
+            .disabled(n == 0)
+            .help(n == 0 ? "Najpierw zaznacz ekrany: kliknij ekran, z klawiszem ⌘ – kilka, ⌘A – wszystkie"
+                  : "Wygasza monitory zaznaczonych komputerów – uczniowie obudzą je myszą lub klawiaturą")
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+            Menu {
+                ScreenLayoutPicker(layout: $layout, inline: true)
+                Divider()
+                Toggle("Pokaż podpisy na ekranach", isOn: $showLabels)
+            } label: {
+                Label("Widok", systemImage: layout.symbol)
+                    .labelStyle(.titleAndIcon)
+            }
             .fixedSize()
-            .help("Układ ekranów: dopasowany do okna, według rozmiaru kafelka albo stała liczba kolumn")
+            .help("Układ ekranów i podpisy (nazwa komputera, uczeń, aplikacja)")
             if layout == .adaptive {
-                Slider(value: $tileWidth, in: 220...900) {
-                    Text("Rozmiar kafelków")
-                } minimumValueLabel: {
-                    Image(systemName: "square.grid.3x3")
-                } maximumValueLabel: {
-                    Image(systemName: "square")
-                }
-                .frame(width: 170)
-                .help("Rozmiar kafelków")
+                ScreenSizeSlider(tileWidth: $tileWidth, range: 220...900)
+                    .frame(width: 150)
             }
-            ScreenRefreshMenu(interval: $interval, backgroundToggle: $refreshInBackground)
-            Toggle(isOn: $showLabels) { Label("Podpisy", systemImage: "text.below.photo") }
-                .toggleStyle(.button)
-                .help("Pokaż nazwę komputera, użytkownika i aplikację na kafelkach")
             Button {
                 center.refresh(machines.map(\.id))
             } label: {
-                Label("Odśwież teraz", systemImage: "arrow.clockwise")
+                Label("Odśwież", systemImage: "arrow.clockwise")
+                    .labelStyle(.titleAndIcon)
             }
-            .help("Pobierz nowe obrazy ze wszystkich widocznych komputerów")
+            .help("Pobierz od razu nowe obrazy ze wszystkich widocznych komputerów")
             Button {
                 (window ?? NSApp.keyWindow)?.toggleFullScreen(nil)
             } label: {
                 Label("Pełny ekran", systemImage: "arrow.up.left.and.arrow.down.right.rectangle")
+                    .labelStyle(.titleAndIcon)
             }
             .help("Pełny ekran – np. na drugim monitorze lub projektorze (⌃⌘F)")
         }
@@ -301,32 +314,43 @@ private struct ScreenWindowContent: View {
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            Menu {
-                ScreenDisplayPicker(machine: machine, feed: feed, center: center)
-                    .pickerStyle(.inline)
-            } label: {
-                Label(center.display(for: machine.id).label, systemImage: "display.2")
+            if feed.displayCount > 1 {
+                Menu {
+                    ScreenDisplayPicker(machine: machine, feed: feed, center: center)
+                        .pickerStyle(.inline)
+                } label: {
+                    Label(center.display(for: machine.id).label, systemImage: "display.2")
+                        .labelStyle(.titleAndIcon)
+                }
+                .fixedSize()
+                .help("Który monitor tego komputera pokazywać")
             }
-            .fixedSize()
-            .help("Który monitor tego komputera pokazywać")
-            Toggle(isOn: $alwaysOnTop) { Label("Zawsze na wierzchu", systemImage: "pin") }
-                .toggleStyle(.button)
-                .help("Utrzymuj to okno nad innymi oknami")
-            Button { composing = true } label: { Label("Wiadomość", systemImage: "text.bubble") }
-                .help("Wyślij wiadomość na ten ekran")
-                .popover(isPresented: $composing, arrowEdge: .bottom) { MessageComposer(targets: [machine]) }
-            Button { actions.sleepDisplay([machine]) } label: { Label("Uśpij ekran", systemImage: "moon.zzz") }
-                .help("Wygasza monitor tego komputera (uczeń wybudzi go myszą lub klawiaturą)")
+            Button { composing = true } label: {
+                Label("Wiadomość", systemImage: "text.bubble").labelStyle(.titleAndIcon)
+            }
+            .help("Wyślij wiadomość na ten ekran")
+            .popover(isPresented: $composing, arrowEdge: .bottom) { MessageComposer(targets: [machine]) }
+            Button { actions.sleepDisplay([machine]) } label: {
+                Label("Uśpij ekran", systemImage: "moon.zzz").labelStyle(.titleAndIcon)
+            }
+            .help("Wygasza monitor tego komputera (uczeń obudzi go myszą lub klawiaturą)")
             Button { actions.screenSharing(machine) } label: {
-                Label("Udostępnianie ekranu", systemImage: "rectangle.on.rectangle")
+                Label("Udostępnianie ekranu", systemImage: "rectangle.on.rectangle").labelStyle(.titleAndIcon)
             }
-            .help("Otwórz Udostępnianie ekranu (VNC) – pełny podgląd i sterowanie, jeśli są włączone na tym Macu")
+            .help("Otwórz aplikację Udostępnianie ekranu (VNC) – pełny podgląd i sterowanie, jeśli są włączone na tym komputerze")
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+            Toggle(isOn: $alwaysOnTop) {
+                Label("Na wierzchu", systemImage: alwaysOnTop ? "pin.fill" : "pin").labelStyle(.titleAndIcon)
+            }
+            .toggleStyle(.button)
+            .help("Utrzymuj to okno nad innymi oknami")
             Menu {
                 ScreenMoreMenuItems(machine: machine, feed: feed, actions: actions)
             } label: {
-                Label("Więcej", systemImage: "ellipsis.circle")
+                Label("Więcej", systemImage: "ellipsis.circle").labelStyle(.titleAndIcon)
             }
-            .help("Więcej działań")
+            .help("Więcej działań: odśwież, zapisz zrzut ekranu, monitor, aplikacje, Terminal")
         }
     }
 }

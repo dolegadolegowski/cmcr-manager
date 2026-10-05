@@ -10,7 +10,7 @@ enum ScreenGridLayout: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .fit: return "Dopasuj do okna"
-        case .adaptive: return "Według rozmiaru kafelka"
+        case .adaptive: return "Własny rozmiar"
         case .two: return "2 kolumny"
         case .three: return "3 kolumny"
         case .four: return "4 kolumny"
@@ -21,9 +21,11 @@ enum ScreenGridLayout: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .fit: return "rectangle.expand.vertical"
-        case .adaptive: return "square.resize"
-        default: return "square.grid.\(min(4, max(2, fixedColumns ?? 3)))x\(min(4, max(2, fixedColumns ?? 3)))"
+        case .fit: return "aspectratio"
+        case .adaptive: return "slider.horizontal.3"
+        case .two: return "square.grid.2x2"
+        case .three: return "square.grid.3x3"
+        default: return "square.grid.4x3.fill"
         }
     }
 
@@ -250,9 +252,9 @@ struct ZoomedScreen: View {
             Button { composing = true } label: { Label("Wiadomość", systemImage: "text.bubble") }
                 .help("Wyślij wiadomość na ten ekran")
             Button { actions.sleepDisplay([machine]) } label: { Label("Uśpij ekran", systemImage: "moon.zzz") }
-                .help("Wygasza monitor tego komputera (uczeń wybudzi go myszą lub klawiaturą)")
-            Button { actions.openInWindow(machine) } label: { Label("Nowe okno", systemImage: "macwindow.badge.plus") }
-                .help("Otwórz ten ekran w osobnym oknie")
+                .help("Wygasza monitor tego komputera (uczeń obudzi go myszą lub klawiaturą)")
+            Button { actions.openInWindow(machine) } label: { Label("Osobne okno", systemImage: "macwindow.badge.plus") }
+                .help("Otwórz ten ekran w osobnym oknie – można je zostawić obok innych okien")
             Button(action: onClose) { Label("Zamknij", systemImage: "xmark") }
                 .help("Wróć do wszystkich ekranów (Esc)")
         }
@@ -276,8 +278,9 @@ struct ScreenTitle: View {
                     .help("Aplikacja na pierwszym planie")
             }
             if let issue = feed.issue {
-                Label(issue.title, systemImage: issue.isIdle ? "info.circle" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(issue.isIdle ? Color.secondary : Color.orange)
+                let calm = issue.isIdle || issue.isOffline
+                Label(issue.title, systemImage: calm ? issue.displaySymbol : "exclamationmark.triangle.fill")
+                    .foregroundStyle(calm ? Color.secondary : Color.orange)
                     .help(issue.message)
             }
         }
