@@ -143,6 +143,18 @@ out="$(ctlpw _builder push 1 "/Users/cmcr-e2e-brak-konta/Desktop" "" "" "$WORK/s
 expect "push: brak katalogu domowego – nie tworzy /Users/…" "$out" "nie istnieje"
 expect_code "push: brak katalogu domowego – kod 2" "$code" 2 "$out"
 [ ! -e "/Users/cmcr-e2e-brak-konta" ] && pass "push: /Users/cmcr-e2e-brak-konta nie powstał" || fail "push: utworzono katalog w /Users"
+for p in "/users/cmcr-e2e-brak-konta/Desktop" "/USERS/cmcr-e2e-brak-konta/Desktop"; do
+  out="$(ctlpw _builder push 1 "$p" "" "" "$WORK/send/b.txt" --root)"; code=$?
+  expect_code "push: $p (inna wielkość liter) – kod 2" "$code" 2 "$out"
+done
+for v in /Volumes/*; do
+  if [ "$(cd "$v" 2>/dev/null && /bin/pwd -P)" = / ]; then
+    out="$(ctlpw _builder push 1 "$v/Users/cmcr-e2e-brak-konta/Desktop" "" "" "$WORK/send/b.txt" --root)"; code=$?
+    expect_code "push: $v/Users/… (dysk startowy przez /Volumes) – kod 2" "$code" 2 "$out"
+    break
+  fi
+done
+[ ! -e "/Users/cmcr-e2e-brak-konta" ] && pass "push: warianty ścieżki nie utworzyły katalogu w /Users" || fail "push: utworzono katalog w /Users"
 out="$(ctlpw _builder push 1 "Desktop" "" "" "$WORK/send/b.txt" --root)"; code=$?
 expect "push: ścieżka względna odrzucona" "$out" "pełną ścieżką"
 out="$(ctlpw _builder push 1 "$WORK/remote/dest" "" "777; rm -rf /" "$WORK/send/b.txt" --root)"; code=$?
@@ -170,8 +182,22 @@ for p in "$WORK/link-do-apps" "/Users/$ME/.ssh" "/Users/$ME/Library" "/Users//De
   out="$(ctlpw _builder clean-folder 1 "$p" --dry-run)"; code=$?
   if [ "$code" = 2 ] && contains "" "$out" "Odmowa"; then pass "clean: odmowa dla $p"; else fail "clean: brak odmowy dla $p (kod $code)" "$out"; fi
 done
+ME_UP="$(printf '%s' "$ME" | tr '[:lower:]' '[:upper:]')"
+for p in "/Users/$ME/LIBRARY" "/Users/$ME/library/Caches" "/users/$ME/Desktop" "/Users/$ME_UP/Desktop" "/USERS/$ME/Documents"; do
+  [ -d "$p" ] || continue
+  out="$(ctlpw _builder clean-folder 1 "$p" --dry-run)"; code=$?
+  if [ "$code" = 2 ] && contains "" "$out" "Odmowa"; then pass "clean: odmowa dla $p (inna wielkość liter)"; else fail "clean: brak odmowy dla $p (kod $code)" "$out"; fi
+done
+out="$(ctlpw exec 'cmcr_realdir "/Users/$USER/LIBRARY"; cmcr_realdir "/USERS"; cmcr_canonpath "/users/cmcr-e2e-brak/Desktop"; cmcr_canonpath "/tmp/cmcr-e2e-brak/x"' 1)"
+expect "cmcr_realdir/cmcr_canonpath: pisownia z dysku" "$out" "/Users/$ME/Library" "
+/Users
+/Users/cmcr-e2e-brak/Desktop
+/private/tmp/cmcr-e2e-brak/x"
 for v in /Volumes/*; do
   if [ "$(cd "$v" 2>/dev/null && pwd -P)" = / ]; then
+    out="$(ctlpw exec "cmcr_realdir '$v/Users'; cmcr_canonpath '$v/cmcr-e2e-brak/x'" 1)"
+    expect "cmcr_realdir: $v/Users → /Users" "$out" "/Users
+/cmcr-e2e-brak/x"
     out="$(ctlpw _builder clean-folder 1 "$v/Applications" --dry-run)"; code=$?
     if [ "$code" = 2 ] && contains "" "$out" "Odmowa"; then pass "clean: odmowa dla $v/Applications (dysk startowy)"; else fail "clean: $v/Applications" "$out"; fi
     break
@@ -206,6 +232,13 @@ expect "quit: polecenie z HOME użytkownika (sudo -H)" "$(fakelog)" "gui-sudo: -
 expect "quit: aplikacja, która nie zamknęła się sama, nie jest zabijana" "$out" "nadal działa"
 expect_code "quit: kod 1, gdy aplikacja nadal działa" "$code" 1 "$out"
 kill -0 "$QPID" 2>/dev/null && pass "quit: proces nadal działa (bez SIGTERM)" || fail "quit: proces zabity bez prośby"
+touch "$WORK/fake-ae-denied"
+out="$(ctlpw _builder quit-app 1 CMCRQuit --wait 1)"; code=$?
+expect "quit: odmowa Apple Event (Automatyzacja) zgłoszona wprost" "$out" "nie pozwolił" "-1743" "Wymuś zamknięcie"
+expect_not "quit: odmowa nie udaje czekania na ucznia" "$out" "pyta ucznia"
+expect_code "quit: odmowa Apple Event – kod 1" "$code" 1 "$out"
+kill -0 "$QPID" 2>/dev/null && pass "quit: po odmowie proces nietknięty" || fail "quit: proces zabity po odmowie"
+rm -f "$WORK/fake-ae-denied"
 out="$(ctlpw _builder quit-app 1 CMCRQuit --wait 1 --term)"; code=$?
 sleep 0.3
 if kill -0 "$QPID" 2>/dev/null; then fail "quit --term: proces nadal działa" "$out"; kill "$QPID"; else pass "quit --term: SIGTERM na życzenie"; fi
@@ -225,6 +258,11 @@ sleep 0.3
 expect "logout: prośba do loginwindow (aplikacje mogą zapisać zmiany)" "$(fakelog)" "gui-exec: /usr/bin/osascript" "aevtrlgo"
 expect_not "logout: bez twardego launchctl bootout" "$(fakelog)" "bootout"
 expect "logout: uczciwy wynik, gdy sesja trwa" "$out" "nadal zalogowany"
+touch "$WORK/fake-ae-denied"
+out="$(ctlpw _builder logout 1 --wait 5)"; code=$?
+expect "logout: odmowa Apple Event zgłoszona wprost" "$out" "nie pozwolił poprosić o wylogowanie" "Wyloguj natychmiast"
+expect_code "logout: odmowa – kod 1" "$code" 1 "$out"
+rm -f "$WORK/fake-ae-denied"
 clear_fakelog
 out="$(ctlpw _builder message 1 "Uwaga" "Koniec lekcji")"
 expect "message: okno wysunięte na wierzch (activate)" "$(fakelog)" "gui-stdin: activate" "display dialog \"Koniec lekcji\""
@@ -241,11 +279,19 @@ expect "restart bez FileVault: shutdown -r now" "$(fakelog)" "shutdown -r now"
 touch "$WORK/fake-filevault"
 clear_fakelog
 out="$(ctlpw _builder power 1 restart)"
-expect "restart z FileVault: fdesetup authrestart" "$out" "fdesetup authrestart"
+expect "restart z FileVault: fdesetup authrestart" "$out" "jednorazowo odblokowany" "fdesetup authrestart"
+expect_not "restart z FileVault: bez ostrzeżenia o ekranie odblokowania" "$out" "ekranie odblokowania"
 sleep 2.6
-expect "restart z FileVault: hasło przekazane w plist na stdin" "$(fakelog)" "fdesetup authrestart -inputplist password ok"
-expect_not "restart z FileVault: bez zwykłego shutdown" "$(fakelog)" "shutdown -r"
-rm -f "$WORK/fake-filevault"; touch "$WORK/fake-filevault-nouser"
+expect "restart z FileVault: odblokowanie uzbrojone przed restartem (hasło w plist na stdin)" "$(fakelog)" \
+  "fdesetup authrestart -delayminutes -1 -inputplist password ok
+shutdown -r now"
+touch "$WORK/fake-fde-refuse"
+clear_fakelog
+out="$(ctlpw _builder power 1 restart)"
+expect "restart z FileVault: odmowa authrestart zgłoszona" "$out" "fdesetup authrestart odmówił" "Unable to restart" "ekranie odblokowania"
+sleep 2.6
+expect "restart z FileVault po odmowie: zwykły restart" "$(fakelog)" "shutdown -r now"
+rm -f "$WORK/fake-filevault" "$WORK/fake-fde-refuse"; touch "$WORK/fake-filevault-nouser"
 clear_fakelog
 out="$(ctlpw _builder power 1 restart)"
 expect "restart z FileVault bez uprawnień do odblokowania: ostrzeżenie" "$out" "ekranie odblokowania"
@@ -260,6 +306,13 @@ expect_code "softwareupdate: kod 0" "$code" 0 "$out"
 expect "softwareupdate: instaluje wybrane etykiety" "$(fakelog)" "softwareupdate --install Safari99.1-99.1 --agree-to-license"
 expect_not "softwareupdate: bez przejścia na nową wersję macOS" "$(fakelog)" "--install macOS Testowy"
 expect "softwareupdate: informuje o pominiętej wersji" "$out" "Pominięto przejście na nową wersję systemu: macOS Testowy 99.1"
+if [ "$(uname -m)" = arm64 ]; then
+  expect_not "softwareupdate: bez ostrzeżenia, gdy konto jest właścicielem woluminu" "$out" "właścicielem woluminu"
+  touch "$WORK/fake-no-volume-owner"
+  out="$(ctlpw _builder install-updates 1)"
+  expect "softwareupdate: ostrzeżenie o braku Secure Token (właściciela woluminu)" "$out" "nie jest właścicielem woluminu"
+  rm -f "$WORK/fake-no-volume-owner"
+fi
 clear_fakelog
 out="$(ctlpw _builder install-updates 1 --major --restart)"
 expect "softwareupdate --major: także nowa wersja macOS i restart" "$(fakelog)" "macOS Testowy 99.1-99A123" "--restart"
@@ -281,6 +334,9 @@ expect_code "prepare-shared: kod 0" "$code" 0 "$out"
 [ "$(stat -f %Lp "$WORK/shared/cmcr" 2>/dev/null)" = 777 ] && pass "prepare-shared: folder 777" || fail "prepare-shared: uprawnienia" "$out"
 out="$(ctlpw _builder prepare-shared 1 "/Users/cmcr-e2e-brak/Public/cmcr" "$ME")"; code=$?
 expect_code "prepare-shared: brak katalogu w /Users – kod 2" "$code" 2 "$out"
+out="$(ctlpw _builder prepare-shared 1 "/users/cmcr-e2e-brak/Public/cmcr" "$ME")"; code=$?
+expect_code "prepare-shared: /users (inna wielkość liter) – kod 2" "$code" 2 "$out"
+[ ! -e "/Users/cmcr-e2e-brak" ] && pass "prepare-shared: nie utworzono /Users/cmcr-e2e-brak" || fail "prepare-shared: utworzono /Users/cmcr-e2e-brak"
 out="$(ctlpw _builder prepare-shared 1 "$WORK/shared/x" "cmcr-e2e-brak-konta")"; code=$?
 expect "prepare-shared: nieistniejące konto" "$out" "nie istnieje"
 fi
