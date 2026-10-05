@@ -8,13 +8,21 @@ import Foundation
 /// - `as_console_user cmd…` – run inside the GUI session of the user logged in at the screen,
 /// - `with_askpass cmd…`    – run a tool that calls `sudo -A` itself (e.g. Homebrew),
 /// - `$CONSOLE_USER`, `$CONSOLE_UID`, `$CMCR_ADMIN_USER`, `$CMCR_TMP` (private temp dir, removed on exit).
+///
+/// The wrapper ignores SIGHUP/SIGPIPE, so a job keeps running (and cleans up) when the admin's Mac sleeps
+/// or the connection drops. Only an explicit cancel (`SSH.cancelRemote`) stops it.
 public struct RemoteScript: Sendable {
     public var body: String
     public var asRoot: Bool
+    /// Registers the job on the remote Mac (process group in /tmp/cmcr-jobs/<id>) so that it can be
+    /// stopped by `SSH.cancelRemote`, and relays its output so it survives a lost connection.
+    /// SSH.run assigns one when the operation has a ProcessHandle. Letters, digits and '-' only.
+    public var jobID: String?
 
-    public init(_ body: String, asRoot: Bool = false) {
+    public init(_ body: String, asRoot: Bool = false, jobID: String? = nil) {
         self.body = body
         self.asRoot = asRoot
+        self.jobID = jobID
     }
 
     static let library = #"""
@@ -43,15 +51,20 @@ public struct RemoteScript: Sendable {
     /// Full script text that is executed by `/bin/bash` on the remote side.
     public func render() -> String {
         let tag = "CMCR_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let job = RemoteJobs.isValidID(jobID) ? jobID ?? "" : ""
         var s = #"""
         IFS= read -r CMCR_PW || CMCR_PW=""
+        trap '' HUP PIPE
         CMCR_TMP="$(mktemp -d /tmp/cmcr.XXXXXX)" || { echo "mktemp nie powiódł się" >&2; exit 90; }
         export CMCR_TMP
+        CMCR_JOB_FILE=""
         cmcr_cleanup() {
-          if [ -n "$(find "$CMCR_TMP" ! -user "$(id -u)" -print -quit 2>/dev/null)" ]; then asroot rm -rf "$CMCR_TMP" 2>/dev/null; fi
+          if [ -n "$CMCR_JOB_FILE" ]; then rm -f "$CMCR_JOB_FILE" "$CMCR_JOB_FILE.root" 2>/dev/null; fi
+          if [ -n "$(find "$CMCR_TMP" ! -user "$UID" -print -quit 2>/dev/null)" ]; then asroot rm -rf "$CMCR_TMP" 2>/dev/null; fi
           rm -rf "$CMCR_TMP" 2>/dev/null
         }
         trap cmcr_cleanup EXIT
+        trap 'exit 143' TERM INT
         cat > "$CMCR_TMP/askpass" <<'\#(tag)_A'
         #!/bin/sh
         # Answer each sudo only once, so a wrong password costs a single failed attempt.
@@ -70,12 +83,16 @@ public struct RemoteScript: Sendable {
         source "$CMCR_TMP/lib.sh"
 
         """#
+        if !job.isEmpty {
+            s += RemoteJobs.registration(jobID: job)
+        }
         if asRoot {
+            // The root shell hands its files back to the admin on exit, so the cleanup needs no second sudo.
             s += #"""
             if [ "$(id -u)" -ne 0 ] && [ -z "$CMCR_PW" ] && ! sudo -n true 2>/dev/null; then
               echo "Brak hasła administratora – zapisz je w Konfiguracji (wymagane do sudo)." >&2; exit 91
             fi
-            printf '%s\n' "$CMCR_PW" | asroot /bin/bash --noprofile --norc -c 'IFS= read -r CMCR_PW; CMCR_TMP="$1"; export CMCR_TMP; source "$CMCR_TMP/lib.sh"; source "$CMCR_TMP/body.sh"' cmcr "$CMCR_TMP"
+            printf '%s\n' "$CMCR_PW" | asroot /bin/bash --noprofile --norc -c 'IFS= read -r CMCR_PW; CMCR_TMP="$1"; export CMCR_TMP; trap "" HUP PIPE; trap "chown -hR $2 \"\$CMCR_TMP\" 2>/dev/null" EXIT; trap "exit 143" TERM INT; if [ -n "$3" ]; then echo "$$" > "$3.root"; fi; source "$CMCR_TMP/lib.sh"; source "$CMCR_TMP/body.sh"' cmcr "$CMCR_TMP" "$UID" "$CMCR_JOB_FILE"
 
             """#
         } else {
@@ -99,32 +116,42 @@ public struct SSHSettings: Sendable {
     public var connectTimeout: Int
     public var extraOptions: [String]
     public var askpassPath: String
+    /// OpenSSH connection sharing (ControlMaster): one login per Mac, later sessions start instantly.
+    public var reuseConnections: Bool
 
-    public init(identityFile: String = "", connectTimeout: Int = 5, extraOptions: [String] = [], askpassPath: String) {
+    public init(identityFile: String = "", connectTimeout: Int = 5, extraOptions: [String] = [], askpassPath: String,
+                reuseConnections: Bool = true) {
         self.identityFile = identityFile
         self.connectTimeout = connectTimeout
         self.extraOptions = extraOptions
         self.askpassPath = askpassPath
+        self.reuseConnections = reuseConnections
     }
 
     public init(_ s: AppSettings, askpassPath: String) {
         self.init(identityFile: s.identityFile, connectTimeout: s.connectTimeout,
-                  extraOptions: s.extraSSHOptionList, askpassPath: askpassPath)
+                  extraOptions: s.extraSSHOptionList, askpassPath: askpassPath,
+                  reuseConnections: s.reuseConnections)
     }
 }
 
 public enum SSH {
     public static let sshPath = "/usr/bin/ssh"
     public static let scpPath = "/usr/bin/scp"
+    /// Seconds an idle shared connection stays open.
+    static let controlPersist = 120
 
-    static func options(_ s: SSHSettings, password: String?) -> [String] {
-        var o = [
+    static func options(_ s: SSHSettings, password: String?, mux: Bool = true) -> [String] {
+        // OpenSSH uses the first value given for an option, so the user's own options go first and win.
+        var o: [String] = s.extraOptions.flatMap { ["-o", $0] }
+        o += [
             "-o", "ConnectTimeout=\(s.connectTimeout)",
             "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "ServerAliveInterval=15",
-            "-o", "ServerAliveCountMax=4",
+            "-o", "ServerAliveInterval=5",
+            "-o", "ServerAliveCountMax=3",
             "-o", "LogLevel=ERROR",
         ]
+        o += muxOptions(s, enabled: mux)
         if let pw = password, !pw.isEmpty {
             o += ["-o", "BatchMode=no", "-o", "NumberOfPasswordPrompts=1"]
         } else {
@@ -132,8 +159,27 @@ public enum SSH {
         }
         let identity = expandTilde(s.identityFile)
         if !s.identityFile.isEmpty { o += ["-i", identity] }
-        for extra in s.extraOptions { o += ["-o", extra] }
         return o
+    }
+
+    static func muxOptions(_ s: SSHSettings, enabled: Bool = true) -> [String] {
+        if enabled, s.reuseConnections, let dir = controlDirectory() {
+            return ["-o", "ControlMaster=auto", "-o", "ControlPath=\(dir)/%C", "-o", "ControlPersist=\(controlPersist)"]
+        }
+        return ["-o", "ControlMaster=no", "-o", "ControlPath=none"]
+    }
+
+    /// Private directory for the shared-connection sockets. It lives in /tmp because a socket path must stay
+    /// under 104 bytes; nil (no sharing) when it is not a real directory owned by this user.
+    public static func controlDirectory() -> String? {
+        let dir = "/tmp/cmcr-\(getuid())"
+        var st = stat()
+        if lstat(dir, &st) != 0 {
+            guard mkdir(dir, 0o700) == 0 || errno == EEXIST, lstat(dir, &st) == 0 else { return nil }
+        }
+        guard st.st_mode & S_IFMT == S_IFDIR, st.st_uid == getuid() else { return nil }
+        if st.st_mode & 0o077 != 0 { chmod(dir, 0o700) }
+        return dir
     }
 
     static func environment(_ s: SSHSettings, password: String?) -> [String: String] {
@@ -147,6 +193,11 @@ public enum SSH {
     }
 
     /// Runs a remote script (cmcr-exec equivalent).
+    ///
+    /// - With a `handle` the script runs as a registered remote job: cancelling the handle also stops the
+    ///   command on the Mac, and a timeout does the same. A lost connection does not stop it.
+    /// - Failures before the remote session started are retried according to `retry`.
+    /// - At most `HostGate.limit` sessions run per Mac at a time (sshd allows 10 per connection).
     public static func run(
         _ script: RemoteScript,
         on host: Machine,
@@ -155,14 +206,125 @@ public enum SSH {
         stdoutFile: URL? = nil,
         timeout: TimeInterval? = nil,
         handle: ProcessHandle? = nil,
+        retry: SSHRetryPolicy = .transient,
+        maxCapture: Int = ProcessRunner.defaultMaxCapture,
         onOutput: (@Sendable (OutputChannel, Data) -> Void)? = nil
     ) async -> CommandResult {
-        let args = options(settings, password: password)
-            + ["-T", "-p", String(host.port), host.destination, script.remoteCommand()]
+        var script = script
+        if script.jobID == nil, handle != nil { script.jobID = RemoteJobs.newID() }
+        let key = HostGate.key(for: host)
+        guard await HostGate.shared.acquire(key, timeout: timeout, handle: handle) else {
+            return handle?.isCancelled == true || Task.isCancelled ? .cancelledResult : HostGate.busyResult(host)
+        }
+        defer { HostGate.shared.release(key) }
+        if handle?.isCancelled == true || Task.isCancelled { return .cancelledResult }
+
+        var cancelToken: UUID?
+        if let handle, let id = script.jobID {
+            cancelToken = handle.addCancelAction {
+                let outcome = await cancelRemote(jobID: id, on: host, password: password, settings: settings)
+                onOutput?(.stderr, Data("▸ \(outcome.message)\n".utf8))
+            }
+            if cancelToken == nil { return .cancelledResult }
+        }
+        defer { if let cancelToken { handle?.removeCancelAction(cancelToken) } }
+
         let stdin = Data(((password ?? "") + "\n").utf8)
-        return await ProcessRunner.run(sshPath, args, environment: environment(settings, password: password),
-                                       stdin: stdin, stdoutFile: stdoutFile, timeout: timeout,
-                                       handle: handle, onOutput: onOutput)
+        let command = script.remoteCommand()
+        var r = await runWithRetry(on: host, settings: settings, retry: retry, handle: handle, stdoutFile: stdoutFile,
+                                   onOutput: onOutput) { mux, output in
+            await ProcessRunner.run(sshPath, options(settings, password: password, mux: mux)
+                                        + ["-T", "-p", String(host.port), host.destination, command],
+                                    environment: environment(settings, password: password), stdin: stdin,
+                                    stdoutFile: stdoutFile, timeout: timeout, maxCapture: maxCapture,
+                                    handle: handle, onOutput: output)
+        }
+        if r.timedOut, !r.cancelled, let id = script.jobID, handle != nil {
+            let outcome = await cancelRemote(jobID: id, on: host, password: password, settings: settings)
+            let note = Data("▸ Przekroczono limit czasu. \(outcome.message)\n".utf8)
+            onOutput?(.stderr, note)
+            r.stderr.append(note)
+        }
+        return r
+    }
+
+    /// Runs `attempt` (with connection sharing first) and repeats it after failures that happened before
+    /// the remote command could start. ssh noise about shared connections is removed from the output.
+    static func runWithRetry(
+        on host: Machine,
+        settings: SSHSettings,
+        retry: SSHRetryPolicy,
+        handle: ProcessHandle?,
+        stdoutFile: URL?,
+        isCopy: Bool = false,
+        onOutput: (@Sendable (OutputChannel, Data) -> Void)?,
+        attempt: (_ mux: Bool, _ output: @escaping @Sendable (OutputChannel, Data) -> Void) async -> CommandResult
+    ) async -> CommandResult {
+        var mux = settings.reuseConnections
+        var transientLeft = retry.attempts
+        var unreachableLeft = retry.unreachableAttempts
+        var round = 0
+        while true {
+            let seen = OutputFlag()
+            let output: @Sendable (OutputChannel, Data) -> Void = { channel, data in
+                if channel == .stdout { seen.set() }
+                let clean = channel == .stderr ? SSHNoise.filter(data) : data
+                if !clean.isEmpty { onOutput?(channel, clean) }
+            }
+            var r = await attempt(mux, output)
+            let wroteStdout = seen.isSet || stdoutFile.map { Payload.size(of: $0) > 0 } ?? false
+            let failure = wroteStdout ? nil : connectFailure(r, sshExitOnly: !isCopy)
+            // Keep ssh's raw message when it is all there is to explain a failed connection.
+            let clean = SSHNoise.filter(r.stderr)
+            if r.exitCode != 255 || !String(decoding: clean, as: UTF8.self).allSatisfy(\.isWhitespace) {
+                r.stderr = clean
+            }
+            guard let failure, handle?.isCancelled != true, !Task.isCancelled else { return r }
+            switch failure {
+            case .transient, .sharedConnection:
+                guard transientLeft > 0 else { return r }
+                transientLeft -= 1
+            case .unreachable:
+                guard unreachableLeft > 0 else { return r }
+                unreachableLeft -= 1
+            }
+            round += 1
+            if failure == .sharedConnection, mux {
+                await closeMaster(host, settings: settings)
+                mux = false
+            }
+            onOutput?(.stderr, Data("▸ Ponowna próba połączenia (\(round))…\n".utf8))
+            let delay: Double = failure == .unreachable ? (round == 1 ? 2 : 5) : Double.random(in: 0.2...0.8)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            if handle?.isCancelled == true || Task.isCancelled { return .cancelledResult }
+        }
+    }
+
+    enum ConnectFailure: Equatable { case transient, sharedConnection, unreachable }
+
+    /// Classifies ssh failures that certainly happened before the remote command started (safe to retry).
+    /// ssh reports its own failures with exit code 255; scp exits with 1 and passes ssh's message through.
+    static func connectFailure(_ r: CommandResult, sshExitOnly: Bool = true) -> ConnectFailure? {
+        guard sshExitOnly ? r.exitCode == 255 : r.exitCode != 0 else { return nil }
+        guard !r.timedOut, !r.cancelled, r.stdout.isEmpty else { return nil }
+        let e = r.stderrText.lowercased()
+        if e.contains("permission denied") || e.contains("host key") || e.contains("authentication failures") {
+            return nil
+        }
+        if e.contains("mux_client_request_session") || e.contains("session open refused by peer")
+            || e.contains("mux_client_hello_exchange") || e.contains("control socket connect") {
+            return .sharedConnection
+        }
+        if e.contains("kex_exchange_identification") || e.contains("ssh_exchange_identification")
+            || e.contains("banner exchange")
+            || e.range(of: #"connection (closed|reset) by \S+ port \d+"#, options: .regularExpression) != nil {
+            return .transient
+        }
+        if e.contains("could not resolve hostname") || e.contains("nodename nor servname")
+            || e.contains("ssh: connect to host") {
+            return .unreachable
+        }
+        return nil
     }
 
     /// Copies local files to a remote path with scp (cmcr-push transport).
@@ -172,20 +334,72 @@ public enum SSH {
         on host: Machine,
         password: String?,
         settings: SSHSettings,
-        handle: ProcessHandle? = nil
+        handle: ProcessHandle? = nil,
+        retry: SSHRetryPolicy = .transient
     ) async -> CommandResult {
-        let args = ["-q", "-r", "-p", "-P", String(host.port)] + options(settings, password: password)
-            + files.map(\.path) + ["\(host.destination):\(remotePath)"]
-        return await ProcessRunner.run(scpPath, args, environment: environment(settings, password: password),
-                                       handle: handle)
+        let key = HostGate.key(for: host)
+        guard await HostGate.shared.acquire(key, handle: handle) else { return .cancelledResult }
+        defer { HostGate.shared.release(key) }
+        // No -q: it would also hide ssh's own diagnostics (unknown host, refused, wrong password).
+        return await runWithRetry(on: host, settings: settings, retry: retry, handle: handle, stdoutFile: nil,
+                                  isCopy: true, onOutput: nil) { mux, output in
+            let args = ["-r", "-p", "-P", String(host.port)] + options(settings, password: password, mux: mux)
+                + files.map(\.path) + ["\(host.destination):\(remotePath)"]
+            return await ProcessRunner.run(scpPath, args, environment: environment(settings, password: password),
+                                           handle: handle, onOutput: output)
+        }
     }
 
     /// Arguments for an interactive session (cmcr-go).
     public static func interactiveArguments(for host: Machine, settings: SSHSettings) -> [String] {
-        var a = ["-p", String(host.port), "-o", "StrictHostKeyChecking=accept-new"]
+        var a: [String] = settings.extraOptions.flatMap { ["-o", $0] }
+        a += ["-p", String(host.port), "-o", "StrictHostKeyChecking=accept-new",
+              "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"]
+        a += muxOptions(settings)
         if !settings.identityFile.isEmpty { a += ["-i", expandTilde(settings.identityFile)] }
-        for extra in settings.extraOptions { a += ["-o", extra] }
         return a + [host.destination]
+    }
+
+    /// Closes the shared connection to a Mac (after it restarted, its key changed or the settings changed).
+    public static func closeMaster(_ host: Machine, settings: SSHSettings) async {
+        guard controlDirectory() != nil else { return }
+        var s = settings
+        s.reuseConnections = true
+        _ = await ProcessRunner.run(sshPath, options(s, password: nil) + ["-O", "exit", "-p", String(host.port), host.destination],
+                                    environment: ["SSH_ASKPASS_REQUIRE": "never"], timeout: 5)
+    }
+
+    public static func closeMasters(_ hosts: [Machine], settings: SSHSettings) async {
+        await withTaskGroup(of: Void.self) { group in
+            for h in hosts { group.addTask { await closeMaster(h, settings: settings) } }
+        }
+    }
+
+    /// Known-hosts files set with `UserKnownHostsFile` in the extra options (empty: ssh's default).
+    public static func knownHostsFiles(_ s: SSHSettings) -> [String] {
+        for option in s.extraOptions {
+            let parts = option.split(maxSplits: 1, whereSeparator: { $0 == "=" || $0 == " " })
+            guard parts.count == 2, parts[0].lowercased() == "userknownhostsfile" else { continue }
+            return parts[1].split(separator: " ").map { expandTilde(String($0)) }.filter { $0 != "none" }
+        }
+        return []
+    }
+
+    /// Stops a remote job started by `run` with a handle (kills its process group, as root if needed).
+    public static func cancelRemote(jobID: String, on host: Machine, password: String?,
+                                    settings: SSHSettings) async -> RemoteCancelOutcome {
+        guard RemoteJobs.isValidID(jobID) else { return .failed("nieprawidłowy identyfikator zadania") }
+        let stdin = Data(((password ?? "") + "\n").utf8)
+        // Not gated and without connection sharing limits: it must get through while the job runs.
+        let command = RemoteJobs.cancelScript(jobID: jobID).remoteCommand()
+        let r = await runWithRetry(on: host, settings: settings, retry: .transient, handle: nil, stdoutFile: nil,
+                                   onOutput: nil) { mux, output in
+            await ProcessRunner.run(sshPath, options(settings, password: password, mux: mux)
+                                        + ["-T", "-p", String(host.port), host.destination, command],
+                                    environment: environment(settings, password: password), stdin: stdin,
+                                    timeout: OperationTimeout.cancel, onOutput: output)
+        }
+        return RemoteCancelOutcome(r)
     }
 
     /// Turns an ssh failure into a status and a human readable (Polish) explanation.
@@ -209,6 +423,18 @@ public enum SSH {
             }
             if lower.contains("host key verification failed") || lower.contains("remote host identification has changed") {
                 return (.error, "Klucz hosta się zmienił – usuń stary wpis (Konfiguracja › Przygotowanie › Zapomnij klucz hosta).")
+            }
+            if lower.contains("kex_exchange_identification") || lower.contains("banner exchange") {
+                return (.error, "Serwer SSH chwilowo odrzucił połączenie (zbyt wiele jednoczesnych połączeń) – spróbuj ponownie.")
+            }
+            if lower.contains("session open refused by peer") || lower.contains("mux_client") {
+                return (.error, "Przekroczono limit jednoczesnych sesji SSH na komputerze – spróbuj ponownie lub zmniejsz liczbę równoległych operacji.")
+            }
+            if lower.contains("server not responding") {
+                return (.offline, "Połączenie zerwane – komputer przestał odpowiadać (uśpiony, wyłączony lub poza siecią).")
+            }
+            if lower.contains("closed by remote host") || lower.contains("broken pipe") {
+                return (.error, "Połączenie zostało przerwane – polecenie mogło nadal działać na komputerze.")
             }
             return (.error, err.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? "Błąd połączenia SSH (kod 255)." : err.trimmingCharacters(in: .whitespacesAndNewlines))
