@@ -24,6 +24,16 @@ public enum ScreenLayout {
         return best
     }
 
+    /// Width of each tile when `count` tiles in `columns` columns must fit `width`×`height` entirely.
+    public static func fitTileWidth(count: Int, columns: Int, width: Double, height: Double, spacing: Double,
+                                    aspect: Double = 16.0 / 10.0, chrome: Double = 0) -> Double {
+        let c = Double(max(1, columns))
+        let rows = Double((max(1, count) + max(1, columns) - 1) / max(1, columns))
+        let byWidth = (width - spacing * (c - 1)) / c
+        let byHeight = ((height - spacing * (rows - 1)) / rows - chrome) * aspect
+        return max(0, min(byWidth, byHeight))
+    }
+
     /// Columns for tiles of at least `minTileWidth` points.
     public static func adaptiveColumns(width: Double, minTileWidth: Double, spacing: Double, maxColumns: Int = 12) -> Int {
         guard width > 0, minTileWidth > 0 else { return 1 }

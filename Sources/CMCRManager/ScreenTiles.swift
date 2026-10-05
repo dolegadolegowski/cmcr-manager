@@ -617,10 +617,13 @@ struct ScreenGrid: View {
             let inner = CGSize(width: max(0, geo.size.width - 2 * Self.padding),
                                height: max(0, geo.size.height - 2 * Self.padding))
             let cols = columns(for: inner)
-            let width = ScreenLayout.tileWidth(columns: cols, width: inner.width, spacing: Self.spacing)
+            let width = layout == .fit
+                ? ScreenLayout.fitTileWidth(count: machines.count, columns: cols, width: inner.width,
+                                            height: inner.height, spacing: Self.spacing)
+                : ScreenLayout.tileWidth(columns: cols, width: inner.width, spacing: Self.spacing)
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Self.spacing), count: cols),
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(width), spacing: Self.spacing), count: cols),
                               spacing: Self.spacing) {
                         ForEach(machines) { m in
                             ScreenTile(machine: m, feed: center.feed(for: m.id), width: width, interval: interval,
@@ -633,6 +636,7 @@ struct ScreenGrid: View {
                         }
                     }
                     .padding(Self.padding)
+                    .frame(maxWidth: .infinity)
                 }
                 .onChange(of: focused) { _, id in
                     if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }

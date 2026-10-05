@@ -13,6 +13,14 @@ import Testing
     #expect(ScreenLayout.fitColumns(count: 30, width: 400, height: 300, spacing: 8, maxColumns: 6) <= 6)
 }
 
+@Test func fitTileWidthKeepsEveryRowVisible() {
+    let w = ScreenLayout.fitTileWidth(count: 15, columns: 4, width: 1600, height: 1000, spacing: 8)
+    let rows = 4.0
+    #expect(w * 4 + 3 * 8 <= 1600)
+    #expect((w / 1.6) * rows + 3 * 8 <= 1000 + 0.001)
+    #expect(ScreenLayout.fitTileWidth(count: 2, columns: 2, width: 1000, height: 2000, spacing: 10) == 495)
+}
+
 @Test func fitColumnsAccountsForLabelHeight() {
     let without = ScreenLayout.fitColumns(count: 6, width: 1200, height: 520, spacing: 8)
     let with = ScreenLayout.fitColumns(count: 6, width: 1200, height: 520, spacing: 8, chrome: 120)
