@@ -78,7 +78,9 @@ screencapture() {
 
 # Observation notice of the screen preview (Scripts.observeNoticeJXA, tag CMCR_OBSERVE_NOTICE): answers like
 # the real panel. Control files in $CMCR_E2E_WORK: fake-notify-fail (osascript fails, e.g. no access to the
-# GUI session), fake-notify-hidden (the panel is not on screen), fake-notify-silent (no answer at all).
+# GUI session), fake-notify-hidden (the panel is not on screen), fake-notify-silent (no answer at all),
+# fake-notify-hang (no answer from a real process that does not quit for a minute, like an osascript stuck in
+# the GUI session; its command line holds "cmcr-fake-osascript $CMCR_E2E_WORK/", so tests can look for leftovers).
 _e2e_notice() {
   local w="${CMCR_E2E_WORK:-/nonexistent}"
   _e2e_log "observe-notice: $1"
@@ -87,6 +89,10 @@ _e2e_notice() {
   fi
   if [ -e "$w/fake-notify-hidden" ]; then echo "CMCR:NOTICE:hidden"; return 0; fi
   if [ -e "$w/fake-notify-silent" ]; then sleep 10; return 0; fi
+  if [ -e "$w/fake-notify-hang" ]; then
+    /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i + 1)); done' "cmcr-fake-osascript $w/"
+    return 0
+  fi
   echo "CMCR:NOTICE:shown"
 }
 _e2e_is_notice() { case " $* " in *" CMCR_OBSERVE_NOTICE "*) return 0 ;; esac; return 1; }
@@ -536,8 +542,15 @@ launchctl() {
   _e2e_next_fake launchctl "$@"
 }
 
+# pmset-repeat.fail in $CMCR_E2E_WORK: `pmset repeat` refuses every schedule (exit 1), as pmset does for a
+# schedule it cannot store.
 pmset() {
   : e2e-setup-wrapper
+  if [ "${1:-}" = repeat ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/pmset-repeat.fail" ]; then
+    _e2e_log "pmset $* (odmowa)"
+    echo "pmset: Error scheduling repeating power events (test)" >&2
+    return 1
+  fi
   if _e2e_sys; then
     local st="$CMCR_E2E_WORK/setup-sys"
     _e2e_log "pmset $*"

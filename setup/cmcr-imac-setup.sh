@@ -286,6 +286,48 @@ as_user() {
   else echo "Nie mogę działać jako $u bez uprawnień roota." >&2; return 1; fi
 }
 in_console() { launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" "$@"; }
+# walk_dir ŚCIEŻKA [create] – wchodzi do folderu krok po kroku (jak cmcr_walk w bibliotece CMCR Manager), więc
+# root nigdy nie przechodzi przez dowiązanie podstawione przez ucznia. Każdy element jest sprawdzany bez podążania
+# za nim, a po `cd -P` to musi być ten sam folder (urządzenie:i-węzeł) – podmiana folderu na dowiązanie w trakcie
+# kończy się odmową. Dowiązanie jest dozwolone tylko wtedy, gdy należy do roota i leży w folderze, który może
+# zmieniać wyłącznie root (/tmp, /var, /etc). Z „create” brakujące foldery powstają od środka folderu nadrzędnego
+# – jako uczeń, gdy to jego folder. Wynik: 0 – powłoka jest w folderze, 2 – dowiązanie (WALK_LINK) lub podmiana
+# (WALK_LINK puste), 1 – brak folderu albo nie da się go otworzyć lub utworzyć (powłoka wraca wtedy do /).
+walk_dir() {
+  local todo="$1" mode="${2:-}" c t hops=0
+  WALK_LINK=""
+  case "$todo" in /*) cd / || return 1 ;; esac
+  while :; do
+    while [ "${todo#/}" != "$todo" ]; do todo="${todo#/}"; done
+    [ -n "$todo" ] || return 0
+    c="${todo%%/*}"
+    if [ "$c" = "$todo" ]; then todo=""; else todo="${todo#*/}"; fi
+    case "$c" in .) continue ;; ..) cd /; return 1 ;; esac
+    set -- $(stat -f '%Sp %u %d:%i' -- "./$c" 2>/dev/null)
+    if [ $# -lt 3 ] && [ "$mode" = create ]; then
+      if [ "$(stat -f %Su . 2>/dev/null)" = "$STUDENT" ]; then as_user "$STUDENT" /bin/mkdir -- "./$c" 2>/dev/null
+      else mkdir -- "./$c" 2>/dev/null; fi
+      set -- $(stat -f '%Sp %u %d:%i' -- "./$c" 2>/dev/null)
+    fi
+    case "${1:-}" in
+      d*)
+        cd -P -- "./$c" 2>/dev/null || { cd /; return 1; }
+        [ "$(stat -f %d:%i . 2>/dev/null)" = "$3" ] || { cd /; return 2; } ;;
+      l*)
+        t="$(/bin/pwd -P)"; [ "$t" = / ] && t=""
+        set -- "$@" $(stat -f '%u %Lp' . 2>/dev/null)
+        if [ "$2" != 0 ] || [ "${4:-}" != 0 ] || [ $(( 0${5:-2} & 022 )) != 0 ]; then
+          WALK_LINK="$t/$c"; cd /; return 2
+        fi
+        hops=$((hops + 1))
+        t="$(readlink "./$c")"
+        if [ -z "$t" ] || [ $hops -gt 32 ]; then cd /; return 1; fi
+        case "$t" in /*) cd / ;; esac
+        todo="$t/$todo" ;;
+      *) cd /; return 1 ;;
+    esac
+  done
+}
 wait_enter() { if [ -r /dev/tty ]; then printf '   Naciśnij Enter, gdy skończysz… '; read -r _ </dev/tty; fi; }
 open_pane() {   # otwiera Ustawienia systemowe w sesji osoby przy komputerze
   [ $GUIDE -eq 1 ] && [ -n "$CONSOLE_USER" ] || return 1
@@ -301,6 +343,19 @@ tcc_value() {
 tcc_ssh_value() {
   sqlite3 -readonly "$TCC_DB" \
     "SELECT IFNULL(MAX(auth_value),-1) FROM access WHERE service='$1' AND (client LIKE '%sshd-keygen-wrapper' OR client LIKE '%sshd-session');" 2>/dev/null
+}
+# Faktyczne uprawnienie „Nagrywanie ekranu” – to samo sprawdzenie co w tabeli Gotowość w CMCR Manager:
+# CGPreflightScreenCaptureAccess w sesji osoby przy komputerze (launchctl asuser, jak podgląd ekranu). Nie pyta
+# o zgodę. Wypisuje true/false; nic, gdy nikt nie jest zalogowany albo sprawdzenie się nie udało (limit 10 s).
+SC_PROBE='ObjC.import("CoreGraphics"); ObjC.bindFunction("CGPreflightScreenCaptureAccess", ["bool", []]); $.CGPreflightScreenCaptureAccess()'
+screen_preflight() {
+  local p w
+  [ -n "$CONSOLE_UID" ] || return 0
+  if [ "$(id -u)" = "$CONSOLE_UID" ]; then osascript -l JavaScript -e "$SC_PROBE" </dev/null 2>/dev/null & p=$!
+  elif [ "$(id -u)" -eq 0 ]; then launchctl asuser "$CONSOLE_UID" osascript -l JavaScript -e "$SC_PROBE" </dev/null 2>/dev/null & p=$!
+  else return 0; fi
+  ( sleep 10; kill "$p" 2>/dev/null ) </dev/null >/dev/null 2>&1 & w=$!
+  wait "$p"; kill "$w" 2>/dev/null
 }
 
 printf 'CMCR Manager – przygotowanie iMaca (skrypt %s, tryb: %s)\n' "$CMCR_SETUP_VERSION" "$MODE"
@@ -515,7 +570,7 @@ step_sshd_tuning() {
 
 step_shared_folder() {
   section "Folder współdzielony ucznia"
-  local shome dir top anc mode_now owner_now acl_ok=1 did="" plan=""
+  local shome dir top anc rest rc at=. mode_now owner_now acl_ok=1 did="" plan=""
   if ! dscl . -read "/Users/$STUDENT" UniqueID >/dev/null 2>&1; then
     record shared warn "Konto ucznia „$STUDENT” nie istnieje – pomijam folder (utwórz konto i uruchom skrypt ponownie)."
     return
@@ -523,7 +578,10 @@ step_shared_folder() {
   shome="$(home_of "$STUDENT")"
   dir="${OPT_SHARED:+$R$OPT_SHARED}"; dir="${dir:-$shome/Public/cmcr}"
   while [ "${dir%/}" != "$dir" ]; do dir="${dir%/}"; done
-  if [ ! -d "$dir" ]; then
+  # Najgłębszy istniejący element ścieżki (dowiązanie też się liczy – oceni je walk_dir).
+  anc="$dir"
+  while [ ! -e "$anc" ] && [ ! -L "$anc" ]; do anc="$(dirname "$anc")"; done
+  if [ "$anc" != "$dir" ]; then
     # Folder domowy tworzy macOS przy pierwszym logowaniu – utworzony przez roota należałby do roota
     # i uczeń nie mógłby się zalogować do własnego folderu.
     case "$dir" in
@@ -538,37 +596,59 @@ step_shared_folder() {
       fi
       return
     fi
-    # Brakujące foldery pośrednie tworzy właściciel najbliższego istniejącego folderu (np. Public ucznia).
-    anc="$(dirname "$dir")"
-    while [ ! -d "$anc" ] && [ "$anc" != / ]; do anc="$(dirname "$anc")"; done
-    if [ "$(stat -f %Su "$anc" 2>/dev/null)" = "$STUDENT" ]; then
+  fi
+  # Uczeń jest właścicielem folderów na tej drodze i mógłby podmienić któryś na dowiązanie (także między
+  # sprawdzeniem a zmianą). Dlatego root wchodzi do folderu krok po kroku (walk_dir) i zmienia „.” – folder,
+  # w którym już jest – a nie ścieżkę.
+  walk_dir "$anc"; rc=$?
+  if [ $rc -eq 0 ] && [ "$anc" != "$dir" ]; then
+    rest="${dir#"$anc"}"
+    while [ "${rest#/}" != "$rest" ]; do rest="${rest#/}"; done
+    if [ $CHANGE -eq 1 ]; then
+      # Brakujące foldery tworzy uczeń, gdy folder nadrzędny jest jego (np. Public), w przeciwnym razie root.
+      walk_dir "$rest" create; rc=$?
+    elif [ "$(stat -f %Su . 2>/dev/null)" = "$STUDENT" ]; then
       run as_user "$STUDENT" /bin/mkdir -p "$dir"
     else
       run /bin/mkdir -p "$dir"
     fi
     did="utworzono"; plan="utworzyć"
   fi
-  if [ -L "$dir" ]; then record shared fail "$dir jest dowiązaniem – przerwano."; return; fi
-  owner_now="$(stat -f %Su "$dir" 2>/dev/null)"; mode_now="$(stat -f %Lp "$dir" 2>/dev/null)"
-  if [ "$owner_now" != "$STUDENT" ]; then run chown "$STUDENT:staff" "$dir"; did="${did:+$did, }właściciel $STUDENT"
+  if [ $rc -ne 0 ]; then
+    if [ $rc -eq 2 ] && [ -n "$WALK_LINK" ]; then
+      record shared fail "$WALK_LINK jest dowiązaniem utworzonym przez konto „$(stat -f %Su "$WALK_LINK" 2>/dev/null)” – przerwano (folder ucznia nie może prowadzić przez dowiązanie). Usuń je i uruchom skrypt ponownie."
+    elif [ $rc -eq 2 ]; then
+      record shared fail "Folder $dir został podmieniony w trakcie sprawdzania – przerwano."
+    elif [ $IS_ROOT -eq 0 ]; then
+      record shared warn "Nie mogę sprawdzić folderu $dir bez uprawnień roota."
+    else
+      record shared fail "Nie można otworzyć ani utworzyć folderu $dir."
+    fi
+    return
+  fi
+  [ $CHANGE -eq 1 ] || at="$dir"   # podgląd: w raporcie pełna ścieżka zamiast „.”
+  owner_now="$(stat -f %Su "$at" 2>/dev/null)"; mode_now="$(stat -f %Lp "$at" 2>/dev/null)"
+  if [ "$owner_now" != "$STUDENT" ]; then run chown "$STUDENT:staff" "$at"; did="${did:+$did, }właściciel $STUDENT"
     plan="${plan:+$plan, }ustawić właściciela $STUDENT"; fi
-  if [ "$mode_now" != "${OPT_SHARED_MODE#0}" ]; then run chmod "$OPT_SHARED_MODE" "$dir"; did="${did:+$did, }chmod $OPT_SHARED_MODE"
+  if [ "$mode_now" != "${OPT_SHARED_MODE#0}" ]; then run chmod "$OPT_SHARED_MODE" "$at"; did="${did:+$did, }chmod $OPT_SHARED_MODE"
     plan="${plan:+$plan, }chmod $OPT_SHARED_MODE"; fi
   if [ "$OPT_SHARED_ACL" = 1 ]; then
     # Dziedziczone ACL: pliki wgrane przez administratora są edytowalne przez ucznia i odwrotnie.
     local perms="list,add_file,search,add_subdirectory,delete_child,readattr,writeattr,readextattr,writeextattr,readsecurity,file_inherit,directory_inherit"
-    ls -led "$dir" 2>/dev/null | grep -q "group:admin allow .*directory_inherit" || acl_ok=0
-    ls -led "$dir" 2>/dev/null | grep -q "user:$STUDENT allow .*directory_inherit" || acl_ok=0
+    ls -led "$at" 2>/dev/null | grep -q "group:admin allow .*directory_inherit" || acl_ok=0
+    ls -led "$at" 2>/dev/null | grep -q "user:$STUDENT allow .*directory_inherit" || acl_ok=0
     if [ $acl_ok -eq 0 ]; then
-      if run chmod -N "$dir" && run chmod +a "user:$STUDENT allow $perms" "$dir" \
-         && run chmod +a "group:admin allow $perms" "$dir"; then
+      if run chmod -N "$at" && run chmod +a "user:$STUDENT allow $perms" "$at" \
+         && run chmod +a "group:admin allow $perms" "$at"; then
         did="${did:+$did, }ACL"; plan="${plan:+$plan, }dziedziczone ACL"
       else
         record shared_acl warn "Nie udało się ustawić ACL w $dir (folder działa, ale bez dziedziczonych uprawnień)."
       fi
     fi
   fi
-  if [ $CHANGE -eq 1 ] && [ "$(stat -f %Su "$dir" 2>/dev/null)" != "$STUDENT" ]; then
+  owner_now="$(stat -f %Su "$at" 2>/dev/null)"
+  cd /
+  if [ $CHANGE -eq 1 ] && [ "$owner_now" != "$STUDENT" ]; then
     record shared fail "Nie udało się ustawić właściciela $STUDENT dla $dir."
   elif [ -n "$did" ]; then changed_or_planned shared "Folder $dir ($did)." "folder $dir – $plan."; else record shared ok "Folder $dir: właściciel $STUDENT, $OPT_SHARED_MODE$([ "$OPT_SHARED_ACL" = 1 ] && echo ', ACL')."; fi
 }
@@ -655,7 +735,11 @@ step_power() {
 
   if [ "$OPT_POWER_SCHEDULE" = off ]; then
     if pmset -g sched 2>/dev/null | grep -q "Repeating power events"; then
-      run pmset repeat cancel; changed_or_planned schedule "Usunięto harmonogram włączania/wyłączania." "usunąć harmonogram włączania/wyłączania."
+      if run pmset repeat cancel; then
+        changed_or_planned schedule "Usunięto harmonogram włączania/wyłączania." "usunąć harmonogram włączania/wyłączania."
+      else
+        record schedule fail "pmset nie usunął harmonogramu włączania/wyłączania."
+      fi
     else
       record schedule ok "Brak harmonogramu włączania/wyłączania."
     fi
@@ -671,10 +755,17 @@ step_power() {
     fi
     [ -n "$SCHED_ACTUAL" ] && detail "Obecny harmonogram (pmset): $SCHED_ACTUAL"
     # pmset repeat zastępuje cały harmonogram, więc ustawiamy oba zdarzenia jednym poleceniem.
+    local rc=0
     if [ -n "$SCHED_OFF" ]; then
-      run pmset repeat wakeorpoweron "$SCHED_DAYS" "$SCHED_ON:00" "$SCHED_OFF_ACTION" "$SCHED_DAYS" "$SCHED_OFF:00"
+      run pmset repeat wakeorpoweron "$SCHED_DAYS" "$SCHED_ON:00" "$SCHED_OFF_ACTION" "$SCHED_DAYS" "$SCHED_OFF:00" || rc=$?
     else
-      run pmset repeat wakeorpoweron "$SCHED_DAYS" "$SCHED_ON:00"
+      run pmset repeat wakeorpoweron "$SCHED_DAYS" "$SCHED_ON:00" || rc=$?
+    fi
+    if [ $rc -ne 0 ]; then
+      # Odcisk zostaje pusty: obecne zdarzenia (np. z aplikacji) nie są tymi ze skryptu – następne uruchomienie ponowi.
+      SCHED_ACTUAL=""
+      record schedule fail "pmset nie przyjął harmonogramu (kod $rc)."
+      return
     fi
     [ $CHANGE -eq 1 ] && SCHED_ACTUAL="$(sched_block)"
     if [ $CHANGE -eq 1 ] && [ -z "$SCHED_ACTUAL" ]; then
@@ -801,7 +892,7 @@ step_filevault() {
 
 step_tcc() {
   section "Uprawnienia prywatności (TCC) dla sesji SSH"
-  local fda sc readable=0
+  local fda sc readable=0 probe sc_why=""
   fda="$(tcc_ssh_value kTCCServiceSystemPolicyAllFiles)"
   [ -n "$fda" ] && readable=1
   if [ $readable -eq 1 ]; then
@@ -811,6 +902,18 @@ step_tcc() {
   elif [ $VIA_SSH -eq 1 ]; then
     FDA_REMOTE=no   # przez SSH bez pełnego dostępu do dysku nie da się otworzyć bazy TCC
   fi
+  # Wpis w TCC.db nie musi odpowiadać procesowi, któremu macOS przypisuje sesję SSH (sshd-session od OpenSSH 9.8):
+  # rozstrzyga sprawdzenie w sesji osoby przy komputerze, tak jak w tabeli Gotowość. Uruchomione w Terminalu
+  # sprawdzałoby uprawnienie Terminala, więc tylko przez SSH.
+  probe=""
+  [ $VIA_SSH -eq 1 ] && probe="$(screen_preflight)"
+  case "$probe" in
+    true) SC_REMOTE=yes ;;
+    false) SC_REMOTE=no ;;
+    *) if [ $VIA_SSH -eq 0 ]; then sc_why="skrypt uruchomiono przy komputerze, nie przez SSH"
+       elif [ -z "$CONSOLE_UID" ]; then sc_why="nikt nie jest zalogowany przy komputerze"
+       else sc_why="sprawdzenie w sesji $CONSOLE_USER nie powiodło się"; fi ;;
+  esac
   # Systemowa baza TCC jest chroniona przez SIP – tych uprawnień nie da się nadać skryptem (tylko ręcznie lub przez MDM).
   case "$FDA_REMOTE" in
     yes) record tcc_fda ok "Pełny dostęp do dysku dla użytkowników zdalnych: włączony." ;;
@@ -821,7 +924,8 @@ step_tcc() {
          fi ;;
   esac
   case "$SC_REMOTE" in
-    yes) record tcc_screen ok "Nagrywanie ekranu dla sesji SSH: zezwolono (podgląd ekranów działa)." ;;
+    yes) if [ -z "$sc_why" ]; then record tcc_screen ok "Nagrywanie ekranu dla sesji SSH: zezwolono (podgląd ekranów działa)."
+         else record tcc_screen ok "Nagrywanie ekranu dla sesji SSH: wpis w TCC zezwala – sprawdź w Gotowości ($sc_why)."; fi ;;
     *)   record tcc_screen todo "Ustawienia › Prywatność i ochrona › Nagrywanie ekranu$([ "$OS_MAJOR" -ge 15 ] && echo ' i dźwięku systemowego') › „+” › ⌘⇧G › /usr/libexec/sshd-keygen-wrapper › włącz$([ "$OS_MAJOR" -ge 15 ] && echo '; jeśli podgląd nadal pokazuje tylko tapetę, dodaj tak samo /usr/libexec/sshd-session')$([ "$SC_REMOTE" = unknown ] && echo ' (stan pokaże CMCR Manager: Konfiguracja › Przygotowanie iMaców › Sprawdź)')."
          if open_pane "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"; then
            detail "Otworzyłem Nagrywanie ekranu: „+”, ⌘⇧G, wpisz /usr/libexec/sshd-keygen-wrapper, Otwórz, włącz przełącznik."
