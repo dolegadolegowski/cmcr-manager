@@ -333,7 +333,8 @@ final class AppModel: ObservableObject {
     func refreshStatus(_ targets: [Machine]? = nil, quietly: Bool = false) {
         let now = Date()
         if quietly {
-            guard isWindowVisible else { return }
+            // Every window runs its own refresh loop; one background round per minute is enough.
+            guard isWindowVisible, now.timeIntervalSince(lastQuietRefresh) >= 60 else { return }
             lastQuietRefresh = now
         }
         let list = (targets ?? machines).filter { m in
