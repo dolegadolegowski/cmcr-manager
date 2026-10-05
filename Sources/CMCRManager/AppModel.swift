@@ -329,6 +329,8 @@ final class AppModel: ObservableObject {
 
     /// Macs whose check is running: a new refresh skips them (no duplicate probes, no out-of-order results).
     private var statusInFlight = Set<UUID>()
+    /// Macs that are off whose ssh port is being probed in the background.
+    private var portProbes = Set<UUID>()
     /// Failed background checks in a row of Macs that are off, and when to check them again.
     private var offlineStreak: [UUID: Int] = [:]
     private var nextQuietProbe: [UUID: Date] = [:]
@@ -337,8 +339,8 @@ final class AppModel: ObservableObject {
 
     /// `quietly` is the background refresh: it pauses while no window can be seen, and a Mac that is off gets
     /// a full check less and less often (up to every 10 min); in between only its ssh port is probed (a TCP
-    /// connect, no login), so a Mac that was switched on shows up within a minute. An explicit refresh always
-    /// checks every target.
+    /// connect, no login), so a Mac that was switched on shows up in the next background round. An explicit
+    /// refresh always checks every target.
     func refreshStatus(_ targets: [Machine]? = nil, quietly: Bool = false) {
         let now = Date()
         if quietly {
@@ -346,29 +348,33 @@ final class AppModel: ObservableObject {
             guard isWindowVisible, now.timeIntervalSince(lastQuietRefresh) >= 60 else { return }
             lastQuietRefresh = now
         }
-        let list = (targets ?? machines).filter { !statusInFlight.contains($0.id) }
+        let list = (targets ?? machines).filter {
+            !statusInFlight.contains($0.id) && !(quietly && portProbes.contains($0.id))
+        }
         guard !list.isEmpty else { return }
-        statusInFlight.formUnion(list.map(\.id))
-        for m in list where !quietly || statuses[m.id] == nil {
+        let probeFirst = Set(list.filter { quietly && (nextQuietProbe[$0.id] ?? .distantPast) > now }.map(\.id))
+        statusInFlight.formUnion(list.map(\.id).filter { !probeFirst.contains($0) })
+        portProbes.formUnion(probeFirst)
+        for m in list where !probeFirst.contains(m.id) && (!quietly || statuses[m.id] == nil) {
             var st = statuses[m.id] ?? HostStatus()
             st.reachability = .checking
             statuses[m.id] = st
         }
         let ss = sshSettings
         let timeout = OperationTimeout.status(connectTimeout: settings.connectTimeout)
-        let jobs = list.map { m in (m, password(for: m), quietly && (nextQuietProbe[m.id] ?? .distantPast) > now) }
+        let jobs = list.map { ($0, password(for: $0)) }
         Task {
             await withTaskGroup(of: Void.self) { group in
                 var active = 0
-                for (m, pw, probeFirst) in jobs {
+                for (m, pw) in jobs {
                     if active >= 16 {
                         await group.next()
                         active -= 1
                     }
                     group.addTask {
-                        if probeFirst, await SSH.portAnswers(m, settings: ss) != true {
-                            await self.skipStatus(m)
-                            return
+                        if probeFirst.contains(m.id) {
+                            let answers = await SSH.portAnswers(m, settings: ss) == true
+                            guard await self.finishPortProbe(m, answered: answers) else { return }
                         }
                         let r = await SSH.run(Scripts.status(), on: m, password: pw, settings: ss, timeout: timeout)
                         await self.applyStatus(m, r)
@@ -379,8 +385,12 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func skipStatus(_ m: Machine) {
-        statusInFlight.remove(m.id)
+    /// Returns whether to run the full check now (the port answered and no other check has started meanwhile).
+    private func finishPortProbe(_ m: Machine, answered: Bool) -> Bool {
+        portProbes.remove(m.id)
+        guard answered, !statusInFlight.contains(m.id) else { return false }
+        statusInFlight.insert(m.id)
+        return true
     }
 
     private func applyStatus(_ m: Machine, _ r: CommandResult) {
