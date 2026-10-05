@@ -40,25 +40,31 @@ enum SnapshotRenderer {
                 .environmentObject(model.screens)
                 .frame(width: size.width, height: size.height))
             window.contentView = host
+            // Key and in front (also while the screen is locked): controls render active and sheets can attach.
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
             for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                NSApp.appearance = NSAppearance(named: appearance)
                 window.appearance = NSAppearance(named: appearance)
                 for entry in entries {
                     let parts = entry.split(separator: ":", maxSplits: 1).map(String.init)
                     let sub = parts.count > 1 ? parts[1] : ""
                     let file = entry.replacingOccurrences(of: ":", with: "-")
                     if parts[0] == "settings" {
-                        await captureSettings(sub: sub, appearance: appearance, wait: wait,
-                                              to: output.appendingPathComponent("\(file)-\(name).png"))
+                        await captureSettings(sub: sub, wait: wait, to: output.appendingPathComponent("\(file)-\(name).png"))
+                        window.makeKeyAndOrderFront(nil)
                         continue
                     }
                     guard let section = AppSection(rawValue: parts[0]) else { continue }
                     model.section = section
-                    try? await Task.sleep(nanoseconds: 400_000_000)
-                    NotificationCenter.default.post(name: subpageNotification, object: sub)
+                    // Twice: views that appear after the first post (a newly selected tab) get the second one.
+                    for _ in 0..<2 {
+                        try? await Task.sleep(nanoseconds: 400_000_000)
+                        NotificationCenter.default.post(name: subpageNotification, object: sub)
+                    }
                     try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
                     capture(window, to: output.appendingPathComponent("\(file)-\(name).png"))
                     if let sheet = window.attachedSheet {
-                        sheet.appearance = window.appearance
                         capture(sheet, to: output.appendingPathComponent("\(file)-sheet-\(name).png"))
                     }
                     if !sub.isEmpty {
@@ -71,18 +77,28 @@ enum SnapshotRenderer {
         }
     }
 
-    private static func captureSettings(sub: String, appearance: NSAppearance.Name, wait: Double, to url: URL) async {
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        try? await Task.sleep(nanoseconds: 600_000_000)
-        guard let window = NSApp.windows.first(where: { $0.identifier?.rawValue.localizedCaseInsensitiveContains("settings") == true }) else {
-            FileHandle.standardError.write(Data("Brak okna Ustawień\n".utf8))
+    private static func captureSettings(sub: String, wait: Double, to url: URL) async {
+        // The app menu's "Settings…" item (⌘,), exactly as the user opens it.
+        let before = Set(NSApp.windows.map(ObjectIdentifier.init))
+        if let menu = NSApp.mainMenu?.items.first?.submenu,
+           let index = menu.items.firstIndex(where: { $0.keyEquivalent == "," && $0.keyEquivalentModifierMask == .command }) {
+            menu.performActionForItem(at: index)
+        }
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        guard let window = NSApp.windows.first(where: { !before.contains(ObjectIdentifier($0)) && $0.contentView != nil })
+                ?? NSApp.windows.first(where: { $0.identifier?.rawValue.localizedCaseInsensitiveContains("settings") == true }) else {
+            FileHandle.standardError.write(Data("Brak okna Ustawień: \(NSApp.windows.map { "\($0.identifier?.rawValue ?? "-") \($0.title)" })\n".utf8))
             return
         }
-        window.appearance = NSAppearance(named: appearance)
-        NotificationCenter.default.post(name: subpageNotification, object: sub)
+        window.makeKeyAndOrderFront(nil)
+        for _ in 0..<2 {
+            NotificationCenter.default.post(name: subpageNotification, object: sub)
+            try? await Task.sleep(nanoseconds: 400_000_000)
+        }
         try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
         capture(window, to: url)
         window.close()
+        try? await Task.sleep(nanoseconds: 300_000_000)
     }
 
     private static func capture(_ window: NSWindow, to url: URL) {

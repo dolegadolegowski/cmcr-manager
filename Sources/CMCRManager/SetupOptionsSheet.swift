@@ -313,47 +313,6 @@ struct SetupOptionsSheet: View {
     }
 }
 
-/// Switch with an SF Symbol and a one-line explanation under the title.
-struct OptionToggle: View {
-    let title: String
-    let icon: String
-    let detail: String
-    @Binding var isOn: Bool
-
-    var body: some View {
-        Toggle(isOn: $isOn) {
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } icon: {
-                Image(systemName: icon)
-                    .frame(width: 22)
-            }
-        }
-        .toggleStyle(.switch)
-    }
-}
-
-/// Form row label with a fixed-width icon, so titles line up with those of `OptionToggle`.
-struct FormLabel: View {
-    let title: String
-    let icon: String
-
-    var body: some View {
-        Label {
-            Text(title)
-        } icon: {
-            Image(systemName: icon)
-                .frame(width: 22)
-        }
-    }
-}
-
 /// Days and times of the power schedule (pmset repeat).
 struct ScheduleEditor: View {
     @Binding var options: SetupOptions
