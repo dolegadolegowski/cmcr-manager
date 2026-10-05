@@ -82,7 +82,9 @@ struct ScreenGrid: View {
                         }
                     }
                     .padding(Self.padding)
-                    .frame(maxWidth: .infinity)
+                    // "Dopasuj do okna" never scrolls: the screens sit in the middle instead of leaving an empty
+                    // band at the bottom of the window.
+                    .frame(maxWidth: .infinity, minHeight: layout == .fit ? geo.size.height : nil)
                 }
                 .onChange(of: focused) { _, id in
                     if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
@@ -275,7 +277,7 @@ struct ZoomedScreen: View {
             .fixedSize()
             Button { composing = true } label: { Label("Wyślij wiadomość", systemImage: "text.bubble") }
                 .help("Wyślij wiadomość na ten ekran")
-            Button { actions.sleepDisplay([machine]) } label: { Label("Uśpij ekran", systemImage: "moon.zzz") }
+            Button { actions.sleepDisplay([machine]) } label: { Label("Uśpij ekran", systemImage: "moon") }
                 .help("Wygasza monitor tego komputera (uczeń obudzi go myszą lub klawiaturą)")
             Button { actions.openInWindow(machine) } label: { Label("Otwórz w oknie", systemImage: "macwindow.badge.plus") }
                 .help("Otwórz ten ekran w osobnym oknie – można je zostawić obok innych okien")

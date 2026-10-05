@@ -61,6 +61,11 @@ struct PowerView: View {
                 Text("Powiadomienie").tag(false)
             }
             HStack {
+                if model.selection.isEmpty {
+                    SelectFirstHint()
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 TargetButton(title: "Wyślij wiadomość", icon: "paperplane.fill") {
                     let t = title, m = text, d = asDialog
@@ -122,13 +127,21 @@ struct PowerView: View {
                 Text("Teraz").tag(0)
                 ForEach([1, 5, 10, 15], id: \.self) { Text("Za \($0) min").tag($0) }
             } label: {
-                Text("Kiedy uśpić, uruchomić ponownie lub wyłączyć")
-                Text(delay == 0 ? "Od razu po potwierdzeniu." : "Do tego czasu możesz to odwołać na dole tej sekcji.")
+                Label {
+                    Text("Kiedy uśpić, uruchomić ponownie lub wyłączyć")
+                    Text(delay == 0 ? "Od razu po potwierdzeniu." : "Do tego czasu możesz to odwołać na dole tej sekcji.")
+                } icon: {
+                    FormRowIcon("clock")
+                }
             }
             if delay > 0 {
                 Toggle(isOn: $warnUsers) {
-                    Text("Uprzedź zalogowanych uczniów")
-                    Text("Na ekranie pojawi się komunikat z prośbą o zapisanie pracy.")
+                    Label {
+                        Text("Uprzedź zalogowanych uczniów")
+                        Text("Na ekranie pojawi się komunikat z prośbą o zapisanie pracy.")
+                    } icon: {
+                        FormRowIcon("exclamationmark.bubble")
+                    }
                 }
             }
             PowerActionRow(title: "Uśpienie", icon: "moon.zzz",
@@ -210,7 +223,7 @@ struct PowerActionRow<Action: View>: View {
                 Text(title)
                 Text(caption)
             } icon: {
-                Image(systemName: icon)
+                FormRowIcon(icon)
             }
         }
     }

@@ -59,6 +59,10 @@ struct ClassroomView: View {
             .fixedSize()
             .frame(maxWidth: .infinity)
             .padding(.top, 8)
+            .accessibilityLabel("Część zajęć")
+            if tab != .attention && lockedCount > 0 {
+                lockedNotice
+            }
             ScrollViewReader { proxy in
                 Form {
                     switch tab {
@@ -87,7 +91,31 @@ struct ClassroomView: View {
                 }
             }
         }
+        .background {
+            // ⇧⌘L and ⇧⌘U lock and unlock the screens from every part of the section, not only from "Tryb uwagi"
+            // (where the visible buttons carry the same shortcuts).
+            if tab != .attention { AttentionShortcuts() }
+        }
         .confirmation($confirm)
+    }
+
+    private var lockedCount: Int { model.machines.filter { classroom.isLocked($0.id) }.count }
+
+    /// Reminder on the other tabs that some students still look at a locked screen.
+    private var lockedNotice: some View {
+        HStack(spacing: 10) {
+            Label {
+                Text("Tryb uwagi jest włączony – zablokowane ekrany: \(lockedCount)")
+            } icon: {
+                Image(systemName: "lock.fill").foregroundStyle(.orange)
+            }
+            Button("Pokaż") { tab = .attention }
+                .buttonStyle(.link)
+                .help("Przejdź do trybu uwagi, aby odblokować ekrany (⇧⌘U)")
+        }
+        .font(.callout)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
     }
 
     @ViewBuilder private func progress(_ kind: LessonPlan.Kind) -> some View {
@@ -182,6 +210,9 @@ private struct StartLessonSection: View {
                     Text(summary)
                     if let note = wakeNote {
                         Text(note)
+                    }
+                    if model.selection.isEmpty {
+                        SelectFirstHint()
                     }
                 }
                 .font(.callout)
@@ -347,9 +378,14 @@ private struct EndLessonSection: View {
             }
 
             HStack(spacing: 12) {
-                Text(summary)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(summary)
+                    if model.selection.isEmpty {
+                        SelectFirstHint()
+                    }
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 let disruptive = c.wrappedValue.isDisruptive
                 Button(role: disruptive ? .destructive : nil) {
@@ -556,6 +592,11 @@ private struct AttentionSection: View {
                 }
             }
             HStack(spacing: 12) {
+                if model.selection.isEmpty {
+                    SelectFirstHint()
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 TargetButton(title: "Odblokuj ekrany", icon: "lock.open", prominent: false) {
                     classroom.unlock(model, model.selectedMachines)
@@ -578,6 +619,28 @@ private struct AttentionSection: View {
 
     var lockedNames: String {
         model.machines.filter { classroom.isLocked($0.id) }.map(\.name).joined(separator: ", ")
+    }
+}
+
+/// Invisible carriers of the attention-mode shortcuts while another tab of the section is shown.
+private struct AttentionShortcuts: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var classroom = ClassroomModel.shared
+
+    var body: some View {
+        let none = model.actionTargets.isEmpty
+        ZStack {
+            Button("Zablokuj ekrany") { classroom.lock(model, model.selectedMachines) }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+                .disabled(none)
+            Button("Odblokuj ekrany") { classroom.unlock(model, model.selectedMachines) }
+                .keyboardShortcut("u", modifiers: [.command, .shift])
+                .disabled(none)
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -627,6 +690,11 @@ private struct QuestionSection: View {
                 Text("Potem okno pytania zniknie z ekranu ucznia.")
             }
             HStack {
+                if model.selection.isEmpty {
+                    SelectFirstHint()
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 TargetButton(title: "Zadaj pytanie", icon: "questionmark.bubble") {
                     classroom.ask(model, model.selectedMachines, buttons: withButtons ? buttons : [])
@@ -735,8 +803,28 @@ struct StepLabel: View {
                 Text(caption)
             }
         } icon: {
-            Image(systemName: step.icon)
+            FormRowIcon(step.icon)
         }
+    }
+}
+
+/// Why the action button next to it is greyed out when nothing is selected.
+struct SelectFirstHint: View {
+    var body: some View {
+        Label("Najpierw zaznacz komputery na liście obok.", systemImage: "hand.point.left")
+    }
+}
+
+/// Symbol in front of a form row, in a fixed-width column so the titles of neighbouring rows line up.
+struct FormRowIcon: View {
+    let name: String
+
+    init(_ name: String) { self.name = name }
+
+    var body: some View {
+        Image(systemName: name)
+            .frame(width: 20, alignment: .center)
+            .accessibilityHidden(true)
     }
 }
 

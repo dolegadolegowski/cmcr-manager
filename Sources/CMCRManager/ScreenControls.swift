@@ -18,7 +18,6 @@ struct ScreenRestrictionsBar: View {
             }
         }
         .font(.callout)
-        .foregroundStyle(.secondary)
     }
 
     private func row(short: Bool) -> some View {
@@ -56,9 +55,13 @@ struct ScreenRestrictionsBar: View {
         }
     }
 
+    /// Secondary text, so that only the "Zmień…" link keeps the accent colour.
     private func item(_ symbol: String, _ text: String, _ help: String) -> some View {
         Label(text, systemImage: symbol)
+            .foregroundStyle(.secondary)
             .help(help)
+            .accessibilityLabel(text)
+            .accessibilityHint(help)
             .fixedSize()
     }
 }

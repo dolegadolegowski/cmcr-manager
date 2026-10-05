@@ -16,7 +16,7 @@ struct EnergyScheduleSection: View {
                     Text("Automatyczne budzenie lub włączanie")
                     Text("Komputery same obudzą się lub włączą o wybranej godzinie.")
                 } icon: {
-                    Image(systemName: "sunrise")
+                    FormRowIcon("sunrise")
                 }
             }
             if s.wrappedValue.powerOnEnabled {
@@ -35,7 +35,7 @@ struct EnergyScheduleSection: View {
                     Text("Automatyczne usypianie lub wyłączanie")
                     Text("Komputery same zasną lub wyłączą się o wybranej godzinie.")
                 } icon: {
-                    Image(systemName: "moon.zzz")
+                    FormRowIcon("moon.zzz")
                 }
             }
             if s.wrappedValue.powerOffEnabled {
@@ -61,7 +61,7 @@ struct EnergyScheduleSection: View {
                     Text("Włącz ponownie po zaniku zasilania")
                     Text("Przydatne, gdy listwy zasilające są wyłączane na noc.")
                 } icon: {
-                    Image(systemName: "bolt.circle")
+                    FormRowIcon("bolt.circle")
                 }
             }
             .help("Ustawienie systemowe pmset autorestart")
@@ -70,7 +70,7 @@ struct EnergyScheduleSection: View {
                     Text("Budź przez sieć (Wake-on-LAN)")
                     Text("Pozwala budzić uśpione komputery przyciskiem „Obudź”.")
                 } icon: {
-                    Image(systemName: "network")
+                    FormRowIcon("network")
                 }
             }
             .help("Opcja „Budź przy dostępie do sieci” (pmset womp)")
@@ -81,7 +81,11 @@ struct EnergyScheduleSection: View {
                     .multilineTextAlignment(.trailing)
                     .fixedSize(horizontal: false, vertical: true)
             } label: {
-                Label("Podsumowanie", systemImage: s.wrappedValue.validationError == nil ? "list.bullet" : "exclamationmark.triangle.fill")
+                Label {
+                    Text("Podsumowanie")
+                } icon: {
+                    FormRowIcon(s.wrappedValue.validationError == nil ? "list.bullet" : "exclamationmark.triangle.fill")
+                }
             }
             HStack(spacing: 12) {
                 TargetButton(title: "Sprawdź obecny", icon: "calendar", prominent: false) {

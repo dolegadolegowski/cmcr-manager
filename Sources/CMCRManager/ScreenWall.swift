@@ -30,6 +30,16 @@ enum ScreenWallSource: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Toolbar wording (the menu items keep the longer `label`), so the window title is not squeezed.
+    var shortLabel: String {
+        switch self {
+        case .all: return "Wszystkie komputery"
+        case .selected: return "Zaznaczone komputery"
+        case .online: return "Włączone komputery"
+        case .withUser: return "Z zalogowanym uczniem"
+        }
+    }
+
     var symbol: String {
         switch self {
         case .all: return "desktopcomputer"
@@ -140,7 +150,7 @@ struct ScreenWallView: View {
             ScreenStatusBar(interval: $interval, backgroundToggle: $refreshInBackground)
         }
         .toolbar { toolbar }
-        .searchable(text: $search, placement: .toolbar, prompt: "Szukaj komputera lub ucznia")
+        .searchable(text: $search, placement: .toolbar, prompt: "Szukaj")
         .navigationTitle("Ściana ekranów")
         .navigationSubtitle(subtitle(list))
         .screenScope(pausesWhenInactive: !refreshInBackground) { w in
@@ -153,6 +163,7 @@ struct ScreenWallView: View {
     }
 
     private func subtitle(_ list: [Machine]) -> String {
+        if list.isEmpty { return search.isEmpty ? "Brak ekranów do pokazania" : "Brak wyników wyszukiwania" }
         let shown = Polish.computers(list.count)
         guard !selection.isEmpty else { return "\(shown) · kliknij ekran, aby go zaznaczyć" }
         return "\(shown) · zaznaczone: \(selection.count)"
@@ -166,11 +177,11 @@ struct ScreenWallView: View {
                 }
                 .pickerStyle(.inline)
             } label: {
-                Label(source.label, systemImage: source.symbol)
+                Label(source.shortLabel, systemImage: source.symbol)
                     .labelStyle(.titleAndIcon)
             }
             .fixedSize()
-            .help("Które komputery pokazać na ścianie ekranów")
+            .help("Które komputery pokazać na ścianie ekranów: \(source.label.lowercased())")
         }
         ToolbarItemGroup(placement: .primaryAction) {
             let n = selection.count
@@ -184,7 +195,7 @@ struct ScreenWallView: View {
             Button {
                 ScreenActions(model: model, center: center, openWindow: openWindow).sleepDisplay(selectedMachines)
             } label: {
-                Label(n == 0 ? "Uśpij ekrany" : "Uśpij ekrany (\(n))", systemImage: "moon.zzz")
+                Label(n == 0 ? "Uśpij ekrany" : "Uśpij ekrany (\(n))", systemImage: "moon")
                     .labelStyle(.titleAndIcon)
             }
             .disabled(n == 0)
@@ -339,7 +350,7 @@ private struct ScreenWindowContent: View {
             .help("Wyślij wiadomość na ten ekran")
             .popover(isPresented: $composing, arrowEdge: .bottom) { MessageComposer(targets: [machine]) }
             Button { actions.sleepDisplay([machine]) } label: {
-                Label("Uśpij ekran", systemImage: "moon.zzz").labelStyle(.titleAndIcon)
+                Label("Uśpij ekran", systemImage: "moon").labelStyle(.titleAndIcon)
             }
             .help("Wygasza monitor tego komputera (uczeń obudzi go myszą lub klawiaturą)")
             Button { actions.screenSharing(machine) } label: {

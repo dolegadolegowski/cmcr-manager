@@ -364,7 +364,7 @@ struct ScreenActionBar: View {
             }
             icon("macwindow.badge.plus", "Otwórz w nowym oknie") { actions.openInWindow(machine) }
             icon("text.bubble", "Wyślij wiadomość", action: onMessage)
-            icon("moon.zzz", "Uśpij ekran") { actions.sleepDisplay([machine]) }
+            icon("moon", "Uśpij ekran") { actions.sleepDisplay([machine]) }
             icon("rectangle.on.rectangle", "Udostępnianie ekranu (VNC) – pełny podgląd i sterowanie") { actions.screenSharing(machine) }
             Menu {
                 ScreenMoreMenuItems(machine: machine, feed: feed, actions: actions)
@@ -494,7 +494,7 @@ struct ScreenTile: View {
                 }
                 Button { actions.openInWindow(machine) } label: { Label("Otwórz w nowym oknie", systemImage: "macwindow.badge.plus") }
                 Button { composing = true } label: { Label("Wyślij wiadomość…", systemImage: "text.bubble") }
-                Button { actions.sleepDisplay([machine]) } label: { Label("Uśpij ekran", systemImage: "moon.zzz") }
+                Button { actions.sleepDisplay([machine]) } label: { Label("Uśpij ekran", systemImage: "moon") }
                 Button { actions.screenSharing(machine) } label: { Label("Udostępnianie ekranu (VNC)", systemImage: "rectangle.on.rectangle") }
                 Divider()
                 ScreenMoreMenuItems(machine: machine, feed: feed, actions: actions)

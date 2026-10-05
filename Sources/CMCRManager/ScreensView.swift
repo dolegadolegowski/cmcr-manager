@@ -35,8 +35,10 @@ struct ScreensView: View {
                     } label: {
                         Label("Zaznacz wszystkie komputery", systemImage: "checklist")
                     }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.machines.isEmpty)
+                    .help("Zaznacz wszystkie komputery z listy (⇧⌘A)")
                     OpenScreenWallButton()
-                        .buttonStyle(.borderedProminent)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
