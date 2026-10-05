@@ -368,9 +368,11 @@ public enum Scripts {
       echo "→ Montowanie $(basename "$1")"
       # PAGER=cat + yes: images with a licence agreement would otherwise wait for "Agree Y/N?".
       # -mountrandom also copes with images that contain several volumes.
-      if ! yes | PAGER=cat hdiutil attach "$1" -readonly -nobrowse -noverify -noautoopen -mountrandom "$base" >/dev/null; then
-        echo "✘ Nie można zamontować obrazu dysku" >&2; rmdir "$base" 2>/dev/null; return 1
+      if ! yes | PAGER=cat hdiutil attach "$1" -readonly -nobrowse -noverify -noautoopen -mountrandom "$base" >/dev/null 2>"$base.err"; then
+        echo "✘ Nie można zamontować obrazu dysku: $(grep -v deprecated "$base.err" | head -3)" >&2
+        rm -f "$base.err"; rmdir "$base" 2>/dev/null; return 1
       fi
+      rm -f "$base.err"
       for mnt in "$base"/*; do
         for p in "$mnt"/*.pkg "$mnt"/*.mpkg; do
           [ -e "$p" ] || continue

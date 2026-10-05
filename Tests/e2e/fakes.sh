@@ -60,9 +60,11 @@ launchctl() {
       shift 2
       if [ "${1:-}" = sudo ]; then
         shift
+        local sflags=""
         while [ $# -gt 0 ]; do
-          case "$1" in -u) shift 2 ;; --) shift; break ;; -*) shift ;; *) break ;; esac
+          case "$1" in -u) sflags="$sflags -u $2"; shift 2 ;; --) shift; break ;; -*) sflags="$sflags $1"; shift ;; *) break ;; esac
         done
+        _e2e_log "gui-sudo:$sflags (cwd $PWD)"
       fi
       case "${1:-}" in
         /usr/sbin/screencapture|screencapture) shift; screencapture "$@" ;;
@@ -145,7 +147,71 @@ defaults() {
     *) command defaults "$@" ;;
   esac
 }
-brew() { _e2e_log "brew $*"; echo "brew (fake) $*"; }
-mas() { _e2e_log "mas $*"; echo "mas (fake) $*"; }
+# brew: like the real one, re-runs with a filtered environment (env -i keeps SUDO_ASKPASS) and asks the
+# askpass for the password, as `sudo -A` inside brew would.
+brew() {
+  _e2e_log "brew $*"
+  if [ -n "${SUDO_ASKPASS:-}" ]; then
+    local pw
+    pw="$(/usr/bin/env -i PATH=/usr/bin:/bin HOME="$HOME" SUDO_ASKPASS="$SUDO_ASKPASS" /bin/sh -c '"$SUDO_ASKPASS" brew-sudo')"
+    if [ "$pw" = "${CMCR_E2E_PASSWORD:-}" ]; then _e2e_log "brew: askpass ok"; else _e2e_log "brew: askpass FAILED"; fi
+  fi
+  echo "brew (fake) $*"
+}
+# mas ≥ 4 calls plain sudo, which uses the askpass only when DISPLAY is set.
+mas() {
+  _e2e_log "mas $*"
+  if [ "${1:-}" = upgrade ]; then
+    if [ -n "${DISPLAY:-}" ] && [ -x "${SUDO_ASKPASS:-}" ]; then _e2e_log "mas: askpass+DISPLAY ok"; else _e2e_log "mas: no askpass"; fi
+  fi
+  echo "mas (fake) $*"
+}
+osascript() { _e2e_log "osascript $*"; return 0; }
+# FileVault state comes from marker files in the test folder: fake-filevault (on, admin can unlock),
+# fake-filevault-nouser (on, admin not enabled for FileVault).
+fdesetup() {
+  local w="${CMCR_E2E_WORK:-/nonexistent}"
+  case "${1:-}" in
+    isactive)
+      if [ -e "$w/fake-filevault" ] || [ -e "$w/fake-filevault-nouser" ]; then echo true; return 0; fi
+      echo false; return 1 ;;
+    status)
+      if [ -e "$w/fake-filevault" ] || [ -e "$w/fake-filevault-nouser" ]; then echo "FileVault is On."; else echo "FileVault is Off."; fi ;;
+    supportsauthrestart) echo true ;;
+    list) [ -e "$w/fake-filevault" ] && echo "$(id -un),00000000-0000-0000-0000-000000000000"; return 0 ;;
+    authrestart)
+      local input; input="$(cat)"
+      case "$input" in
+        *"<string>${CMCR_E2E_PASSWORD:-}</string>"*) _e2e_log "fdesetup $* password ok" ;;
+        *) _e2e_log "fdesetup $* password WRONG" ;;
+      esac ;;
+    *) _e2e_log "fdesetup $*" ;;
+  esac
+}
+# Nobody at the login window when $CMCR_E2E_WORK/fake-no-console exists.
+stat() {
+  if [ "$*" = "-f%Su /dev/console" ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/fake-no-console" ]; then echo root; return 0; fi
+  command stat "$@"
+}
+diskutil() {
+  case "${1:-} ${2:-}" in
+    "list "*|"info "*|"apfs list"*) command diskutil "$@" ;;
+    *) _e2e_log "diskutil $*"; return 0 ;;
+  esac
+}
+dscl() {
+  case " $* " in
+    *" -read "*|*" -list "*|*" -search "*) command dscl "$@" ;;
+    *) _e2e_log "dscl $*"; return 0 ;;
+  esac
+}
+createhomedir() { _e2e_log "createhomedir $*"; return 0; }
+networksetup() {
+  case "${1:-}" in
+    -list*|-get*|-print*|-show*) command networksetup "$@" ;;
+    *) _e2e_log "networksetup $*"; return 0 ;;
+  esac
+}
 export -f _e2e_log _e2e_fake_png sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer \
-  chown systemsetup scutil dseditgroup visudo spctl defaults brew mas 2>/dev/null
+  chown systemsetup scutil dseditgroup visudo spctl defaults brew mas osascript fdesetup stat diskutil dscl \
+  createhomedir networksetup 2>/dev/null
