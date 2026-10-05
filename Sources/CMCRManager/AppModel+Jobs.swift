@@ -142,7 +142,9 @@ extension AppModel {
         }
         retryConfirmation = ConfirmRequest(
             title: "Powtórzyć „\(batch.title)”?",
-            message: "Ta operacja wymagała potwierdzenia – może przerwać pracę zalogowanych uczniów lub usunąć dane. "
+            message: (confirmation.destructive
+                ? "Ta operacja wymagała potwierdzenia – może przerwać pracę zalogowanych uczniów lub usunąć dane. "
+                : "Ta operacja wymagała potwierdzenia. ")
                 + "Zostanie wykonana ponownie \(Polish.onComputers(hosts.count)).",
             button: confirmation.button, destructive: confirmation.destructive, targets: hosts,
             skipLoggedIn: batch.skippedLoggedIn) {

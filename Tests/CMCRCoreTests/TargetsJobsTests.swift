@@ -102,6 +102,14 @@ func polishComputerPlurals(n: Int, expected: String) {
     #expect(b.generation == 2)
 }
 
+@Test func outputDigestComparesWholeOutputs() {
+    let tail = String(repeating: "x", count: 60_000)
+    #expect(OutputDigest.of("a" + tail) == OutputDigest.of("a" + tail))
+    // Same tail, different beginning: a comparison of the kept tails alone would call these equal.
+    #expect(OutputDigest.of("a" + tail) != OutputDigest.of("b" + tail))
+    #expect(OutputDigest.of("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+}
+
 // MARK: - Groups and filtering
 
 private func lab() -> [Machine] {
