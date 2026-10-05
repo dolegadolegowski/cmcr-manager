@@ -71,6 +71,16 @@ public enum ScriptCatalog {
             Sample(name: "unityInstallEditor", script: Scripts.unityInstallEditor(version: "6000.3.7f1", modules: ["android", a],
                                                                                   changeset: "abc123")),
             Sample(name: "unityInstallEditor(min)", script: Scripts.unityInstallEditor(version: a, modules: [])),
+            // U3 setup
+            Sample(name: "readiness", script: Scripts.readiness(student: a, sharedFolder: "/Users/student/\(a)",
+                                                                publicKey: "ssh-ed25519 AAAAC3Nz \(a)")),
+            Sample(name: "readiness(noKey)", script: Scripts.readiness(student: "student", sharedFolder: "/Users/student/Public/cmcr",
+                                                                       publicKey: nil)),
+            Sample(name: "remote(apply)", script: SetupScript.remote(SetupOptions(), host: Machine(name: "imac04", address: "imac04.local", user: "imac04"),
+                                                                     settings: AppSettings(), publicKey: "ssh-ed25519 AAAAC3Nz \(a)", mode: .apply)),
+            Sample(name: "remote(verify)", script: SetupScript.remote(SetupOptions(), host: Machine(name: a, address: a, user: a),
+                                                                      settings: AppSettings(), publicKey: nil, mode: .verify)),
+            Sample(name: "createStudentFolder", script: Scripts.createStudentFolder("/Users/student/\(a)", owner: a)),
         ]
         for restart in [false, true] {
             for recommended in [false, true] {

@@ -228,3 +228,198 @@ networksetup() {
 export -f _e2e_log _e2e_fake_png sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer \
   chown systemsetup scutil dseditgroup visudo spctl defaults brew mas osascript fdesetup stat diskutil dscl \
   createhomedir networksetup 2>/dev/null
+
+# --- One-time setup script and readiness check (Tests/e2e/suites/setup.sh) ----------------------------
+# setup/cmcr-imac-setup.sh and Scripts.readiness put every system file and home folder they touch under
+# CMCR_SETUP_ROOT_PREFIX. While the setup suite runs it creates $CMCR_E2E_WORK/setup-sys, which switches
+# the fakes below to a small simulated system state (launchd services, pmset, firewall, FileVault,
+# screen-capture permission); otherwise they behave like the fakes above or pass read-only calls through.
+[ -n "${CMCR_E2E_WORK:-}" ] && export CMCR_SETUP_ROOT_PREFIX="$CMCR_E2E_WORK/setup-root"
+_e2e_sys() { [ -n "${CMCR_E2E_WORK:-}" ] && [ -d "$CMCR_E2E_WORK/setup-sys" ]; }
+# Keeps an earlier fake of NAME callable as _e2e_base_NAME, so the wrappers below compose with it. A wrapper
+# inherited from the parent shell (export -f) is skipped: wrapping it again would make it call itself.
+_e2e_wrap() {
+  declare -F "$1" >/dev/null || return 0
+  declare -f "$1" | grep -q 'e2e-setup-wrapper' && return 0
+  eval "$(declare -f "$1" | sed "1s/^$1 /_e2e_base_$1 /")"
+}
+# _e2e_next NAME ARGS… – the earlier fake when there is one, otherwise the real tool (read-only uses only).
+_e2e_next() {
+  local n=$1; shift
+  if declare -F "_e2e_base_$n" >/dev/null; then "_e2e_base_$n" "$@"; else command "$n" "$@"; fi
+}
+# Same, but never falls back to the real tool.
+_e2e_next_fake() {
+  local n=$1; shift
+  if declare -F "_e2e_base_$n" >/dev/null; then "_e2e_base_$n" "$@"; else _e2e_log "$n $*"; fi
+}
+for _e2e_f in launchctl pmset osascript fdesetup dscl dseditgroup; do _e2e_wrap "$_e2e_f"; done
+unset _e2e_f
+# Service access lists (com.apple.access_ssh, …) are simulated while setup-sys/groups exists: one file per
+# group, with lines "nested GUID" (nested group, e.g. admin) and "member NAME" (direct member).
+_e2e_groups() { _e2e_sys && [ -d "$CMCR_E2E_WORK/setup-sys/groups" ]; }
+
+launchctl() {
+  : e2e-setup-wrapper
+  if _e2e_sys; then
+    local st="$CMCR_E2E_WORK/setup-sys"
+    case "${1:-} ${2:-}" in
+      "print system/com.openssh.sshd"|"print system/com.apple.screensharing")
+        _e2e_log "launchctl $*"
+        [ -e "$st/off-${2#system/}" ] && return 113
+        return 0 ;;
+      "bootstrap system")
+        _e2e_log "launchctl $*"
+        case "${3:-}" in
+          */ssh.plist) rm -f "$st/off-com.openssh.sshd" ;;
+          */com.apple.screensharing.plist) rm -f "$st/off-com.apple.screensharing" ;;
+        esac
+        return 0 ;;
+      "asuser "*)
+        if [ "${3:-}" = osascript ]; then shift 3; osascript "$@"; return; fi ;;
+    esac
+  fi
+  _e2e_next_fake launchctl "$@"
+}
+
+pmset() {
+  : e2e-setup-wrapper
+  if _e2e_sys; then
+    local st="$CMCR_E2E_WORK/setup-sys"
+    _e2e_log "pmset $*"
+    case "${1:-} ${2:-}" in
+      "-g cap") echo "Capabilities for AC Power:"; printf ' %s\n' womp tcpkeepalive sleep displaysleep autorestart ;;
+      "-g sched")
+        if [ -s "$st/sched" ]; then echo "Repeating power events:"; sed 's/^/  /' "$st/sched"
+        else echo "Scheduled power events:"; fi ;;
+      "-g ")
+        echo "System-wide power settings:"; echo "Currently in use:"
+        sed 's/^/ /' "$st/pmset" 2>/dev/null ;;
+      "-a "*)
+        { grep -v "^${2:-} " "$st/pmset" 2>/dev/null; echo "${2:-} ${3:-}"; } > "$st/pmset.new"
+        mv "$st/pmset.new" "$st/pmset" ;;
+      "repeat cancel") rm -f "$st/sched" ;;
+      "repeat "*) shift; echo "$*" > "$st/sched" ;;
+    esac
+    return 0
+  fi
+  _e2e_next_fake pmset "$@"
+}
+
+osascript() {
+  : e2e-setup-wrapper
+  if _e2e_sys; then
+    case "$*" in
+      *CGPreflightScreenCaptureAccess*)
+        _e2e_log "osascript: screen-capture preflight"
+        cat "$CMCR_E2E_WORK/setup-sys/screen-preflight" 2>/dev/null || echo false
+        return 0 ;;
+    esac
+  fi
+  _e2e_next osascript "$@"
+}
+
+socketfilterfw() {
+  local st="${CMCR_E2E_WORK:-/nonexistent}/setup-sys"
+  case "${1:-}" in
+    --getblockall)
+      if [ -e "$st/blockall" ]; then echo "Firewall has block all state set to enabled."
+      else echo "Firewall has block all state set to disabled."; fi ;;
+    --getglobalstate) echo "Firewall is disabled. (State = 0)" ;;
+    --setblockall) _e2e_log "socketfilterfw $*"; [ "${2:-}" = off ] && rm -f "$st/blockall" ;;
+    *) _e2e_log "socketfilterfw $*" ;;
+  esac
+  return 0
+}
+
+fdesetup() {
+  : e2e-setup-wrapper
+  case "${1:-}" in
+    status)
+      if _e2e_sys && [ -f "$CMCR_E2E_WORK/setup-sys/filevault" ]; then cat "$CMCR_E2E_WORK/setup-sys/filevault"; return 0; fi
+      _e2e_next fdesetup "$@" ;;
+    *) _e2e_next_fake fdesetup "$@" ;;
+  esac
+}
+
+# sshd -t validates a configuration; the suite makes it fail by creating setup-sys/sshd-t-fails.
+sshd() {
+  case " $* " in
+    *" -t "*)
+      _e2e_log "sshd $*"
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/setup-sys/sshd-t-fails" ]; then
+        echo "/etc/ssh/sshd_config.d/050-cmcr-manager.conf line 3: Bad configuration option (test)" >&2
+        return 255
+      fi
+      return 0 ;;
+  esac
+  _e2e_log "sshd $*"
+  return 1
+}
+
+ssh-keygen() {
+  case " $* " in
+    *" -A "*) _e2e_log "ssh-keygen $*"; return 0 ;;
+  esac
+  command ssh-keygen "$@"
+}
+
+dscl() {
+  : e2e-setup-wrapper
+  if _e2e_groups; then
+    local gdir="$CMCR_E2E_WORK/setup-sys/groups"
+    case "${2:-} ${3:-}" in
+      "-read /Groups/com.apple.access_"*)
+        [ -f "$gdir/${3#/Groups/}" ] || { echo "<dscl_cmd> DS Error: -14136 (eDSRecordNotFound)" >&2; return 56; }
+        case "${4:-}" in
+          RecordName) echo "RecordName: ${3#/Groups/}" ;;
+          NestedGroups|GroupMembership)
+            local key=nested; [ "$4" = GroupMembership ] && key=member
+            grep -q "^$key " "$gdir/${3#/Groups/}" || { echo "No such key: $4" >&2; return 181; }
+            echo "$4: $(sed -n "s/^$key //p" "$gdir/${3#/Groups/}" | tr '\n' ' ')" ;;
+        esac
+        return 0 ;;
+      "-change /Groups/com.apple.access_"*)
+        _e2e_log "dscl $*"
+        mv "$gdir/${3#/Groups/}" "$gdir/${6:-renamed}"
+        return 0 ;;
+    esac
+  fi
+  case " $* " in
+    *" -create "*|*" -change "*|*" -append "*|*" -delete "*|*" -merge "*|*" -passwd "*|*" -createpl "*|*" -deletepl "*)
+      _e2e_log "dscl $*"; return 0 ;;
+  esac
+  _e2e_next dscl "$@"
+}
+dseditgroup() {
+  : e2e-setup-wrapper
+  local g a u="" prev=""
+  for g in "$@"; do :; done
+  if _e2e_groups; then
+    case "$g" in com.apple.access_*)
+      local f="$CMCR_E2E_WORK/setup-sys/groups/$g"
+      case " $* " in
+        *" checkmember "*)
+          for a in "$@"; do [ "$prev" = -m ] && u=$a; prev=$a; done
+          if [ -f "$f" ] && { grep -qx "member $u" "$f" \
+               || { grep -q '^nested ' "$f" && _e2e_next dseditgroup -o checkmember -m "$u" admin >/dev/null 2>&1; }; }; then
+            echo "yes $u is a member of $g"; return 0
+          fi
+          echo "no $u is NOT a member of $g"; return 1 ;;
+        *" -o create "*) _e2e_log "dseditgroup $*"; : > "$f"; return 0 ;;
+        *" -o edit -a admin -t group "*)
+          _e2e_log "dseditgroup $*"; echo "nested $(dsmemberutil getuuid -G admin)" >> "$f"; return 0 ;;
+      esac ;;
+    esac
+  fi
+  case " $* " in
+    *" checkmember "*) _e2e_next dseditgroup "$@" ;;
+    *) _e2e_next_fake dseditgroup "$@" ;;
+  esac
+}
+export -f _e2e_sys _e2e_groups _e2e_wrap _e2e_next _e2e_next_fake launchctl pmset osascript socketfilterfw fdesetup \
+  sshd dscl dseditgroup 2>/dev/null
+for _e2e_f in launchctl pmset osascript fdesetup dscl dseditgroup; do
+  declare -F "_e2e_base_$_e2e_f" >/dev/null && export -f "_e2e_base_$_e2e_f"
+done
+unset _e2e_f

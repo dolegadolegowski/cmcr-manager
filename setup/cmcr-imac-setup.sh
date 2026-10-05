@@ -1,0 +1,906 @@
+#!/bin/bash
+# =============================================================================
+#  cmcr-imac-setup.sh – jednorazowa konfiguracja iMaca do pracy z CMCR Manager
+#
+#  Lokalnie (przy komputerze, zalogowany na koncie administratora imacNN):
+#      sudo bash cmcr-imac-setup.sh [opcje]
+#      sudo bash cmcr-imac-setup.sh --guided   (otwiera Ustawienia przy krokach ręcznych)
+#  Zdalnie: CMCR Manager › Konfiguracja › Przygotowanie iMaców › „Skonfiguruj zaznaczone”
+#  (aplikacja wysyła skrypt przez SSH i uruchamia go jako root).
+#
+#  Skrypt jest idempotentny (można go uruchamiać wielokrotnie), nieinteraktywny
+#  (poza trybem --guided przy komputerze), wypisuje raport po polsku i zapisuje
+#  znacznik /Library/Application Support/CMCR/setup.json.
+#  Kody wyjścia: 0 – gotowe (mogą zostać kroki ręczne), 1 – co najmniej jeden
+#  krok nieudany, 2 – błędne opcje, 3 – brak uprawnień roota, 4 – zbyt stary macOS.
+#  Wymaga: macOS 13–26 (działa też na 11–12), /bin/bash 3.2.
+#
+#  Źródło: setup/cmcr-imac-setup.sh w repozytorium CMCR Manager. Po zmianie
+#  uruchom scripts/embed-setup.sh (kopia wbudowana w aplikację).
+# =============================================================================
+set -u
+umask 022
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/libexec:/usr/libexec/ApplicationFirewall"
+export LC_ALL=C
+
+CMCR_SETUP_VERSION="1.0.0"
+CMCR_SETUP_SCHEMA=1
+NL=$'\n'
+
+# >>> CMCR-DEFAULTS – CMCR Manager podmienia ten blok przy generowaniu skryptu >>>
+OPT_PUBKEYS=''            # klucze publiczne menedżera (po jednym w linii)
+OPT_ADMIN=''              # konto administracyjne; puste = konto, które wywołało sudo
+OPT_STUDENT='student'     # konto ucznia
+OPT_SHARED=''             # folder współdzielony; puste = /Users/<uczeń>/Public/cmcr
+OPT_SHARED_MODE='777'     # uprawnienia folderu (zgodnie z cmcr-helpers)
+OPT_SHARED_ACL=1          # dziedziczone ACL: uczeń i grupa admin mają pełny dostęp
+OPT_SSH_ACL=1             # SSH tylko dla administratorów (com.apple.access_ssh)
+OPT_SSH_TUNING=1          # /etc/ssh/sshd_config.d/050-cmcr-manager.conf (keepalive)
+OPT_SSH_KEY_ONLY=0        # wyłącz logowanie hasłem przez SSH (tylko klucze)
+OPT_KEY_FROM=''           # ogranicz klucz menedżera do adresów (from="…")
+OPT_VNC=0                 # 1 = włącz Udostępnianie ekranu (tylko administratorzy)
+OPT_SUDO_NOPASSWD=''      # yes / no / puste = bez zmian
+OPT_HOSTNAME=''           # nazwa komputera; "auto" = nazwa konta administratora
+OPT_WOL=1                 # Budź przy dostępie do sieci (pmset womp 1)
+OPT_NO_SLEEP=0            # 1 = komputer nie usypia się (pmset sleep 0)
+OPT_DISPLAY_SLEEP=''      # minuty do uśpienia ekranu; puste = bez zmian
+OPT_AUTORESTART=0         # 1 = uruchom po zaniku zasilania
+OPT_POWER_SCHEDULE=''     # "MTWRF 07:30 17:00 [shutdown|sleep]", "off" lub puste
+OPT_ROSETTA=0             # 1 = zainstaluj Rosetta 2 (Apple Silicon)
+OPT_UPDATES=''            # check / download / auto / puste = bez zmian
+OPT_FIX_FIREWALL=0        # 1 = wyłącz „Blokuj wszystkie połączenia przychodzące”
+OPT_GUIDE='auto'          # auto / yes / no – prowadzenie przez kroki ręczne
+# <<< CMCR-DEFAULTS <<<
+
+MODE=apply                # apply / verify / dry-run
+
+usage() {
+  cat <<'EOF'
+cmcr-imac-setup.sh – przygotowanie iMaca do pracy z CMCR Manager
+
+Użycie:  sudo bash cmcr-imac-setup.sh [opcje]
+
+Konta i klucz:
+  --admin KONTO            konto administracyjne używane przez aplikację (domyślnie: wywołujący sudo)
+  --pubkey "ssh-ed25519 …" klucz publiczny CMCR Manager (można powtórzyć)
+  --pubkey-file PLIK       klucz(e) publiczne z pliku
+  --key-from WZORCE        ogranicz klucz do adresów, np. "192.168.10.0/24"
+  --student KONTO          konto ucznia (domyślnie: student)
+  --shared-folder ŚCIEŻKA  folder współdzielony (domyślnie: /Users/<uczeń>/Public/cmcr)
+  --shared-mode 777        uprawnienia folderu współdzielonego
+  --no-shared-acl          bez dziedziczonych uprawnień ACL w folderze
+SSH i zdalny dostęp:
+  --no-ssh-acl             nie ograniczaj SSH do administratorów
+  --no-ssh-tuning          nie dodawaj ustawień sshd (keepalive)
+  --ssh-key-only           SSH tylko z kluczem (wyłącza logowanie hasłem) – ostrożnie!
+  --enable-vnc             włącz Udostępnianie ekranu (VNC) dla administratorów
+  --sudo-nopasswd          sudo bez hasła dla konta administracyjnego (NIEZALECANE)
+  --no-sudo-nopasswd       usuń wcześniej dodane sudo bez hasła
+Nazwa i zasilanie:
+  --hostname NAZWA|auto    ustaw ComputerName i LocalHostName (auto = nazwa konta admin.)
+  --no-wol                 nie zmieniaj „Budź przy dostępie do sieci”
+  --no-sleep               komputer nie usypia się (ekran nadal może)
+  --display-sleep MIN      uśpienie ekranu po MIN minutach
+  --autorestart            włącz po zaniku zasilania
+  --power-schedule "MTWRF 07:30 17:00 [shutdown|sleep]" | off
+                           harmonogram włączania/wyłączania (dni: M T W R F S U)
+Inne:
+  --rosetta                zainstaluj Rosetta 2 (Apple Silicon)
+  --updates check|download|auto
+                           automatyczne aktualizacje: tylko sprawdzaj / pobieraj
+                           i instaluj poprawki bezpieczeństwa / instaluj wszystko
+  --fix-firewall           wyłącz „Blokuj wszystkie połączenia przychodzące”
+  --guided | --no-guide    prowadź przez kroki ręczne: otwiera właściwe panele Ustawień
+                           i czeka na Enter (domyślnie: tylko przy komputerze, w Terminalu)
+Tryby:
+  --verify                 tylko sprawdź stan (nic nie zmienia)
+  --dry-run                pokaż, co zostałoby zrobione (nic nie zmienia)
+  --version, --help
+EOF
+}
+
+die_usage() { printf 'Błąd: %s\n' "$1" >&2; printf 'Pomoc: bash cmcr-imac-setup.sh --help\n' >&2; exit 2; }
+need_arg() { [ $# -ge 2 ] || die_usage "opcja $1 wymaga wartości"; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --pubkey)           need_arg "$@"; OPT_PUBKEYS="${OPT_PUBKEYS}${OPT_PUBKEYS:+$NL}$2"; shift 2 ;;
+    --pubkey-file)      need_arg "$@"; [ -r "$2" ] || die_usage "nie można odczytać pliku $2"
+                        OPT_PUBKEYS="${OPT_PUBKEYS}${OPT_PUBKEYS:+$NL}$(cat "$2")"; shift 2 ;;
+    --key-from)         need_arg "$@"; OPT_KEY_FROM=$2; shift 2 ;;
+    --admin)            need_arg "$@"; OPT_ADMIN=$2; shift 2 ;;
+    --student)          need_arg "$@"; OPT_STUDENT=$2; shift 2 ;;
+    --shared-folder)    need_arg "$@"; OPT_SHARED=$2; shift 2 ;;
+    --shared-mode)      need_arg "$@"; OPT_SHARED_MODE=$2; shift 2 ;;
+    --no-shared-acl)    OPT_SHARED_ACL=0; shift ;;
+    --no-ssh-acl)       OPT_SSH_ACL=0; shift ;;
+    --no-ssh-tuning)    OPT_SSH_TUNING=0; shift ;;
+    --ssh-key-only)     OPT_SSH_KEY_ONLY=1; shift ;;
+    --enable-vnc)       OPT_VNC=1; shift ;;
+    --sudo-nopasswd)    OPT_SUDO_NOPASSWD=yes; shift ;;
+    --no-sudo-nopasswd) OPT_SUDO_NOPASSWD=no; shift ;;
+    --hostname)         need_arg "$@"; OPT_HOSTNAME=$2; shift 2 ;;
+    --no-wol)           OPT_WOL=0; shift ;;
+    --no-sleep)         OPT_NO_SLEEP=1; shift ;;
+    --display-sleep)    need_arg "$@"; OPT_DISPLAY_SLEEP=$2; shift 2 ;;
+    --autorestart)      OPT_AUTORESTART=1; shift ;;
+    --power-schedule)   need_arg "$@"; OPT_POWER_SCHEDULE=$2; shift 2 ;;
+    --rosetta)          OPT_ROSETTA=1; shift ;;
+    --updates)          need_arg "$@"; OPT_UPDATES=$2; shift 2 ;;
+    --fix-firewall)     OPT_FIX_FIREWALL=1; shift ;;
+    --guided|--guide)   OPT_GUIDE=yes; shift ;;
+    --no-guide)         OPT_GUIDE=no; shift ;;
+    --verify)           MODE=verify; shift ;;
+    --dry-run)          MODE=dry-run; shift ;;
+    --version)          echo "cmcr-imac-setup $CMCR_SETUP_VERSION"; exit 0 ;;
+    -h|--help)          usage; exit 0 ;;
+    *)                  die_usage "nieznana opcja: $1" ;;
+  esac
+done
+
+# --- Walidacja opcji -----------------------------------------------------------
+valid_account() { case "$1" in ''|-*|*[!A-Za-z0-9._-]*) return 1 ;; esac; return 0; }
+[ -z "$OPT_ADMIN" ] || valid_account "$OPT_ADMIN" || die_usage "niepoprawna nazwa konta: $OPT_ADMIN"
+valid_account "$OPT_STUDENT" || die_usage "niepoprawna nazwa konta ucznia: $OPT_STUDENT"
+case "$OPT_SHARED_MODE" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) ;; *) die_usage "niepoprawne uprawnienia: $OPT_SHARED_MODE" ;; esac
+case "$OPT_UPDATES" in ''|check|download|auto) ;; *) die_usage "--updates: check, download lub auto" ;; esac
+case "$OPT_DISPLAY_SLEEP" in '') ;; *[!0-9]*) die_usage "--display-sleep: liczba minut" ;; esac
+case "$OPT_KEY_FROM" in *[!A-Za-z0-9.:/*?,!-]*) die_usage "--key-from: dozwolone adresy, maski i wzorce (np. 10.0.0.0/8,*.local)" ;; esac
+case "$OPT_SHARED" in
+  '') ;;
+  *..*|*/./*) die_usage "ścieżka folderu nie może zawierać .. ani ./" ;;
+  /Users/Shared/?*|/Users/*/?*) ;;
+  *) die_usage "folder współdzielony musi leżeć w /Users/<konto>/… lub /Users/Shared/…" ;;
+esac
+if [ -n "$OPT_HOSTNAME" ] && [ "$OPT_HOSTNAME" != auto ]; then
+  case "$OPT_HOSTNAME" in -*|*-|*[!A-Za-z0-9-]*) die_usage "nazwa komputera: litery, cyfry i myślniki (np. imac01)" ;; esac
+  [ ${#OPT_HOSTNAME} -le 63 ] || die_usage "nazwa komputera może mieć najwyżej 63 znaki"
+fi
+SCHED_DAYS=""; SCHED_ON=""; SCHED_OFF=""; SCHED_OFF_ACTION="shutdown"; SCHED_DESC=""
+valid_time() {
+  case "$1" in [0-2][0-9]:[0-5][0-9]) [ "${1%%:*}" -le 23 ] 2>/dev/null ;; *) return 1 ;; esac
+}
+if [ -n "$OPT_POWER_SCHEDULE" ] && [ "$OPT_POWER_SCHEDULE" != off ]; then
+  read -r SCHED_DAYS SCHED_ON SCHED_OFF SCHED_OFF_ACTION _rest <<EOF
+$OPT_POWER_SCHEDULE
+EOF
+  SCHED_OFF_ACTION=${SCHED_OFF_ACTION:-shutdown}
+  case "$SCHED_DAYS" in ''|*[!MTWRFSU]*) die_usage "--power-schedule: dni z liter M T W R F S U (np. MTWRF)" ;; esac
+  valid_time "$SCHED_ON" || die_usage "--power-schedule: godzina włączenia w formacie HH:MM"
+  [ -z "$SCHED_OFF" ] || valid_time "$SCHED_OFF" || die_usage "--power-schedule: godzina wyłączenia w formacie HH:MM"
+  case "$SCHED_OFF_ACTION" in shutdown|sleep) ;; *) die_usage "--power-schedule: po godzinie wyłączenia: shutdown lub sleep" ;; esac
+fi
+
+# --- Środowisko ------------------------------------------------------------------
+IS_ROOT=0; [ "$(id -u)" -eq 0 ] && IS_ROOT=1
+# Tylko dla testów automatycznych (Tests/e2e): wszystkie pliki systemowe i katalogi domowe leżą pod
+# tym katalogiem, a „root” to atrapa sudo (ustawia SUDO_USER). Prawdziwe sudo usuwa tę zmienną.
+R="${CMCR_SETUP_ROOT_PREFIX:-}"
+if [ -n "$R" ]; then
+  case "$R" in /*) ;; *) die_usage "CMCR_SETUP_ROOT_PREFIX musi być ścieżką bezwzględną" ;; esac
+  [ -d "$R" ] || die_usage "CMCR_SETUP_ROOT_PREFIX: brak katalogu $R"
+  [ $IS_ROOT -eq 0 ] || die_usage "CMCR_SETUP_ROOT_PREFIX służy tylko do testów – nie uruchamiaj go jako root"
+  [ -n "${SUDO_USER:-}" ] && IS_ROOT=1
+fi
+DRY=0; [ "$MODE" = dry-run ] && DRY=1
+CHANGE=1; [ "$MODE" = apply ] || CHANGE=0   # czy wolno cokolwiek zmieniać
+
+if [ "$MODE" = apply ] && [ $IS_ROOT -eq 0 ]; then
+  echo "Ten skrypt trzeba uruchomić jako root:  sudo bash $0 …" >&2
+  echo "(Podgląd bez zmian: bash $0 --dry-run)" >&2
+  exit 3
+fi
+
+OS_VER="$(sw_vers -productVersion 2>/dev/null)"; OS_BUILD="$(sw_vers -buildVersion 2>/dev/null)"
+OS_MAJOR="${OS_VER%%.*}"; case "$OS_MAJOR" in ''|*[!0-9]*) OS_MAJOR=0 ;; esac
+ARCH="$(uname -m)"
+if [ "$OS_MAJOR" -lt 11 ]; then echo "macOS $OS_VER nie jest obsługiwany (wymagany 11 lub nowszy, zalecany 13+)." >&2; exit 4; fi
+
+CONSOLE_USER="$(stat -f%Su /dev/console 2>/dev/null)"
+case "$CONSOLE_USER" in root|loginwindow|_mbsetupuser) CONSOLE_USER="" ;; esac
+CONSOLE_UID=""; [ -n "$CONSOLE_USER" ] && CONSOLE_UID="$(id -u "$CONSOLE_USER" 2>/dev/null)"
+
+ADMIN="${OPT_ADMIN:-${SUDO_USER:-}}"
+[ -n "$ADMIN" ] || { [ $IS_ROOT -eq 0 ] && ADMIN="$(id -un)"; }
+STUDENT="$OPT_STUDENT"
+
+TCC_DB="$R/Library/Application Support/com.apple.TCC/TCC.db"
+MARKER_DIR="$R/Library/Application Support/CMCR"
+MARKER="$MARKER_DIR/setup.json"
+LOG_DIR="$R/Library/Logs/CMCR"
+LOG_FILE="$LOG_DIR/cmcr-imac-setup.log"
+SSHD_CONFIG="$R/etc/ssh/sshd_config"
+SSHD_DROPIN="$R/etc/ssh/sshd_config.d/050-cmcr-manager.conf"
+SUDOERS="$R/etc/sudoers"
+SUDOERS_DIR="$R/private/etc/sudoers.d"
+SUDOERS_DROPIN="$SUDOERS_DIR/cmcr-manager"
+SU_PLIST="$R/Library/Preferences/com.apple.SoftwareUpdate"
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/cmcr-setup.XXXXXX")" || { echo "mktemp nie powiódł się" >&2; exit 1; }
+trap 'rm -rf "$WORK"' EXIT
+
+# Proces wywołany przez sesję SSH? (sudo usuwa SSH_CONNECTION, więc sprawdzamy przodków)
+VIA_SSH=0
+_pid=$$; _n=0
+while [ -n "$_pid" ] && [ "$_pid" -gt 1 ] && [ $_n -lt 40 ]; do
+  case "$(ps -o comm= -p "$_pid" 2>/dev/null)" in *sshd*) VIA_SSH=1; break ;; esac
+  _pid="$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ')"; _n=$((_n + 1))
+done
+
+GUIDE=0
+case "$OPT_GUIDE" in
+  yes) GUIDE=1 ;;
+  auto) if [ $VIA_SSH -eq 0 ] && [ -t 1 ] && [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" = "${SUDO_USER:-}" ]; then GUIDE=1; fi ;;
+esac
+[ "$MODE" = apply ] || GUIDE=0
+
+# --- Raport --------------------------------------------------------------------------
+STEP_N=0; N_OK=0; N_CHANGED=0; N_PENDING=0; N_WARN=0; N_TODO=0; N_FAIL=0; N_SKIP=0
+TODO_TEXT=""
+KEY_FPS=""; ETH_MACS=""; FDA_REMOTE="unknown"; SC_REMOTE="unknown"; FILEVAULT="unknown"
+
+section() { printf '\n── %s\n' "$1"; }
+detail()  { printf '   %s\n' "$*"; }
+# Statusy: ok, changed (zmieniono), pending (wymaga zmiany – tryb --verify/--dry-run),
+#          skipped, warn, todo (krok ręczny przy komputerze), fail.
+record() {   # record ID STATUS KOMUNIKAT
+  local sym
+  STEP_ID[$STEP_N]=$1; STEP_ST[$STEP_N]=$2; STEP_MSG[$STEP_N]=$3; STEP_N=$((STEP_N + 1))
+  case "$2" in
+    ok)      sym="✔"; N_OK=$((N_OK + 1)) ;;
+    changed) sym="✚"; N_CHANGED=$((N_CHANGED + 1)) ;;
+    pending) sym="…"; N_PENDING=$((N_PENDING + 1)) ;;
+    skipped) sym="–"; N_SKIP=$((N_SKIP + 1)) ;;
+    warn)    sym="⚠︎"; N_WARN=$((N_WARN + 1)) ;;
+    todo)    sym="☐"; N_TODO=$((N_TODO + 1)); TODO_TEXT="${TODO_TEXT}${NL}$3" ;;
+    *)       sym="✘"; N_FAIL=$((N_FAIL + 1)) ;;
+  esac
+  printf '%s %s\n' "$sym" "$3"
+}
+# Wykonuje polecenie zmieniające system (w trybie --dry-run/--verify tylko je wypisuje).
+run() {
+  if [ $CHANGE -eq 0 ]; then [ $DRY -eq 1 ] && printf '   [próba] %s\n' "$*"; return 0; fi
+  "$@"
+}
+# Wynik do zapisania w raporcie: w trybie podglądu „zostałoby zmienione”.
+# changed_or_planned ID OPIS_ZMIANY [OPIS_PLANU] – plan (bez kropki) trafia do raportu w trybie podglądu.
+changed_or_planned() {
+  if [ $CHANGE -eq 1 ]; then record "$1" changed "$2"; else record "$1" pending "Wymaga zmiany: ${3:-$2}"; fi
+}
+
+json_esc() {
+  local s=$1
+  s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\t'/\\t}; s=${s//$'\r'/\\r}; s=${s//$'\n'/\\n}
+  printf '%s' "$s"
+}
+home_of() {
+  local h; h="$(dscl . -read "/Users/$1" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p' | head -n 1)"
+  [ -n "$h" ] && printf '%s%s' "$R" "$h"
+}
+is_admin() { dseditgroup -o checkmember -m "$1" admin >/dev/null 2>&1; }
+# Uruchamia polecenie jako dane konto (zapis w jego katalogu bez podążania za dowiązaniami jako root).
+as_user() {
+  local u=$1; shift
+  if [ "$(id -u)" -eq 0 ]; then sudo -u "$u" "$@"
+  elif [ "$(id -un)" = "$u" ]; then "$@"
+  else echo "Nie mogę działać jako $u bez uprawnień roota." >&2; return 1; fi
+}
+in_console() { launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" "$@"; }
+wait_enter() { if [ -r /dev/tty ]; then printf '   Naciśnij Enter, gdy skończysz… '; read -r _ </dev/tty; fi; }
+open_pane() {   # otwiera Ustawienia systemowe w sesji osoby przy komputerze
+  [ $GUIDE -eq 1 ] && [ -n "$CONSOLE_USER" ] || return 1
+  in_console /usr/bin/open "$1" >/dev/null 2>&1
+}
+# Max auth_value z systemowej bazy TCC (2 = zezwolono). Pusty wynik = brak dostępu do bazy.
+tcc_value() {
+  sqlite3 -readonly "$TCC_DB" \
+    "SELECT IFNULL(MAX(auth_value),-1) FROM access WHERE service='$1' AND client LIKE '$2';" 2>/dev/null
+}
+
+printf 'CMCR Manager – przygotowanie iMaca (skrypt %s, tryb: %s)\n' "$CMCR_SETUP_VERSION" "$MODE"
+printf 'Komputer: %s · macOS %s (%s) · %s · konto admin.: %s · uczeń: %s%s\n' \
+  "$(scutil --get ComputerName 2>/dev/null)" "$OS_VER" "$OS_BUILD" "$ARCH" "${ADMIN:-?}" "$STUDENT" \
+  "$([ $VIA_SSH -eq 1 ] && echo ' · przez SSH')"
+[ $IS_ROOT -eq 1 ] || printf '(Bez uprawnień roota – część sprawdzeń może być niepełna.)\n'
+[ -z "$R" ] || printf '(TEST: pliki systemowe przekierowane do %s)\n' "$R"
+
+# =============================================================================
+#  Kroki
+# =============================================================================
+
+step_preflight() {
+  section "Sprawdzenie wstępne"
+  if [ "$OS_MAJOR" -lt 13 ]; then
+    record system warn "macOS $OS_VER – skrypt jest testowany na macOS 13–26; kontynuuję."
+  else
+    record system ok "macOS $OS_VER ($ARCH)."
+  fi
+  if [ -z "$ADMIN" ] || ! dscl . -read "/Users/$ADMIN" UniqueID >/dev/null 2>&1; then
+    record admin fail "Nie znaleziono konta administracyjnego „${ADMIN:-?}” (podaj --admin KONTO)."
+    return 1
+  fi
+  if ! is_admin "$ADMIN"; then
+    record admin fail "Konto „$ADMIN” nie jest administratorem – aplikacja potrzebuje sudo na tym koncie."
+    return 1
+  fi
+  record admin ok "Konto administracyjne: $ADMIN."
+  return 0
+}
+
+ssh_loaded() { launchctl print system/com.openssh.sshd >/dev/null 2>&1; }
+
+step_remote_login() {
+  section "Zdalne logowanie (SSH)"
+  if ssh_loaded; then record ssh ok "Zdalne logowanie jest włączone."; return; fi
+  if [ $CHANGE -eq 0 ]; then
+    run launchctl enable system/com.openssh.sshd
+    run launchctl bootstrap system /System/Library/LaunchDaemons/ssh.plist
+    record ssh pending "Wymaga zmiany: zdalne logowanie (SSH) jest wyłączone."
+    return
+  fi
+  # launchctl nie wymaga „Pełnego dostępu do dysku” (w odróżnieniu od systemsetup -setremotelogin).
+  launchctl enable system/com.openssh.sshd 2>/dev/null
+  launchctl bootstrap system /System/Library/LaunchDaemons/ssh.plist 2>/dev/null
+  sleep 1
+  if ! ssh_loaded; then
+    local out
+    out="$(systemsetup -f -setremotelogin on 2>&1)"
+    [ -n "$out" ] && detail "systemsetup: $out"
+    sleep 1
+  fi
+  if ssh_loaded; then
+    record ssh changed "Włączono zdalne logowanie (SSH)."
+  else
+    record ssh fail "Nie udało się włączyć SSH. Włącz ręcznie: Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie."
+  fi
+}
+
+# Grupa com.apple.access_<usługa> ogranicza dostęp; nazwa z sufiksem -disabled = „Wszyscy użytkownicy”.
+ensure_access_group() {   # ensure_access_group USŁUGA OPIS_GRUPY ID_KROKU NAZWA_DLA_RAPORTU PREFEROWANY_GID
+  local g="com.apple.access_$1" desc="$2" id="$3" what="$4" did="" plan=""
+  if dscl . -read "/Groups/$g" RecordName >/dev/null 2>&1; then :
+  elif dscl . -read "/Groups/$g-disabled" RecordName >/dev/null 2>&1; then
+    run dscl . -change "/Groups/$g-disabled" RecordName "$g-disabled" "$g" && did="przywrócono listę dostępu" && plan="przywrócić listę dostępu"
+  else
+    if [ -z "$(dscl . -search /Groups PrimaryGroupID "$5" 2>/dev/null)" ]; then
+      run dseditgroup -o create -r "$desc" -i "$5" "$g" && did="utworzono listę dostępu" && plan="utworzyć listę dostępu"
+    else
+      run dseditgroup -o create -r "$desc" "$g" && did="utworzono listę dostępu" && plan="utworzyć listę dostępu"
+    fi
+  fi
+  # Grupa „admin” zagnieżdżona w liście dostępu = „Dopuszczaj: Administratorzy” w Ustawieniach.
+  local admin_guid; admin_guid="$(dsmemberutil getuuid -G admin 2>/dev/null)"
+  if ! dscl . -read "/Groups/$g" NestedGroups 2>/dev/null | grep -q "${admin_guid:-ABCDEFAB-CDEF-ABCD-EFAB-CDEF00000050}"; then
+    run dseditgroup -o edit -a admin -t group "$g" && did="${did:+$did, }dodano grupę Administratorzy" \
+      && plan="${plan:+$plan, }dodać grupę Administratorzy"
+  fi
+  # Inni bezpośredni członkowie, którzy nie są administratorami – tylko ostrzeżenie.
+  local m others=""
+  for m in $(dscl . -read "/Groups/$g" GroupMembership 2>/dev/null | sed 's/^GroupMembership://'); do
+    is_admin "$m" || others="$others $m"
+  done
+  if [ $CHANGE -eq 1 ] && ! dseditgroup -o checkmember -m "$ADMIN" "$g" >/dev/null 2>&1; then
+    record "$id" fail "$what: konto $ADMIN nie ma dostępu mimo zmian w $g."
+  elif [ -n "$did" ]; then
+    changed_or_planned "$id" "$what: dostęp tylko dla administratorów ($did)." "$what – $plan (dostęp tylko dla administratorów)."
+  else
+    record "$id" ok "$what: dostęp tylko dla administratorów."
+  fi
+  [ -z "$others" ] || detail "Uwaga: w $g są też konta bez uprawnień administratora:$others"
+}
+
+step_ssh_acl() {
+  [ "$OPT_SSH_ACL" = 1 ] || { record ssh_acl skipped "Lista dostępu SSH bez zmian (--no-ssh-acl)."; return; }
+  ensure_access_group ssh "Remote Login ACL" ssh_acl "SSH" 399
+}
+
+step_ssh_key() {
+  section "Klucz SSH aplikacji CMCR Manager"
+  local home sshdir ak grp line type blob comment desired n_keys=0 n_added=0 n_present=0 fp
+  home="$(home_of "$ADMIN")"
+  if [ -z "$home" ] || [ ! -d "$home" ]; then record ssh_key fail "Brak katalogu domowego konta $ADMIN."; return; fi
+  sshdir="$home/.ssh"; ak="$sshdir/authorized_keys"; grp="$(id -gn "$ADMIN" 2>/dev/null || echo staff)"
+  if [ -z "$OPT_PUBKEYS" ]; then
+    if [ -s "$ak" ]; then
+      record ssh_key skipped "Nie podano klucza (--pubkey) – w authorized_keys jest już $(grep -c . "$ak" 2>/dev/null) wpis(ów)."
+    else
+      record ssh_key warn "Nie podano klucza (--pubkey) – aplikacja będzie logować się hasłem."
+    fi
+    return
+  fi
+  if [ -L "$sshdir" ] || [ -L "$ak" ]; then record ssh_key fail "$sshdir lub authorized_keys jest dowiązaniem – przerwano ze względów bezpieczeństwa."; return; fi
+  # StrictModes w sshd odrzuca klucze, gdy katalog domowy jest zapisywalny dla grupy/innych.
+  case "$(stat -f %Lp "$home" 2>/dev/null)" in
+    *[2367]?|*?[2367]) run chmod go-w "$home"; detail "Usunięto prawo zapisu grupy/innych z $home (wymóg sshd)." ;;
+  esac
+  [ -d "$sshdir" ] || run as_user "$ADMIN" /bin/mkdir -m 700 "$sshdir"
+  local cur="$WORK/ak.cur" new="$WORK/ak.new"
+  if [ -f "$ak" ]; then cat "$ak" > "$cur" 2>/dev/null || : > "$cur"; else : > "$cur"; fi
+  cp "$cur" "$new"
+  while IFS= read -r line; do
+    line="$(printf '%s' "$line" | tr -d '\r')"
+    case "$line" in ''|'#'*) continue ;; esac
+    read -r type blob comment <<EOF
+$line
+EOF
+    case "$type" in ssh-ed25519|ssh-rsa|ecdsa-sha2-*|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-*) ;; *)
+      record ssh_key fail "Niepoprawny klucz publiczny (oczekiwano „ssh-ed25519 AAAA…”)."; return ;;
+    esac
+    printf '%s\n' "$type $blob ${comment:-cmcr-manager}" > "$WORK/one.pub"
+    if ! fp="$(ssh-keygen -l -E sha256 -f "$WORK/one.pub" 2>/dev/null | awk '{print $2}')" || [ -z "$fp" ]; then
+      record ssh_key fail "Klucz publiczny jest uszkodzony (ssh-keygen go odrzucił)."; return
+    fi
+    KEY_FPS="${KEY_FPS}${KEY_FPS:+ }$fp"; n_keys=$((n_keys + 1))
+    desired="$type $blob ${comment:-cmcr-manager}"
+    [ -n "$OPT_KEY_FROM" ] && desired="from=\"$OPT_KEY_FROM\" $desired"
+    if grep -qxF "$desired" "$new"; then n_present=$((n_present + 1)); continue; fi
+    if awk -v b="$blob" '{for(i=1;i<=NF;i++) if($i==b) f=1} END{exit !f}' "$new"; then
+      if [ -z "$OPT_KEY_FROM" ]; then n_present=$((n_present + 1)); continue; fi
+      awk -v b="$blob" '{k=0; for(i=1;i<=NF;i++) if($i==b) k=1} !k' "$new" > "$new.tmp" && mv "$new.tmp" "$new"
+    fi
+    printf '%s\n' "$desired" >> "$new"; n_added=$((n_added + 1))
+  done <<EOF
+$OPT_PUBKEYS
+EOF
+  if [ $n_added -gt 0 ]; then
+    if [ $CHANGE -eq 1 ]; then
+      # Zapis jako właściciel konta (bez podążania za dowiązaniami jako root), potem atomowa zamiana.
+      local tmp
+      tmp="$(as_user "$ADMIN" /usr/bin/mktemp "$sshdir/.authorized_keys.XXXXXX")" || { record ssh_key fail "Nie można zapisać w $sshdir."; return; }
+      as_user "$ADMIN" /bin/sh -c 'cat > "$1"' sh "$tmp" < "$new" && chmod 600 "$tmp" && mv -f "$tmp" "$ak" \
+        || { rm -f "$tmp"; record ssh_key fail "Nie udało się zapisać $ak."; return; }
+    else
+      run "zapis $n_added klucza(y) do $ak"
+    fi
+  fi
+  if [ $CHANGE -eq 1 ]; then
+    chown "$ADMIN:$grp" "$sshdir" "$ak" 2>/dev/null; chmod 700 "$sshdir"; chmod 600 "$ak"
+  fi
+  if [ $n_added -gt 0 ]; then
+    changed_or_planned ssh_key "Klucz SSH menedżera zainstalowany dla $ADMIN ($KEY_FPS)." \
+      "zainstalować klucz SSH menedżera dla $ADMIN ($KEY_FPS)."
+  else
+    record ssh_key ok "Klucz SSH menedżera jest już zainstalowany ($KEY_FPS)."
+  fi
+}
+
+step_sshd_tuning() {
+  [ "$OPT_SSH_TUNING" = 1 ] || [ "$OPT_SSH_KEY_ONLY" = 1 ] || { record sshd_conf skipped "Ustawienia sshd bez zmian."; return; }
+  if ! grep -Eq '^Include[[:space:]]+/etc/ssh/sshd_config\.d/\*' "$SSHD_CONFIG" 2>/dev/null; then
+    record sshd_conf warn "sshd_config nie wczytuje /etc/ssh/sshd_config.d – pomijam (nie zmieniam głównego pliku)."
+    return
+  fi
+  local want="$WORK/sshd.conf"
+  {
+    echo "# CMCR Manager – zarządzane przez cmcr-imac-setup.sh $CMCR_SETUP_VERSION. Nie edytuj ręcznie."
+    echo "# Rozłącza martwe sesje (np. gdy Mac nauczyciela uśnie w trakcie zadania)."
+    echo "ClientAliveInterval 30"
+    echo "ClientAliveCountMax 6"
+    if [ "$OPT_SSH_KEY_ONLY" = 1 ]; then
+      echo "# Logowanie wyłącznie kluczem."
+      echo "PasswordAuthentication no"
+      echo "KbdInteractiveAuthentication no"
+    fi
+  } > "$want"
+  if [ "$OPT_SSH_KEY_ONLY" = 1 ] && [ -z "$KEY_FPS" ]; then
+    record sshd_conf fail "--ssh-key-only wymaga podania klucza (--pubkey) – inaczej utracisz dostęp. Pominięto."
+    return
+  fi
+  if [ -f "$SSHD_DROPIN" ] && cmp -s "$want" "$SSHD_DROPIN"; then
+    record sshd_conf ok "Ustawienia sshd (keepalive$([ "$OPT_SSH_KEY_ONLY" = 1 ] && echo ', tylko klucze')) są aktualne."
+    return
+  fi
+  if [ $CHANGE -eq 0 ]; then run "zapis $SSHD_DROPIN"; changed_or_planned sshd_conf "Ustawienia sshd (keepalive)." "zapisać ustawienia sshd (keepalive)."; return; fi
+  # sshd -t wymaga kluczy hosta; przy pierwszym włączeniu SSH mogą jeszcze nie istnieć.
+  if ! ls "$R"/etc/ssh/ssh_host_*_key >/dev/null 2>&1; then
+    if [ -n "$R" ]; then ssh-keygen -A -f "$R" >/dev/null 2>&1; else ssh-keygen -A >/dev/null 2>&1; fi
+  fi
+  local backup="" rc
+  [ -f "$SSHD_DROPIN" ] && { backup="$WORK/sshd.bak"; cp -p "$SSHD_DROPIN" "$backup"; }
+  install -m 0644 "$want" "$SSHD_DROPIN" && chown root:wheel "$SSHD_DROPIN"
+  if [ -n "$R" ]; then sshd -t -f "$SSHD_CONFIG" 2>"$WORK/sshd.err"; rc=$?; else sshd -t 2>"$WORK/sshd.err"; rc=$?; fi
+  if [ $rc -eq 0 ]; then
+    changed_or_planned sshd_conf "Zapisano $SSHD_DROPIN (nowe połączenia SSH od razu go używają)."
+  else
+    if [ -n "$backup" ]; then cp -p "$backup" "$SSHD_DROPIN"; else rm -f "$SSHD_DROPIN"; fi
+    record sshd_conf fail "sshd -t odrzucił konfigurację – przywrócono poprzednią: $(head -n 1 "$WORK/sshd.err")"
+  fi
+}
+
+step_shared_folder() {
+  section "Folder współdzielony ucznia"
+  local shome dir top anc mode_now owner_now acl_ok=1 did="" plan=""
+  if ! dscl . -read "/Users/$STUDENT" UniqueID >/dev/null 2>&1; then
+    record shared warn "Konto ucznia „$STUDENT” nie istnieje – pomijam folder (utwórz konto i uruchom skrypt ponownie)."
+    return
+  fi
+  shome="$(home_of "$STUDENT")"
+  dir="${OPT_SHARED:+$R$OPT_SHARED}"; dir="${dir:-$shome/Public/cmcr}"
+  while [ "${dir%/}" != "$dir" ]; do dir="${dir%/}"; done
+  if [ ! -d "$dir" ]; then
+    # Folder domowy tworzy macOS przy pierwszym logowaniu – utworzony przez roota należałby do roota
+    # i uczeń nie mógłby się zalogować do własnego folderu.
+    case "$dir" in
+      "$R"/Users/?*/*) top="${dir#"$R"/Users/}"; top="$R/Users/${top%%/*}" ;;
+      *) record shared warn "Nie znaleziono folderu domowego ucznia ($STUDENT) w /Users – pomijam folder współdzielony."; return ;;
+    esac
+    if [ ! -d "$top" ]; then
+      if [ "$top" = "$shome" ] || [ "$top" = "$R/Users/$STUDENT" ]; then
+        record shared warn "Folder domowy ucznia ($STUDENT) jeszcze nie istnieje – zaloguj się raz na konto ucznia przy komputerze i uruchom skrypt ponownie."
+      else
+        record shared warn "Folder $top nie istnieje – pomijam folder współdzielony $dir."
+      fi
+      return
+    fi
+    # Brakujące foldery pośrednie tworzy właściciel najbliższego istniejącego folderu (np. Public ucznia).
+    anc="$(dirname "$dir")"
+    while [ ! -d "$anc" ] && [ "$anc" != / ]; do anc="$(dirname "$anc")"; done
+    if [ "$(stat -f %Su "$anc" 2>/dev/null)" = "$STUDENT" ]; then
+      run as_user "$STUDENT" /bin/mkdir -p "$dir"
+    else
+      run /bin/mkdir -p "$dir"
+    fi
+    did="utworzono"; plan="utworzyć"
+  fi
+  if [ -L "$dir" ]; then record shared fail "$dir jest dowiązaniem – przerwano."; return; fi
+  owner_now="$(stat -f %Su "$dir" 2>/dev/null)"; mode_now="$(stat -f %Lp "$dir" 2>/dev/null)"
+  if [ "$owner_now" != "$STUDENT" ]; then run chown "$STUDENT:staff" "$dir"; did="${did:+$did, }właściciel $STUDENT"
+    plan="${plan:+$plan, }ustawić właściciela $STUDENT"; fi
+  if [ "$mode_now" != "${OPT_SHARED_MODE#0}" ]; then run chmod "$OPT_SHARED_MODE" "$dir"; did="${did:+$did, }chmod $OPT_SHARED_MODE"
+    plan="${plan:+$plan, }chmod $OPT_SHARED_MODE"; fi
+  if [ "$OPT_SHARED_ACL" = 1 ]; then
+    # Dziedziczone ACL: pliki wgrane przez administratora są edytowalne przez ucznia i odwrotnie.
+    local perms="list,add_file,search,add_subdirectory,delete_child,readattr,writeattr,readextattr,writeextattr,readsecurity,file_inherit,directory_inherit"
+    ls -led "$dir" 2>/dev/null | grep -q "group:admin allow .*directory_inherit" || acl_ok=0
+    ls -led "$dir" 2>/dev/null | grep -q "user:$STUDENT allow .*directory_inherit" || acl_ok=0
+    if [ $acl_ok -eq 0 ]; then
+      if run chmod -N "$dir" && run chmod +a "user:$STUDENT allow $perms" "$dir" \
+         && run chmod +a "group:admin allow $perms" "$dir"; then
+        did="${did:+$did, }ACL"; plan="${plan:+$plan, }dziedziczone ACL"
+      else
+        record shared_acl warn "Nie udało się ustawić ACL w $dir (folder działa, ale bez dziedziczonych uprawnień)."
+      fi
+    fi
+  fi
+  if [ $CHANGE -eq 1 ] && [ "$(stat -f %Su "$dir" 2>/dev/null)" != "$STUDENT" ]; then
+    record shared fail "Nie udało się ustawić właściciela $STUDENT dla $dir."
+  elif [ -n "$did" ]; then changed_or_planned shared "Folder $dir ($did)." "folder $dir – $plan."; else record shared ok "Folder $dir: właściciel $STUDENT, $OPT_SHARED_MODE$([ "$OPT_SHARED_ACL" = 1 ] && echo ', ACL')."; fi
+}
+
+step_vnc() {
+  section "Udostępnianie ekranu (VNC)"
+  if [ "$OPT_VNC" != 1 ]; then
+    if launchctl print system/com.apple.screensharing >/dev/null 2>&1; then
+      record vnc skipped "Udostępnianie ekranu jest włączone (bez zmian)."
+    else
+      record vnc skipped "Udostępnianie ekranu wyłączone (włącz opcją --enable-vnc)."
+    fi
+    return
+  fi
+  local did=""
+  if ! launchctl print system/com.apple.screensharing >/dev/null 2>&1; then
+    run launchctl enable system/com.apple.screensharing
+    run launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null
+    did=1
+  fi
+  if [ $CHANGE -eq 1 ] && ! launchctl print system/com.apple.screensharing >/dev/null 2>&1; then
+    record vnc fail "Nie udało się uruchomić usługi Udostępniania ekranu."
+  elif [ -n "$did" ]; then
+    changed_or_planned vnc "Włączono usługę Udostępniania ekranu." "włączyć usługę Udostępniania ekranu."
+  else
+    record vnc ok "Usługa Udostępniania ekranu działa."
+  fi
+  ensure_access_group screensharing "Screen Sharing ACL" vnc_acl "Udostępnianie ekranu" 398
+  # Od macOS 12.1 włączenie przez launchctl nie nadaje uprawnień TCC agentowi – sprawdzamy je.
+  local sc
+  sc="$(tcc_value kTCCServiceScreenCapture 'com.apple.screensharing.agent')"
+  if [ "$sc" = 2 ]; then
+    record vnc_tcc ok "Udostępnianie ekranu ma uprawnienie do nagrywania ekranu."
+  elif [ -z "$sc" ]; then
+    record vnc_tcc warn "Nie mogę sprawdzić uprawnień Udostępniania ekranu (brak pełnego dostępu do dysku). Jeśli połączenie VNC pokazuje czarny ekran: Ustawienia › Ogólne › Udostępnianie › wyłącz i włącz „Udostępnianie ekranu”."
+  else
+    record vnc_tcc todo "Udostępnianie ekranu: w Ustawieniach › Ogólne › Udostępnianie wyłącz i włącz „Udostępnianie ekranu” (od macOS 12.1 tylko tak – lub przez MDM – nadaje się mu uprawnienia; bez tego widać czarny ekran)."
+    open_pane "x-apple.systempreferences:com.apple.preferences.sharing?Services_ScreenSharing" && wait_enter
+  fi
+}
+
+# Opis harmonogramu po polsku, np. „pn wt śr cz pt: włączenie 07:30, wyłączenie 17:00”.
+sched_text() {
+  local d="" i c
+  i=0
+  while [ $i -lt ${#SCHED_DAYS} ]; do
+    c="${SCHED_DAYS:$i:1}"
+    case "$c" in M) d="$d pn" ;; T) d="$d wt" ;; W) d="$d śr" ;; R) d="$d cz" ;; F) d="$d pt" ;; S) d="$d sb" ;; U) d="$d nd" ;; esac
+    i=$((i + 1))
+  done
+  printf '%s: włączenie %s' "${d# }" "$SCHED_ON"
+  [ -n "$SCHED_OFF" ] && printf ', %s %s' "$([ "$SCHED_OFF_ACTION" = sleep ] && echo uśpienie || echo wyłączenie)" "$SCHED_OFF"
+}
+
+pm_get() { pmset -g 2>/dev/null | awk -v k="$1" '$1==k {print $2; exit}'; }
+pm_cap() { pmset -g cap 2>/dev/null | awk '{print $1}' | grep -qx "$1"; }
+pm_set() {   # pm_set KLUCZ WARTOŚĆ OPIS
+  local cur; cur="$(pm_get "$1")"
+  if ! pm_cap "$1"; then detail "$3: nieobsługiwane na tym komputerze."; return 0; fi
+  if [ "$cur" = "$2" ]; then PM_OK="${PM_OK}${PM_OK:+, }$3"; return 0; fi
+  run pmset -a "$1" "$2" && PM_DID="${PM_DID}${PM_DID:+, }$3"
+}
+
+step_power() {
+  section "Zasilanie i Wake-on-LAN"
+  local eth
+  eth="$(networksetup -listallhardwareports 2>/dev/null | awk '/^Hardware Port:/{p=$0; sub(/^Hardware Port: /,"",p)} /^Ethernet Address:/{ if (p ~ /^Ethernet/ && p !~ /Adapter|Thunderbolt/) print $3 }')"
+  ETH_MACS="$(echo $eth)"
+  [ -n "$ETH_MACS" ] && detail "Adres MAC Ethernet (do Wake-on-LAN): $ETH_MACS"
+  PM_OK=""; PM_DID=""
+  [ "$OPT_WOL" = 1 ] && pm_set womp 1 "budzenie przy dostępie do sieci"
+  [ "$OPT_WOL" = 1 ] && pm_set tcpkeepalive 1 "podtrzymanie sieci w uśpieniu"
+  [ "$OPT_NO_SLEEP" = 1 ] && pm_set sleep 0 "bez usypiania komputera"
+  [ -n "$OPT_DISPLAY_SLEEP" ] && pm_set displaysleep "$OPT_DISPLAY_SLEEP" "uśpienie ekranu po $OPT_DISPLAY_SLEEP min"
+  [ "$OPT_AUTORESTART" = 1 ] && pm_set autorestart 1 "start po zaniku zasilania"
+  if [ -n "$PM_DID" ]; then changed_or_planned power "Zasilanie: $PM_DID."
+  elif [ -n "$PM_OK" ]; then record power ok "Zasilanie: $PM_OK."
+  else record power skipped "Ustawienia zasilania bez zmian."; fi
+
+  if [ "$OPT_POWER_SCHEDULE" = off ]; then
+    if pmset -g sched 2>/dev/null | grep -q "Repeating power events"; then
+      run pmset repeat cancel; changed_or_planned schedule "Usunięto harmonogram włączania/wyłączania." "usunąć harmonogram włączania/wyłączania."
+    else
+      record schedule ok "Brak harmonogramu włączania/wyłączania."
+    fi
+  elif [ -n "$SCHED_DAYS" ]; then
+    SCHED_DESC="$SCHED_DAYS $SCHED_ON${SCHED_OFF:+ $SCHED_OFF $SCHED_OFF_ACTION}"
+    if [ "$(plutil -extract power_schedule raw -o - "$MARKER" 2>/dev/null)" = "$SCHED_DESC" ] \
+       && pmset -g sched 2>/dev/null | grep -q "Repeating power events"; then
+      record schedule ok "Harmonogram: $(sched_text)."
+      return
+    fi
+    # pmset repeat zastępuje cały harmonogram, więc ustawiamy oba zdarzenia jednym poleceniem.
+    if [ -n "$SCHED_OFF" ]; then
+      run pmset repeat wakeorpoweron "$SCHED_DAYS" "$SCHED_ON:00" "$SCHED_OFF_ACTION" "$SCHED_DAYS" "$SCHED_OFF:00"
+    else
+      run pmset repeat wakeorpoweron "$SCHED_DAYS" "$SCHED_ON:00"
+    fi
+    if [ $CHANGE -eq 1 ] && ! pmset -g sched 2>/dev/null | grep -q "Repeating power events"; then
+      record schedule fail "pmset nie przyjął harmonogramu."
+    else
+      changed_or_planned schedule "Harmonogram ustawiony: $(sched_text)." "ustawić harmonogram ($(sched_text))."
+      [ "$SCHED_OFF_ACTION" = shutdown ] && [ -n "$SCHED_OFF" ] && \
+        detail "Wake-on-LAN budzi tylko uśpiony komputer – po wyłączeniu włączy go dopiero harmonogram lub przycisk."
+    fi
+  fi
+}
+
+step_hostname() {
+  [ -n "$OPT_HOSTNAME" ] || { record hostname skipped "Nazwa komputera bez zmian ($(scutil --get LocalHostName 2>/dev/null).local)."; return; }
+  local name="$OPT_HOSTNAME"
+  [ "$name" = auto ] && name="$ADMIN"
+  case "$name" in -*|*-|*[!A-Za-z0-9-]*|'') record hostname fail "Nazwa „$name” nie nadaje się na nazwę komputera."; return ;; esac
+  if [ "$(scutil --get ComputerName 2>/dev/null)" = "$name" ] && [ "$(scutil --get LocalHostName 2>/dev/null)" = "$name" ]; then
+    record hostname ok "Nazwa komputera: $name ($name.local)."; return
+  fi
+  run scutil --set ComputerName "$name"
+  run scutil --set LocalHostName "$name"
+  changed_or_planned hostname "Nazwa komputera ustawiona na $name ($name.local)." "ustawić nazwę komputera na $name ($name.local)."
+}
+
+step_sudoers() {
+  case "$OPT_SUDO_NOPASSWD" in
+    '') [ -f "$SUDOERS_DROPIN" ] && record sudoers warn "sudo bez hasła jest WŁĄCZONE dla $ADMIN ($SUDOERS_DROPIN)." \
+                                  || record sudoers skipped "sudo wymaga hasła (zalecane)."
+        return ;;
+    no)
+      if [ -f "$SUDOERS_DROPIN" ]; then run rm -f "$SUDOERS_DROPIN"; changed_or_planned sudoers "Usunięto sudo bez hasła." "usunąć sudo bez hasła."
+      else record sudoers ok "sudo wymaga hasła."; fi
+      return ;;
+  esac
+  if [ $IS_ROOT -eq 1 ] && ! grep -Eq '^[#@]includedir[[:space:]]+/private/etc/sudoers\.d' "$SUDOERS"; then
+    record sudoers fail "/etc/sudoers nie wczytuje /private/etc/sudoers.d – pomijam."; return
+  fi
+  local want="$WORK/sudoers"
+  printf '# CMCR Manager – sudo bez hasła (cmcr-imac-setup.sh %s). Usuń: --no-sudo-nopasswd\n%s ALL=(ALL) NOPASSWD: ALL\n' \
+    "$CMCR_SETUP_VERSION" "$ADMIN" > "$want"
+  if [ -f "$SUDOERS_DROPIN" ] && cmp -s "$want" "$SUDOERS_DROPIN" 2>/dev/null; then
+    record sudoers warn "sudo bez hasła jest włączone dla $ADMIN (świadoma decyzja)."; return
+  fi
+  if [ $CHANGE -eq 0 ]; then run "zapis $SUDOERS_DROPIN"; changed_or_planned sudoers "sudo bez hasła dla $ADMIN." "włączyć sudo bez hasła dla $ADMIN."; return; fi
+  # Błędny plik w sudoers.d blokuje całe sudo – walidujemy przed i po instalacji.
+  if ! visudo -cf "$want" >/dev/null 2>&1; then record sudoers fail "visudo odrzucił regułę – nic nie zmieniono."; return; fi
+  local tmp; tmp="$(mktemp "$SUDOERS_DIR/.cmcr.XXXXXX")" || { record sudoers fail "Nie można zapisać w sudoers.d."; return; }
+  cat "$want" > "$tmp" && chown root:wheel "$tmp" && chmod 0440 "$tmp" && mv -f "$tmp" "$SUDOERS_DROPIN"
+  if visudo -c >/dev/null 2>&1; then
+    record sudoers changed "sudo bez hasła WŁĄCZONE dla $ADMIN – każdy, kto ma klucz SSH aplikacji, ma pełne uprawnienia roota."
+  else
+    rm -f "$SUDOERS_DROPIN" "$tmp"
+    record sudoers fail "visudo -c zgłosił błąd – reguła usunięta."
+  fi
+}
+
+# Sprawdzenie bez uruchamiania kodu x86 (nie wywołuje systemowej propozycji instalacji).
+rosetta_installed() { [ -e "$R/Library/Apple/usr/libexec/oah/libRosettaRuntime" ]; }
+
+step_rosetta() {
+  [ "$ARCH" = arm64 ] || { [ "$OPT_ROSETTA" = 1 ] && record rosetta skipped "Rosetta 2 niepotrzebna (procesor Intel)."; return; }
+  if rosetta_installed; then record rosetta ok "Rosetta 2 jest zainstalowana."; return; fi
+  [ "$OPT_ROSETTA" = 1 ] || { record rosetta skipped "Rosetta 2 nie jest zainstalowana (opcja --rosetta)."; return; }
+  section "Rosetta 2"
+  if [ $CHANGE -eq 0 ]; then run softwareupdate --install-rosetta --agree-to-license; changed_or_planned rosetta "Instalacja Rosetta 2." "zainstalować Rosetta 2."; return; fi
+  softwareupdate --install-rosetta --agree-to-license 2>&1 | tail -n 3 | sed 's/^/   /'
+  if rosetta_installed; then record rosetta changed "Zainstalowano Rosetta 2."
+  else record rosetta fail "Instalacja Rosetta 2 nie powiodła się (sprawdź połączenie z internetem)."; fi
+}
+
+su_set() {   # su_set KLUCZ true|false
+  local cur; cur="$(defaults read "$SU_PLIST" "$1" 2>/dev/null)"
+  case "$cur:$2" in 1:true|0:false) return 0 ;; esac
+  run defaults write "$SU_PLIST" "$1" -bool "$2" && SU_DID=1
+}
+
+step_updates() {
+  [ -n "$OPT_UPDATES" ] || { record updates skipped "Ustawienia automatycznych aktualizacji bez zmian."; return; }
+  SU_DID=""
+  local dl=false crit=false os=false label
+  case "$OPT_UPDATES" in
+    check)    label="tylko sprawdzanie" ;;
+    download) dl=true; crit=true; label="sprawdzanie, pobieranie i poprawki bezpieczeństwa (macOS instaluje administrator)" ;;
+    auto)     dl=true; crit=true; os=true; label="pełna automatyczna instalacja" ;;
+  esac
+  su_set AutomaticCheckEnabled true
+  su_set AutomaticDownload "$dl"
+  su_set ConfigDataInstall "$crit"
+  su_set CriticalUpdateInstall "$crit"
+  su_set AutomaticallyInstallMacOSUpdates "$os"
+  if [ -n "$SU_DID" ]; then changed_or_planned updates "Aktualizacje: $label."; else record updates ok "Aktualizacje: $label."; fi
+  [ "$OS_MAJOR" -ge 15 ] && [ "$OPT_UPDATES" != auto ] && \
+    detail "macOS 15.4+ potrafi sam ponownie włączyć automatyczne aktualizacje – trwałą blokadę daje tylko MDM."
+}
+
+step_firewall() {
+  local fw=socketfilterfw state blockall
+  command -v "$fw" >/dev/null 2>&1 || return
+  state="$($fw --getglobalstate 2>/dev/null)"; blockall="$($fw --getblockall 2>/dev/null)"
+  case "$blockall" in
+    *"set to enabled"*|*"ENABLED"*)
+      if [ "$OPT_FIX_FIREWALL" = 1 ]; then
+        run "$fw" --setblockall off
+        changed_or_planned firewall "Zapora: wyłączono „Blokuj wszystkie połączenia przychodzące” (blokowało SSH)." \
+          "wyłączyć w zaporze „Blokuj wszystkie połączenia przychodzące” (blokuje SSH)."
+      else
+        record firewall fail "Zapora blokuje wszystkie połączenia przychodzące (również SSH) – użyj --fix-firewall lub zmień w Ustawieniach › Sieć › Zapora."
+      fi ;;
+    *) case "$state" in *enabled*) record firewall ok "Zapora włączona, usługi systemowe (SSH) dozwolone." ;;
+                        *) record firewall ok "Zapora wyłączona." ;; esac ;;
+  esac
+}
+
+step_filevault() {
+  case "$(fdesetup status 2>/dev/null)" in
+    *"FileVault is On"*)
+      FILEVAULT=on
+      record filevault warn "FileVault włączony: po restarcie iMac czeka na odblokowanie przy ekranie i jest niedostępny przez SSH (zdalny restart: fdesetup authrestart)." ;;
+    *"FileVault is Off"*) FILEVAULT=off; record filevault ok "FileVault wyłączony – iMac po restarcie od razu dostępny przez SSH." ;;
+    *) record filevault skipped "Nie udało się odczytać stanu FileVault." ;;
+  esac
+}
+
+step_tcc() {
+  section "Uprawnienia prywatności (TCC) dla sesji SSH"
+  local fda sc readable=0
+  fda="$(tcc_value kTCCServiceSystemPolicyAllFiles '%sshd-keygen-wrapper')"
+  [ -n "$fda" ] && readable=1
+  if [ $readable -eq 1 ]; then
+    sc="$(tcc_value kTCCServiceScreenCapture '%sshd-keygen-wrapper')"
+    [ "$fda" = 2 ] && FDA_REMOTE=yes || FDA_REMOTE=no
+    [ "$sc" = 2 ] && SC_REMOTE=yes || SC_REMOTE=no
+  elif [ $VIA_SSH -eq 1 ]; then
+    FDA_REMOTE=no   # przez SSH bez pełnego dostępu do dysku nie da się otworzyć bazy TCC
+  fi
+  # Systemowa baza TCC jest chroniona przez SIP – tych uprawnień nie da się nadać skryptem (tylko ręcznie lub przez MDM).
+  case "$FDA_REMOTE" in
+    yes) record tcc_fda ok "Pełny dostęp do dysku dla użytkowników zdalnych: włączony." ;;
+    *)   record tcc_fda todo "Ustawienia › Ogólne › Udostępnianie › (i) przy „Zdalne logowanie” › włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”$([ "$FDA_REMOTE" = unknown ] && echo ' (nie da się tego sprawdzić lokalnie – sprawdź z aplikacji)')."
+         if open_pane "x-apple.systempreferences:com.apple.preferences.sharing?Services_RemoteLogin"; then
+           detail "Otworzyłem Udostępnianie: kliknij (i) obok „Zdalne logowanie”, włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”, OK."
+           wait_enter
+         fi ;;
+  esac
+  case "$SC_REMOTE" in
+    yes) record tcc_screen ok "Nagrywanie ekranu dla sshd-keygen-wrapper: zezwolono (podgląd ekranów działa)." ;;
+    *)   record tcc_screen todo "Ustawienia › Prywatność i ochrona › Nagrywanie ekranu$([ "$OS_MAJOR" -ge 15 ] && echo ' i dźwięku systemowego') › „+” › ⌘⇧G › /usr/libexec/sshd-keygen-wrapper › włącz$([ "$SC_REMOTE" = unknown ] && echo ' (stan pokaże CMCR Manager: Konfiguracja › Przygotowanie iMaców › Sprawdź)')."
+         if open_pane "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"; then
+           detail "Otworzyłem Nagrywanie ekranu: „+”, ⌘⇧G, wpisz /usr/libexec/sshd-keygen-wrapper, Otwórz, włącz przełącznik."
+           detail "Jeśli „+” nie przyjmuje narzędzia (macOS 26.1–26.2): przeciągnij plik z Findera (⌘⇧G /usr/libexec/)."
+           wait_enter
+         fi ;;
+  esac
+}
+
+write_marker() {
+  local result="ok" i ts host json
+  [ $N_TODO -gt 0 ] && result="todo"
+  [ $N_PENDING -gt 0 ] && result="pending"
+  [ $N_FAIL -gt 0 ] && result="fail"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  host="$(scutil --get LocalHostName 2>/dev/null)"
+  json="$WORK/setup.json"
+  {
+    printf '{\n'
+    printf '  "schema": %s,\n  "version": "%s",\n  "mode": "%s",\n  "timestamp": "%s",\n' "$CMCR_SETUP_SCHEMA" "$CMCR_SETUP_VERSION" "$MODE" "$ts"
+    printf '  "host": "%s",\n  "computer_name": "%s",\n' "$(json_esc "$host")" "$(json_esc "$(scutil --get ComputerName 2>/dev/null)")"
+    printf '  "os": "%s",\n  "build": "%s",\n  "arch": "%s",\n' "$OS_VER" "$OS_BUILD" "$ARCH"
+    printf '  "admin": "%s",\n  "student": "%s",\n' "$(json_esc "$ADMIN")" "$(json_esc "$STUDENT")"
+    printf '  "power_schedule": "%s",\n' "$(json_esc "${SCHED_DESC:-$( [ "$OPT_POWER_SCHEDULE" = off ] || plutil -extract power_schedule raw -o - "$MARKER" 2>/dev/null)}")"
+    printf '  "key_fingerprints": "%s",\n  "ethernet_mac": "%s",\n' "$(json_esc "$KEY_FPS")" "$(json_esc "$ETH_MACS")"
+    printf '  "via_ssh": %s,\n  "fda_remote": "%s",\n  "screen_capture_remote": "%s",\n  "filevault": "%s",\n' \
+      "$([ $VIA_SSH -eq 1 ] && echo true || echo false)" "$FDA_REMOTE" "$SC_REMOTE" "$FILEVAULT"
+    printf '  "result": "%s",\n  "ok_count": %d,\n  "changed_count": %d,\n  "pending_count": %d,\n  "warn_count": %d,\n  "todo_count": %d,\n  "fail_count": %d,\n' \
+      "$result" "$N_OK" "$N_CHANGED" "$N_PENDING" "$N_WARN" "$N_TODO" "$N_FAIL"
+    printf '  "steps": [\n'
+    i=0
+    while [ $i -lt $STEP_N ]; do
+      printf '    {"id": "%s", "status": "%s", "message": "%s"}' "${STEP_ID[$i]}" "${STEP_ST[$i]}" "$(json_esc "${STEP_MSG[$i]}")"
+      i=$((i + 1)); [ $i -lt $STEP_N ] && printf ','
+      printf '\n'
+    done
+    printf '  ]\n}\n'
+  } > "$json"
+  if [ "$MODE" = apply ]; then
+    mkdir -p "$MARKER_DIR" && chown root:wheel "$MARKER_DIR" && chmod 755 "$MARKER_DIR" \
+      && install -m 0644 "$json" "$MARKER" && chown root:wheel "$MARKER" \
+      || printf '✘ Nie udało się zapisać %s\n' "$MARKER"
+  fi
+  printf '\n-----BEGIN CMCR SETUP JSON-----\n'; cat "$json"; printf -- '-----END CMCR SETUP JSON-----\n'
+}
+
+# =============================================================================
+#  Wykonanie
+# =============================================================================
+REPORT="$WORK/report.txt"
+{
+  if step_preflight; then
+    step_remote_login
+    step_ssh_acl
+    step_ssh_key
+    step_sshd_tuning
+    step_shared_folder
+    step_vnc
+    step_power
+    section "Nazwa, uprawnienia i oprogramowanie"
+    step_hostname
+    step_sudoers
+    step_rosetta
+    step_updates
+    section "Bezpieczeństwo i niezawodność"
+    step_firewall
+    step_filevault
+    step_tcc
+  fi
+
+  printf '\n══ Podsumowanie: %s · ✔ %d  ✚ %d  … %d  ⚠︎ %d  ☐ %d  ✘ %d\n' \
+    "$(scutil --get LocalHostName 2>/dev/null)" "$N_OK" "$N_CHANGED" "$N_PENDING" "$N_WARN" "$N_TODO" "$N_FAIL"
+  if [ -n "$TODO_TEXT" ]; then
+    printf 'Do zrobienia ręcznie przy tym komputerze:\n'
+    printf '%s\n' "$TODO_TEXT" | awk 'NF {n++; printf "  %d. %s\n", n, $0}'
+    if [ $GUIDE -eq 0 ] && [ $VIA_SSH -eq 0 ] && [ "$MODE" = apply ]; then
+      printf 'Wskazówka: sudo bash %s --guided otworzy po kolei właściwe panele Ustawień.\n' "$0"
+    fi
+  fi
+  if [ $N_FAIL -gt 0 ]; then printf 'Wynik: BŁĘDY (%d) – szczegóły powyżej.\n' "$N_FAIL"
+  elif [ $N_PENDING -gt 0 ]; then
+    if [ $VIA_SSH -eq 1 ] || case "$0" in */cmcr.*/cmcr-imac-setup.sh) true ;; *) false ;; esac; then printf 'Wynik: ustawienia do zmiany: %d – w CMCR Manager użyj „Skonfiguruj zaznaczone” (Konfiguracja › Przygotowanie iMaców).\n' "$N_PENDING"
+    else printf 'Wynik: ustawienia do zmiany: %d – uruchom: sudo bash %s (bez --verify/--dry-run).\n' "$N_PENDING" "$0"; fi
+  elif [ $N_TODO -gt 0 ]; then printf 'Wynik: skonfigurowano; zostały kroki ręczne (%d).\n' "$N_TODO"
+  else printf 'Wynik: iMac gotowy do pracy z CMCR Manager.\n'; fi
+  write_marker
+} 2>&1 | tee "$REPORT"
+
+if [ "$MODE" = apply ]; then
+  mkdir -p "$LOG_DIR" 2>/dev/null && { printf '=== %s ===\n' "$(date)"; cat "$REPORT"; } >> "$LOG_FILE" 2>/dev/null
+  # Dziennik nie rośnie bez końca (ostatnie ~2000 linii).
+  if [ "$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)" -gt 4000 ]; then
+    tail -n 2000 "$LOG_FILE" > "$WORK/log" && cat "$WORK/log" > "$LOG_FILE"
+  fi
+fi
+
+# Kod wyjścia liczymy z raportu, bo blok powyżej działał w podpowłoce (potok z tee).
+if grep -q '"fail_count": 0,' "$REPORT"; then exit 0; else exit 1; fi

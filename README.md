@@ -30,12 +30,55 @@ Natywna aplikacja okienkowa macOS (SwiftUI) do zdalnego zarządzania pracownią 
 
 **Komputer administratora:** macOS 13 lub nowszy, Swift (Xcode albo Command Line Tools: `xcode-select --install`).
 
-**Każdy iMac (jednorazowo, przy komputerze):**
-1. Ustawienia systemowe › Ogólne › Udostępnianie › **Logowanie zdalne** — włączone dla administratorów (konto `imacNN`). Do pobierania plików z chronionych folderów ucznia zaznacz „Zezwalaj zdalnym użytkownikom na pełny dostęp do dysku”.
-2. Podgląd ekranu: Prywatność i ochrona › **Nagrywanie ekranu i dźwięku systemowego** › „+” › ⌘⇧G › `/usr/libexec/sshd-keygen-wrapper` › włącz. Bez tego zrzut pokaże tylko tapetę lub się nie uda (macOS nie pozwala nadać tego uprawnienia zdalnie bez MDM).
-3. Opcjonalnie: **Udostępnianie ekranu** (VNC) i „Budź przy dostępie do sieci” (Wake-on-LAN).
+**Każdy iMac:** jednorazowa konfiguracja skryptem — zob. [Konfiguracja iMaców (jednorazowo)](#konfiguracja-imaców-jednorazowo). Minimum, by aplikacja mogła się połączyć: Ustawienia systemowe › Ogólne › Udostępnianie › **Zdalne logowanie** włączone (albo skrypt uruchomiony lokalnie, który je włączy).
 
 Przy pierwszym połączeniu macOS zapyta, czy CMCR Manager może korzystać z sieci lokalnej — zezwól.
+
+## Konfiguracja iMaców (jednorazowo)
+
+Skrypt [`setup/cmcr-imac-setup.sh`](setup/cmcr-imac-setup.sh) przygotowuje iMaca do pełnej współpracy z aplikacją. Uruchamia się go raz jako root — zdalnie z aplikacji albo lokalnie przy komputerze. Jest idempotentny (kolejne uruchomienia zmieniają tylko to, co trzeba), nie zadaje pytań, wypisuje raport po polsku i zapisuje znacznik `/Library/Application Support/CMCR/setup.json` (wersja skryptu, wynik, odciski kluczy — bez haseł) oraz dziennik `/Library/Logs/CMCR/cmcr-imac-setup.log`.
+
+**Co robi domyślnie:**
+- włącza **Zdalne logowanie** (SSH) i ogranicza je do administratorów,
+- instaluje klucz SSH aplikacji na koncie administratora (`imacNN`) i poprawia uprawnienia `~/.ssh`,
+- dodaje ustawienia sshd zamykające zawieszone połączenia (`/etc/ssh/sshd_config.d/050-cmcr-manager.conf`, sprawdzane `sshd -t`, przy błędzie przywracane),
+- tworzy folder ucznia `/Users/student/Public/cmcr` (właściciel `student`, `777`, dziedziczone ACL dla ucznia i administratorów); jeśli uczeń jeszcze nigdy się nie zalogował i nie ma folderu domowego, skrypt pomija ten krok — zaloguj się raz na konto ucznia i uruchom go ponownie,
+- włącza Wake-on-LAN (`pmset womp 1`),
+- sprawdza zaporę („Blokuj wszystkie połączenia przychodzące” blokuje SSH), FileVault i uprawnienia prywatności sesji SSH.
+
+**Opcjonalnie** (przełączniki w aplikacji lub opcje skryptu): Udostępnianie ekranu dla administratorów (`--enable-vnc`), nazwa komputera (`--hostname`; z aplikacji według adresu z listy, np. `imac07.local` → `imac07`, więc adres się nie zmienia; w zapisanym pliku — nazwa konta administratora), brak usypiania (`--no-sleep`), harmonogram włączania i wyłączania (`--power-schedule "MTWRF 07:30 17:00"`), Rosetta 2 (`--rosetta`), automatyczne aktualizacje (`--updates check|download|auto`), sudo bez hasła (`--sudo-nopasswd`, niezalecane), SSH wyłącznie z kluczem (`--ssh-key-only`). Pełna lista: `bash cmcr-imac-setup.sh --help`. Kody wyjścia: 0 — gotowe (mogą zostać kroki ręczne), 1 — nieudany krok, 2 — błędne opcje, 3 — brak uprawnień roota.
+
+### Zdalnie z aplikacji (gdy SSH już działa)
+
+1. **Konfiguracja › Dostęp i hasła** — zapisz hasło administratora (potrzebne do uruchomienia jako root).
+2. **Konfiguracja › Przygotowanie iMaców** — tabela „Gotowość iMaców” pokazuje dla każdego iMaca: SSH i klucz, sudo, folder ucznia, Wake-on-LAN, Udostępnianie ekranu, Nagrywanie ekranu, Pełny dostęp do dysku, FileVault i wersję konfiguracji. Kliknięcie komórki pokazuje szczegóły i przycisk naprawy. Sprawdzenie niczego nie zmienia i nie wyświetla na iMacu żadnych okien zgody.
+3. Zaznacz iMaki, kliknij **Skonfiguruj zaznaczone…**, wybierz opcje i potwierdź. Skrypt jest wysyłany przez SSH i uruchamiany jako root; raport każdego iMaca widać pod tabelą i w dziale Zadania. „Tylko sprawdź” pokazuje, co zostałoby zmienione.
+
+Z terminala: `cmcrctl setup all --verify`, potem `cmcrctl setup all [opcje]`; stan pracowni: `cmcrctl readiness all`.
+
+### Lokalnie przy iMacu (pendrive lub AirDrop — np. gdy SSH jeszcze nie działa)
+
+1. W aplikacji kliknij **Zapisz skrypt konfiguracyjny…** (albo `cmcrctl setup-script [opcje] > cmcr-imac-setup.sh`). Plik zawiera klucz publiczny aplikacji i wybrane opcje; jeden plik pasuje do wszystkich iMaców — konto administratora i nazwa są wykrywane na miejscu.
+2. Skopiuj plik na iMaca, zaloguj się na konto administratora `imacNN`, otwórz Terminal i wpisz:
+
+   ```bash
+   sudo bash ~/Downloads/cmcr-imac-setup.sh --guided
+   ```
+
+   `--guided` przy krokach ręcznych otwiera właściwe panele Ustawień i czeka na Enter. Podgląd bez zmian: `bash cmcr-imac-setup.sh --dry-run` (lub `--verify`). Uruchomienie przez `bash` działa także dla plików z AirDrop i internetu (Gatekeeper ich nie blokuje).
+
+### Co zostaje do zrobienia ręcznie przy każdym iMacu
+
+macOS chroni te uprawnienia (baza TCC jest pod ochroną SIP) — nie da się ich nadać skryptem ani zdalnie, tylko przy komputerze albo profilem MDM:
+
+1. **Pełny dostęp do dysku dla sesji zdalnych:** Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie” › „Daj użytkownikom zdalnym pełny dostęp do dysku”. Potrzebny do pobierania prac z Biurka i Dokumentów ucznia, czyszczenia folderów oraz podmiany i usuwania aplikacji.
+2. **Nagrywanie ekranu** dla podglądu: Ustawienia systemowe › Prywatność i ochrona › Nagrywanie ekranu i dźwięku systemowego › „+” › ⌘⇧G › `/usr/libexec/sshd-keygen-wrapper` › włącz. Bez tego podgląd pokazuje tylko tapetę. macOS 26.1–26.2 może nie pokazywać dodanego narzędzia na liście — uprawnienie i tak działa.
+3. Jeśli połączenie VNC pokazuje czarny ekran: wyłącz i włącz „Udostępnianie ekranu” w Ustawieniach.
+4. Z włączonym **FileVault** iMac po restarcie czeka na odblokowanie przy ekranie i do tego czasu jest niedostępny przez SSH.
+
+Tabela gotowości pokazuje, których iMaców dotyczą te kroki, a „Otwórz instrukcję” prowadzi przez nie krok po kroku.
+
+Dla deweloperów: kopię skryptu wbudowaną w aplikację (`Sources/CMCRCore/SetupScriptTemplate.swift`) generuje `scripts/embed-setup.sh` — uruchom go po każdej zmianie `setup/cmcr-imac-setup.sh` (test jednostkowy pilnuje zgodności). Testy e2e (`Tests/e2e/suites/setup.sh`) uruchamiają skrypt zdalnie na atrapach poleceń systemowych, z plikami systemowymi przekierowanymi do katalogu testowego (`CMCR_SETUP_ROOT_PREFIX`).
 
 ## Budowanie i uruchomienie
 
@@ -54,7 +97,7 @@ open "build/CMCR Manager.app"
 1. **Konfiguracja › Komputery** — domyślnie lista `imac01…imac15` (`imacNN@imacNN.local`); popraw ją generatorem lub ręcznie.
 2. **Konfiguracja › Dostęp i hasła** — zapisz hasło kont administracyjnych (Pęk kluczy). Jeśli komputery mają różne hasła, ustaw „własne” przy danym komputerze.
 3. Zaznacz wszystkie komputery i kliknij **Roześlij klucz** (odpowiednik sekcji „Distribute your SSH key” z README). Kolejne połączenia logują się kluczem.
-4. **Konfiguracja › Przygotowanie iMaców** — „Utwórz folder cmcr ucznia” (`/Users/student/Public/cmcr`, właściciel `student`, `chmod 777`).
+4. **Konfiguracja › Przygotowanie iMaców** — sprawdź gotowość iMaców i kliknij **Skonfiguruj zaznaczone…** (folder ucznia `/Users/student/Public/cmcr`, klucz, Wake-on-LAN i inne — zob. wyżej).
 
 Pola wyboru na liście komputerów (środkowa kolumna) wyznaczają cel operacji we wszystkich działach; zaznaczenie jest zapamiętywane. Kliknięcie wiersza tylko go podświetla (menu kontekstowe działa na podświetlone wiersze) i nie zmienia zaznaczenia — dwuklik, Return lub spacja zaznacza albo odznacza podświetlone komputery. Lista ma wyszukiwarkę, filtr stanu (online, niedostępne, z zalogowanym użytkownikiem, wymagające uwagi) i **grupy** (np. rzędy ławek — tworzone z menu kontekstowego lub w Konfiguracji › Komputery). Opcja „Pomiń niedostępne” pomija komputery, które przy ostatnim sprawdzeniu były wyłączone (offline) — także w trakcie ponownego sprawdzania — zamiast czekać na limit czasu — trafiają do wyników jako pominięte, a „Powtórz na nieudanych” próbuje na nich ponownie bez pomijania. Po Wake-on-LAN, zapisaniu hasła i rozesłaniu klucza stan komputerów jest sprawdzany ponownie automatycznie. Niebezpieczne operacje (restart, wylogowanie, czyszczenie folderu, odinstalowanie…) pokazują listę komputerów z zalogowanymi użytkownikami i pozwalają ich pominąć; ich powtórzenie („Powtórz na nieudanych”, „Powtórz…” w Zadaniach) wymaga ponownego potwierdzenia w tym samym oknie. Pliki można upuścić na komputer na liście. Gdy trwają zadania, Mac administratora nie usypia się, a zamknięcie okna nie przerywa pracy. Skróty: ⌘R odśwież stan, ⇧⌘A zaznacz wszystkie, ⇧⌘O zaznacz online, ⌘1…⌘0 działy.
 
@@ -69,7 +112,7 @@ Pola wyboru na liście komputerów (środkowa kolumna) wyznaczają cel operacji 
 | dystrybucja klucza (README) | Konfiguracja › Dostęp i hasła | — |
 | Unity Hub / sdkmanager / Homebrew (notes.md) | Instalacja, Polecenia › Gotowe polecenia | `cmcrctl exec` |
 
-`cmcrctl` (w `build/cmcrctl` i w pakiecie aplikacji: `Contents/Resources/bin/cmcrctl`) korzysta z tej samej konfiguracji i Pęku kluczy co aplikacja. Pełna lista poleceń: `cmcrctl --help`. Poza odpowiednikami z tabeli: `status [--json]`, `apps`, `open-app`, `quit-app`, `open-url`, `kill`, `uninstall`, `brew`, `screenshot`, `ls`, `clean`, `updates list|install|history`, `message`, `logout`, `power restart|shutdown|sleep|display-sleep`, `wake`, `hosts list|add|set|remove|generate`, `password set|clear|status`, `install plik… [all|nr]` (`.pkg`/`.dmg`/`.zip`/`.app`), `install-url URL [all|nr]`, `render` (pokazuje dokładnie skrypt wykonywany zdalnie) i `selftest` (sprawdza składnię wszystkich skryptów zdalnych).
+`cmcrctl` (w `build/cmcrctl` i w pakiecie aplikacji: `Contents/Resources/bin/cmcrctl`) korzysta z tej samej konfiguracji i Pęku kluczy co aplikacja. Pełna lista poleceń: `cmcrctl --help`. Poza odpowiednikami z tabeli: `status [--json]`, `apps`, `open-app`, `quit-app`, `open-url`, `kill`, `uninstall`, `brew`, `screenshot`, `ls`, `clean`, `updates list|install|history`, `message`, `logout`, `power restart|shutdown|sleep|display-sleep`, `wake`, `hosts list|add|set|remove|generate`, `password set|clear|status`, `install plik… [all|nr]` (`.pkg`/`.dmg`/`.zip`/`.app`), `install-url URL [all|nr]`, `render` (pokazuje dokładnie skrypt wykonywany zdalnie), `setup-script`, `setup` i `readiness` (jednorazowa konfiguracja iMaców) i `selftest` (sprawdza składnię wszystkich skryptów zdalnych).
 
 - Komputery wskazuje się numerem z nazwy (`4` → imac04), listą (`1,3,7`), zakresem (`1-5`), pozycją na liście (`@2`), nazwą lub `all`. Numer, którego nie ma na liście, jest błędem – polecenie nigdy nie trafi do innego Maca.
 - Bez listy komputerów `status` sprawdza wszystkie. `exec`, `open-app` i `quit-app` działają wtedy na wszystkich tylko w terminalu (i wypisują, na których); w skryptach trzeba podać listę, np. `all`. Dzięki temu argument zgubiony przez powłokę – np. niezacytowane `#3`, które w skrypcie jest komentarzem – kończy się błędem, a nie poleceniem dla całej pracowni.
@@ -156,5 +199,6 @@ Opcjonalne CI (`.github/workflows/ci.yml`) buduje projekt i uruchamia testy jedn
 Sources/CMCRCore     – SSH/scp, skrypty zdalne, parsowanie, Pęk kluczy, Wake-on-LAN (wspólne)
 Sources/CMCRManager  – aplikacja SwiftUI
 Sources/cmcrctl      – narzędzie wiersza poleceń
-scripts/             – budowanie pakietu .app i ikony, wydania (release.sh, update-signing.swift, make-signing-identity.sh)
+scripts/             – budowanie pakietu .app i ikony, osadzanie skryptu konfiguracyjnego, wydania (release.sh, update-signing.swift, make-signing-identity.sh)
+setup/               – jednorazowy skrypt konfiguracyjny iMaców (root)
 ```
