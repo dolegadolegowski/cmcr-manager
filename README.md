@@ -69,7 +69,20 @@ Zaznaczenie komputerów na liście (środkowa kolumna) jest wspólne dla wszystk
 | dystrybucja klucza (README) | Konfiguracja › Dostęp i hasła | — |
 | Unity Hub / sdkmanager / Homebrew (notes.md) | Instalacja, Polecenia › Gotowe polecenia | `cmcrctl exec` |
 
-`cmcrctl` (w `build/cmcrctl` i w pakiecie aplikacji: `Contents/Resources/bin/cmcrctl`) korzysta z tej samej konfiguracji i Pęku kluczy co aplikacja. Dodatkowo: `status`, `apps`, `screenshot`, `open-app`, `quit-app`, `render` (pokazuje dokładnie skrypt wykonywany zdalnie). Hasło można też podać zmienną `CMCR_PASSWORD`.
+`cmcrctl` (w `build/cmcrctl` i w pakiecie aplikacji: `Contents/Resources/bin/cmcrctl`) korzysta z tej samej konfiguracji i Pęku kluczy co aplikacja. Pełna lista poleceń: `cmcrctl --help`. Poza odpowiednikami z tabeli: `status [--json]`, `apps`, `open-app`, `quit-app`, `open-url`, `kill`, `uninstall`, `brew`, `screenshot`, `ls`, `clean`, `updates list|install|history`, `message`, `logout`, `power restart|shutdown|sleep|display-sleep`, `wake`, `hosts list|add|set|remove|generate`, `password set|clear|status`, `render` (pokazuje dokładnie skrypt wykonywany zdalnie) i `selftest` (sprawdza składnię wszystkich skryptów zdalnych).
+
+- Komputery wskazuje się numerem z nazwy (`4` → imac04), listą (`1,3,7`), zakresem (`1-5`), pozycją na liście (`#2`), nazwą lub `all`. Numer, którego nie ma na liście, jest błędem – polecenie nigdy nie trafi do innego Maca.
+- `-j N` obsługuje N komputerów naraz; wyniki i tak są wypisywane w kolejności listy (`--prefix` dodaje `[imac04]` przed każdym wierszem). `status` i `updates list` działają równolegle domyślnie.
+- Restart, wyłączenie, wylogowanie, czyszczenie folderu, deinstalacja i zmiany listy komputerów pytają o potwierdzenie; w skryptach (bez terminala) trzeba dodać `--yes`.
+- Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie; `exec` zwraca kod zdalnego polecenia.
+- Hasło: `cmcrctl password set` (czyta ze standardowego wejścia, bez echa) lub zmienna `CMCR_PASSWORD`.
+
+```sh
+cmcrctl status                                  # stan wszystkich komputerów
+cmcrctl exec "df -h /" 1-8 -j 8 --prefix        # polecenie na imac01…imac08 naraz
+cmcrctl updates install all --restart --yes     # aktualizacje macOS z restartem
+cmcrctl message "Przerwa" "Za 5 minut koniec zajęć" all
+```
 
 ## Jak to działa i bezpieczeństwo
 

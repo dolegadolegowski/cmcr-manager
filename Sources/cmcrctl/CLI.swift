@@ -311,7 +311,7 @@ struct CLI: Sendable {
         let codes = await runHosts(list, jobs: args.jobs ?? 1, prefixLines: prefixLines) { io in
             let h = io.host
             let items = Operations.conventionItems(base: s.localFolder, host: h)
-            io.out("Pushing to \(h.destination) ... (\(items.count) elementów)")
+            io.out("Pushing to \(h.destination) ... (\(plural(items.count, "element", "elementy", "elementów")))")
             if items.isEmpty { return ExitCode.success }
             switch await Payload.make(items) {
             case .failure(let e):
