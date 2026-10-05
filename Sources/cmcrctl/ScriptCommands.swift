@@ -66,6 +66,10 @@ enum ScriptCommands {
 
     /// `_builder NAME HOST [arguments…]`
     static func builder(_ args: [String]) async -> Int32 {
+        // Test hook: never against the real lab configuration and Keychain by accident.
+        guard let dir = ProcessInfo.processInfo.environment["CMCR_CONFIG_DIR"], !dir.isEmpty else {
+            fail("_builder służy do testów i wymaga CMCR_CONFIG_DIR (osobnej konfiguracji).")
+        }
         guard args.count >= 2 else { fail("Użycie: cmcrctl _builder NAZWA all|nr [argumenty…]") }
         let name = args[0], spec = args[1]
         var a = Array(args.dropFirst(2))

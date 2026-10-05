@@ -230,9 +230,10 @@ public enum Scripts {
     /// Quits an application by name (`Safari`) or bundle path in the console user's session.
     ///
     /// Without `force` the app gets the standard `quit` Apple Event, exactly like ⌘Q: it may ask the student
-    /// to save documents. `quit` (like `activate`/`open`) is exempt from the Automation (TCC) consent, so no
-    /// privacy prompt appears; the event is sent from the user's own session with `as_console_user` and
-    /// without waiting for a reply. If the app is still running after `wait` seconds it is left alone, or
+    /// to save documents. `quit` (like `activate`/`open`) is documented as exempt from the Automation (TCC)
+    /// consent (not yet verified on the lab iMacs); should macOS refuse the event anyway, the error code is
+    /// reported. The event is sent from the user's own session with `as_console_user` and without waiting
+    /// for a reply. If the app is still running after `wait` seconds it is left alone, or
     /// gets SIGTERM when `terminateIfRunning` is set. Processes without a bundle identifier (no Info.plist)
     /// cannot receive Apple Events and get SIGTERM. `force` sends SIGKILL immediately.
     public static func quitApp(_ app: String, force: Bool, terminateIfRunning: Bool = false,
@@ -259,21 +260,34 @@ public enum Scripts {
         esac
         case "$BID" in *[!A-Za-z0-9._-]*) BID="" ;; esac
         if [ -n "$BID" ]; then
+          # Apple Event errors (e.g. -1743: Automation not allowed) are caught and printed as CMCR_AE_ERR,
+          # so a refusal is not mistaken for an app that is waiting for the student.
           as_console_user /usr/bin/osascript -e 'on run argv' -e 'set b to item 1 of argv' -e 'try' \
             -e 'if application id b is running then' -e 'ignoring application responses' \
-            -e 'tell application id b to quit' -e 'end ignoring' -e 'end if' -e 'end try' -e 'end run' \
+            -e 'tell application id b to quit' -e 'end ignoring' -e 'end if' \
+            -e 'on error m number n' -e 'log "CMCR_AE_ERR " & n & " " & m' -e 'end try' -e 'end run' \
             "$BID" </dev/null >/dev/null 2>"$CMCR_TMP/quit.err"
           RC=$?
           if [ $RC = 91 ] || [ $RC = 3 ] || grep -qiE 'password|Sorry, try again' "$CMCR_TMP/quit.err"; then
             cat "$CMCR_TMP/quit.err" >&2; exit $RC
           fi
-          echo "→ Wysłano polecenie „Zakończ” do $NAME ($BID)."
-          i=0
-          while [ $i -lt $((WAIT * 2)) ]; do
-            sleep 0.5; i=$((i + 1))
-            PIDS="$(app_pids)"; [ -z "$PIDS" ] && break
-          done
-          if [ -z "$PIDS" ]; then echo "✔ Zamknięto $NAME."; exit 0; fi
+          AE="$(sed -n 's/^.*CMCR_AE_ERR //p' "$CMCR_TMP/quit.err" | head -1)"
+          case "$AE" in
+            ""|-600|-600\ *)
+              echo "→ Wysłano polecenie „Zakończ” do $NAME ($BID)."
+              i=0
+              while [ $i -lt $((WAIT * 2)) ]; do
+                sleep 0.5; i=$((i + 1))
+                PIDS="$(app_pids)"; [ -z "$PIDS" ] && break
+              done
+              if [ -z "$PIDS" ]; then echo "✔ Zamknięto $NAME."; exit 0; fi ;;
+            *)
+              case "$AE" in
+                -1743*) echo "✘ macOS nie pozwolił wysłać polecenia „Zakończ” do $NAME (Automatyzacja, kod -1743)." >&2 ;;
+                *) echo "✘ Nie udało się wysłać polecenia „Zakończ” do $NAME (kod $AE)." >&2 ;;
+              esac
+              if [ $FALLBACK = 0 ]; then echo "  Aplikacja nadal działa – użyj „Wymuś zamknięcie”." >&2; exit 1; fi ;;
+          esac
         elif [ $FALLBACK = 0 ]; then
           echo "→ $NAME nie przyjmuje polecenia „Zakończ” (brak identyfikatora aplikacji) – wysyłam SIGTERM."
           FALLBACK=1
@@ -364,16 +378,19 @@ public enum Scripts {
       installer -pkg "$1" -target / && echo "✔ Zainstalowano pakiet $(basename "$1")"
     }
     cmcr_install_dmg() {
-      local base mnt rc=0 found=0 p
+      local base err mnt rc=0 found=0 p
       base="$(mktemp -d /tmp/cmcr-mnt.XXXXXX)" || return 1
+      # In the private $CMCR_TMP: a name derived from $base in world-writable /tmp could be pre-created
+      # as a symlink by another user and root would overwrite its target.
+      err="$(mktemp "$CMCR_TMP/hdiutil.XXXXXX")" || { rmdir "$base"; return 1; }
       echo "→ Montowanie $(basename "$1")"
       # PAGER=cat + yes: images with a licence agreement would otherwise wait for "Agree Y/N?".
       # -mountrandom also copes with images that contain several volumes.
-      if ! yes | PAGER=cat hdiutil attach "$1" -readonly -nobrowse -noverify -noautoopen -mountrandom "$base" >/dev/null 2>"$base.err"; then
-        echo "✘ Nie można zamontować obrazu dysku: $(grep -v deprecated "$base.err" | head -3)" >&2
-        rm -f "$base.err"; rmdir "$base" 2>/dev/null; return 1
+      if ! yes | PAGER=cat hdiutil attach "$1" -readonly -nobrowse -noverify -noautoopen -mountrandom "$base" >/dev/null 2>"$err"; then
+        echo "✘ Nie można zamontować obrazu dysku: $(grep -v deprecated "$err" | head -3)" >&2
+        rm -f "$err"; rmdir "$base" 2>/dev/null; return 1
       fi
-      rm -f "$base.err"
+      rm -f "$err"
       for mnt in "$base"/*; do
         for p in "$mnt"/*.pkg "$mnt"/*.mpkg; do
           [ -e "$p" ] || continue
@@ -576,7 +593,7 @@ public enum Scripts {
           # Apple Silicon requires the credentials of a volume owner (Secure Token) for OS updates.
           GUID="$(dscl . -read "/Users/$CMCR_ADMIN_USER" GeneratedUID 2>/dev/null | awk '{print $2}')"
           if [ -n "$GUID" ]; then
-            VO="$(diskutil apfs listUsers / 2>/dev/null | awk -v g="$GUID" 'index($0, g) {f = 1; next} /^[|]? *\+--/ {f = 0} f && /Volume Owner:/ {print $3; exit}')"
+            VO="$(diskutil apfs listUsers / 2>/dev/null | awk -v g="$GUID" 'index($0, g) {f = 1; next} /^[|]? *\+--/ {f = 0} f && /Volume Owner:/ {print $NF; exit}')"
             if [ "$VO" = "No" ]; then
               echo "⚠︎ Konto $CMCR_ADMIN_USER nie jest właścicielem woluminu (brak Secure Token) – aktualizacja macOS może się nie udać. Użyj konta administratora z Secure Token." >&2
             fi
@@ -648,8 +665,9 @@ public enum Scripts {
         while [ ! -e "$P" ] && [ ! -L "$P" ]; do P="$(dirname "$P")"; done
         [ -d "$P" ] || { echo "✘ $P nie jest folderem" >&2; exit 2; }
         if [ "$P" != "$DEST" ]; then
-          case "$P" in
-            /|/Users|/Volumes|/private|/private/var|/System|/System/Volumes|/System/Volumes/Data)
+          # On-disk spelling: /users, /USERS or /Volumes/Macintosh HD/Users are /Users too.
+          case "$(cmcr_realdir "$P")" in
+            ""|/|/Users|/Volumes|/private|/private/var|/System|/System/Volumes|/System/Volumes/Data)
               echo "✘ Folder $(dirname "$DEST") nie istnieje na tym Macu (np. konto bez katalogu domowego) – nie tworzę go." >&2; exit 2 ;;
           esac
         fi
@@ -730,18 +748,28 @@ public enum Scripts {
         [ -d "$DIR" ] || { echo "Brak folderu: $DIR"; exit 0; }
         REAL="$(cmcr_realdir "$DIR")"
         [ -n "$REAL" ] || { echo "Odmowa: nie można otworzyć $DIR" >&2; exit 2; }
+        # cmcr_realdir already returns the on-disk case; nocasematch also covers case-insensitive volumes.
+        shopt -s nocasematch
         case "$REAL" in
           /Users/?*/?*|/private/tmp/?*|/Volumes/?*/?*) ;;
           *) echo "Odmowa: czyszczenie dozwolone tylko w podfolderach /Users/<konto>/…, /tmp lub /Volumes/<dysk>/… (podano: $DIR → $REAL)" >&2; exit 2 ;;
         esac
+        AH="$(dscl . -read "/Users/$CMCR_ADMIN_USER" NFSHomeDirectory 2>/dev/null | awk 'NR == 1 {print $2}')"
+        [ -n "$AH" ] && [ -d "$AH" ] && AH="$(cmcr_realdir "$AH")"
+        case "$REAL/" in
+          "${AH:-/nonexistent}"/*) echo "Odmowa: folder domowy administratora ($REAL) jest chroniony." >&2; exit 2 ;;
+        esac
         case "$REAL" in
           /Users/*)
             REL="${REAL#/Users/}"; ACCT="${REL%%/*}"; SUB="${REL#*/}"
-            if [ "$ACCT" = "$CMCR_ADMIN_USER" ]; then echo "Odmowa: folder domowy administratora ($REAL) jest chroniony." >&2; exit 2; fi
+            case "$ACCT" in
+              "$CMCR_ADMIN_USER") echo "Odmowa: folder domowy administratora ($REAL) jest chroniony." >&2; exit 2 ;;
+            esac
             case "$SUB" in
               Library|Library/*|.*) echo "Odmowa: $REAL to folder systemowy konta (Library lub ukryty)." >&2; exit 2 ;;
             esac ;;
         esac
+        shopt -u nocasematch
         if [ $DRY = 1 ]; then
           echo "Do usunięcia z $REAL:"; find "$REAL" -mindepth 1 -maxdepth 1 -print; exit 0
         fi
@@ -776,14 +804,20 @@ public enum Scripts {
         case "$DIR/" in */../*|*/./*|*//*) echo "✘ Niepoprawna ścieżka: $DIR" >&2; exit 2 ;; esac
         id "$U" >/dev/null 2>&1 || { echo "✘ Konto $U nie istnieje na tym Macu." >&2; exit 2; }
         H="$(dscl . -read "/Users/$U" NFSHomeDirectory 2>/dev/null | awk 'NR == 1 {print $2}')"
+        CDIR="$(cmcr_canonpath "$DIR")" || { echo "✘ Niepoprawna ścieżka: $DIR" >&2; exit 2; }
         if [ -n "$H" ] && [ ! -d "$H" ]; then
-          case "$DIR/" in
+          shopt -s nocasematch
+          case "$CDIR/" in
             "$H"/*) echo "✘ Konto $U nie ma jeszcze katalogu domowego ($H). Zaloguj się raz na to konto przy komputerze (albo wykonaj: sudo createhomedir -c -u $U) i powtórz." >&2; exit 2 ;;
           esac
+          shopt -u nocasematch
         fi
-        P="$DIR"; while [ ! -e "$P" ]; do P="$(dirname "$P")"; done
+        P="$DIR"; while [ ! -e "$P" ] && [ ! -L "$P" ]; do P="$(dirname "$P")"; done
         if [ "$P" != "$DIR" ]; then
-          case "$P" in /|/Users|/Volumes) echo "✘ Folder $(dirname "$DIR") nie istnieje – nie tworzę go." >&2; exit 2 ;; esac
+          case "$(cmcr_realdir "$P")" in
+            ""|/|/Users|/Volumes|/private|/private/var|/System|/System/Volumes|/System/Volumes/Data)
+              echo "✘ Folder $(dirname "$DIR") nie istnieje – nie tworzę go." >&2; exit 2 ;;
+          esac
         fi
         mkdir -p "$DIR" && chown "$OWNER" "$DIR" && chmod 777 "$DIR" && ls -ld "$DIR"
         """#, asRoot: true)
@@ -822,14 +856,28 @@ public enum Scripts {
         return RemoteScript(#"""
         if [ -z "$CONSOLE_USER" ]; then echo "Nikt nie jest zalogowany."; exit 0; fi
         WHO="$CONSOLE_USER"; WAIT=\#(max(1, wait))
-        as_console_user /usr/bin/osascript -e 'ignoring application responses' \
-          -e 'tell application "loginwindow" to «event aevtrlgo»' -e 'end ignoring' </dev/null >/dev/null 2>&1 &
+        # Runs in the background: if macOS showed an Automation prompt, the send would wait for it.
+        as_console_user /usr/bin/osascript -e 'try' -e 'ignoring application responses' \
+          -e 'tell application "loginwindow" to «event aevtrlgo»' -e 'end ignoring' \
+          -e 'on error m number n' -e 'log "CMCR_AE_ERR " & n & " " & m' -e 'end try' \
+          </dev/null >/dev/null 2>"$CMCR_TMP/logout.err" &
         P=$!
         echo "→ Poproszono o wylogowanie $WHO (aplikacje mogą zapytać o zapisanie zmian)."
         i=0
         while [ $i -lt $((WAIT * 2)) ]; do
           sleep 0.5; i=$((i + 1))
           if [ "$(stat -f%Su /dev/console 2>/dev/null)" != "$WHO" ]; then echo "✔ Wylogowano $WHO."; exit 0; fi
+          AE="$(sed -n 's/^.*CMCR_AE_ERR //p' "$CMCR_TMP/logout.err" 2>/dev/null | head -1)"
+          if [ -n "$AE" ]; then
+            case "$AE" in
+              -1743*) echo "✘ macOS nie pozwolił poprosić o wylogowanie (Automatyzacja, kod -1743) – użyj „Wyloguj natychmiast”." >&2 ;;
+              *) echo "✘ Prośba o wylogowanie nie powiodła się (kod $AE) – użyj „Wyloguj natychmiast”." >&2 ;;
+            esac
+            exit 1
+          fi
+          if grep -qiE 'password|Sorry, try again|Brak hasła' "$CMCR_TMP/logout.err" 2>/dev/null; then
+            cat "$CMCR_TMP/logout.err" >&2; exit 1
+          fi
         done
         kill $P 2>/dev/null
         echo "⚠︎ $WHO jest nadal zalogowany (np. aplikacja czeka na zapisanie dokumentu) – użyj „Wyloguj natychmiast”." >&2
@@ -838,27 +886,37 @@ public enum Scripts {
     }
 
     /// Power actions run detached (the SSH session ends first). A FileVault Mac restarted with `shutdown`
-    /// stops at the unlock screen – unreachable over SSH until someone types a password – so a restart uses
-    /// `fdesetup authrestart` when the stored password belongs to a FileVault-enabled admin.
+    /// stops at the unlock screen – unreachable over SSH until someone types a password – so when the stored
+    /// password belongs to a FileVault-enabled admin, `fdesetup authrestart -delayminutes -1` first arms a
+    /// one-time unlock for the next restart. It runs before detaching, so a refusal (e.g. a FileVault password
+    /// that differs from the login password) is reported to the teacher instead of disappearing.
     public static func power(_ action: PowerAction) -> RemoteScript {
         switch action {
         case .restart:
             return RemoteScript(#"""
             if [ "$(fdesetup isactive 2>/dev/null)" = "true" ]; then
+              ARMED=0
               if [ -n "$CMCR_PW" ] && [ "$(fdesetup supportsauthrestart 2>/dev/null)" = "true" ] \
                 && fdesetup list 2>/dev/null | grep -q "^$CMCR_ADMIN_USER,"; then
                 xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
-                echo "FileVault: ponowne uruchamianie z jednorazowym odblokowaniem dysku (fdesetup authrestart) za 2 s…"
-                printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Username</key><string>%s</string><key>Password</key><string>%s</string></dict></plist>\n' \
-                  "$(xml "$CMCR_ADMIN_USER")" "$(xml "$CMCR_PW")" \
-                  | ( trap '' HUP; sleep 2; fdesetup authrestart -inputplist ) >/dev/null 2>&1 &
-                exit 0
+                if printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Username</key><string>%s</string><key>Password</key><string>%s</string></dict></plist>\n' \
+                     "$(xml "$CMCR_ADMIN_USER")" "$(xml "$CMCR_PW")" \
+                     | fdesetup authrestart -delayminutes -1 -inputplist >"$CMCR_TMP/fde.out" 2>&1; then
+                  ARMED=1
+                  echo "FileVault: dysk zostanie jednorazowo odblokowany przy tym restarcie (fdesetup authrestart)."
+                else
+                  echo "✘ fdesetup authrestart odmówił: $(grep -v '^ *$' "$CMCR_TMP/fde.out" | head -2 | tr '\n' ' ')" >&2
+                fi
               fi
-              echo "⚠︎ FileVault jest włączony: po restarcie iMac zatrzyma się na ekranie odblokowania – ktoś musi wpisać hasło przy komputerze (do tego czasu SSH i Wake-on-LAN nie działają)." >&2
-              if [ -z "$CMCR_PW" ]; then
-                echo "  Zapisz hasło administratora w Konfiguracji, aby restartować z odblokowaniem (fdesetup authrestart)." >&2
-              else
-                echo "  Konto $CMCR_ADMIN_USER nie może odblokować FileVault (brak na liście fdesetup list)." >&2
+              if [ $ARMED = 0 ]; then
+                echo "⚠︎ FileVault jest włączony: po restarcie iMac zatrzyma się na ekranie odblokowania – ktoś musi wpisać hasło przy komputerze (do tego czasu SSH i Wake-on-LAN nie działają)." >&2
+                if [ -z "$CMCR_PW" ]; then
+                  echo "  Zapisz hasło administratora w Konfiguracji, aby restartować z odblokowaniem (fdesetup authrestart)." >&2
+                elif ! fdesetup list 2>/dev/null | grep -q "^$CMCR_ADMIN_USER,"; then
+                  echo "  Konto $CMCR_ADMIN_USER nie może odblokować FileVault (brak na liście fdesetup list)." >&2
+                elif [ "$(fdesetup supportsauthrestart 2>/dev/null)" != "true" ]; then
+                  echo "  Ten Mac nie obsługuje restartu z odblokowaniem (fdesetup supportsauthrestart)." >&2
+                fi
               fi
             fi
             echo 'Ponowne uruchamianie za 2 s…'

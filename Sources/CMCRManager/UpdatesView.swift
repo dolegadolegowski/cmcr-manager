@@ -31,7 +31,7 @@ struct UpdatesView: View {
             }
             updatesTable
             Divider()
-            HStack {
+            VStack(alignment: .leading, spacing: 6) {
                 Toggle("Uruchom ponownie, jeśli wymagane (-R)", isOn: $restart)
                 Toggle("Tylko zalecane (-r)", isOn: $recommendedOnly)
                 Toggle("Pozwól na nową wersję macOS", isOn: $allowMajor)
@@ -46,10 +46,11 @@ struct UpdatesView: View {
                 }
                 TargetButton(title: "Zainstaluj aktualizacje", icon: "arrow.triangle.2.circlepath") {
                     let r = restart, rec = recommendedOnly, major = allowMajor
+                    let majorNote = major ? " Uwaga: także przejście na nową wersję macOS (długa instalacja, restart)." : ""
                     confirm = ConfirmRequest(
-                        title: "Zainstalować aktualizacje macOS?",
-                        message: "Na \(model.selection.count) komputerach zostanie uruchomione softwareupdate --install\(r ? " z automatycznym restartem – zalogowani użytkownicy stracą niezapisane dane" : "").",
-                        button: "Instaluj", destructive: r) {
+                        title: major ? "Zainstalować aktualizacje i nową wersję macOS?" : "Zainstalować aktualizacje macOS?",
+                        message: "Na \(model.selection.count) komputerach zostanie uruchomione softwareupdate --install\(r ? " z automatycznym restartem – zalogowani użytkownicy stracą niezapisane dane" : "").\(majorNote)",
+                        button: "Instaluj", destructive: r || major) {
                         model.runScript("softwareupdate --install\(r ? " --restart" : "")", on: model.selectedMachines) { _ in
                             Scripts.installUpdates(restart: r, recommendedOnly: rec, downloadOnly: false,
                                                    allowMajorUpgrade: major)

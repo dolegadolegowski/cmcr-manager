@@ -73,6 +73,10 @@ launchctl() {
           if [ ! -t 0 ]; then input="$(cat)"; fi
           _e2e_log "gui-exec: $*"
           [ -n "$input" ] && _e2e_log "gui-stdin: $input"
+          # fake-ae-denied: Apple Events refused (Automation/TCC), as the scripts' `on error` handler logs it.
+          if [ "${1:-}" = /usr/bin/osascript ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/fake-ae-denied" ]; then
+            echo "CMCR_AE_ERR -1743 Not authorized to send Apple events to the application." >&2
+          fi
           return 0 ;;
       esac ;;
     print) _e2e_log "launchctl $*"; return 0 ;;
@@ -181,9 +185,12 @@ fdesetup() {
     list) [ -e "$w/fake-filevault" ] && echo "$(id -un),00000000-0000-0000-0000-000000000000"; return 0 ;;
     authrestart)
       local input; input="$(cat)"
+      if [ -e "$w/fake-fde-refuse" ]; then
+        _e2e_log "fdesetup $* refused"; echo "Error: Unable to restart with authentication." >&2; return 1
+      fi
       case "$input" in
         *"<string>${CMCR_E2E_PASSWORD:-}</string>"*) _e2e_log "fdesetup $* password ok" ;;
-        *) _e2e_log "fdesetup $* password WRONG" ;;
+        *) _e2e_log "fdesetup $* password WRONG"; echo "Error: User could not be authenticated." >&2; return 1 ;;
       esac ;;
     *) _e2e_log "fdesetup $*" ;;
   esac
@@ -193,7 +200,13 @@ stat() {
   if [ "$*" = "-f%Su /dev/console" ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/fake-no-console" ]; then echo root; return 0; fi
   command stat "$@"
 }
+# fake-no-volume-owner: the current user is listed as a crypto user that is not a volume owner.
 diskutil() {
+  if [ "${1:-} ${2:-}" = "apfs listUsers" ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/fake-no-volume-owner" ]; then
+    local g; g="$(command dscl . -read "/Users/$(id -un)" GeneratedUID | awk '{print $2}')"
+    printf 'Cryptographic users for disk3s1s1 (2 found)\n|\n+-- %s\n|   Type: Local Open Directory User\n|   Volume Owner: No\n|\n+-- EBC6C064-0000-11AA-AA11-00306543ECAC\n    Type: Personal Recovery User\n    Volume Owner: Yes\n' "$g"
+    return 0
+  fi
   case "${1:-} ${2:-}" in
     "list "*|"info "*|"apfs list"*) command diskutil "$@" ;;
     *) _e2e_log "diskutil $*"; return 0 ;;

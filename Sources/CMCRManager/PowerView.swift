@@ -42,7 +42,7 @@ struct PowerView: View {
                         model.power(.displaySleep, on: model.selectedMachines)
                     }
                     TargetButton(title: "Wyloguj", icon: "rectangle.portrait.and.arrow.right", prominent: false) {
-                        model.runScript("Wylogowanie (z zapisem)", on: model.selectedMachines) { _ in Scripts.logoutUser(force: false) }
+                        model.runScript("Wylogowanie (z pytaniem o zapis)", on: model.selectedMachines) { _ in Scripts.logoutUser(force: false) }
                     }
                     .help("Jak „Wyloguj” w menu Apple: aplikacje mogą zapytać ucznia o zapisanie zmian i wstrzymać wylogowanie.")
                     TargetButton(title: "Wyloguj natychmiast", icon: "rectangle.portrait.and.arrow.right.fill", role: .destructive, prominent: false) {

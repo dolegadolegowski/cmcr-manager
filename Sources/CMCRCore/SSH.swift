@@ -82,8 +82,21 @@ public struct RemoteScript: Sendable {
         *'{console}'*) [ -n "$CONSOLE_USER" ] || { echo "✘ Nikt nie jest zalogowany – nie można użyć {console}." >&2; exit 3; } ;;
       esac
     }
-    # Physical path of an existing folder (symlinks resolved, e.g. /Volumes/Macintosh HD → /).
-    cmcr_realdir() { ( cd "$1" 2>/dev/null && pwd -P ); }
+    # Physical path of an existing folder: symlinks resolved (/Volumes/Macintosh HD → /) and every component
+    # in its on-disk case. /bin/pwd, not the builtin: the builtin keeps the case as typed (/Users/x/LIBRARY),
+    # which the case-insensitive file system accepts but path checks would not recognise.
+    cmcr_realdir() { ( cd "$1" 2>/dev/null && /bin/pwd -P ); }
+    # Canonical form of a path whose tail may not exist yet: the deepest existing folder through cmcr_realdir,
+    # then the missing components as given. Empty when no existing ancestor is a folder.
+    cmcr_canonpath() {
+      local p="$1" r
+      while [ ! -e "$p" ] && [ ! -L "$p" ]; do p="$(dirname "$p")"; done
+      r="$(cmcr_realdir "$p")" || return 1
+      [ -n "$r" ] || return 1
+      r="$r${1#"$p"}"
+      case "$r" in //*) r="${r#/}" ;; esac
+      printf '%s\n' "$r"
+    }
     """#
 
     /// Full script text that is executed by `/bin/bash` on the remote side.
