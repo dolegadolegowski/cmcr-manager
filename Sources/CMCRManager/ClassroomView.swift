@@ -178,6 +178,27 @@ private struct EndLessonSection: View {
                 .padding(.leading, 28)
             }
 
+            Toggle(isOn: c.quitApps) {
+                StepLabel(.quitApps, "Zamknij aplikacje")
+            }
+            if c.wrappedValue.quitApps {
+                Picker("Które", selection: c.quitAllApps) {
+                    Text("Wszystkie aplikacje ucznia").tag(true)
+                    Text("Tylko wybrane").tag(false)
+                }
+                .padding(.leading, 28)
+                if !c.wrappedValue.quitAllApps {
+                    HStack {
+                        TextField("Aplikacje", text: c.apps, prompt: Text("np. Unity, Safari"))
+                        AppNameMenu { name in
+                            let list = c.wrappedValue.appList
+                            if !list.contains(name) { c.wrappedValue.apps = (list + [name]).joined(separator: ", ") }
+                        }
+                    }
+                    .padding(.leading, 28)
+                }
+            }
+
             Toggle(isOn: c.collect) {
                 StepLabel(.collect, "Zbierz prace do nowego folderu")
             }
@@ -202,27 +223,6 @@ private struct EndLessonSection: View {
                     }
                 }
                 .padding(.leading, 28)
-            }
-
-            Toggle(isOn: c.quitApps) {
-                StepLabel(.quitApps, "Zamknij aplikacje")
-            }
-            if c.wrappedValue.quitApps {
-                Picker("Które", selection: c.quitAllApps) {
-                    Text("Wszystkie aplikacje ucznia").tag(true)
-                    Text("Tylko wybrane").tag(false)
-                }
-                .padding(.leading, 28)
-                if !c.wrappedValue.quitAllApps {
-                    HStack {
-                        TextField("Aplikacje", text: c.apps, prompt: Text("np. Unity, Safari"))
-                        AppNameMenu { name in
-                            let list = c.wrappedValue.appList
-                            if !list.contains(name) { c.wrappedValue.apps = (list + [name]).joined(separator: ", ") }
-                        }
-                    }
-                    .padding(.leading, 28)
-                }
             }
 
             Toggle(isOn: Binding(get: { c.wrappedValue.collect && c.wrappedValue.cleanShared },
