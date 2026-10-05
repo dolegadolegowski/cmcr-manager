@@ -149,3 +149,158 @@ brew() { _e2e_log "brew $*"; echo "brew (fake) $*"; }
 mas() { _e2e_log "mas $*"; echo "mas (fake) $*"; }
 export -f _e2e_log _e2e_fake_png sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer \
   chown systemsetup scutil dseditgroup visudo spctl defaults brew mas 2>/dev/null
+
+# ---------------------------------------------------------------- classroom, attention mode, power (U8)
+# State of these fakes lives in $CMCR_E2E_WORK, so suites can prepare and inspect it (lockscreen.fail,
+# filevault.on, ask.answer, ask.timeout, pmset.repeat …).
+_e2e_state() { printf '%s/%s' "${CMCR_E2E_WORK:-/tmp/cmcr-e2e-state}" "$1"; }
+
+# launchctl: wraps the fake above. LockScreen and the attention overlay are only recorded as "running";
+# question dialogs (Scripts.ask) get a canned answer.
+eval "_e2e_launchctl_base() $(declare -f launchctl | tail -n +2)"
+launchctl() {
+  if [ "${1:-}" != asuser ]; then _e2e_launchctl_base "$@"; return; fi
+  local all=" $* " last="" a
+  for a in "$@"; do last="$a"; done
+  case "$all" in
+    *"/LockScreen "*)
+      _e2e_log "lockscreen: $*"
+      [ -e "$(_e2e_state lockscreen.fail)" ] || : > "$(_e2e_state lockscreen.running)"
+      return 0 ;;
+    *" CMCR_ATTENTION "*)
+      case "$all" in *" /usr/bin/osascript -l JavaScript "*) _e2e_log "attention-overlay: osascript JXA $last" ;;
+        *) _e2e_log "attention-overlay: $last" ;; esac
+      : > "$(_e2e_state attention.running)"
+      return 0 ;;
+  esac
+  local input=""
+  if [ ! -t 0 ]; then input="$(cat)"; fi
+  case "$input" in
+    *"CMCR:ANSWER:"*)
+      _e2e_log "ask-dialog"
+      if [ -e "$(_e2e_state ask.timeout)" ]; then echo "CMCR:TIMEOUT"; return 0; fi
+      case "$input" in
+        *"default answer"*) printf 'CMCR:ANSWER:Wyślij\t%s\n' "$(cat "$(_e2e_state ask.answer)" 2>/dev/null || echo odpowiedź)" ;;
+        *) printf 'CMCR:ANSWER:%s\n' "$(printf '%s\n' "$input" | sed -n 's/.*buttons {"\([^"]*\)".*/\1/p' | head -1)" ;;
+      esac
+      return 0 ;;
+  esac
+  printf '%s' "$input" | _e2e_launchctl_base "$@"
+}
+
+_e2e_pattern() { local a p=""; for a in "$@"; do case "$a" in -*) ;; *) p="$a" ;; esac; done; printf '%s' "$p"; }
+
+# pgrep/pkill: LockScreen and the overlay are simulated; the tagged helper processes the scripts start
+# (timers) are real and may be stopped, but only this user's. Nothing else is ever killed.
+pgrep() {
+  case "$(_e2e_pattern "$@")" in
+    LockScreen) [ -e "$(_e2e_state lockscreen.running)" ] && { echo 99901; return 0; }; return 1 ;;
+    CMCR_ATTENTION)
+      [ -e "$(_e2e_state attention.running)" ] && { echo 99902; return 0; }
+      command pgrep -U "$(id -u)" -f CMCR_ATTENTION ;;
+    cmcr-delayed-power) command pgrep -U "$(id -u)" -f cmcr-delayed-power ;;
+    *) command pgrep "$@" ;;
+  esac
+}
+pkill() {
+  local p rc=1
+  p="$(_e2e_pattern "$@")"
+  _e2e_log "pkill $*"
+  case "$p" in
+    LockScreen) [ -e "$(_e2e_state lockscreen.running)" ] && rc=0; rm -f "$(_e2e_state lockscreen.running)" ;;
+    CMCR_ATTENTION)
+      [ -e "$(_e2e_state attention.running)" ] && rc=0; rm -f "$(_e2e_state attention.running)"
+      command pkill -U "$(id -u)" -f CMCR_ATTENTION && rc=0 ;;
+    cmcr-delayed-power) command pkill -U "$(id -u)" -f cmcr-delayed-power && rc=0 ;;
+  esac
+  return $rc
+}
+
+# kill: refuses to signal application processes (…/X.app/Contents/MacOS/…) that do not belong to the test,
+# e.g. when "Zamknij wszystkie aplikacje" would otherwise reach the real apps of the user running the tests.
+kill() {
+  local a cmd args=() pids=0
+  for a in "$@"; do
+    case "$a" in
+      -*|%*) args+=("$a") ;;
+      *)
+        cmd="$(command ps -p "$a" -o command= 2>/dev/null)"
+        case "$cmd" in
+          *"${CMCR_E2E_WORK:-/nonexistent-cmcr-e2e}/"*) args+=("$a"); pids=$((pids + 1)) ;;
+          *.app/Contents/MacOS/*) _e2e_log "kill zablokowany (aplikacja spoza testu): $a $cmd" ;;
+          *) args+=("$a"); pids=$((pids + 1)) ;;
+        esac ;;
+    esac
+  done
+  if [ $pids -eq 0 ]; then
+    case " $* " in *" -l "*|*" -L "*) builtin kill "$@"; return ;; esac
+    return 0
+  fi
+  builtin kill "${args[@]}"
+}
+
+ioreg() {
+  case " $* " in
+    *" IOConsoleUsers "*|*" Root "*)
+      printf '  "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=No,"kCGSSessionIDKey"=111,"kCGSSessionUserNameKey"="inny"},{"kCGSSessionOnConsoleKey"=Yes,"kCGSSessionIDKey"=4242,"kCGSSessionUserNameKey"="%s"})\n' "$(id -un)" ;;
+    *) command ioreg "$@" ;;
+  esac
+}
+
+# pmset: keeps the repeating schedule and -a settings in state files and prints them like pmset does.
+pmset() {
+  _e2e_log "pmset $*"
+  local f; f="$(_e2e_state pmset.repeat)"
+  case "${1:-}" in
+    -g)
+      case "${2:-}" in
+        sched)
+          if [ -s "$f" ]; then echo "Repeating power events:"; cat "$f"; fi
+          echo "Scheduled power events:"
+          echo " [0]  wake at 10/06/2026 07:45:00 by 'com.apple.alarm.user-invisible-e2e'" ;;
+        *)
+          echo "System-wide power settings:"
+          echo "Currently in use:"
+          echo " womp                 $(cat "$(_e2e_state pmset.womp)" 2>/dev/null || echo 1)"
+          echo " autorestart          $(cat "$(_e2e_state pmset.autorestart)" 2>/dev/null || echo 0)"
+          echo " sleep                0"
+          echo " displaysleep         10" ;;
+      esac ;;
+    repeat)
+      shift
+      if [ "${1:-}" = cancel ]; then rm -f "$f"; return 0; fi
+      local out="" type days time h m ap d
+      while [ $# -ge 3 ]; do
+        type="$1"; days="$2"; time="$3"; shift 3
+        case "$type" in wake|poweron|wakeorpoweron|sleep|shutdown|restart) ;; *) echo "pmset: bad type $type" >&2; return 1 ;; esac
+        case "$days" in ""|*[!MTWRFSU]*) echo "pmset: bad weekdays $days" >&2; return 1 ;; esac
+        case "$time" in [0-2][0-9]:[0-5][0-9]:[0-5][0-9]) ;; *) echo "pmset: bad time $time" >&2; return 1 ;; esac
+        [ "$type" = wakeorpoweron ] && type=wakepoweron
+        h=$((10#${time%%:*})); m="${time#*:}"; m="${m%%:*}"; ap=AM
+        [ $h -ge 12 ] && ap=PM
+        [ $h -gt 12 ] && h=$((h - 12))
+        [ $h -eq 0 ] && h=12
+        case "$days" in MTWRF) d="weekdays only" ;; MTWRFSU) d="every day" ;; SU) d="weekends only" ;; *) d="$days" ;; esac
+        out="$out$(printf '  %s at %d:%s%s %s' "$type" "$h" "$m" "$ap" "$d")
+"
+      done
+      [ $# -eq 0 ] || { echo "pmset: bad arguments" >&2; return 1; }
+      printf '%s' "$out" > "$f" ;;
+    -a|-c|-b)
+      shift
+      while [ $# -ge 2 ]; do echo "$2" > "$(_e2e_state "pmset.$1")"; shift 2; done ;;
+  esac
+  return 0
+}
+
+fdesetup() {
+  case "${1:-}" in
+    isactive) if [ -e "$(_e2e_state filevault.on)" ]; then echo true; return 0; fi; echo false; return 1 ;;
+    supportsauthrestart) echo true ;;
+    *) _e2e_log "fdesetup $*" ;;
+  esac
+}
+killall() { _e2e_log "killall $*"; return 0; }
+dscacheutil() { _e2e_log "dscacheutil $*"; return 0; }
+export -f _e2e_state _e2e_launchctl_base launchctl _e2e_pattern pgrep pkill kill ioreg pmset fdesetup killall \
+  dscacheutil 2>/dev/null

@@ -4,6 +4,7 @@ import SwiftUI
 
 enum AppSection: String, CaseIterable, Identifiable, Hashable {
     case dashboard, commands, files, apps, install, updates, screens, power, jobs, setup
+    case classroom
 
     var id: String { rawValue }
 
@@ -19,6 +20,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .power: return "Sesja i zasilanie"
         case .jobs: return "Zadania"
         case .setup: return "Konfiguracja"
+        case .classroom: return "Zajęcia"
         }
     }
 
@@ -34,6 +36,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .power: return "power"
         case .jobs: return "list.bullet.rectangle"
         case .setup: return "gearshape"
+        case .classroom: return "graduationcap"
         }
     }
 }
@@ -585,19 +588,7 @@ final class AppModel: ObservableObject {
     }
 
     func wake(_ targets: [Machine]) {
-        runBatch("Wake-on-LAN", on: targets) { m, job in
-            let mac = m.macAddress.isEmpty ? (self.status(m).mac ?? "") : m.macAddress
-            guard !mac.isEmpty else {
-                return .failure("Brak adresu MAC – odśwież stan, gdy komputer jest włączony, lub wpisz MAC w Konfiguracji.")
-            }
-            do {
-                for _ in 0..<3 { try WakeOnLAN.wake(mac: mac) }
-                job.note("Wysłano pakiet Wake-on-LAN do \(mac). Działa przy połączeniu Ethernet i włączonym „Budź przy dostępie do sieci”.")
-                return CommandResult(exitCode: 0)
-            } catch {
-                return .failure(error.localizedDescription)
-            }
-        }
+        ClassroomModel.shared.wake(self, targets)
     }
 
     // MARK: - Setup

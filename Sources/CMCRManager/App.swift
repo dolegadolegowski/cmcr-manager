@@ -45,7 +45,7 @@ struct CMCRManagerApp: App {
             CommandMenu("Przejdź") {
                 ForEach(Array(AppSection.allCases.enumerated()), id: \.element) { index, section in
                     Button(section.title) { model.section = section }
-                        .keyboardShortcut(KeyEquivalent(Character(String((index + 1) % 10))), modifiers: [.command])
+                        .keyboardShortcut(index < 10 ? KeyboardShortcut(KeyEquivalent(Character(String((index + 1) % 10))), modifiers: [.command]) : nil)
                 }
             }
         }
@@ -66,6 +66,7 @@ struct ContentView: View {
             DetailView()
         }
         .task {
+            ClassroomModel.shared.attach(model)
             model.refreshStatus()
             // Keep the overview fresh in the background.
             while !Task.isCancelled {
@@ -90,6 +91,7 @@ struct SidebarView: View {
                 row(.updates)
             }
             Section("Nadzór") {
+                row(.classroom)
                 row(.screens)
                 row(.power)
             }
@@ -246,6 +248,7 @@ struct DetailView: View {
             case .power: PowerView()
             case .jobs: JobsView()
             case .setup: SetupView()
+            case .classroom: ClassroomView()
             }
         }
         .navigationTitle(model.section?.title ?? "CMCR Manager")

@@ -13,7 +13,8 @@ Natywna aplikacja okienkowa macOS (SwiftUI) do zdalnego zarządzania pracownią 
 | **Instalacja** | `.pkg`, `.dmg`, `.zip`, `.app` z tego Maca lub pobierane z URL bezpośrednio na iMacach; Homebrew (formuły i `--cask`), instalacja Homebrew i Oracle JDK; Unity Hub headless (edytor + moduły) i Android SDK (`sdkmanager`) — wg notes.md |
 | **Aktualizacje** | `softwareupdate` (lista, pobieranie, instalacja, restart; na Apple Silicon z `--user/--stdinpass`), historia, `brew upgrade`, `mas upgrade` |
 | **Podgląd ekranów** | Siatka miniatur ekranów zalogowanych użytkowników z automatycznym odświeżaniem i powiększeniem — tylko do odczytu, z ograniczeniami (niżej) |
-| **Sesja i zasilanie** | Wiadomość (okno/powiadomienie), wylogowanie, uśpienie ekranu/komputera, restart, wyłączenie, Wake-on-LAN |
+| **Zajęcia** | „Rozpocznij zajęcia” i „Zakończ zajęcia” jednym kliknięciem (budzenie, materiały, aplikacje, powitanie / zbieranie prac, porządki, wylogowanie, uśpienie), tryb uwagi (blokada ekranów z komunikatem), pytania do uczniów z odpowiedziami |
+| **Sesja i zasilanie** | Wiadomość (okno/powiadomienie, szablony), wylogowanie, uśpienie ekranu/komputera, restart i wyłączenie (także z opóźnieniem i ostrzeżeniem), Wake-on-LAN, harmonogram zasilania (`pmset repeat`) |
 | **Zadania** | Historia operacji z wynikiem i pełnym wyjściem dla każdego iMaca, anulowanie; dziennik działań w `~/Library/Logs/CMCRManager/actions.log` |
 | **Konfiguracja** | Lista komputerów (generator jak pętla w `cmcr-helpers.sh`, import/eksport), hasła w Pęku kluczy (wspólne lub per komputer), generowanie i rozsyłanie klucza SSH, ustawienia, przygotowanie iMaców |
 
@@ -70,6 +71,26 @@ Zaznaczenie komputerów na liście (środkowa kolumna) jest wspólne dla wszystk
 | Unity Hub / sdkmanager / Homebrew (notes.md) | Instalacja, Polecenia › Gotowe polecenia | `cmcrctl exec` |
 
 `cmcrctl` (w `build/cmcrctl` i w pakiecie aplikacji: `Contents/Resources/bin/cmcrctl`) korzysta z tej samej konfiguracji i Pęku kluczy co aplikacja. Dodatkowo: `status`, `apps`, `screenshot`, `open-app`, `quit-app`, `render` (pokazuje dokładnie skrypt wykonywany zdalnie). Hasło można też podać zmienną `CMCR_PASSWORD`.
+
+## Zajęcia, tryb uwagi i zasilanie
+
+- **Rozpocznij zajęcia** – budzi komputery (Wake-on-LAN) i czeka, aż odpowiedzą, wysyła materiały z wybranego folderu do folderu cmcr lub na Biurko ucznia, uruchamia aplikacje i wyświetla powitanie. Postęp każdego kroku widać osobno dla każdego iMaca.
+- **Zakończ zajęcia** – uprzedza uczniów i odlicza czas, zbiera prace do nowego folderu `~/Public/cmcr/zebrane/<data_godzina> <klasa>/<komputer>`, zamyka aplikacje, czyści folder cmcr i Pobrane (tylko na komputerach, z których prace zebrano), wylogowuje, usypia lub wyłącza. Ustawienia obu scenariuszy zapisują się w `classroom.json`.
+- **Tryb uwagi** – zakrywa ekrany uczniów komunikatem. Najpierw używa narzędzia LockScreen z Apple Remote Desktop wbudowanego w macOS (`…/RemoteManagement/AppleVNCServer.bundle/Contents/Support/LockScreen.app`, argumenty `-session <ID sesji z ioreg> -msg <tekst>`); jeśli się nie uruchomi, pokazuje okno na pełnym ekranie rysowane przez `osascript` (JavaScript for Automation) w sesji ucznia. Okno ukrywa Dock i menu i wyłącza przełączanie aplikacji, ale nie jest zabezpieczeniem. Apple nie dokumentuje LockScreen — sprawdź go na jednym iMacu przed lekcją. Automatyczne odblokowanie po ustawionym czasie chroni przed utratą połączenia.
+- **Zapytaj uczniów** – pytanie w oknie na ekranie ucznia (pole tekstowe albo do 3 przycisków); odpowiedzi zbierają się w tabeli i można je wyeksportować do CSV.
+- **Harmonogram zasilania** – `pmset repeat` (jedno budzenie/włączanie i jedno usypianie/wyłączanie w wybrane dni), włączanie po zaniku zasilania (`autorestart`) i Wake-on-LAN (`womp`). **Wake-on-LAN budzi tylko z uśpienia** — wyłączone komputery włączy wyłącznie harmonogram. Na Macach z FileVault po restarcie lub włączeniu pojawia się ekran odblokowania dysku; aplikacja ostrzega o tym przed restartem.
+- **Wake-on-LAN** wysyła pakiety na 255.255.255.255 i na adres rozgłoszeniowy każdego interfejsu (porty 9 i 7, kilka razy), preferuje adres MAC karty Ethernet i czeka, aż komputer odpowie.
+- **Komputery** – kafelki zaznaczają pasujące komputery, kolumny tabeli można ukrywać, przestawiać i sortować, panel szczegółów pokazuje notatki, IP/MAC, FileVault i harmonogram. Ostatni znany stan zostaje zapisany między uruchomieniami (`status-cache.json`). Raport CSV (UTF-8, średnik – otwiera się w Excelu), porównanie wersji aplikacji na wszystkich iMacach i zmiana nazw komputerów (ComputerName, LocalHostName, HostName) z aktualizacją adresów `.local` na liście.
+
+| Zadanie | cmcrctl |
+|---|---|
+| scenariusz zajęć z aplikacji | `cmcrctl lesson start\|end [all\|nr] [--no-wait]` |
+| tryb uwagi | `cmcrctl lock [all\|nr] [--message "…"] [--minutes N]`, `cmcrctl unlock` |
+| pytanie do uczniów | `cmcrctl ask "pytanie" [all\|nr] [--buttons "Tak,Nie"]` |
+| harmonogram zasilania | `cmcrctl schedule show\|set\|clear [all\|nr] [--on MTWRF@07:45] [--off MTWRF@16:30]` |
+| restart/wyłączenie za N min | `cmcrctl power-later restart\|shutdown\|sleep N [all\|nr] [--warn "…"]`, `cmcrctl power-cancel` |
+| nazwy komputerów | `cmcrctl rename [all\|nr] [--name "…"] [--dry-run] [--update-list]` |
+| wersja aplikacji, FileVault, raport | `cmcrctl app-version "Nazwa"`, `cmcrctl filevault`, `cmcrctl report plik.csv` |
 
 ## Jak to działa i bezpieczeństwo
 

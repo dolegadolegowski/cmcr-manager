@@ -1,149 +1,339 @@
 import CMCRCore
 import SwiftUI
 
+/// One row of the overview table: a Mac with its (possibly last-known) status, flattened for sorting.
+struct DashboardRow: Identifiable {
+    let machine: Machine
+    let status: HostStatus
+    let lastSeen: Date?
+    let locked: Bool
+
+    var id: UUID { machine.id }
+    var name: String { machine.name }
+    var account: String { machine.destination }
+    /// The logged-in user is shown only while the Mac answers; for offline Macs it would be stale.
+    var user: String { [.online, .checking].contains(status.reachability) ? (status.consoleUser ?? "") : "" }
+    var os: String { status.osVersion ?? "" }
+    var model: String { status.model ?? "" }
+    var ip: String { status.ip ?? "" }
+    var mac: String { status.preferredMAC ?? machine.macAddress }
+    var uptime: Double { status.bootDate.map { Date().timeIntervalSince($0) } ?? -1 }
+    var freeGB: Double { status.freeDiskGB ?? -1 }
+    var seen: Date { lastSeen ?? .distantPast }
+    var note: String { status.message.isEmpty ? machine.notes : status.message }
+
+    /// Online first, then states that need attention, unknown last.
+    var stateRank: Int {
+        switch status.reachability {
+        case .online: return 0
+        case .checking: return 1
+        case .authFailed: return 2
+        case .error: return 3
+        case .offline: return 4
+        case .unknown: return 5
+        }
+    }
+
+    static let lowDiskGB = 15.0
+    var lowDisk: Bool { freeGB >= 0 && freeGB < Self.lowDiskGB }
+}
+
 struct DashboardView: View {
     @EnvironmentObject var model: AppModel
-    @ViewState private var sortOrder = [KeyPathComparator(\Machine.name)]
+    @ObservedObject private var classroom = ClassroomModel.shared
+    @ViewState private var sortOrder = [KeyPathComparator(\DashboardRow.name, comparator: .localizedStandard)]
+    @ViewState private var columns = TableColumnCustomization<DashboardRow>()
+    @ViewState private var columnsLoaded = false
+    @ViewState private var showRename = false
+    @ViewState private var showVersions = false
+    @SceneStorage("dashboard.inspector") private var showInspector = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             TargetHeader(section: .dashboard,
-                         subtitle: "Stan pracowni. Zaznaczenie w tabeli i na liście po lewej jest wspólne dla wszystkich działów.")
-            summaryTiles
-            quickActions
+                         subtitle: "Stan pracowni. Kliknij kafelek, aby zaznaczyć pasujące komputery; dwuklik w tabeli otwiera szczegóły.")
+            tiles
             table
         }
         .padding(20)
+        .inspector(isPresented: $showInspector) {
+            HostInspector()
+                .inspectorColumnWidth(min: 260, ideal: 310, max: 420)
+        }
+        .toolbar {
+            ToolbarItemGroup {
+                Menu {
+                    Button {
+                        classroom.exportInventory(model)
+                    } label: {
+                        Label("Eksportuj raport CSV…", systemImage: "tablecells")
+                    }
+                    Button {
+                        showVersions = true
+                    } label: {
+                        Label("Wersje aplikacji…", systemImage: "app.badge.checkmark")
+                    }
+                } label: {
+                    Label("Raporty", systemImage: "doc.text.magnifyingglass")
+                }
+                .help("Raport o komputerach w pliku CSV i porównanie wersji aplikacji")
+                Button {
+                    showRename = true
+                } label: {
+                    Label("Zmień nazwy", systemImage: "character.cursor.ibeam")
+                }
+                .disabled(model.selection.isEmpty)
+                .help("Nadaj zaznaczonym komputerom nazwy (także w sieci .local)")
+                Button {
+                    showInspector.toggle()
+                } label: {
+                    Label("Szczegóły", systemImage: "sidebar.trailing")
+                }
+                .help(showInspector ? "Ukryj szczegóły komputera" : "Pokaż szczegóły zaznaczonego komputera")
+            }
+        }
+        .sheet(isPresented: $showRename) { RenameComputersSheet() }
+        .sheet(isPresented: $showVersions) { AppVersionsSheet() }
+        .onAppear(perform: loadColumns)
+        .onChange(of: columns) { _, new in saveColumns(new) }
     }
 
-    var summaryTiles: some View {
-        let all = model.machines
-        let statuses = all.map { model.status($0) }
-        let online = statuses.filter { $0.reachability == .online }.count
-        let users = statuses.compactMap(\.consoleUser).count
-        let problems = statuses.filter { [.authFailed, .error].contains($0.reachability) }.count
-        let checking = statuses.filter { $0.reachability == .checking }.count
-        return HStack(spacing: 12) {
-            Tile(title: "Online", value: "\(online)/\(all.count)", icon: "wifi", color: .green)
-            Tile(title: "Zalogowani użytkownicy", value: "\(users)", icon: "person.2.fill", color: .blue)
-            Tile(title: "Wymaga uwagi", value: "\(problems)", icon: "exclamationmark.triangle.fill",
-                 color: problems > 0 ? .orange : .secondary)
-            Tile(title: "Sprawdzanie", value: "\(checking)", icon: "arrow.triangle.2.circlepath", color: .secondary)
+    // MARK: Tiles
+
+    var tiles: some View {
+        let rows = self.rows
+        let online = rows.filter { $0.status.reachability == .online }
+        let offline = rows.filter { $0.status.reachability == .offline }
+        let users = rows.filter { !$0.user.isEmpty && $0.status.reachability == .online }
+        let problems = rows.filter { [.authFailed, .error].contains($0.status.reachability) }
+        let lowDisk = rows.filter(\.lowDisk)
+        let checking = rows.contains { $0.status.reachability == .checking }
+        let refreshed = rows.compactMap(\.status.updatedAt).max()
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 165), spacing: 10)], spacing: 10) {
+            StatTile(title: "Online", value: "\(online.count)/\(rows.count)", icon: "checkmark.circle.fill", color: .green,
+                     help: "Zaznacz komputery online") { select(online) }
+            StatTile(title: "Wyłączone lub uśpione", value: "\(offline.count)", icon: "moon.zzz.fill", color: .gray,
+                     help: "Zaznacz komputery, które nie odpowiadają (np. aby je obudzić)") { select(offline) }
+            StatTile(title: "Zalogowani uczniowie", value: "\(users.count)", icon: "person.2.fill", color: .blue,
+                     help: "Zaznacz komputery z zalogowanym użytkownikiem") { select(users) }
+            StatTile(title: "Wymaga uwagi", value: "\(problems.count)", icon: "exclamationmark.triangle.fill",
+                     color: problems.isEmpty ? .secondary : .orange,
+                     help: "Zaznacz komputery z błędem logowania lub połączenia") { select(problems) }
+            StatTile(title: "Mało miejsca (<\(Int(DashboardRow.lowDiskGB)) GB)", value: "\(lowDisk.count)",
+                     icon: "externaldrive.badge.exclamationmark", color: lowDisk.isEmpty ? .secondary : .orange,
+                     help: "Zaznacz komputery, na których kończy się miejsce na dysku") { select(lowDisk) }
+            StatTile(title: checking ? "Sprawdzanie…" : "Ostatnie odświeżenie",
+                     value: refreshed.map { $0.formatted(date: .omitted, time: .shortened) } ?? "—",
+                     icon: "arrow.clockwise", color: .secondary, busy: checking,
+                     help: "Odśwież stan wszystkich komputerów (⌘R)") { model.refreshStatus() }
         }
     }
 
-    var quickActions: some View {
-        HStack {
-            Button {
-                model.refreshStatus(model.selection.isEmpty ? nil : model.selectedMachines)
-            } label: {
-                Label("Odśwież", systemImage: "arrow.clockwise")
-            }
-            Button {
-                model.selectedMachines.prefix(4).forEach(model.openTerminal)
-            } label: {
-                Label("Terminal SSH", systemImage: "terminal")
-            }
-            .disabled(model.selection.isEmpty)
-            Button {
-                model.selectedMachines.prefix(4).forEach(model.openScreenSharing)
-            } label: {
-                Label("VNC", systemImage: "rectangle.on.rectangle")
-            }
-            .disabled(model.selection.isEmpty)
-            Button {
-                model.section = .screens
-            } label: {
-                Label("Podgląd ekranów", systemImage: "eye")
-            }
-            .disabled(model.selection.isEmpty)
-            Spacer()
-        }
-        .fixedSize(horizontal: false, vertical: true)
+    func select(_ rows: [DashboardRow]) {
+        model.selection = Set(rows.map(\.id))
     }
+
+    // MARK: Table
+
+    var rows: [DashboardRow] {
+        model.machines.map { m in
+            DashboardRow(machine: m, status: model.status(m), lastSeen: classroom.lastSeen[m.id],
+                         locked: classroom.isLocked(m.id))
+        }
+    }
+
+    typealias Column = TableColumnContent<DashboardRow, KeyPathComparator<DashboardRow>>
 
     var table: some View {
-        Table(sortedMachines, selection: $model.selection, sortOrder: $sortOrder) {
-            TableColumn("Stan") { m in
-                HStack(spacing: 6) {
-                    StatusDot(reachability: model.status(m).reachability)
-                    Text(model.status(m).reachability.label).font(.caption)
-                }
-            }
-            .width(min: 90, ideal: 100)
-            TableColumn("Nazwa", value: \.name)
-                .width(min: 70, ideal: 90)
-            TableColumn("Konto SSH", value: \.destination)
-                .width(min: 140, ideal: 170)
-            TableColumn("Zalogowany") { m in
-                Text(model.status(m).consoleUser ?? "—")
-            }
-            .width(min: 70, ideal: 90)
-            TableColumn("macOS") { m in
-                Text(model.status(m).osVersion ?? "—")
-            }
-            .width(min: 50, ideal: 60)
-            TableColumn("Model") { m in
-                Text(model.status(m).model ?? "—").lineLimit(1)
-            }
-            .width(min: 70, ideal: 90)
-            TableColumn("IP / MAC") { m in
-                let st = model.status(m)
-                Text("\(st.ip ?? "—")\n\(st.mac ?? (m.macAddress.isEmpty ? "—" : m.macAddress))")
-                    .font(.caption.monospaced())
-            }
-            .width(min: 110, ideal: 130)
-            TableColumn("Czas pracy") { m in
-                Text(model.status(m).uptimeText ?? "—")
-            }
-            .width(min: 60, ideal: 80)
-            TableColumn("Dysk") { m in
-                Text(model.status(m).diskText ?? "—").lineLimit(1)
-            }
-            .width(min: 90, ideal: 130)
-            TableColumn("Uwagi") { m in
-                let st = model.status(m)
-                Text(st.message.isEmpty ? (st.updatedAt.map { "sprawdzono \($0.formatted(date: .omitted, time: .shortened))" } ?? "") : st.message)
-                    .foregroundStyle(st.message.isEmpty ? Color.secondary : Color.orange)
-                    .lineLimit(2)
-                    .help(st.message)
-            }
+        Table(rows.sorted(using: sortOrder), selection: $model.selection, sortOrder: $sortOrder,
+              columnCustomization: $columns) {
+            mainColumns
+            detailColumns
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             if let id = ids.first, let m = model.machine(id) {
+                Button("Pokaż szczegóły") {
+                    model.selection = [id]
+                    showInspector = true
+                }
+                Divider()
                 MachineContextMenu(machine: m)
             }
         } primaryAction: { ids in
-            ids.compactMap(model.machine).prefix(4).forEach(model.openTerminal)
+            if let id = ids.first {
+                model.selection = [id]
+                showInspector = true
+            }
         }
     }
 
-    var sortedMachines: [Machine] {
-        model.machines.sorted(using: sortOrder)
+    @TableColumnBuilder<DashboardRow, KeyPathComparator<DashboardRow>>
+    var mainColumns: some Column {
+        TableColumn("Stan", value: \.stateRank) { row in
+            HStack(spacing: 6) {
+                StatusDot(reachability: row.status.reachability)
+                Text(row.status.reachability.label)
+                if row.locked {
+                    Image(systemName: "lock.fill").foregroundStyle(.secondary).help("Ekran zablokowany (tryb uwagi)")
+                }
+            }
+        }
+        .width(min: 90, ideal: 110)
+        .customizationID("state")
+        TableColumn("Nazwa", value: \.name) { row in
+            Text(row.name).fontWeight(.medium)
+        }
+        .width(min: 70, ideal: 90)
+        .customizationID("name")
+        TableColumn("Zalogowany", value: \.user) { row in
+            Text(row.user.isEmpty ? "—" : row.user)
+        }
+        .width(min: 70, ideal: 90)
+        .customizationID("user")
+        TableColumn("macOS", value: \.os) { row in
+            Text(row.os.isEmpty ? "—" : row.os)
+        }
+        .width(min: 50, ideal: 60)
+        .customizationID("os")
+        TableColumn("Wolne miejsce", value: \.freeGB) { row in
+            DiskCell(status: row.status)
+        }
+        .width(min: 90, ideal: 120)
+        .customizationID("disk")
+        TableColumn("Czas pracy", value: \.uptime) { row in
+            Text(row.status.uptimeText ?? "—")
+        }
+        .width(min: 60, ideal: 80)
+        .customizationID("uptime")
+        TableColumn("Ostatnio widziany", value: \.seen) { row in
+            LastSeenText(row: row)
+        }
+        .width(min: 90, ideal: 120)
+        .customizationID("lastSeen")
+    }
+
+    @TableColumnBuilder<DashboardRow, KeyPathComparator<DashboardRow>>
+    var detailColumns: some Column {
+        TableColumn("IP", value: \.ip) { row in
+            Text(row.ip.isEmpty ? "—" : row.ip).font(.body.monospacedDigit())
+        }
+        .width(min: 80, ideal: 105)
+        .customizationID("ip")
+        TableColumn("MAC", value: \.mac) { row in
+            Text(row.mac.isEmpty ? "—" : row.mac).font(.body.monospaced())
+        }
+        .width(min: 120, ideal: 140)
+        .customizationID("mac")
+        .defaultVisibility(.hidden)
+        TableColumn("Model", value: \.model) { row in
+            Text(row.model.isEmpty ? "—" : row.model)
+        }
+        .width(min: 70, ideal: 90)
+        .customizationID("model")
+        .defaultVisibility(.hidden)
+        TableColumn("Konto SSH", value: \.account) { row in
+            Text(row.account)
+        }
+        .width(min: 120, ideal: 160)
+        .customizationID("account")
+        .defaultVisibility(.hidden)
+        TableColumn("Uwagi", value: \.note) { row in
+            Text(row.note)
+                .foregroundStyle(row.status.message.isEmpty ? Color.secondary : Color.orange)
+                .help(row.note)
+        }
+        .customizationID("notes")
+    }
+
+    // MARK: Column layout persistence
+
+    func loadColumns() {
+        guard !columnsLoaded else { return }
+        columnsLoaded = true
+        let state = classroom.config.dashboardTableState
+        guard !state.isEmpty, let data = Data(base64Encoded: state),
+              let saved = try? JSONDecoder().decode(TableColumnCustomization<DashboardRow>.self, from: data) else { return }
+        columns = saved
+    }
+
+    func saveColumns(_ value: TableColumnCustomization<DashboardRow>) {
+        guard columnsLoaded, let data = try? JSONEncoder().encode(value) else { return }
+        let encoded = data.base64EncodedString()
+        if classroom.config.dashboardTableState != encoded { classroom.config.dashboardTableState = encoded }
     }
 }
 
-struct Tile: View {
+/// Clickable summary tile: shows a number and selects the matching Macs.
+struct StatTile: View {
     let title: String
     let value: String
     let icon: String
     let color: Color
+    var busy = false
+    var help: String
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundStyle(color)
-                .frame(width: 30)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(value).font(.title2.weight(.semibold).monospacedDigit())
-                Text(title).font(.caption).foregroundStyle(.secondary)
+        Button(action: action) {
+            HStack(spacing: 10) {
+                ZStack {
+                    if busy {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: icon).font(.title2).foregroundStyle(color)
+                    }
+                }
+                .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(value).font(.title2.weight(.semibold).monospacedDigit())
+                    Text(title).font(.caption).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.85)
+                }
+                Spacer(minLength: 0)
             }
-            Spacer()
+            .padding(10)
+            .frame(maxWidth: .infinity)
+            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
         }
-        .padding(12)
-        .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.15)))
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel("\(title): \(value)")
+    }
+}
+
+struct DiskCell: View {
+    let status: HostStatus
+
+    var body: some View {
+        if let free = status.freeDiskGB, let total = status.totalDiskGB, total > 0 {
+            HStack(spacing: 6) {
+                Gauge(value: max(0, total - free), in: 0...total) { EmptyView() }
+                    .gaugeStyle(.accessoryLinearCapacity)
+                    .tint(free < DashboardRow.lowDiskGB ? .orange : .accentColor)
+                    .frame(width: 44)
+                Text(String(format: "%.0f GB", free))
+                    .monospacedDigit()
+                    .foregroundStyle(free < DashboardRow.lowDiskGB ? .orange : .primary)
+            }
+            .help(String(format: "Wolne %.0f z %.0f GB", free, total))
+        } else {
+            Text("—")
+        }
+    }
+}
+
+struct LastSeenText: View {
+    let row: DashboardRow
+
+    var body: some View {
+        if row.status.reachability == .online {
+            Text("teraz").foregroundStyle(.secondary)
+        } else if let seen = row.lastSeen {
+            Text(seen, format: .relative(presentation: .named))
+                .help(seen.formatted(date: .abbreviated, time: .shortened))
+        } else {
+            Text("—").foregroundStyle(.secondary)
+        }
     }
 }

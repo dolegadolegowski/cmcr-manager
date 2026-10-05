@@ -74,18 +74,32 @@ public enum Parsers {
 
 public enum WakeOnLAN {
     public enum WOLError: LocalizedError {
-        case badMAC(String), socket(Int32)
+        case badMAC(String), badAddress(String), socket(Int32)
         public var errorDescription: String? {
             switch self {
             case .badMAC(let m): return "Niepoprawny adres MAC: \(m)"
+            case .badAddress(let a): return "Niepoprawny adres rozgłoszeniowy: \(a)"
+            case .socket(let e) where e == EHOSTUNREACH || e == EPERM || e == EACCES:
+                return "System nie pozwolił wysłać pakietu (\(String(cString: strerror(e)))). Zezwól aplikacji na dostęp do sieci lokalnej: Ustawienia systemowe › Prywatność i ochrona › Sieć lokalna."
             case .socket(let e): return "Błąd gniazda sieciowego: \(String(cString: strerror(e)))"
             }
         }
     }
 
+    /// Accepts `aa:bb:cc:dd:ee:ff`, `aa-bb-…`, `aabb.ccdd.eeff`, `aabbccddeeff` and the unpadded form printed
+    /// by `arp -a` (`0:1b:63:84:45:e6`).
     public static func parseMAC(_ mac: String) -> [UInt8]? {
-        let hex = mac.filter { $0.isHexDigit }
-        guard hex.count == 12 else { return nil }
+        let trimmed = mac.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed.split(whereSeparator: { ":-".contains($0) })
+        if parts.count == 6 {
+            let bytes = parts.compactMap { p -> UInt8? in
+                guard (1...2).contains(p.count), p.allSatisfy(\.isHexDigit) else { return nil }
+                return UInt8(p, radix: 16)
+            }
+            return bytes.count == 6 ? bytes : nil
+        }
+        let hex = trimmed.filter { $0 != "." }
+        guard hex.count == 12, hex.allSatisfy(\.isHexDigit) else { return nil }
         var bytes: [UInt8] = []
         var idx = hex.startIndex
         for _ in 0..<6 {
@@ -97,23 +111,66 @@ public enum WakeOnLAN {
         return bytes
     }
 
-    /// Sends a magic packet (6×0xFF + 16×MAC) as UDP broadcast on port 9.
-    public static func wake(mac: String, broadcast: String = "255.255.255.255", port: UInt16 = 9) throws {
-        guard let macBytes = parseMAC(mac) else { throw WOLError.badMAC(mac) }
+    /// Canonical lower-case `aa:bb:cc:dd:ee:ff`, or nil for an invalid address.
+    public static func normalizeMAC(_ mac: String) -> String? {
+        parseMAC(mac).map { $0.map { String(format: "%02x", $0) }.joined(separator: ":") }
+    }
+
+    /// Magic packet: 6×0xFF followed by the MAC repeated 16 times (102 bytes).
+    public static func magicPacket(_ mac: [UInt8]) -> [UInt8] {
         var packet = [UInt8](repeating: 0xFF, count: 6)
-        for _ in 0..<16 { packet += macBytes }
+        for _ in 0..<16 { packet += mac }
+        return packet
+    }
+
+    /// The limited broadcast plus the directed broadcast of every active IPv4 interface. macOS sends
+    /// 255.255.255.255 only through the primary interface, so a Mac on Wi-Fi + Ethernet needs both.
+    public static func broadcastAddresses() -> [String] {
+        var result = ["255.255.255.255"]
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return result }
+        defer { freeifaddrs(list) }
+        var cursor: UnsafeMutablePointer<ifaddrs>? = first
+        while let ifa = cursor {
+            defer { cursor = ifa.pointee.ifa_next }
+            let flags = Int32(ifa.pointee.ifa_flags)
+            guard flags & IFF_UP != 0, flags & IFF_BROADCAST != 0, flags & IFF_LOOPBACK == 0,
+                  let addr = ifa.pointee.ifa_addr, addr.pointee.sa_family == sa_family_t(AF_INET),
+                  let dst = ifa.pointee.ifa_dstaddr, dst.pointee.sa_family == sa_family_t(AF_INET) else { continue }
+            var sin = dst.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+            var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            guard inet_ntop(AF_INET, &sin.sin_addr, &buf, socklen_t(INET_ADDRSTRLEN)) != nil else { continue }
+            let text = String(cString: buf)
+            if text != "0.0.0.0", !result.contains(text) { result.append(text) }
+        }
+        return result
+    }
+
+    /// Directed broadcast of the /24 network an address belongs to (`10.0.5.23` → `10.0.5.255`). Used as an
+    /// extra target for Macs that were last seen in another subnet; routers usually drop it, but it is free.
+    public static func subnetBroadcast(forIPv4 ip: String) -> String? {
+        var a = in_addr()
+        guard inet_pton(AF_INET, ip, &a) == 1 else { return nil }
+        let parts = ip.split(separator: ".")
+        guard parts.count == 4 else { return nil }
+        return parts.prefix(3).joined(separator: ".") + ".255"
+    }
+
+    /// Sends one magic packet to one address and port.
+    public static func send(mac: String, to address: String, port: UInt16) throws {
+        guard let macBytes = parseMAC(mac) else { throw WOLError.badMAC(mac) }
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        guard inet_pton(AF_INET, address, &addr.sin_addr) == 1 else { throw WOLError.badAddress(address) }
 
         let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
         guard fd >= 0 else { throw WOLError.socket(errno) }
         defer { close(fd) }
         var on: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &on, socklen_t(MemoryLayout<Int32>.size))
-
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian
-        addr.sin_addr.s_addr = inet_addr(broadcast)
+        let packet = magicPacket(macBytes)
         let sent = packet.withUnsafeBytes { buf in
             withUnsafePointer(to: &addr) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
@@ -122,6 +179,39 @@ public enum WakeOnLAN {
             }
         }
         if sent < 0 { throw WOLError.socket(errno) }
+    }
+
+    /// Sends magic packets for `mac` to the limited broadcast and every interface's directed broadcast
+    /// (plus `extraBroadcasts`), on ports 9 and 7, `repeats` times. Returns the addresses that accepted the
+    /// packet; throws only when nothing could be sent at all.
+    @discardableResult
+    public static func wake(mac: String, extraBroadcasts: [String] = [], ports: [UInt16] = [9, 7],
+                            repeats: Int = 3) throws -> [String] {
+        guard parseMAC(mac) != nil else { throw WOLError.badMAC(mac) }
+        var targets = broadcastAddresses()
+        for extra in extraBroadcasts where !targets.contains(extra) { targets.append(extra) }
+        var delivered: [String] = []
+        var lastError: Error?
+        for round in 0..<max(1, repeats) {
+            if round > 0 { usleep(100_000) }
+            for address in targets {
+                for port in ports {
+                    do {
+                        try send(mac: mac, to: address, port: port)
+                        if !delivered.contains(address) { delivered.append(address) }
+                    } catch {
+                        lastError = error
+                    }
+                }
+            }
+        }
+        if delivered.isEmpty, let lastError { throw lastError }
+        return delivered
+    }
+
+    /// Single-address variant kept for callers of the original API.
+    public static func wake(mac: String, broadcast: String, port: UInt16 = 9) throws {
+        try send(mac: mac, to: broadcast, port: port)
     }
 }
 
