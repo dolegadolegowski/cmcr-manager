@@ -3,7 +3,7 @@ import Foundation
 
 /// Commands for the end-to-end tests (Tests/e2e/suites/core-runtime.sh); not listed in the help text.
 ///
-///   cmcrctl __run-job "polecenie" nr [--root] [--cancel-after S] [--timeout S]
+///   cmcrctl __run-job "polecenie" nr [--root] [--cancel-after S] [--timeout S] [--stdout PLIK]
 ///       runs the command as a cancellable remote job, like the app does; prints `CMCR:JOB:<id>` first
 ///       and `CMCR:RESULT …` last
 ///   cmcrctl __forget-host-key nr
@@ -25,8 +25,10 @@ enum HiddenCommands {
                     handle.cancel()
                 }
             }
+            let stdoutFile = args.firstIndex(of: "--stdout").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
             let r = await SSH.run(RemoteScript(args[0], asRoot: root, jobID: id), on: host,
                                   password: Keychain.password(for: host), settings: settings,
+                                  stdoutFile: stdoutFile.map { URL(fileURLWithPath: $0) },
                                   timeout: value(after: "--timeout", in: args), handle: handle,
                                   onOutput: { channel, data in
                                       (channel == .stdout ? FileHandle.standardOutput : FileHandle.standardError).write(data)
