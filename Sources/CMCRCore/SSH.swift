@@ -281,7 +281,22 @@ public struct RemoteScript: Sendable {
     /// ~/.bashrc, whose output or aliases could corrupt results (e.g. the tar stream of a pull).
     public func remoteCommand() -> String {
         let b64 = Data(render().utf8).base64EncodedString()
-        return "/bin/bash --noprofile --norc -c \"$(echo \(b64) | base64 -D)\""
+        return Self.avoidingMuxWindow("/bin/bash --noprofile --norc -c \"$(echo \(b64) | base64 -D)\"")
+    }
+
+    /// Through a shared connection (ControlMaster) macOS refuses to pass the session's descriptors when the
+    /// request ends just below a multiple of 8 KiB of the local socket buffer ("mm_send_fd: sendmsg(2): Message
+    /// too long" for commands of about 8104–8150, 16300–16345, 24490–24535… bytes; the exact spot moves with
+    /// the environment variables ssh sends). A command near such a boundary gets trailing spaces – ignored by
+    /// the remote shell – that move it safely past it, so the shared connection is used instead of a retry.
+    static func avoidingMuxWindow(_ command: String) -> String {
+        let block = 8192, before = 600, after = 150
+        let length = command.utf8.count
+        guard length >= 2048 else { return command }
+        let offset = length % block
+        guard offset >= block - before || offset < after else { return command }
+        let boundary = offset < after ? length - offset : length - offset + block
+        return command + String(repeating: " ", count: boundary + after + 50 - length)
     }
 }
 
@@ -318,9 +333,10 @@ public enum SSH {
     static func options(_ s: SSHSettings, password: String?, mux: Bool = true) -> [String] {
         // OpenSSH uses the first value given for an option, so the user's own options go first and win.
         var o: [String] = s.extraOptions.flatMap { ["-o", $0] }
+        // Only trusted host keys (HostTrust): a Mac that was never confirmed is refused before any login, so
+        // the password on stdin and in askpass never reaches a device that merely answers to its name.
+        o += ["-o", "ConnectTimeout=\(s.connectTimeout)"] + HostTrust.strictOptions(s)
         o += [
-            "-o", "ConnectTimeout=\(s.connectTimeout)",
-            "-o", "StrictHostKeyChecking=accept-new",
             "-o", "ServerAliveInterval=5",
             "-o", "ServerAliveCountMax=3",
             "-o", "LogLevel=ERROR",
@@ -426,6 +442,7 @@ public enum SSH {
                                     stdoutFile: stdoutFile, timeout: timeout, maxCapture: maxCapture,
                                     handle: handle, onOutput: output)
         }
+        r.started = started.isSet
         if r.timedOut, !r.cancelled, started.isSet, let id = script.jobID, handle != nil {
             let outcome = await cancelRemote(jobID: id, on: host, password: password, settings: settings)
             let note = Data("▸ Przekroczono limit czasu. \(outcome.message)\n".utf8)
@@ -513,6 +530,11 @@ public enum SSH {
         if e.contains("session open refused by peer") {
             return .sharedConnection
         }
+        // Handing the session's descriptors to the shared connection failed (macOS refuses the fd message when
+        // the request nearly fills the socket buffer). The connection itself is fine: retry without it, keep it.
+        if e.contains("mm_send_fd") || e.contains("send fds failed") {
+            return .sharedConnection
+        }
         if e.contains("mux_client_") || e.contains("control socket connect") {
             return .brokenSharedConnection
         }
@@ -554,11 +576,36 @@ public enum SSH {
     /// Arguments for an interactive session (cmcr-go).
     public static func interactiveArguments(for host: Machine, settings: SSHSettings) -> [String] {
         var a: [String] = settings.extraOptions.flatMap { ["-o", $0] }
-        a += ["-p", String(host.port), "-o", "StrictHostKeyChecking=accept-new",
-              "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"]
+        // An untrusted key is shown with its fingerprint and accepted only when the user types "yes" in Terminal.
+        a += ["-p", String(host.port)] + HostTrust.strictOptions(settings, mode: "ask")
+        a += ["-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"]
         a += muxOptions(settings)
         if !settings.identityFile.isEmpty { a += ["-i", expandTilde(settings.identityFile)] }
         return a + [host.destination]
+    }
+
+    /// The `.command` file Terminal runs for cmcr-go. Host fields come from the host list (possibly an imported
+    /// file), so every one of them is quoted: the banner is printed with printf '%s' (zsh's echo would also
+    /// interpret backslashes) and nothing in the script is expanded by the shell.
+    public static func terminalScript(for host: Machine, settings: SSHSettings) -> String {
+        let args = interactiveArguments(for: host, settings: settings).map(shQuote).joined(separator: " ")
+        return """
+        #!/bin/zsh
+        clear
+        printf '%s\\n' \(shQuote("cmcr-go → \(host.destination)"))
+        exec /usr/bin/ssh \(args)
+
+        """
+    }
+
+    /// File name for the cmcr-go script: the Mac's name with anything but letters, digits, `-`, `_` and `.`
+    /// replaced (a name such as "Sala 3/iMac" must not become a path), never hidden or empty.
+    public static func terminalFileName(for host: Machine) -> String {
+        let safe = String(host.name.unicodeScalars.map { s -> Character in
+            s.isASCII && (CharacterSet.alphanumerics.contains(s) || "-_.".unicodeScalars.contains(s)) ? Character(s) : "_"
+        })
+        let base = safe.isEmpty || safe.hasPrefix(".") || safe.allSatisfy({ $0 == "_" }) ? host.id.uuidString : safe
+        return "cmcr-go-\(base).command"
     }
 
     /// Retires the shared connection to a Mac (after it restarted, its key changed or the settings changed).
@@ -613,7 +660,24 @@ public enum SSH {
         let err = r.stderrText
         let lower = err.lowercased()
         if r.cancelled { return (.error, "Anulowano.") }
-        if r.timedOut { return (.offline, "Przekroczono limit czasu.") }
+        if r.timedOut {
+            // Once the script ran on the Mac, the Mac answered: the command was just too slow.
+            return r.started ? (.online, "Przekroczono limit czasu – polecenie działało na komputerze zbyt długo.")
+                : (.offline, "Przekroczono limit czasu.")
+        }
+        if !r.started, let refusal = HostTrust.refusal(r) {
+            switch refusal {
+            case .unknown:
+                return (.error, "Klucz SSH tego komputera nie jest jeszcze zaufany – połączenie przerwano przed logowaniem, "
+                        + "hasło nie zostało wysłane. Sprawdź odcisk klucza i zaufaj mu: Konfiguracja › Przygotowanie iMaców "
+                        + "› Szybkie naprawy › Sprawdź klucz komputera.")
+            case .changed:
+                return (.error, "Klucz SSH komputera się zmienił – połączenie przerwano przed logowaniem, hasło nie zostało "
+                        + "wysłane. Jeśli ten iMac był reinstalowany lub wymieniony, sprawdź nowy klucz: Konfiguracja › "
+                        + "Przygotowanie iMaców › Szybkie naprawy › Sprawdź klucz komputera. W przeciwnym razie ktoś może "
+                        + "podszywać się pod ten komputer.")
+            }
+        }
         if r.exitCode == 255 || lower.contains("ssh:") {
             if lower.contains("permission denied") || lower.contains("too many authentication failures") {
                 return (.authFailed, "Odmowa dostępu – brak klucza SSH na komputerze lub błędne hasło administratora.")
@@ -627,11 +691,11 @@ public enum SSH {
             if lower.contains("timed out") || lower.contains("no route to host") || lower.contains("host is down") {
                 return (.offline, "Komputer nie odpowiada (wyłączony lub poza siecią).")
             }
-            if lower.contains("host key verification failed") || lower.contains("remote host identification has changed") {
-                return (.error, "Klucz hosta się zmienił – usuń stary wpis (Konfiguracja › Przygotowanie › Zapomnij klucz hosta).")
-            }
             if lower.contains("kex_exchange_identification") || lower.contains("banner exchange") {
                 return (.error, "Serwer SSH chwilowo odrzucił połączenie (zbyt wiele jednoczesnych połączeń) – spróbuj ponownie.")
+            }
+            if lower.contains("mm_send_fd") || lower.contains("send fds failed") {
+                return (.error, "Nie udało się przekazać sesji przez wspólne połączenie SSH – spróbuj ponownie.")
             }
             if lower.contains("session open refused by peer") || lower.contains("mux_client_request_session") {
                 return (.error, "Przekroczono limit jednoczesnych sesji SSH na komputerze – spróbuj ponownie lub zmniejsz liczbę równoległych operacji.")

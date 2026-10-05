@@ -249,21 +249,9 @@ public enum SSHKeys {
                                        ["-t", type, "-N", "", "-f", path, "-C", "cmcr-manager@\(ProcessInfo.processInfo.hostName)"])
     }
 
-    /// Removes a stale host key from ~/.ssh/known_hosts (or the files set with `UserKnownHostsFile`).
-    /// The shared connection to the Mac is closed first, so the next session checks the new key.
-    public static func forgetHostKey(_ host: Machine, settings: SSHSettings? = nil) async -> CommandResult {
-        let name = host.port == 22 ? host.address : "[\(host.address)]:\(host.port)"
-        guard let settings else { return await ProcessRunner.run("/usr/bin/ssh-keygen", ["-R", name]) }
-        await SSH.closeMaster(host, settings: settings)
-        let files = SSH.knownHostsFiles(settings)
-        if files.isEmpty { return await ProcessRunner.run("/usr/bin/ssh-keygen", ["-R", name]) }
-        var result = CommandResult(exitCode: 0)
-        for file in files where FileManager.default.fileExists(atPath: file) {
-            let r = await ProcessRunner.run("/usr/bin/ssh-keygen", ["-R", name, "-f", file])
-            result.stdout += r.stdout
-            result.stderr += r.stderr
-            if r.exitCode != 0 { result.exitCode = r.exitCode }
-        }
-        return result
+    /// Removes the Mac's key from the trusted known_hosts files (`HostTrust.files`) and closes its shared
+    /// connection. Until a key is trusted again (`HostTrust.trust`), every connection to the Mac is refused.
+    public static func forgetHostKey(_ host: Machine, settings: SSHSettings) async -> CommandResult {
+        await HostTrust.forget(host, settings: settings)
     }
 }

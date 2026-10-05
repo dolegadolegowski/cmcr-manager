@@ -11,9 +11,13 @@ public enum HostEntry {
         case domain
     }
 
+    /// Characters OpenSSH refuses in a host name or user given on its command line; no working entry has them,
+    /// and a shell would treat them as code (quotes, `$( )`, backticks, `;`, `|`…).
+    public static let shellCharacters = CharacterSet(charactersIn: "'\"`$\\;&<>|(){}")
+
     /// Why `value` cannot be used, in Polish, or nil when it is fine.
     /// For ssh parts a space or control character would split or corrupt the destination, a leading `-` would be
-    /// read by ssh as an option and an `@` would move the user/address boundary.
+    /// read by ssh as an option, an `@` would move the user/address boundary and shell characters are refused.
     public static func problem(_ value: String, as kind: Kind) -> String? {
         if value.isEmpty { return kind == .domain ? nil : "pusta wartość" }
         if value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
@@ -29,6 +33,9 @@ public enum HostEntry {
             }
             if value.hasPrefix("-") { return "zaczyna się od „-” (ssh odczytałby to jako opcję)" }
             if value.contains("@") { return "zawiera „@”" }
+            if let bad = value.unicodeScalars.first(where: { shellCharacters.contains($0) }) {
+                return "zawiera niedozwolony znak „\(Character(bad))”"
+            }
         }
         return nil
     }

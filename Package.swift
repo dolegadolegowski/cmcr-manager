@@ -13,5 +13,6 @@ let package = Package(
         .executableTarget(name: "CMCRManager", dependencies: ["CMCRCore"]),
         .executableTarget(name: "cmcrctl", dependencies: ["CMCRCore"]),
         .testTarget(name: "CMCRCoreTests", dependencies: ["CMCRCore"]),
+        .testTarget(name: "CMCRManagerTests", dependencies: ["CMCRManager", "CMCRCore"]),
     ]
 )

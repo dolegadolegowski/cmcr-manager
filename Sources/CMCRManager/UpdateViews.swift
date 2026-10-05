@@ -111,10 +111,10 @@ struct UpdateSheet: View {
         .padding(20)
         .frame(width: 560)
         .alert("Przerwać trwające zadania?", isPresented: $confirmRestart) {
-            Button("Zainstaluj i uruchom ponownie", role: .destructive) { updater.install() }
+            Button("Zainstaluj i uruchom ponownie", role: .destructive) { updater.install(jobsConfirmed: true) }
             Button("Anuluj", role: .cancel) {}
         } message: {
-            Text("Na iMacach \(runningJobs(model.runningJobCount)). Ponowne uruchomienie aplikacji je przerwie.")
+            Text("\(runningWork). Ponowne uruchomienie aplikacji je przerwie.")
         }
     }
 
@@ -164,8 +164,8 @@ struct UpdateSheet: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        if model.runningJobCount > 0 {
-            Label("Na iMacach \(runningJobs(model.runningJobCount)) – ponowne uruchomienie aplikacji je przerwie.",
+        if model.hasRunningWork {
+            Label("\(runningWork) – ponowne uruchomienie aplikacji je przerwie.",
                   systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
@@ -249,7 +249,7 @@ struct UpdateSheet: View {
                 .help("Otwórz stronę wydania na GitHubie")
         } else {
             Button(updater.phase.isFailed ? "Spróbuj ponownie" : "Zainstaluj i uruchom ponownie") {
-                if model.runningJobCount > 0 { confirmRestart = true } else { updater.install() }
+                if model.hasRunningWork { confirmRestart = true } else { updater.install() }
             }
             .keyboardShortcut(.defaultAction)
             .buttonStyle(.borderedProminent)
@@ -263,11 +263,7 @@ struct UpdateSheet: View {
     private func bytes(_ n: Int64) -> String { ByteCountFormatter.string(fromByteCount: n, countStyle: .file) }
 
     /// "trwa 1 zadanie", "trwają 3 zadania", "trwa 5 zadań", "trwają 22 zadania".
-    private func runningJobs(_ n: Int) -> String {
-        if n == 1 { return "trwa 1 zadanie" }
-        if (2...4).contains(n % 10), !(12...14).contains(n % 100) { return "trwają \(n) zadania" }
-        return "trwa \(n) zadań"
-    }
+    private var runningWork: String { model.runningWorkSummary }
 }
 
 private extension Updater.Phase {

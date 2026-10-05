@@ -91,18 +91,22 @@ sudos="$(grep -c '^sudo ' "$WORK/fake.log" 2>/dev/null)"
 
 section "Anulowanie zatrzymuje polecenie na komputerze"
 rm -f "$WORK/cancel-1" "$WORK/cancel-2" "$WORK/cancel-3"
-out1="$(ctl __run-job "echo start; echo \"tmp=\$CMCR_TMP\"; sleep 6.3; echo koniec > '$WORK/cancel-1'" 1 --cancel-after 1.5)"
+out1="$(ctl __run-job "echo start; echo \"tmp=\$CMCR_TMP\"; sleep 6.3$PORT; echo koniec > '$WORK/cancel-1'" 1 --cancel-after 1.5)"
 expect "anuluj: zadanie przerwane i zatrzymane zdalnie" "$out1" "start" "Zatrzymano polecenie na komputerze" "cancelled=true"
-no_process "sleep 6.3" && pass "anuluj: proces na komputerze zakończony" || fail "anuluj: proces nadal działa" "$(pgrep -lf 'sleep 6.3')"
+no_process "sleep 6.3$PORT" && pass "anuluj: proces na komputerze zakończony" || fail "anuluj: proces nadal działa" "$(pgrep -lf "sleep 6.3$PORT")"
 jid="$(job_id "$out1")"; jtmp="$(printf '%s\n' "$out1" | sed -n 's/^tmp=//p')"
 job_file_gone "$jid" && pass "anuluj: wpis w rejestrze usunięty" || fail "anuluj: wpis w rejestrze pozostał"
 [ -n "$jtmp" ] && [ ! -d "$jtmp" ] && pass "anuluj: katalog tymczasowy usunięty" || fail "anuluj: katalog tymczasowy ($jtmp)"
-out2="$(ctlpw __run-job "echo start-root; sleep 6.4; echo koniec > '$WORK/cancel-2'" 1 --root --cancel-after 1.5)"
+out2="$(ctlpw __run-job "echo start-root; sleep 6.4$PORT; echo koniec > '$WORK/cancel-2'" 1 --root --cancel-after 1.5)"
 expect "anuluj (root): zadanie zatrzymane zdalnie" "$out2" "start-root" "Zatrzymano polecenie na komputerze"
-no_process "sleep 6.4" && pass "anuluj (root): proces na komputerze zakończony" || fail "anuluj (root): proces nadal działa"
-out3="$(ctl __run-job "sleep 6.6; echo koniec > '$WORK/cancel-3'" 1 --timeout 1.5)"
+no_process "sleep 6.4$PORT" && pass "anuluj (root): proces na komputerze zakończony" || fail "anuluj (root): proces nadal działa"
+out3="$(ctl __run-job "sleep 6.6$PORT; echo koniec > '$WORK/cancel-3'" 1 --timeout 1.5)"
 expect "limit czasu: polecenie zatrzymane zdalnie" "$out3" "Przekroczono limit czasu" "Zatrzymano polecenie na komputerze" "timedOut=true"
-no_process "sleep 6.6" && pass "limit czasu: proces na komputerze zakończony" || fail "limit czasu: proces nadal działa"
+# The Mac answered (the script ran there): a slow command must not mark it offline, or later actions skip it.
+expect "limit czasu po starcie: komputer nadal online" "$out3" "started=true" "reach=online"
+out5="$("$CTL" __run-job "echo x" 99 --timeout 20 2>&1)"
+expect "brak połączenia: komputer niedostępny" "$out5" "started=false" "reach=offline"
+no_process "sleep 6.6$PORT" && pass "limit czasu: proces na komputerze zakończony" || fail "limit czasu: proces nadal działa"
 out4="$(ctl __run-job "echo szybkie" 1 --cancel-after 3)"
 expect_not "anuluj po zakończeniu: brak próby zatrzymania" "$out4" "Zatrzymano"
 sleep 5
@@ -131,13 +135,19 @@ set_setting reuseConnections false
 survive "bez mux"
 set_setting reuseConnections true
 
-section "Klucz hosta (Zapomnij klucz hosta)"
+section "Klucz hosta (zapomnij, zaufaj ponownie)"
 out="$(ctl status 1)"
-if ssh-keygen -F "[127.0.0.1]:$PORT" -f "$WORK/known_hosts" >/dev/null 2>&1; then pass "known_hosts: wpis po połączeniu"; else fail "known_hosts: brak wpisu" "$(cat "$WORK/known_hosts" 2>&1)"; fi
+if ssh-keygen -F "[127.0.0.1]:$PORT" -f "$WORK/known_hosts" >/dev/null 2>&1; then pass "known_hosts: zaufany klucz zapisany"; else fail "known_hosts: brak wpisu" "$(cat "$WORK/known_hosts" 2>&1)"; fi
 expect "known_hosts: połączenie współdzielone przed usunięciem" "$(mux_ssh -O check)" "Master running"
 out="$(ctl __forget-host-key 1)"; code=$?
 expect_code "zapomnij klucz: kod 0" "$code" 0 "$out"
 if ssh-keygen -F "[127.0.0.1]:$PORT" -f "$WORK/known_hosts" >/dev/null 2>&1; then fail "zapomnij klucz: wpis pozostał" "$(cat "$WORK/known_hosts")"; else pass "zapomnij klucz: wpis usunięty z pliku UserKnownHostsFile"; fi
 expect_not "zapomnij klucz: połączenie współdzielone zamknięte" "$(mux_ssh -O check)" "Master running"
+out="$(ctl status 1)"; code=$?
+expect "zapomnij klucz: bez zaufanego klucza połączenie odrzucone" "$out" "nie jest jeszcze zaufany" "cmcrctl trust imac01"
+expect_code "zapomnij klucz: kod 1" "$code" 1 "$out"
+expect_not "zapomnij klucz: klucz nie został przyjęty sam" "$(cat "$WORK/known_hosts" 2>/dev/null)" "[127.0.0.1]:$PORT"
+out="$(ctl trust 1 --yes)"
+expect "zaufaj: odcisk klucza i zapis" "$out" "nowy klucz" "SHA256:" "imac01: zaufano"
 out="$(ctl status 1)"
-expect "zapomnij klucz: ponowne połączenie (nowy klucz przyjęty)" "$out" "● imac01"
+expect "zaufaj: ponowne połączenie" "$out" "● imac01"

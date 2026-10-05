@@ -112,6 +112,15 @@ unset CMCR_PASSWORD
 ctl() { "$CTL" "$@" 2>&1; }
 ctlpw() { CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }
 
+# ---------------------------------------------------------------- first contact
+# Connections check host keys strictly (HostTrust): the test sshd's key is trusted explicitly first, as a
+# teacher does in the app's "Potwierdź klucze komputerów" sheet.
+trust_out="$("$CTL" trust 1 --yes 2>&1)"
+case "$trust_out" in
+  *"imac01: zaufano"*) ;;
+  *) echo "PRZERWANO: nie udało się zaufać kluczowi testowego sshd."; echo "$trust_out"; exit 2 ;;
+esac
+
 # ---------------------------------------------------------------- safety guard
 # Every remote bash must see the fake sudo. If not, stop before anything could reach the real sudo.
 guard_out="$("$CTL" exec 'type sudo launchctl shutdown pmset softwareupdate installer 2>&1 | grep -c "is a function"' 1 2>&1)"

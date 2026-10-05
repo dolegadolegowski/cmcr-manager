@@ -158,6 +158,9 @@ final class HostIO: @unchecked Sendable {
     func report(_ r: CommandResult, passThrough: Bool = false) -> Int32 {
         if r.succeeded { return ExitCode.success }
         err("✘ \(host.name): \(SSH.diagnose(r).1)")
+        if !r.started, HostTrust.refusal(r) != nil {
+            err("  W terminalu: cmcrctl trust \(host.name) – pokaże odcisk klucza i zapyta o zaufanie.")
+        }
         if passThrough, r.exitCode > 0 { return r.exitCode }
         return ExitCode.failure
     }

@@ -307,8 +307,10 @@ public enum LessonRunner {
         let m = host.machine
         let probeTimeout = TimeInterval(ssh.connectTimeout + 15)
         func online() async -> Bool {
-            await SSH.run(Scripts.ping(), on: m, password: host.password, settings: ssh, timeout: probeTimeout,
-                          handle: handle).succeeded
+            let r = await SSH.run(Scripts.ping(), on: m, password: host.password, settings: ssh, timeout: probeTimeout,
+                                  handle: handle)
+            // A refused host key still means the Mac answered, so it is awake; the next steps explain the key.
+            return r.succeeded || (!r.started && HostTrust.refusal(r) != nil)
         }
         if await online() { return .done("komputer jest włączony") }
         let macs = host.macs.filter { WakeOnLAN.parseMAC($0) != nil }

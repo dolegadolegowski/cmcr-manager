@@ -44,6 +44,8 @@ cat > "$DIR/config/settings.json" <<EOF
 {"identityFile":"$DIR/client","extraSSHOptions":"UserKnownHostsFile=$DIR/known_hosts","sharedFolder":"/Users/student/Public/cmcr",
  "localFolder":"$DIR/local","studentUser":"student","connectTimeout":3,"observeOnlyStandardAccounts":false}
 EOF
+# The demo iMac's key counts as confirmed (connections check host keys strictly; see HostTrust).
+printf '[127.0.0.1]:%s %s\n' "$PORT" "$(cut -d' ' -f1-2 "$DIR/hostkey.pub")" > "$DIR/known_hosts"
 [ -f "$DIR/sshd.pid" ] && kill "$(cat "$DIR/sshd.pid")" 2>/dev/null
 /usr/sbin/sshd -f "$DIR/sshd_config" -E "$DIR/sshd.log"
 for _ in $(seq 1 30); do nc -z 127.0.0.1 "$PORT" 2>/dev/null && break; sleep 0.1; done

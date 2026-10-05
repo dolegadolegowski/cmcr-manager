@@ -3,6 +3,8 @@ import Foundation
 /// Problems in the host list that would make actions hit the wrong Mac or fail.
 public enum HostIssue: Hashable, Sendable {
     case emptyName, emptyAddress, emptyUser, duplicateName, duplicateAddress, invalidPort, invalidMAC
+    /// The address or account contains characters ssh refuses (space, quotes, `$`, `;`…) – e.g. an imported list.
+    case invalidCharacters
 
     public var message: String {
         switch self {
@@ -13,6 +15,8 @@ public enum HostIssue: Hashable, Sendable {
         case .duplicateAddress: return "Ten sam adres i port są użyte więcej niż raz."
         case .invalidPort: return "Port musi być liczbą od 1 do 65535."
         case .invalidMAC: return "Adres MAC ma zły format (oczekiwano np. a4:83:e7:12:34:56)."
+        case .invalidCharacters:
+            return "Adres lub konto zawiera niedozwolone znaki (spacja, cudzysłów, $, ;, | …) – połączenie z tym komputerem nie zadziała."
         }
     }
 }
@@ -44,6 +48,9 @@ public enum HostValidation {
                 list.append(.duplicateAddress)
             }
             if key(m.user).isEmpty { list.append(.emptyUser) }
+            if [m.address, m.user].contains(where: { !$0.isEmpty && HostEntry.problem($0, as: .sshPart) != nil }) {
+                list.append(.invalidCharacters)
+            }
             if !portRange.contains(m.port) { list.append(.invalidPort) }
             if !m.macAddress.trimmingCharacters(in: .whitespaces).isEmpty && !isValidMAC(m.macAddress) {
                 list.append(.invalidMAC)

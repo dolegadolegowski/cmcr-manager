@@ -290,7 +290,8 @@ cp "$HCFG/hosts.json" "$WORK/hosts-before-bad-add"
 out="$(hctl hosts add x '')"; code=$?
 expect_code "hosts add: pusty adres – kod 2" "$code" 2 "$out"
 expect "hosts add: pusty adres – komunikat" "$out" "Niepoprawny adres „”: pusta wartość"
-for bad in "x| |admin" "a b" "x|10.0.0.8|ad min" "x|-oProxyCommand=x" "x|10.0.0.8|-l" "x|10.0.0.8|a@b" "a,b|10.0.0.8|admin"; do
+for bad in "x| |admin" "a b" "x|10.0.0.8|ad min" "x|-oProxyCommand=x" "x|10.0.0.8|-l" "x|10.0.0.8|a@b" \
+           'x|imac$(touch pwned).local|admin' 'x|10.0.0.8|ad`id`min' 'x|imac01.local;id|admin' "a,b|10.0.0.8|admin"; do
   IFS='|' read -r -a parts <<<"$bad"
   out="$(hctl hosts add -- "${parts[@]}")"; code=$?
   expect_code "hosts add: niepoprawny wpis ($bad) – kod 2" "$code" 2 "$out"
@@ -300,6 +301,8 @@ out="$(hctl hosts add "a b")"
 expect "hosts add: nazwa ze spacją bez adresu – wskazówka" "$out" "Nazwa „a b” zawiera spację – podaj też adres i konto"
 out="$(hctl hosts add x -- -oProxyCommand=x)"
 expect "hosts add: adres zaczynający się od „-”" "$out" "Niepoprawny adres „-oProxyCommand=x”: zaczyna się od „-”"
+out="$(hctl hosts add x 'imac$(id).local' admin)"
+expect "hosts add: znaki powłoki w adresie" "$out" "zawiera niedozwolony znak „\$”"
 cmp -s "$HCFG/hosts.json" "$WORK/hosts-before-bad-add" && pass "hosts add: niepoprawne wpisy niczego nie zapisały" \
   || fail "hosts add: zapisano niepoprawny wpis" "$(cat "$HCFG/hosts.json")"
 out="$(hctl hosts generate "lab x")"; code=$?
