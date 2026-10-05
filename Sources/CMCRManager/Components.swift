@@ -389,7 +389,7 @@ struct JobStateIcon: View {
     }
 }
 
-enum DurationText {
+enum JobDurationText {
     static func format(_ seconds: TimeInterval) -> String {
         let s = Int(seconds.rounded())
         if s >= 3600 { return "\(s / 3600) h \((s % 3600) / 60) min" }
@@ -551,7 +551,7 @@ struct JobRow: View {
                         .help(job.state == .running ? job.lastLine : job.summary)
                     Spacer()
                     if let duration = job.duration {
-                        Text(DurationText.format(duration))
+                        Text(JobDurationText.format(duration))
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                             .font(.caption)
@@ -608,13 +608,13 @@ struct JobLogView: View {
     @ObservedObject var job: Job
 
     var body: some View {
-        LogView(text: job.output.isEmpty ? "(brak wyjścia)" : job.output,
+        LogTextView(text: job.output.isEmpty ? "(brak wyjścia)" : job.output,
                 generation: job.output.isEmpty ? -1 : job.outputGeneration)
     }
 }
 
 /// Read-only monospaced text view with Find (⌘F) that appends new text instead of re-laying out everything.
-struct LogView: NSViewRepresentable {
+struct LogTextView: NSViewRepresentable {
     let text: String
     /// Change it whenever `text` is not just `previous text + more` (a different log, or a trimmed beginning).
     var generation = 0

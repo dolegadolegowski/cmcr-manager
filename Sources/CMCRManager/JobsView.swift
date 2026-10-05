@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Job history from disk (earlier sessions and archived jobs of this one).
 @MainActor
-final class HistoryStore: ObservableObject {
+final class JobHistoryStore: ObservableObject {
     @Published private(set) var batches: [HistoryBatch] = []
     @Published private(set) var loading = false
     @Published private(set) var loaded = false
@@ -26,7 +26,7 @@ final class HistoryStore: ObservableObject {
 /// Master-detail view of operations: running, this session and history; per-host table and fast log.
 struct JobsView: View {
     @EnvironmentObject var model: AppModel
-    @StateObject private var history = HistoryStore()
+    @StateObject private var history = JobHistoryStore()
     @ViewState private var search = ""
 
     /// The selection lives in the model, so "Pokaż" in a toast, notification or results box can pick a batch.
@@ -87,7 +87,7 @@ struct JobsView: View {
         let live = liveIDs
         let older = history.batches.filter { !live.contains($0.id) && matches($0) }
         return VStack(spacing: 0) {
-            SearchField(prompt: "Szukaj: operacja, komputer, wynik", text: $search)
+            NativeSearchField(prompt: "Szukaj: operacja, komputer, wynik", text: $search)
                 .padding(8)
             List(selection: $model.focusedBatchID) {
                 if !running.isEmpty {
@@ -297,7 +297,7 @@ struct BatchDetailView: View {
 
     var timing: String {
         var parts = ["Rozpoczęto \(batch.createdAt.formatted(date: .omitted, time: .standard))"]
-        parts.append((batch.finished ? "trwało " : "trwa ") + DurationText.format(batch.duration))
+        parts.append((batch.finished ? "trwało " : "trwa ") + JobDurationText.format(batch.duration))
         parts.append(Polish.computers(batch.jobs.count))
         return parts.joined(separator: " · ")
     }
@@ -391,7 +391,7 @@ private struct JobCell: View {
     }
 
     var durationText: some View {
-        Text(job.duration.map(DurationText.format) ?? "—")
+        Text(job.duration.map(JobDurationText.format) ?? "—")
             .monospacedDigit()
             .foregroundStyle(.secondary)
     }
@@ -433,7 +433,7 @@ struct GroupedResultsView: View {
             }
             ForEach(groups) { group in
                 DisclosureGroup {
-                    LogView(text: group.output.isEmpty ? "(brak wyjścia)" : group.output, generation: group.id.hashValue)
+                    LogTextView(text: group.output.isEmpty ? "(brak wyjścia)" : group.output, generation: group.id.hashValue)
                         .frame(minHeight: 80, idealHeight: 160, maxHeight: 260)
                 } label: {
                     HStack(spacing: 8) {
@@ -494,7 +494,7 @@ struct HistoryDetailView: View {
                     }
                     .width(min: 40, ideal: 50)
                     TableColumn("Czas") { r in
-                        Text(r.durationMs.map { DurationText.format(Double($0) / 1000) } ?? "—")
+                        Text(r.durationMs.map { JobDurationText.format(Double($0) / 1000) } ?? "—")
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
@@ -513,7 +513,7 @@ struct HistoryDetailView: View {
                         }
                     } else {
                         // Loaded asynchronously, so the text is not an extension of the previous one.
-                        LogView(text: output, generation: output.hashValue)
+                        LogTextView(text: output, generation: output.hashValue)
                     }
                 }
                 .frame(minHeight: 120, idealHeight: 320, maxHeight: .infinity)

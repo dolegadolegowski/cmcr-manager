@@ -5,7 +5,7 @@ import SwiftUI
 // MARK: - Search field
 
 /// Native search field (magnifier, clear button, Esc clears) usable inside lists and panes.
-struct SearchField: NSViewRepresentable {
+struct NativeSearchField: NSViewRepresentable {
     let prompt: String
     @Binding var text: String
 
@@ -27,8 +27,8 @@ struct SearchField: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
-        var parent: SearchField
-        init(_ parent: SearchField) { self.parent = parent }
+        var parent: NativeSearchField
+        init(_ parent: NativeSearchField) { self.parent = parent }
 
         func controlTextDidChange(_ notification: Notification) {
             if let field = notification.object as? NSSearchField { parent.text = field.stringValue }
@@ -36,17 +36,17 @@ struct SearchField: NSViewRepresentable {
     }
 }
 
-// MARK: - Toast
+// MARK: - ActionToast
 
 /// "Uruchomiono … na 6 komputerach · Pokaż" right after an action starts.
-struct ToastOverlay: View {
+struct ActionToastOverlay: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
             if let toast = model.toast {
-                ToastView(toast: toast)
+                ActionToastView(toast: toast)
                     .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                     .padding(.bottom, 18)
             }
@@ -55,9 +55,9 @@ struct ToastOverlay: View {
     }
 }
 
-private struct ToastView: View {
+private struct ActionToastView: View {
     @EnvironmentObject var model: AppModel
-    let toast: Toast
+    let toast: ActionToast
 
     var body: some View {
         let content = HStack(spacing: 10) {
@@ -262,7 +262,7 @@ struct PasswordBanner: View {
         .background(Color.orange.opacity(0.12))
         .overlay(alignment: .bottom) { Divider() }
         .sheet(isPresented: $editing) {
-            SharedPasswordSheet().environmentObject(model)
+            MissingPasswordSheet().environmentObject(model)
         }
     }
 
@@ -271,7 +271,7 @@ struct PasswordBanner: View {
     }
 }
 
-struct SharedPasswordSheet: View {
+struct MissingPasswordSheet: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @ViewState private var password = ""

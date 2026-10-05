@@ -4,7 +4,7 @@ import SwiftUI
 import UserNotifications
 
 /// Short message shown at the bottom of the window right after an action starts.
-struct Toast: Identifiable, Equatable {
+struct ActionToast: Identifiable, Equatable {
     let id = UUID()
     let message: String
     var icon = "play.circle.fill"
@@ -78,7 +78,7 @@ extension AppModel {
         if !selection.contains(m.id) { selection = [m.id] }
         section = .files
         let target = selection.count == 1 ? m.name : Polish.computers(selection.count)
-        showToast(Toast(message: "Dodano \(Polish.files(files.count)) do wysłania (cel: \(target)) – sprawdź folder docelowy i wyślij.",
+        showToast(ActionToast(message: "Dodano \(Polish.files(files.count)) do wysłania (cel: \(target)) – sprawdź folder docelowy i wyślij.",
                         icon: "tray.and.arrow.up"))
         return true
     }
@@ -125,7 +125,7 @@ extension AppModel {
         if !ids.isEmpty { selection = ids }
     }
 
-    func showToast(_ toast: Toast) {
+    func showToast(_ toast: ActionToast) {
         self.toast = toast
         toastTask?.cancel()
         toastTask = Task { @MainActor in
@@ -137,17 +137,17 @@ extension AppModel {
     func announce(_ batch: Batch) {
         let started = batch.jobs.count - batch.skipped
         if started == 0 {
-            showToast(Toast(message: "Nie uruchomiono „\(batch.title)” – zaznaczone komputery są niedostępne",
+            showToast(ActionToast(message: "Nie uruchomiono „\(batch.title)” – zaznaczone komputery są niedostępne",
                             icon: "exclamationmark.triangle.fill", batchID: batch.id))
             return
         }
         var message = "Uruchomiono „\(batch.title)” \(Polish.onComputers(started))"
         if batch.skipped > 0 { message += " · pominięto \(batch.skipped)" }
-        showToast(Toast(message: message, batchID: batch.id))
+        showToast(ActionToast(message: message, batchID: batch.id))
     }
 
     func batchFinished(_ batch: Batch) {
-        if batch.duration >= 30, !NSApp.isActive { Notifier.post(batch) }
+        if batch.duration >= 30, !NSApp.isActive { JobNotifier.post(batch) }
     }
 
     /// Writes the job to the persistent history; the in-memory log is trimmed once the full one is on disk.
@@ -189,7 +189,7 @@ extension AppModel {
 
 // MARK: - Persistence of small UI choices
 
-enum UIState {
+enum TargetUIState {
     /// Isolated runs (CMCR_CONFIG_DIR, tests, UI snapshots) never read or write the user's preferences.
     private static var defaults: UserDefaults? {
         ProcessInfo.processInfo.environment["CMCR_CONFIG_DIR"] == nil ? .standard : nil
@@ -283,7 +283,7 @@ final class SharedPayload: @unchecked Sendable {
 // MARK: - Notifications
 
 /// Completion notifications for long batches finished while the app is in the background.
-enum Notifier {
+enum JobNotifier {
     private final class Router: NSObject, UNUserNotificationCenterDelegate {
         func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                     withCompletionHandler completionHandler: @escaping () -> Void) {

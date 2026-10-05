@@ -68,7 +68,7 @@ struct ContentView: View {
         } detail: {
             DetailView()
         }
-        .overlay(alignment: .bottom) { ToastOverlay() }
+        .overlay(alignment: .bottom) { ActionToastOverlay() }
         .toolbar {
             ToolbarItem(placement: .primaryAction) { ActivityToolbarButton() }
         }
@@ -257,7 +257,7 @@ struct MachineListView: View {
     func header(_ visible: [Machine]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                SearchField(prompt: "Szukaj komputera lub użytkownika", text: $query.text)
+                NativeSearchField(prompt: "Szukaj komputera lub użytkownika", text: $query.text)
                 filterMenu
             }
             if !model.groups.isEmpty { groupChips }

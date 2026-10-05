@@ -238,7 +238,7 @@ final class AppModel: ObservableObject {
     }
     @Published var statuses: [UUID: HostStatus] = [:]
     @Published var selection: Set<UUID> = [] {
-        didSet { if selection != oldValue { UIState.selection = selection } }
+        didSet { if selection != oldValue { TargetUIState.selection = selection } }
     }
     @Published var section: AppSection? = .dashboard
     @Published var batches: [Batch] = []
@@ -248,10 +248,10 @@ final class AppModel: ObservableObject {
         didSet { runningJobsChanged(from: oldValue) }
     }
     /// Skip hosts known to be offline or failing to log in instead of waiting for their timeouts.
-    @Published var skipUnreachable = UIState.skipUnreachable {
-        didSet { UIState.skipUnreachable = skipUnreachable }
+    @Published var skipUnreachable = TargetUIState.skipUnreachable {
+        didSet { TargetUIState.skipUnreachable = skipUnreachable }
     }
-    @Published var toast: Toast?
+    @Published var toast: ActionToast?
     /// Batch the Jobs view should show (set by "Pokaż" in the toast or the activity popover).
     @Published var focusedBatchID: UUID?
     var pendingSkip: (ids: Set<UUID>, reason: Job.SkipReason)?
@@ -275,7 +275,7 @@ final class AppModel: ObservableObject {
         machines = ConfigStore.loadHosts()
         settings = ConfigStore.loadSettings()
         hasSharedPassword = Keychain.get(Keychain.sharedAccount) != nil
-        selection = UIState.selection.intersection(machines.map(\.id))
+        selection = TargetUIState.selection.intersection(machines.map(\.id))
         AppModel.shared = self
         JobHistory.purgeInBackground()
         // Start-up hooks for scripted UI checks: CMCR_SECTION=<section>, CMCR_SELECT_ALL=1.
