@@ -47,7 +47,7 @@ scripts/build-app.sh
 open "build/CMCR Manager.app"
 ```
 
-`scripts/build-app.sh --dmg` dodatkowo tworzy `build/CMCR-Manager.dmg` do przeniesienia na inny Mac. Skrypt sam wybiera zgodne SDK, gdy zainstalowane są tylko Command Line Tools (najnowsze SDK może wymagać Xcode do makr SwiftUI). W trakcie pracy nad kodem: `swift run CMCRManager`.
+`scripts/build-app.sh --dmg` dodatkowo tworzy `build/CMCR-Manager.dmg` do przeniesienia na inny Mac. Numer wersji pochodzi z pliku `VERSION`. Skrypt sam wybiera zgodne SDK, gdy zainstalowane są tylko Command Line Tools (najnowsze SDK może wymagać Xcode do makr SwiftUI). W trakcie pracy nad kodem: `swift run CMCRManager`.
 
 ## Pierwsze kroki
 
@@ -80,11 +80,59 @@ Zaznaczenie komputerów na liście (środkowa kolumna) jest wspólne dla wszystk
 - W skryptach dostępne są: `asroot`, `as_console_user`, `with_askpass`, `$CONSOLE_USER`, `$CONSOLE_UID`, `$CMCR_ADMIN_USER`, `$CMCR_TMP`.
 - Konfiguracja: `~/Library/Application Support/CMCRManager/` (`hosts.json`, `settings.json`; katalog można zmienić zmienną `CMCR_CONFIG_DIR`).
 
+## Uaktualnienia aplikacji
+
+CMCR Manager sam sprawdza w [GitHub Releases](https://github.com/dolegadolegowski/cmcr-manager/releases), czy jest nowsza wersja: kilkanaście sekund po uruchomieniu i potem raz dziennie. Gdy jest, na dole paska bocznego pojawia się **„Dostępna nowa wersja X”** — kliknięcie pokazuje opis zmian i przyciski **Zainstaluj i uruchom ponownie**, **Przypomnij później** (24 h) oraz **Pomiń tę wersję**. Ręcznie: menu **CMCR Manager › Sprawdź uaktualnienia…**. Ustawienia: **Konfiguracja › Ustawienia › Uaktualnienia CMCR Manager** (sprawdzanie automatyczne — domyślnie włączone; pobieranie w tle — włączone; **Instaluj automatycznie** — domyślnie wyłączone, instaluje sprawdzone uaktualnienie przy zamykaniu aplikacji; wersje testowe).
+
+Bez Twojej zgody nic nie jest instalowane (chyba że włączysz „Instaluj automatycznie”). Przed instalacją aplikacja sprawdza:
+
+1. podpis cyfrowy **Ed25519** manifestu `cmcr-update.json` kluczem publicznym wbudowanym w aplikację (`Sources/CMCRCore/UpdateKeys.swift`) — przed odczytaniem czegokolwiek z manifestu; manifest wiąże wersję, tag, nazwę i rozmiar pliku oraz sumę SHA-256, więc starego wydania nie da się podsunąć jako nowego,
+2. rozmiar i sumę **SHA-256** pobranego archiwum,
+3. identyfikator, wersję, architekturę i **podpis kodu** rozpakowanej aplikacji.
+
+Instalator działa po zamknięciu aplikacji: jeszcze raz sprawdza sumę, przygotowuje nową wersję obok starej, uruchamia ją testowo (`--cmcr-self-test`), zamienia pakiety atomowo i uruchamia aplikację ponownie. Jeśli nowa wersja nie potwierdzi startu w ciągu 45 s, **poprzednia wersja zostaje przywrócona** i aplikacja pokazuje powód. Gdy aplikacja leży w folderze, do którego nie masz prawa zapisu (np. `/Applications` należący do administratora), macOS jednorazowo poprosi o hasło administratora. Aplikacji uruchomionej z obrazu DMG lub z Pobranych (App Translocation) nie da się uaktualnić — przenieś ją do folderu Aplikacje. Jeśli macOS zablokuje podmianę pakietu, aplikacja zgłosi to i dalej działa w starej wersji — wtedy włącz CMCR Manager w Ustawieniach systemowych › Prywatność i ochrona › **Zarządzanie aplikacjami** i spróbuj ponownie. Dziennik: `~/Library/Logs/CMCRManager/update.log`.
+
+Z terminala: `cmcrctl app-update` (sprawdza), `cmcrctl app-update install [--relaunch]` (pobiera, weryfikuje i instaluje; aplikacja musi być zamknięta), opcje `--app ŚCIEŻKA`, `--beta`.
+
+> Wersja 1.0.0 nie ma wbudowanych uaktualnień — wersję 1.1.0 trzeba zainstalować ręcznie (DMG z GitHuba; przy pierwszym uruchomieniu: Ustawienia systemowe › Prywatność i ochrona › „Otwórz mimo to”). Kolejne wersje instalują się już same.
+
+## Publikowanie wersji (opiekun projektu)
+
+Jednorazowo:
+
+```bash
+swift scripts/update-signing.swift keygen        # klucz prywatny → Pęk kluczy, wypisuje klucz PUBLICZNY
+```
+
+Wypisany klucz publiczny wpisz w `Sources/CMCRCore/UpdateKeys.swift` w miejsce `PLACEHOLDER_…` i zatwierdź. Dopóki jest tam PLACEHOLDER, aplikacja odrzuca każde uaktualnienie. **Zrób kopię zapasową klucza prywatnego** (`security find-generic-password -s pl.cmcr.manager.update-signing -a ed25519 -w | pbcopy` → menedżer haseł) — bez niego zainstalowane kopie nie przyjmą kolejnych wersji. Zamiast Pęku kluczy można użyć pliku: `keygen --file ~/.config/cmcr-manager/update-signing.key` (chmod 600; narzędzie odmawia zapisu klucza w repozytorium git i użycia pliku czytelnego dla innych). Nigdy nie dodawaj klucza do repozytorium — `.gitignore` blokuje `*.key`, `*.pem`, `*.p12`, `hosts.json`, `settings.json`.
+
+Każde wydanie:
+
+```bash
+echo 1.2.0 > VERSION && git commit -am "Wersja 1.2.0" && git push
+scripts/release.sh --dry-run                     # próba: buduje, pakuje i podpisuje w dist/1.2.0, nic nie publikuje
+scripts/release.sh --notes-file zmiany.md        # tag v1.2.0 + wydanie na GitHubie (gh)
+```
+
+`release.sh` przerywa pracę, gdy: drzewo git nie jest czyste lub różni się od `origin/main`, wersja nie jest nowsza od ostatniego tagu, w śledzonych plikach jest coś, co wygląda na sekret (klucze prywatne, tokeny GitHuba, `hosts.json`, `settings.json`, `askpass.sh`, sam klucz podpisu; dodatkowo `gitleaks`, jeśli jest zainstalowany), klucz podpisu nie pasuje do `UpdateKeys.swift`, aplikacja nie przechodzi testu uruchomienia albo podpis kodu nie przetrwał spakowania. Domyślnie buduje wersję uniwersalną (Apple Silicon + Intel; `--arm64-only` tylko Apple Silicon). Pliki wydania: `CMCR-Manager-X.Y.Z.zip` (uaktualnienie), `cmcr-update.json` + `.sig` (podpisany manifest), `CMCR-Manager-X.Y.Z.dmg`, `cmcrctl-X.Y.Z-macos.zip`, `SHA256SUMS.txt`. W ustawieniach repozytorium warto włączyć *Immutable releases*.
+
+### Podpis kodu i pytania Pęku kluczy
+
+Bez konta Apple Developer aplikacja jest podpisywana ad-hoc. Taki podpis zmienia się przy każdej kompilacji, więc po każdym uaktualnieniu macOS zapyta jeszcze raz, czy CMCR Manager może użyć zapisanego hasła administratora („Zawsze pozwalaj”). Żeby tego uniknąć, utwórz raz stałą tożsamość podpisu (certyfikat samopodpisany, bez zmiany ustawień zaufania systemu):
+
+```bash
+scripts/make-signing-identity.sh --export ~/cmcr-podpis.p12    # kopia zapasowa poza repozytorium
+```
+
+`scripts/build-app.sh` i `release.sh` użyją jej automatycznie (albo wskaż ją zmienną `CMCR_SIGN_IDENTITY`). Wtedy wymaganie podpisu aplikacji brzmi `identifier "pl.cmcr.manager" and certificate root = H"…"` i jest takie samo dla każdej kompilacji: sprawdzone na osobnym pęku kluczy — kompilacja podpisana ad-hoc po przebudowaniu traci dostęp do zapisanego hasła, podpisana tym certyfikatem go zachowuje. Po przejściu z podpisu ad-hoc macOS zapyta jeszcze jeden raz. Wszystkie wydania podpisuj tym samym certyfikatem (na innym Macu zaimportuj kopię `.p12`). Gatekeeper nadal traktuje aplikację jak nienotaryzowaną — dotyczy to tylko pierwszej ręcznej instalacji, bo uaktualnienia pobierane przez aplikację nie dostają atrybutu kwarantanny.
+
+Opcjonalne CI (`.github/workflows/ci.yml`) buduje projekt i uruchamia testy jednostkowe; nie ma dostępu do żadnych kluczy — wydania podpisuje się lokalnie.
+
 ## Struktura projektu
 
 ```
 Sources/CMCRCore     – SSH/scp, skrypty zdalne, parsowanie, Pęk kluczy, Wake-on-LAN (wspólne)
 Sources/CMCRManager  – aplikacja SwiftUI
 Sources/cmcrctl      – narzędzie wiersza poleceń
-scripts/             – budowanie pakietu .app i ikony
+scripts/             – budowanie pakietu .app i ikony, wydania (release.sh, update-signing.swift, make-signing-identity.sh)
 ```

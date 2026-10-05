@@ -5,6 +5,7 @@ import Foundation
 
 signal(SIGPIPE, SIG_IGN)
 setvbuf(stdout, nil, _IONBF, 0)
+if let code = await SelfUpdateCommand.handle(CommandLine.arguments) { exit(code) }
 
 let usage = """
 cmcrctl – zarządzanie iMacami z terminala (odpowiednik cmcr-helpers.sh)
@@ -21,6 +22,7 @@ Użycie:
   cmcrctl open-app "Nazwa" [all|nr]         uruchom aplikację u zalogowanego użytkownika
   cmcrctl quit-app "Nazwa" [all|nr] [--force]  zamknij aplikację
   cmcrctl render "polecenie" [--root]       pokaż skrypt wykonywany zdalnie
+\(SelfUpdateCommand.usage)
 
 Konfiguracja: \(ConfigStore.directory.path)
 Hasło administratora: Pęk kluczy (ustawiane w aplikacji) lub zmienna CMCR_PASSWORD.
