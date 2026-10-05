@@ -327,8 +327,10 @@ final class AppModel: ObservableObject {
         let batch = Batch(title: title, jobs: jobs, section: owner)
         batch.completed = batch.skipped
         batch.rerun = { [weak self] hosts in
-            self?.runBatch(Self.retryTitle(title), on: hosts, section: owner, includeUnreachable: includeUnreachable,
-                           operation: operation, completion: completion)
+            guard let self else { return }
+            let retry = self.runBatch(Self.retryTitle(title), on: hosts, section: owner,
+                                      includeUnreachable: includeUnreachable, operation: operation, completion: completion)
+            if self.section == .jobs, let retry { self.focusedBatchID = retry.id }
         }
         batches.insert(batch, at: 0)
         trimBatches()

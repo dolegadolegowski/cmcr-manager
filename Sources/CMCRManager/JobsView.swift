@@ -25,8 +25,10 @@ final class HistoryStore: ObservableObject {
 struct JobsView: View {
     @EnvironmentObject var model: AppModel
     @StateObject private var history = HistoryStore()
-    @ViewState private var selectedID: UUID?
     @ViewState private var search = ""
+
+    /// The selection lives in the model, so "Pokaż" in a toast, notification or results box can pick a batch.
+    var selectedID: UUID? { model.focusedBatchID }
 
     var body: some View {
         Group {
@@ -47,13 +49,10 @@ struct JobsView: View {
         }
         .onAppear {
             history.load()
-            selectedID = model.focusedBatchID ?? selectedID ?? model.batches.first?.id
-        }
-        .onChange(of: model.focusedBatchID) { _, id in
-            if let id { selectedID = id }
+            if model.focusedBatchID == nil { model.focusedBatchID = model.batches.first?.id }
         }
         .onChange(of: model.batches.count) { _, _ in
-            if selectedID == nil { selectedID = model.batches.first?.id }
+            if model.focusedBatchID == nil { model.focusedBatchID = model.batches.first?.id }
         }
     }
 
@@ -85,7 +84,7 @@ struct JobsView: View {
         return VStack(spacing: 0) {
             SearchField(prompt: "Szukaj: operacja, komputer, wynik", text: $search)
                 .padding(8)
-            List(selection: $selectedID) {
+            List(selection: $model.focusedBatchID) {
                 if !running.isEmpty {
                     Section("W toku") {
                         ForEach(running) { BatchListRow(batch: $0).tag($0.id) }
