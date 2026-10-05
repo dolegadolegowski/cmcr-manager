@@ -319,6 +319,15 @@ enum ManualStep: String, CaseIterable, Identifiable {
         case .localNetwork: return false
         }
     }
+
+    /// The check could not tell (e.g. nobody logged in for the screen-recording probe).
+    func isUnknown(in r: ReadinessReport) -> Bool {
+        switch self {
+        case .fullDiskAccess: return r[.fda].state == .unknown
+        case .screenRecording: return r[.screen].state == .unknown
+        default: return false
+        }
+    }
 }
 
 // MARK: - Main view
@@ -859,8 +868,10 @@ struct ManualStepsBox: View {
             return names.isEmpty ? ("FileVault wyłączony na wszystkich sprawdzonych iMacach.", false)
                                  : ("FileVault włączony na: \(names.joined(separator: ", ")).", true)
         default:
-            return names.isEmpty ? ("Gotowe na wszystkich sprawdzonych iMacach.", false)
-                                 : ("Do zrobienia na: \(names.joined(separator: ", ")).", true)
+            if !names.isEmpty { return ("Do zrobienia na: \(names.joined(separator: ", ")).", true) }
+            let unknown = checked.filter { step.isUnknown(in: $0.1) }.map(\.0.name)
+            return unknown.isEmpty ? ("Gotowe na wszystkich sprawdzonych iMacach.", false)
+                                   : ("Nie udało się sprawdzić na: \(unknown.joined(separator: ", ")) – szczegóły po kliknięciu komórki w tabeli.", false)
         }
     }
 }
