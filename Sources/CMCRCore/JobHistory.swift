@@ -89,14 +89,28 @@ public enum JobHistory {
 
     private static func encoder() -> JSONEncoder {
         let e = JSONEncoder()
-        e.dateEncodingStrategy = .iso8601
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        e.dateEncodingStrategy = .custom { date, enc in
+            var c = enc.singleValueContainer()
+            try c.encode(f.string(from: date))
+        }
         e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return e
     }
 
     private static func decoder() -> JSONDecoder {
         let d = JSONDecoder()
-        d.dateDecodingStrategy = .iso8601
+        let precise = ISO8601DateFormatter()
+        precise.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
+        d.dateDecodingStrategy = .custom { dec in
+            let s = try dec.singleValueContainer().decode(String.self)
+            guard let date = precise.date(from: s) ?? plain.date(from: s) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: dec.codingPath, debugDescription: "Zła data: \(s)"))
+            }
+            return date
+        }
         return d
     }
 
