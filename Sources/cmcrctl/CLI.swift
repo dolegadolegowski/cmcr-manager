@@ -199,8 +199,11 @@ struct CLI: Sendable {
     }
 
     /// Asks before disruptive actions. Without a terminal `--yes` is required, so scripts never hang.
-    func confirm(_ question: String) {
-        if args.yes { return }
+    func confirm(_ question: String) { Self.confirm(question, yes: args.yes) }
+
+    /// `confirm` for commands with their own parser (module commands): `yes` is their `--yes`/`-y`.
+    static func confirm(_ question: String, yes: Bool) {
+        if yes { return }
         guard isatty(STDIN_FILENO) != 0 else {
             usageError("\(question)\nTo polecenie wymaga potwierdzenia – dodaj --yes.")
         }

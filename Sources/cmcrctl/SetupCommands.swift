@@ -11,20 +11,16 @@ enum SetupCommands {
       cmcrctl readiness [all|nr]                gotowość iMaców: klucz, sudo, folder, uprawnienia, FileVault…
     """
 
-    private static func err(_ text: String) {
-        FileHandle.standardError.write(Data((text + "\n").utf8))
-    }
-
-    private static let printer: Operations.Output = { channel, data in
-        (channel == .stdout ? FileHandle.standardOutput : FileHandle.standardError).write(data)
-    }
+    private static func err(_ text: String) { Console.err(text) }
+    private static func print(_ text: String, terminator: String = "\n") { Console.out(text, terminator: terminator) }
+    private static let printer = Console.printer
 
     static func appPublicKey(_ settings: AppSettings) -> String? {
         SSHKeys.currentPrivateKey(settings: settings).flatMap { SSHKeys.publicKey(for: $0) }
     }
 
-    static func run(_ command: String, _ args: [String], select: (String?) -> [Machine],
-                    settings: AppSettings, ssh: SSHSettings) async -> Int32 {
+    static func run(_ command: String, _ args: [String], settings: AppSettings, ssh: SSHSettings) async -> Int32 {
+        let select = ModuleHosts.readOnly
         if args.contains("--help") || args.contains("-h") {
             print(usage + "\n\n" + SetupCommandLine.optionsHelp)
             return 0
@@ -70,8 +66,7 @@ enum SetupCommands {
                 } else if !r.succeeded {
                     err("✘ \(h.name): \(SSH.diagnose(r).1)")
                 }
-                let code: Int32 = r.succeeded ? 0 : (r.exitCode == 0 ? 1 : r.exitCode)
-                status = max(status, code)
+                if !r.succeeded { status = ExitCode.failure }
             }
             return status
 
