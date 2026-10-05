@@ -313,7 +313,6 @@ final class ScreenCenter: ObservableObject {
             return
         }
         s.idleSince = nil
-        ledger.observed(host, at: now)
 
         let settings = model.settings
         let merged = ScreenSchedule.merge(all.map { ($0.request.pixels, $0.request.interval) },
@@ -322,7 +321,9 @@ final class ScreenCenter: ObservableObject {
         feed.set(\.interval, merged.interval)
         let display = self.display(for: host)
 
-        if !all.contains(where: { scopeIsActive($0.scope) }) {
+        // A paused observer does not look at the screen: a long pause ends the observation session too.
+        guard all.contains(where: { scopeIsActive($0.scope) }) else {
+            ledger.unobserved(host, at: now)
             startQueue.removeAll { $0 == host }
             if let stream = s.stream {
                 if s.helloSeen && !s.remotePaused {
@@ -337,6 +338,7 @@ final class ScreenCenter: ObservableObject {
             return
         }
         s.pausedSince = nil
+        ledger.observed(host, at: now)
 
         if let stream = s.stream {
             guard s.helloSeen else {
@@ -437,7 +439,7 @@ final class ScreenCenter: ObservableObject {
         s.exitIssue = nil
         s.byeReason = nil
         let feed = feed(for: host)
-        if feed.phase != .live { feed.phase = .connecting }
+        if feed.phase != .live { feed.set(\.phase, .connecting) }
 
         stream.start(password: model.password(for: machine), settings: model.sshSettings, onEvent: { [weak self] event in
             let decoded = ScreenCenter.prepare(event)
@@ -453,7 +455,7 @@ final class ScreenCenter: ObservableObject {
 
     private func stop(_ s: Session, _ reason: StopReason) {
         startQueue.removeAll { $0 == s.host }
-        guard let stream = s.stream else { return }
+        guard let stream = s.stream, s.stopReason == nil else { return }
         trace(s.host, "stop \(reason)")
         s.stopReason = reason
         if reason == .watchdog { stream.kill() } else { stream.stop() }
@@ -501,6 +503,7 @@ final class ScreenCenter: ObservableObject {
                 feed.set(\.phase, s.remotePaused ? .paused : .live)
                 s.failures = 0
                 s.retryAt = nil
+                s.exitIssue = nil
                 if let user = feed.user, let name = model?.machine(host)?.name, ledger.shouldLog(host, user: user) {
                     ConfigStore.log("Podgląd ekranu → \(name) (użytkownik \(user))")
                 }
@@ -526,6 +529,7 @@ final class ScreenCenter: ObservableObject {
                 feed.set(\.issue, nil)
                 s.failures = 0
                 s.retryAt = nil
+                s.exitIssue = nil
                 if feed.phase != .paused { feed.set(\.phase, .live) }
             case .state(let issue):
                 feed.set(\.issue, issue)
@@ -559,10 +563,8 @@ final class ScreenCenter: ObservableObject {
         s.stopReason = nil
 
         switch reason {
-        case .unobserved, .paused, .removed:
-            if reason == .paused { feed.phase = .paused } else { feed.phase = .idle }
-            return
-        case .restart:
+        case .unobserved, .paused, .removed, .restart:
+            feed.set(\.phase, reason == .paused ? .paused : .idle)
             reconcile(host)
             return
         case .watchdog, nil:
@@ -660,15 +662,19 @@ final class ScreenCenter: ObservableObject {
         let now = Date()
         reconcileAll()
         for host in ledger.expire(at: now) {
-            // The observation session ended: drop the last image instead of keeping it in memory.
-            if let f = feeds[host], sessions[host]?.stream == nil {
+            // The observation session ended: drop the last image instead of keeping it in memory, and close
+            // a paused stream, whose remote loop would otherwise still remember the notified user.
+            if let f = feeds[host] {
                 f.image = nil
                 f.user = nil
                 f.frontApp = nil
                 f.issue = nil
                 f.confirmedAt = nil
             }
-            sessions[host]?.displayImages = [:]
+            if let s = sessions[host] {
+                s.displayImages = [:]
+                stop(s, .paused)
+            }
         }
         if observers.isEmpty, sessions.values.allSatisfy({ $0.stream == nil }), !sessions.isEmpty,
            sessions.values.allSatisfy({ s in s.idleSince.map { now.timeIntervalSince($0) > ledger.grace } ?? true }) {
