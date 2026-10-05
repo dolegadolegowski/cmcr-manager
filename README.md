@@ -14,7 +14,7 @@ Natywna aplikacja okienkowa macOS (SwiftUI) do zdalnego zarządzania pracownią 
 | **Aktualizacje** | `softwareupdate` (lista, pobieranie, instalacja, restart; na Apple Silicon z `--user/--stdinpass`), historia, `brew upgrade`, `mas upgrade` |
 | **Podgląd ekranów** | Siatka miniatur ekranów zalogowanych użytkowników z automatycznym odświeżaniem i powiększeniem — tylko do odczytu, z ograniczeniami (niżej) |
 | **Sesja i zasilanie** | Wiadomość (okno/powiadomienie), wylogowanie, uśpienie ekranu/komputera, restart, wyłączenie, Wake-on-LAN |
-| **Zadania** | Historia operacji z wynikiem i pełnym wyjściem dla każdego iMaca, anulowanie; dziennik działań w `~/Library/Logs/CMCRManager/actions.log` |
+| **Zadania** | Operacje w toku i historia (także z poprzednich uruchomień) z wynikiem, kodem wyjścia, czasem i pełnym wyjściem dla każdego iMaca; „Powtórz na nieudanych”, „Zaznacz nieudane”, grupowanie identycznych wyników, eksport do pliku; dziennik działań w `~/Library/Logs/CMCRManager/actions.log`, historia w `<konfiguracja>/history/` (JSONL + wyjście każdego zadania, 90 dni) |
 | **Konfiguracja** | Lista komputerów (generator jak pętla w `cmcr-helpers.sh`, import/eksport), hasła w Pęku kluczy (wspólne lub per komputer), generowanie i rozsyłanie klucza SSH, ustawienia, przygotowanie iMaców |
 
 ### Podgląd ekranu – ograniczenia
@@ -56,7 +56,7 @@ open "build/CMCR Manager.app"
 3. Zaznacz wszystkie komputery i kliknij **Roześlij klucz** (odpowiednik sekcji „Distribute your SSH key” z README). Kolejne połączenia logują się kluczem.
 4. **Konfiguracja › Przygotowanie iMaców** — „Utwórz folder cmcr ucznia” (`/Users/student/Public/cmcr`, właściciel `student`, `chmod 777`).
 
-Zaznaczenie komputerów na liście (środkowa kolumna) jest wspólne dla wszystkich działów; każdy przycisk akcji pokazuje, na ilu komputerach zadziała. Skróty: ⌘R odśwież stan, ⇧⌘A zaznacz wszystkie, ⇧⌘O zaznacz online, ⌘1…⌘0 działy.
+Pola wyboru na liście komputerów (środkowa kolumna) wyznaczają cel operacji we wszystkich działach; zaznaczenie jest zapamiętywane. Lista ma wyszukiwarkę, filtr stanu (online, niedostępne, z zalogowanym użytkownikiem, wymagające uwagi) i **grupy** (np. rzędy ławek — tworzone z menu kontekstowego lub w Konfiguracji › Komputery). Opcja „Pomiń niedostępne” pomija komputery offline lub z błędem logowania zamiast czekać na limit czasu — trafiają do wyników jako pominięte i można później „Powtórzyć na nieudanych”. Niebezpieczne operacje (restart, wylogowanie, czyszczenie folderu, odinstalowanie…) pokazują listę komputerów z zalogowanymi użytkownikami i pozwalają ich pominąć. Pliki można upuścić na komputer na liście. Gdy trwają zadania, Mac administratora nie usypia się, a zamknięcie okna nie przerywa pracy. Skróty: ⌘R odśwież stan, ⇧⌘A zaznacz wszystkie, ⇧⌘O zaznacz online, ⌘1…⌘0 działy.
 
 ## Odpowiedniki cmcr-helpers
 
