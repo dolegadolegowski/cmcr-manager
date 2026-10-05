@@ -70,13 +70,15 @@ enum SnapshotRenderer {
 
     /// Optional state for the pictures: CMCR_SNAPSHOT_SELECT=imac01,imac03 checks only these Macs,
     /// CMCR_SNAPSHOT_COMMAND=<script> runs a command on the checked Macs first (only with a demo or test
-    /// configuration!), CMCR_SNAPSHOT_CONFIRM=1 also renders the confirmation sheet (confirm-light.png …).
+    /// configuration!) [as an action of CMCR_SNAPSHOT_COMMAND_SECTION], CMCR_SNAPSHOT_CONFIRM=1 also renders the confirmation sheet (confirm-light.png …).
     private static func prepare(_ model: AppModel, env: [String: String]) {
         if let names = env["CMCR_SNAPSHOT_SELECT"] {
             let wanted = Set(names.split(separator: ",").map(String.init))
             model.selection = Set(model.machines.filter { wanted.contains($0.name) }.map(\.id))
         }
         if let command = env["CMCR_SNAPSHOT_COMMAND"], !command.isEmpty {
+            // The result box of that section shows the batch (CMCR_SNAPSHOT_COMMAND_SECTION=apps).
+            if let owner = env["CMCR_SNAPSHOT_COMMAND_SECTION"].flatMap(AppSection.init(rawValue:)) { model.section = owner }
             model.runCommand(command, asRoot: false, on: model.selectedMachines)
         }
     }

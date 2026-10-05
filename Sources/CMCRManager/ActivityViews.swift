@@ -69,11 +69,11 @@ private struct ActionToastView: View {
                 .lineLimit(2)
                 .frame(maxWidth: 460, alignment: .leading)
             if let id = toast.batchID, model.section != .jobs {
-                Button("Pokaż") {
+                Button("Pokaż wyniki") {
                     model.toast = nil
                     model.showJobs(id)
                 }
-                .help("Otwiera wyniki w sekcji Zadania")
+                .help("Otwiera wyniki z każdego komputera w dziale Zadania")
             }
             Button {
                 model.toast = nil
@@ -272,27 +272,22 @@ struct PasswordBanner: View {
     @ViewState private var editing = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.title3)
-                .foregroundStyle(.orange)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Nie zapisano hasła administratora")
-                    .font(.callout.weight(.semibold))
-                Text("Bez niego instalowanie programów, aktualizacje i inne działania wymagające uprawnień administratora nie zadziałają.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+        // Side by side when there is room; in a narrow column (e.g. next to the inspector) the button goes below.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                icon
+                texts.frame(minWidth: 300, idealWidth: 380, maxWidth: .infinity, alignment: .leading)
+                button
             }
-            Spacer(minLength: 8)
-            Button {
-                editing = true
-            } label: {
-                Label("Wpisz hasło…", systemImage: "key.fill")
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 10) {
+                    icon
+                    texts
+                }
+                button.padding(.leading, 30)
             }
-            .help("Zapisz hasło kont administratorów (imacNN) w Pęku kluczy tego Maca")
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(Color.orange.opacity(0.12))
@@ -301,6 +296,35 @@ struct PasswordBanner: View {
         .sheet(isPresented: $editing) {
             MissingPasswordSheet().environmentObject(model)
         }
+    }
+
+    var icon: some View {
+        Image(systemName: "exclamationmark.triangle.fill")
+            .font(.title3)
+            .foregroundStyle(.orange)
+            .accessibilityHidden(true)
+    }
+
+    var texts: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text("Nie zapisano hasła administratora")
+                .font(.callout.weight(.semibold))
+            Text("Bez niego instalowanie programów, aktualizacje i inne działania wymagające uprawnień administratora nie zadziałają.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    var button: some View {
+        Button {
+            editing = true
+        } label: {
+            Label("Wpisz hasło…", systemImage: "key.fill")
+        }
+        .fixedSize()
+        .help("Zapisz hasło kont administratorów (imacNN) w Pęku kluczy tego Maca")
     }
 
     /// Sections where the window does not put the banner above the page: Konfiguracja asks for the password

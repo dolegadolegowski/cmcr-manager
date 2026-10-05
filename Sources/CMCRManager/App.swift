@@ -409,9 +409,14 @@ struct MachineListView: View {
                        : "Filtruj i sortuj listę komputerów")
     }
 
+    /// Filters the list by group (it does not check anything; the context menu of a group can).
     var groupChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
+                Text("Pokaż:")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
                 chip("Wszystkie", selected: query.group == nil) { query.group = nil }
                 ForEach(model.groups, id: \.self) { g in
                     chip(g, selected: query.group.map { $0.caseInsensitiveCompare(g) == .orderedSame } ?? false) {
@@ -443,8 +448,10 @@ struct MachineListView: View {
                 .foregroundStyle(selected ? Color.white : Color.primary)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title == "Wszystkie" ? "Pokaż wszystkie grupy" : "Pokaż grupę \(title)")
         .accessibilityAddTraits(selected ? .isSelected : [])
-        .help(title == "Wszystkie" ? "Pokaż wszystkie komputery" : "Pokaż tylko grupę „\(title)” (prawy przycisk: zaznacz grupę)")
+        .help(title == "Wszystkie" ? "Pokaż na liście komputery ze wszystkich grup"
+                                   : "Pokaż na liście tylko grupę „\(title)”. Prawy przycisk: zaznacz jej komputery.")
     }
 
     // MARK: Footer: counts and selection menu
@@ -547,11 +554,6 @@ struct MachineRow: View {
                         .labelStyle(.titleAndIcon)
                         .lineLimit(1)
                         .help("Zalogowany użytkownik: \(user)")
-                }
-                if status.reachability == .error || status.reachability == .authFailed {
-                    Image(systemName: "exclamationmark.bubble.fill")
-                        .foregroundStyle(.orange)
-                        .help(status.message.isEmpty ? status.reachability.label : status.message)
                 }
             }
             .accessibilityElement(children: .combine)

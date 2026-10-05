@@ -343,7 +343,7 @@ struct ConfirmSheet: View {
                     .font(.subheadline.weight(.semibold))
                 List(targets) { m in row(m) }
                     .listStyle(.bordered(alternatesRowBackgrounds: true))
-                    .frame(height: min(220, CGFloat(targets.count) * 26 + 10))
+                    .frame(height: min(220, CGFloat(targets.count) * 24 + 6))
             }
             if !withUser.isEmpty || needsAcknowledgement {
                 VStack(alignment: .leading, spacing: 8) {
@@ -475,27 +475,48 @@ enum JobDurationText {
     }
 }
 
-/// Counts of a batch: ✓ 12  ✗ 2  ⏭ 1.
+/// Counts of a batch: "✓ Gotowe: 12  ✗ Błędy: 2", or only the symbols and numbers where there is no room.
 struct BatchCounts: View {
     @ObservedObject var batch: Batch
 
     var body: some View {
-        HStack(spacing: 8) {
-            if !batch.finished {
-                Text("\(batch.completed)/\(batch.jobs.count)").monospacedDigit().foregroundStyle(.secondary)
-            }
-            count(batch.succeeded, .succeeded, "Gotowe")
-            count(batch.failed, .failed, "Błędy")
-            count(batch.cancelled, .cancelled, "Przerwane")
-            count(batch.skipped, .skipped, "Pominięte")
+        JobCounts(succeeded: batch.succeeded, failed: batch.failed, cancelled: batch.cancelled, skipped: batch.skipped,
+                  progress: batch.finished ? nil : "\(batch.completed)/\(batch.jobs.count)")
+    }
+}
+
+/// Results per state of a running, finished or saved batch, in words when there is room.
+struct JobCounts: View {
+    var succeeded = 0
+    var failed = 0
+    var cancelled = 0
+    var skipped = 0
+    /// "3/12" while the batch runs.
+    var progress: String?
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            counts(words: true)
+            counts(words: false)
         }
-        .font(.callout)
+    }
+
+    func counts(words: Bool) -> some View {
+        HStack(spacing: words ? 10 : 8) {
+            if let progress {
+                Text(progress).monospacedDigit().foregroundStyle(.secondary)
+            }
+            count(succeeded, .succeeded, "Gotowe", words)
+            count(failed, .failed, "Błędy", words)
+            count(cancelled, .cancelled, "Przerwane", words)
+            count(skipped, .skipped, "Pominięte", words)
+        }
         .fixedSize()
     }
 
-    @ViewBuilder func count(_ n: Int, _ state: Job.State, _ label: String) -> some View {
+    @ViewBuilder func count(_ n: Int, _ state: Job.State, _ label: String, _ words: Bool) -> some View {
         if n > 0 {
-            Label("\(n)", systemImage: state.symbol)
+            Label(words ? "\(label): \(n)" : "\(n)", systemImage: state.symbol)
                 .foregroundStyle(state.color)
                 .monospacedDigit()
                 .help("\(label): \(n)")
@@ -582,25 +603,25 @@ struct BatchResultsView: View {
     }
 
     @ViewBuilder var controls: some View {
-        BatchCounts(batch: batch)
+        BatchCounts(batch: batch).font(.callout)
         BatchActions(batch: batch)
             .controlSize(.small)
         let allExpanded = expanded.count == batch.jobs.count
         Button {
             expanded = allExpanded ? [] : Set(batch.jobs.map(\.id))
         } label: {
-            Label(allExpanded ? "Zwiń" : "Rozwiń",
+            Label(allExpanded ? "Zwiń wszystkie" : "Rozwiń wszystkie",
                   systemImage: allExpanded ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
         }
         .controlSize(.small)
-        .help(allExpanded ? "Zwiń wyniki wszystkich komputerów" : "Pokaż wyniki wszystkich komputerów")
+        .help(allExpanded ? "Zwiń wyniki wszystkich komputerów" : "Pokaż pełne wyniki wszystkich komputerów")
         Button {
             model.showJobs(batch.id)
         } label: {
-            Label("Szczegóły", systemImage: "list.bullet.rectangle")
+            Label("Pokaż w Zadaniach", systemImage: AppSection.jobs.icon)
         }
         .controlSize(.small)
-        .help("Otwiera to działanie w Zadaniach: pełne wyniki, grupowanie, eksport")
+        .help("Otwiera to działanie w dziale Zadania: pełne wyniki, grupowanie takich samych wyników, eksport")
     }
 }
 

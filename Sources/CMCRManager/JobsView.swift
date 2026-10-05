@@ -269,7 +269,7 @@ struct BatchDetailView: View {
                     .lineLimit(2)
                     .textSelection(.enabled)
                 Spacer(minLength: 12)
-                BatchCounts(batch: batch)
+                BatchCounts(batch: batch).font(.callout)
             }
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 Text(timing)
@@ -574,19 +574,9 @@ struct HistoryDetailView: View {
                     .lineLimit(2)
                     .textSelection(.enabled)
                 Spacer(minLength: 12)
-                HStack(spacing: 8) {
-                    Label("\(batch.succeeded)", systemImage: Job.State.succeeded.symbol).foregroundStyle(.green)
-                    if batch.failed > 0 {
-                        Label("\(batch.failed)", systemImage: Job.State.failed.symbol).foregroundStyle(.red)
-                    }
-                    if batch.skipped + batch.cancelled > 0 {
-                        Label("\(batch.skipped + batch.cancelled)", systemImage: Job.State.skipped.symbol)
-                            .foregroundStyle(.secondary)
-                            .help("Pominięte lub przerwane")
-                    }
-                }
-                .monospacedDigit()
-                .fixedSize()
+                JobCounts(succeeded: batch.succeeded, failed: batch.failed, cancelled: batch.cancelled,
+                          skipped: batch.skipped)
+                    .font(.callout)
             }
             Text(info)
                 .font(.callout)
