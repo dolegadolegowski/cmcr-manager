@@ -75,8 +75,9 @@ final class Updater: ObservableObject {
     /// confirmed in the update sheet already, so the app delegate quits without asking a second time (a modal
     /// question would also outlast the installer, which waits only 60 s for the app to quit).
     private(set) var isQuittingForUpdate = false
-    /// The user agreed in the update sheet that running jobs may be interrupted.
-    private(set) var jobsConfirmed = false
+    /// The work the user agreed in the update sheet to interrupt (`AppModel.runningWorkIDs` when answering); nil
+    /// when not asked. Work started after the answer, e.g. while the update downloads, is asked about again.
+    private(set) var confirmedWork: Set<UUID>?
     /// The installer started as this user; stopped again when quitting is cancelled after all.
     private var helperProcess: Process?
     /// A root installer (folder that needs an administrator) cannot be stopped: until it gave up waiting for this
@@ -332,11 +333,11 @@ final class Updater: ObservableObject {
             }
         } catch UpdateError.cancelled {
             installWhenReady = false
-            jobsConfirmed = false
+            confirmedWork = nil
             phase = .available
         } catch {
             installWhenReady = false
-            jobsConfirmed = false
+            confirmedWork = nil
             preparedArchive = nil
             ConfigStore.log("Uaktualnienie aplikacji: odrzucono \(c.manifest.version) – \(error.localizedDescription)")
             phase = .failed(error.localizedDescription)
@@ -344,9 +345,9 @@ final class Updater: ObservableObject {
     }
 
     /// Primary action of the sheet: downloads first when needed, then installs and relaunches.
-    /// `jobsConfirmed`: the user answered "Przerwać trwające zadania?" in the sheet.
+    /// `jobsConfirmed`: the user answered "Przerwać trwające zadania?" in the sheet – for the work running now.
     func install(jobsConfirmed: Bool = false) {
-        if jobsConfirmed { self.jobsConfirmed = true }
+        if jobsConfirmed { confirmedWork = AppModel.shared?.runningWorkIDs ?? [] }
         switch phase {
         case .ready:
             installAndRelaunch()
@@ -365,30 +366,38 @@ final class Updater: ObservableObject {
 
     func cancelDownload() {
         installWhenReady = false
-        jobsConfirmed = false
+        confirmedWork = nil
         downloadTask?.cancel()
     }
 
-    /// Jobs (or a lesson countdown) are running and the user has not agreed in the sheet to interrupt them.
-    var needsJobsConfirmation: Bool { (AppModel.shared?.hasRunningWork ?? false) && !jobsConfirmed }
+    /// Jobs (or a lesson countdown) are running that the user has not agreed in the sheet to interrupt – also
+    /// when they started after the answer, e.g. while the update was downloading.
+    var needsJobsConfirmation: Bool {
+        guard let model = AppModel.shared, model.hasRunningWork else { return false }
+        guard let confirmedWork else { return true }
+        return !model.runningWorkIDs.isSubset(of: confirmedWork)
+    }
 
     /// "Zainstaluj i uruchom ponownie". Asks about running work in the sheet first – also when jobs started while
     /// the update was downloading – and never after the installer is running.
     func installAndRelaunch() {
         guard phase == .ready else { return }
         if needsJobsConfirmation {
+            confirmedWork = nil
             ConfigStore.log("Uaktualnienie aplikacji: instalacja czeka – trwają zadania na iMacach")
             isSheetPresented = true
             return
         }
         if let until = privilegedHelperBusyUntil, until > Date() {
+            confirmedWork = nil
             phase = .failed("Poprzednia próba instalacji jeszcze się nie zakończyła – spróbuj ponownie za minutę.")
             return
         }
         if let zip = preparedArchive, !FileManager.default.fileExists(atPath: zip.path) {
             // The verified archive disappeared from the cache (cleaned up meanwhile): fetch and verify it again
-            // instead of letting the installer fail after the app has quit.
+            // instead of letting the installer fail after the app has quit. Running work is asked about again then.
             ConfigStore.log("Uaktualnienie aplikacji: brak pobranego archiwum – pobieranie ponownie")
+            confirmedWork = nil
             preparedArchive = nil
             phase = .available
             installWhenReady = true
@@ -414,10 +423,10 @@ final class Updater: ObservableObject {
                 // Reached only when quitting was cancelled after all.
                 quitForUpdateCancelled()
             } catch UpdateError.cancelled {
-                jobsConfirmed = false
+                confirmedWork = nil
                 phase = .ready
             } catch {
-                jobsConfirmed = false
+                confirmedWork = nil
                 ConfigStore.log("Uaktualnienie aplikacji: instalacja nie powiodła się – \(error.localizedDescription)")
                 phase = .failed(error.localizedDescription)
             }
@@ -428,7 +437,7 @@ final class Updater: ObservableObject {
     /// pending version, so the next start does not report a failed update, and offer the installation again.
     func quitForUpdateCancelled() {
         isQuittingForUpdate = false
-        jobsConfirmed = false
+        confirmedWork = nil
         defaults.removeObject(forKey: Keys.pendingVersion)
         defaults.removeObject(forKey: Keys.pendingFrom)
         if let helper = helperProcess {

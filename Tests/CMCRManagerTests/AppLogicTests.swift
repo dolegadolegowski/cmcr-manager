@@ -136,10 +136,91 @@ struct AppLogicTests {
         #expect(defaults.string(forKey: "update.pendingVersion") == nil)
         #expect(defaults.string(forKey: "update.pendingFrom") == nil)
         #expect(!updater.isQuittingForUpdate)
-        #expect(!updater.jobsConfirmed)
+        #expect(updater.confirmedWork == nil)
         #expect(updater.phase != .installing)
         batch.cancel()
         #expect(await AppTestEnvironment.wait { batch.finished })
+    }
+
+    /// A job on `machine` that runs until it is cancelled.
+    func longJob(_ model: AppModel, _ title: String, on machine: Machine) -> Batch? {
+        model.runBatch(title, on: [machine]) { _, job in
+            while !job.handle.isCancelled { try? await Task.sleep(nanoseconds: 20_000_000) }
+            return .cancelledResult
+        }
+    }
+
+    /// An updater with defaults of its own (removed by `cleanup`). Its phase stays .idle, so `install` only
+    /// records the answer: nothing is downloaded or installed.
+    func isolatedUpdater() throws -> (updater: Updater, cleanup: () -> Void) {
+        let suite = "pl.cmcr.manager.unit-tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        return (Updater(defaults: defaults), { defaults.removePersistentDomain(forName: suite) })
+    }
+
+    // update-confirm-before-download-kills-new-work
+    @Test func anUpdateRestartAsksAgainAboutWorkStartedAfterTheAnswer() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        let (updater, cleanup) = try isolatedUpdater()
+        defer { cleanup() }
+        let first = try #require(longJob(model, "Zadanie A", on: a))
+        #expect(await AppTestEnvironment.wait { model.runningJobCount == 1 })
+        #expect(updater.needsJobsConfirmation)
+        updater.install(jobsConfirmed: true)
+        #expect(updater.confirmedWork == [first.id])
+        #expect(!updater.needsJobsConfirmation)
+
+        // The teacher starts another job while the update downloads: the restart must not cancel it unasked.
+        let second = try #require(longJob(model, "Zadanie B", on: a))
+        #expect(await AppTestEnvironment.wait { model.runningJobCount == 2 })
+        #expect(updater.needsJobsConfirmation, "zadanie rozpoczęte po odpowiedzi przerwano by bez pytania")
+        second.cancel()
+        #expect(await AppTestEnvironment.wait { second.finished })
+        #expect(!updater.needsJobsConfirmation, "trwa tylko zadanie, na którego przerwanie nauczyciel się zgodził")
+        first.cancel()
+        #expect(await AppTestEnvironment.wait { first.finished })
+        #expect(!model.hasRunningWork)
+        #expect(!updater.needsJobsConfirmation)
+
+        // A confirmation given with nothing running does not cover work started later either.
+        updater.install(jobsConfirmed: true)
+        let third = try #require(longJob(model, "Zadanie C", on: a))
+        #expect(await AppTestEnvironment.wait { model.runningJobCount == 1 })
+        #expect(updater.needsJobsConfirmation)
+        third.cancel()
+        #expect(await AppTestEnvironment.wait { third.finished })
+    }
+
+    @Test func anUpdateRestartConfirmedDuringTheCountdownCoversTheLessonsOwnSteps() async throws {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        let (updater, cleanup) = try isolatedUpdater()
+        defer { cleanup() }
+        endPlan()
+        classroom.endLesson(model, targets: [a])
+        let run = try #require(classroom.run)
+        // The warning batch belongs to the routine, as do the steps after the countdown.
+        #expect(model.runningWorkIDs == [run.id])
+        #expect(await AppTestEnvironment.wait { run.phase == "Odliczanie" })
+        #expect(updater.needsJobsConfirmation)
+        updater.install(jobsConfirmed: true)
+        #expect(!updater.needsJobsConfirmation)
+
+        let other = try #require(longJob(model, "Zadanie spoza zajęć", on: b))
+        #expect(await AppTestEnvironment.wait { model.runningJobCount == 1 })
+        #expect(updater.needsJobsConfirmation, "zadanie rozpoczęte w trakcie odliczania przerwano by bez pytania")
+        other.cancel()
+        #expect(await AppTestEnvironment.wait { other.finished })
+
+        var asked = false
+        run.skipCountdown = true
+        #expect(await AppTestEnvironment.wait {
+            asked = asked || updater.needsJobsConfirmation
+            return run.finished
+        })
+        #expect(!asked, "kroki zakończenia zajęć po odliczaniu potraktowano jak nowe zadanie")
+        #expect(!model.hasRunningWork)
     }
 
     // lesson-start-retry-deleted-payload
