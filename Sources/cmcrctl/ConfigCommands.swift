@@ -38,8 +38,12 @@ extension CLI {
         guard let name = args[2]?.trimmingCharacters(in: .whitespaces), !name.isEmpty else {
             usageError("Użycie: cmcrctl hosts add nazwa [adres] [konto] [--port N] [--mac MAC]")
         }
-        let address = args[3] ?? "\(name).local"
-        let user = args[4] ?? name
+        _ = checked(name, .name, "Niepoprawna nazwa")
+        if args[3] == nil || args[4] == nil, let problem = HostEntry.problem(name, as: .sshPart) {
+            usageError("Nazwa „\(name)” \(problem) – podaj też adres i konto: cmcrctl hosts add \"\(name)\" adres konto")
+        }
+        let address = checked(args[3]?.trimmingCharacters(in: .whitespaces) ?? "\(name).local", .sshPart, "Niepoprawny adres")
+        let user = checked(args[4]?.trimmingCharacters(in: .whitespaces) ?? name, .sshPart, "Niepoprawne konto")
         let port = args.int("--port", in: 1...65535) ?? 22
         let mac = normalizedMAC(args.value("--mac") ?? "")
         if let dup = hosts.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame
@@ -72,9 +76,15 @@ extension CLI {
 
     /// `aa:bb:cc:dd:ee:ff` from any common spelling; an empty value clears the address.
     func normalizedMAC(_ raw: String) -> String {
-        guard !raw.isEmpty else { return "" }
-        guard let bytes = WakeOnLAN.parseMAC(raw) else { usageError("Niepoprawny adres MAC: \(raw)") }
-        return bytes.map { String(format: "%02x", $0) }.joined(separator: ":")
+        guard !raw.trimmingCharacters(in: .whitespaces).isEmpty else { return "" }
+        guard let mac = HostEntry.normalizedMAC(raw) else { usageError("Niepoprawny adres MAC: \(raw)") }
+        return mac
+    }
+
+    /// `value`, or a usage error such as "Niepoprawny adres „a b”: zawiera spację." before anything is saved.
+    func checked(_ value: String, _ kind: HostEntry.Kind, _ lead: String) -> String {
+        if let problem = HostEntry.problem(value, as: kind) { usageError("\(lead) „\(value)”: \(problem).") }
+        return value
     }
 
     func hostsRemove() -> Int32 {
@@ -93,11 +103,11 @@ extension CLI {
     func hostsGenerate() -> Int32 {
         args.expect("hosts generate", options: ["--start", "--count", "--digits", "--domain", "--replace", "--append"],
                     positional: 3)
-        let prefix = args[2] ?? "imac"
+        let prefix = checked(args[2] ?? "imac", .sshPart, "Niepoprawny prefiks")
         let start = args.int("--start", in: 0...999) ?? 1
         let count = args.int("--count", in: 1...250) ?? 15
         let digits = args.int("--digits", in: 1...4) ?? 2
-        let domain = args.value("--domain") ?? "local"
+        let domain = checked(args.value("--domain") ?? "local", .domain, "Niepoprawna domena (--domain)")
         let replace = args.has("--replace"), append = args.has("--append")
         if replace && append { usageError("Wybierz --replace albo --append.") }
         let hosts = append ? editableHosts() : hosts

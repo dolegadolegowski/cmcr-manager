@@ -27,9 +27,9 @@ import Testing
         #expect(try names("1,3") == ["imac01", "imac03"])
         #expect(try names("3, 1 ,3") == ["imac01", "imac03"])
         #expect(try names("2-5") == ["imac02", "imac03", "imac05"])
-        #expect(try names("#4") == ["imac05"])
-        #expect(try names("#6") == ["nauczyciel"])
-        #expect(try names("6,#1") == ["imac01", "imac06"])
+        #expect(try names("@4") == ["imac05"])
+        #expect(try names("@6") == ["nauczyciel"])
+        #expect(try names("6,@1") == ["imac01", "imac06"])
     }
 
     @Test func namesAddressesAndAccounts() throws {
@@ -42,10 +42,19 @@ import Testing
     }
 
     @Test func anyUnknownPartFailsTheWholeSelection() {
-        #expect(throws: HostSpec.SelectionError.notFound(["imac09", "#8"])) { try names("1,imac09,#8") }
+        #expect(throws: HostSpec.SelectionError.notFound(["imac09", "@8"])) { try names("1,imac09,@8") }
         #expect(throws: HostSpec.SelectionError.notFound(["7-9"])) { try names("7-9") }
         #expect(throws: HostSpec.SelectionError.notFound(["5-2"])) { try names("5-2") }
-        #expect(throws: HostSpec.SelectionError.notFound(["#0"])) { try names("#0") }
+        #expect(throws: HostSpec.SelectionError.notFound(["@0"])) { try names("@0") }
+    }
+
+    /// An unquoted `#2` is a shell comment in scripts, so `#` is not a position marker; a quoted one is an
+    /// error that points to `@2` instead of silently matching something.
+    @Test func hashIsNotAPosition() {
+        #expect(throws: HostSpec.SelectionError.notFound(["#2"])) { try names("#2") }
+        let message = HostSpec.SelectionError.notFound(["#2"]).localizedDescription
+        #expect(message.contains("@2"))
+        #expect(!HostSpec.SelectionError.notFound(["9"]).localizedDescription.contains("@2"))
     }
 
     @Test func emptyInputs() {
