@@ -272,7 +272,7 @@ struct HostsEditor: View {
         Button(role: .destructive) {
             askDelete(rows)
         } label: {
-            Label("Usuń z listy…", systemImage: "trash")
+            DestructiveLabel(title: "Usuń z listy…", icon: "trash", enabled: !rows.isEmpty)
         }
         .disabled(rows.isEmpty)
         .help(rows.isEmpty ? "Najpierw kliknij wiersz w tabeli (z ⌘ – kilka wierszy)."
@@ -464,7 +464,7 @@ struct HostListGeneratorSheet: View {
                 Button(role: .destructive) {
                     askReplace()
                 } label: {
-                    Label("Zastąp całą listę…", systemImage: "arrow.triangle.2.circlepath")
+                    DestructiveLabel(title: "Zastąp całą listę…", icon: "arrow.triangle.2.circlepath", enabled: !preview.isEmpty)
                 }
                 .disabled(preview.isEmpty)
                 .help("Usuwa obecną listę i wstawia wygenerowaną (grupy i własne hasła obecnych wpisów przepadną)")
@@ -626,7 +626,7 @@ struct AccessSettings: View {
                         message: "Bez hasła instalacje, aktualizacje i inne operacje wymagające uprawnień administratora przestaną działać, dopóki nie zapiszesz go ponownie.",
                         button: "Usuń hasło", targets: []) { model.setSharedPassword("") }
                 } label: {
-                    Label("Usuń hasło…", systemImage: "trash")
+                    DestructiveLabel(title: "Usuń hasło…", icon: "trash", enabled: model.hasSharedPassword)
                 }
                 .disabled(!model.hasSharedPassword)
                 .help("Usuwa zapisane hasło z Pęku kluczy tego Maca")
@@ -789,7 +789,7 @@ struct GeneralSettings: View {
                     .help("Otwiera te same ustawienia w osobnym oknie (⌘,)")
                 } label: {
                     SettingLabel(title: "Okno Ustawień",
-                                 caption: "Te same ustawienia otworzysz z każdego miejsca skrótem ⌘, (menu CMCR Manager › Ustawienia…)",
+                                 caption: "Te same ustawienia otworzysz w każdej chwili z menu CMCR Manager › Ustawienia… (⌘,)",
                                  icon: "gearshape.2", color: .gray)
                 }
             }
@@ -992,6 +992,30 @@ struct AppFilesSettings: View {
 
 // MARK: - Settings window (⌘,)
 
+/// Settings window › Ogólne: the computer list, passwords and iMac preparation stay in the main window.
+struct ConfigurationLinkSection: View {
+    @EnvironmentObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Section {
+            LabeledContent {
+                Button {
+                    model.section = .setup
+                    MainWindow.bringToFront(openWindow)
+                } label: {
+                    Label("Otwórz Konfigurację", systemImage: "arrow.up.forward.app")
+                }
+                .help("Pokazuje dział Konfiguracja w głównym oknie")
+            } label: {
+                SettingLabel(title: "Komputery, hasła i przygotowanie iMaców",
+                             caption: "Lista komputerów, hasło administratora i klucz logowania są w głównym oknie, w dziale Konfiguracja",
+                             icon: "desktopcomputer", color: .blue)
+            }
+        }
+    }
+}
+
 enum SettingsTab: String, CaseIterable {
     case general, connection, screens, updates
 }
@@ -1002,7 +1026,7 @@ struct AppSettingsWindow: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            pane { StudentFolderSettings(); AppFilesSettings() }
+            pane { ConfigurationLinkSection(); StudentFolderSettings(); AppFilesSettings() }
                 .tabItem { Label("Ogólne", systemImage: "gearshape") }
                 .tag(SettingsTab.general)
             pane { ConnectionSettings() }

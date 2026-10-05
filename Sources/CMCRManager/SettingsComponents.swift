@@ -80,6 +80,22 @@ struct FormFooter: View {
     }
 }
 
+/// Label of a bordered destructive button: red while the button can be used (a bordered macOS button ignores
+/// the tint), plain grey when disabled.
+struct DestructiveLabel: View {
+    let title: String
+    let icon: String
+    var enabled = true
+
+    var body: some View {
+        if enabled {
+            Label(title, systemImage: icon).foregroundStyle(.red)
+        } else {
+            Label(title, systemImage: icon)
+        }
+    }
+}
+
 /// Status line with a coloured symbol, e.g. "Zapisane w Pęku kluczy".
 struct StatusText: View {
     let text: String

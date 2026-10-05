@@ -29,21 +29,23 @@ struct UpdateBanner: View {
             Button {
                 updater.isSheetPresented = true
             } label: {
-                VStack(alignment: .leading, spacing: 3) {
-                    Label {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: updater.phase == .ready ? "arrow.down.app.fill" : "arrow.down.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("Dostępna nowa wersja \(c.manifest.version)")
-                    } icon: {
-                        Image(systemName: updater.phase == .ready ? "arrow.down.app.fill" : "arrow.down.circle.fill")
-                            .foregroundStyle(Color.accentColor)
+                            .font(.callout.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .font(.callout.weight(.semibold))
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .buttonStyle(.plain)
             .modifier(BannerBackground())
@@ -66,14 +68,13 @@ struct UpdateBanner: View {
     }
 }
 
+/// A tinted card, not Liquid Glass: on macOS 26+ the sidebar itself is glass, and glass must not be stacked on glass.
 private struct BannerBackground: ViewModifier {
     func body(content: Content) -> some View {
-        if #available(macOS 26, *) {
-            content.glassEffect(.regular.tint(Color.accentColor.opacity(0.18)).interactive(),
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        } else {
-            content.background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.accentColor.opacity(0.12)))
-        }
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        content
+            .background(shape.fill(Color.accentColor.opacity(0.12)))
+            .overlay(shape.strokeBorder(Color.accentColor.opacity(0.28)))
     }
 }
 
@@ -320,6 +321,7 @@ struct ReleaseNotesView: View {
 
 struct UpdateSettingsSection: View {
     @ObservedObject private var updater = Updater.shared
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Section {
@@ -327,6 +329,19 @@ struct UpdateSettingsSection: View {
                 Text(updater.currentVersionText).foregroundStyle(.secondary)
             } label: {
                 SettingLabel(title: "Zainstalowana wersja", caption: lastCheckText, icon: "app.badge.checkmark.fill", color: .blue)
+            }
+            if let c = updater.candidate {
+                LabeledContent {
+                    Button("Pokaż szczegóły…") {
+                        MainWindow.bringToFront(openWindow)
+                        updater.isSheetPresented = true
+                    }
+                        .buttonStyle(.borderedProminent)
+                        .help("Pokazuje, co nowego, i pozwala zainstalować uaktualnienie (w głównym oknie)")
+                } label: {
+                    SettingLabel(title: "Dostępna nowa wersja \(c.manifest.version)", caption: "Kliknij, aby zobaczyć zmiany i zainstalować",
+                                 icon: "arrow.down.circle.fill", color: .accentColor)
+                }
             }
             OptionToggle(title: "Sprawdzaj automatycznie", icon: "arrow.triangle.2.circlepath", color: .blue,
                          detail: "Przy uruchomieniu aplikacji i raz dziennie (wydania na GitHubie)",

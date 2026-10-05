@@ -432,9 +432,11 @@ struct ReadinessView: View {
                 }
                 .disabled(model.actionTargets.isEmpty)
             }
-            Divider()
-            Button("Zapomnij klucz hosta (po reinstalacji iMaca)", systemImage: "key.slash") {
-                model.forgetHostKeys(model.selectedMachines)
+            Section("Tylko po reinstalacji lub wymianie iMaca") {
+                Button("Zapomnij zapamiętany identyfikator iMaca", systemImage: "key.slash") {
+                    model.forgetHostKeys(model.selectedMachines)
+                }
+                .help("Usuwa z tego Maca zapamiętany klucz hosta SSH zaznaczonych iMaców – przy następnym połączeniu zostanie zapamiętany nowy.")
             }
         } label: {
             Label("Szybkie naprawy", systemImage: "bandage")
@@ -776,9 +778,9 @@ struct ReadinessCellDetail: View {
                 model.forgetHostKeys([machine])
                 onDone()
             } label: {
-                Label("Zapomnij klucz hosta", systemImage: "key.slash")
+                DestructiveLabel(title: "Zapomnij identyfikator iMaca", icon: "key.slash")
             }
-            .help("Tylko jeśli ten iMac był reinstalowany lub wymieniony – inaczej zmieniony klucz może oznaczać, że w sieci podszywa się pod niego inne urządzenie.")
+            .help("Usuwa zapamiętany klucz hosta SSH. Tylko jeśli ten iMac był reinstalowany lub wymieniony – inaczej zmieniony identyfikator może oznaczać, że w sieci podszywa się pod niego inne urządzenie.")
         case (.ssh, .problem) where connectionFailure == .authFailed:
             Button(action: onPassword) {
                 Label("Hasło tego komputera…", systemImage: "key.fill")
