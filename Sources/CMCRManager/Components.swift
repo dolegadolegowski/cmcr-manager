@@ -26,6 +26,30 @@ extension Reachability {
         case .unknown: return "circle.dashed"
         }
     }
+
+    /// State in plain words for the window (the CLI keeps the short `label`).
+    var displayName: String {
+        switch self {
+        case .online: return "Włączony"
+        case .offline: return "Niedostępny"
+        case .authFailed: return "Błąd logowania"
+        case .error: return "Błąd połączenia"
+        case .checking: return "Sprawdzanie…"
+        case .unknown: return "Nie sprawdzono"
+        }
+    }
+
+    /// One sentence explaining the state, for tooltips.
+    var explanation: String {
+        switch self {
+        case .online: return "Komputer jest włączony i odpowiada."
+        case .offline: return "Komputer nie odpowiada – jest wyłączony, uśpiony albo poza siecią."
+        case .authFailed: return "Komputer odpowiada, ale nie przyjął hasła ani klucza. Sprawdź hasło w Konfiguracji."
+        case .error: return "Nie udało się sprawdzić komputera."
+        case .checking: return "Trwa sprawdzanie, czy komputer odpowiada."
+        case .unknown: return "Stan nie był jeszcze sprawdzany."
+        }
+    }
 }
 
 /// Status of a Mac: a coloured SF Symbol (or a spinner while checking) with an accessibility label.
@@ -43,9 +67,9 @@ struct StatusDot: View {
             }
         }
         .frame(width: 16, height: 16)
-        .help(reachability.label.capitalizedFirst)
+        .help("\(reachability.displayName). \(reachability.explanation)")
         .accessibilityElement()
-        .accessibilityLabel("Stan: \(reachability.label)")
+        .accessibilityLabel("Stan: \(reachability.displayName)")
     }
 }
 
@@ -53,7 +77,7 @@ extension String {
     var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }
 
-/// Header shown on every action page: which Macs the action will target.
+/// Header shown on every action page: the section's name, which Macs the action will reach and a short hint.
 struct TargetHeader: View {
     @EnvironmentObject var model: AppModel
     let section: AppSection
@@ -62,12 +86,12 @@ struct TargetHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .center, spacing: 16) {
                     title
-                    Spacer(minLength: 16)
+                    Spacer(minLength: 0)
                     TargetSummary()
                 }
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     title
                     TargetSummary()
                 }
@@ -88,10 +112,12 @@ struct TargetHeader: View {
         Label(section.title, systemImage: section.icon)
             .font(.title2.weight(.semibold))
             .lineLimit(1)
+            .fixedSize()
     }
 }
 
-/// "Cel: 6 komputerów" – counts only the Macs an action will really reach, names in the tooltip.
+/// "Działanie obejmie 6 komputerów" – counts only the Macs an action will really reach (the same number the
+/// action buttons use), names in the tooltip.
 struct TargetSummary: View {
     @EnvironmentObject var model: AppModel
 
@@ -99,48 +125,63 @@ struct TargetSummary: View {
         let selected = model.selectedMachines
         let unreachable = selected.filter { model.knownReachability($0).isUnreachable }
         if selected.isEmpty {
-            Label("Zaznacz komputery na liście", systemImage: "hand.point.left")
+            Label("Zaznacz komputery na liście obok", systemImage: "hand.point.left.fill")
+                .font(.callout)
                 .foregroundStyle(.secondary)
-                .font(.callout)
-                .symbolRenderingMode(.multicolor)
+                .fixedSize()
         } else {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Label {
-                    Text(summary(selected: selected.count, unreachable: unreachable.count))
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(Self.headline(reaching: model.actionTargets.count))
+                            .font(.callout.weight(.medium))
+                        if let note = note(selected: selected.count, unreachable: unreachable.count) {
+                            Text(note)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .lineLimit(1)
                 } icon: {
-                    Image(systemName: "scope")
+                    Image(systemName: "desktopcomputer")
+                        .foregroundStyle(Color.accentColor)
                 }
-                .font(.callout)
                 .help(names(selected))
                 if !unreachable.isEmpty {
                     Toggle("Pomiń niedostępne", isOn: $model.skipUnreachable)
                         .toggleStyle(.checkbox)
                         .controlSize(.small)
-                        .help("Niedostępne teraz: \(unreachable.map(\.name).joined(separator: ", ")). "
-                              + "Pominięte komputery pojawią się w wynikach – można później powtórzyć na nich operację.")
+                        .help("Niedostępne teraz: \(unreachable.map(\.name).joined(separator: ", ")). Pominięte "
+                              + "komputery pojawią się w wynikach – później można na nich powtórzyć działanie.")
                 }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .fixedSize()
         }
     }
 
-    func summary(selected: Int, unreachable: Int) -> String {
-        guard unreachable > 0 else { return "Cel: \(Polish.computers(selected))" }
-        if model.skipUnreachable {
-            return "Cel: \(Polish.computers(selected - unreachable)) (pominięte niedostępne: \(unreachable))"
-        }
-        return "Cel: \(Polish.computers(selected)), w tym niedostępne: \(unreachable)"
+    static func headline(reaching n: Int) -> String {
+        n == 0 ? "Żaden zaznaczony komputer nie odpowiada" : "Działanie obejmie \(Polish.computers(n))"
+    }
+
+    func note(selected: Int, unreachable: Int) -> String? {
+        guard unreachable > 0 else { return nil }
+        let count = Polish.count(unreachable, "niedostępny", "niedostępne", "niedostępnych")
+        return model.skipUnreachable ? "Pominięte: \(count) z \(selected) \(selected == 1 ? "zaznaczonego" : "zaznaczonych")"
+                                     : "W tym \(count) – trzeba będzie poczekać na \(unreachable == 1 ? "jego" : "ich") odpowiedź"
     }
 
     func names(_ machines: [Machine]) -> String {
         let list = machines.map { m in
-            model.willSkip(m) ? "\(m.name) (pominięty – \(model.knownReachability(m).label))" : m.name
+            model.willSkip(m) ? "\(m.name) (pominięty – \(model.knownReachability(m).displayName.lowercased()))" : m.name
         }
-        return list.joined(separator: ", ")
+        return "Zaznaczone: " + list.joined(separator: ", ")
     }
 }
 
+/// A titled group of controls on an action page.
 struct SectionBox<Content: View>: View {
     let title: String
     let icon: String
@@ -150,15 +191,18 @@ struct SectionBox<Content: View>: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(6)
+                .padding(8)
         } label: {
-            Label(title, systemImage: icon).font(.headline)
+            Label(title, systemImage: icon)
+                .font(.headline)
+                .padding(.bottom, 2)
         }
     }
 }
 
 /// Action button for the selected Macs. Disabled when nothing reachable is selected; the tooltip says on how
-/// many Macs it will run (unreachable ones are skipped unless `includeUnreachable`, e.g. Wake-on-LAN).
+/// many Macs it will run (unreachable ones are skipped unless `includeUnreachable`, e.g. Wake-on-LAN) – the
+/// same count as `TargetSummary`.
 struct TargetButton: View {
     @EnvironmentObject var model: AppModel
     let title: String
@@ -171,23 +215,30 @@ struct TargetButton: View {
     var body: some View {
         let selected = model.selectedMachines.count
         let count = includeUnreachable ? selected : model.actionTargets.count
+        let destructive = role == .destructive
         let button = Button(role: role, action: action) {
-            Label(title, systemImage: icon)
+            let label = Label(title, systemImage: icon).labelStyle(.titleAndIcon)
+            if destructive && !prominent && count > 0 {
+                // A bordered macOS button ignores the tint; red text marks the dangerous ones.
+                label.foregroundStyle(.red)
+            } else {
+                label
+            }
         }
         .disabled(count == 0)
         .help(help(selected: selected, count: count))
         if prominent {
-            button.buttonStyle(.borderedProminent)
+            button.buttonStyle(.borderedProminent).tint(destructive ? .red : nil)
         } else {
             button.buttonStyle(.bordered)
         }
     }
 
     func help(selected: Int, count: Int) -> String {
-        if selected == 0 { return "Najpierw zaznacz komputery na liście." }
+        if selected == 0 { return "Najpierw zaznacz komputery na liście obok." }
         if count == 0 {
-            return "Wszystkie zaznaczone komputery były niedostępne przy ostatnim sprawdzeniu. "
-                + "Odśwież stan komputerów albo wyłącz „Pomiń niedostępne”."
+            return "Żaden z zaznaczonych komputerów nie odpowiadał przy ostatnim sprawdzeniu. "
+                + "Kliknij „Odśwież” albo wyłącz „Pomiń niedostępne”."
         }
         if count == selected { return "\(title) – \(Polish.onComputers(count))." }
         return "\(title) – \(Polish.onComputers(count)) z \(selected) zaznaczonych (niedostępne zostaną pominięte)."
@@ -279,26 +330,32 @@ struct ConfirmSheet: View {
                     .foregroundStyle(request.destructive ? Color.orange : Color.accentColor)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(request.title).font(.headline)
+                    Text(request.title)
+                        .font(.title3.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(request.message)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("Dotyczy: \(Polish.computers(effective.count))")
+                Text("Działanie obejmie \(Polish.computers(effective.count)):")
                     .font(.subheadline.weight(.semibold))
                 List(targets) { m in row(m) }
                     .listStyle(.bordered(alternatesRowBackgrounds: true))
-                    .frame(height: min(220, CGFloat(targets.count) * 26 + 10))
+                    .frame(height: min(220, CGFloat(targets.count) * 24 + 6))
             }
-            if !withUser.isEmpty {
-                Toggle("Pomiń komputery z zalogowanym użytkownikiem (\(withUser.count))", isOn: $skipLoggedIn)
-                    .help(withUser.map(\.name).joined(separator: ", "))
-            }
-            if needsAcknowledgement {
-                Toggle("Rozumiem – operacja obejmie \(Polish.computers(effective.count)) i nie da się jej cofnąć",
-                       isOn: $acknowledged)
+            if !withUser.isEmpty || needsAcknowledgement {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !withUser.isEmpty {
+                        Toggle("Pomiń komputery, przy których ktoś jest zalogowany (\(withUser.count))", isOn: $skipLoggedIn)
+                            .help("Zalogowani teraz: " + withUser.map(\.name).joined(separator: ", "))
+                    }
+                    if needsAcknowledgement {
+                        Toggle("Rozumiem – działanie obejmie \(Polish.computers(effective.count)) i nie da się go cofnąć",
+                               isOn: $acknowledged)
+                    }
+                }
             }
             HStack {
                 Spacer()
@@ -306,6 +363,7 @@ struct ConfirmSheet: View {
                     .keyboardShortcut(.cancelAction)
                 confirmButton
             }
+            .controlSize(.large)
         }
         .padding(20)
         .frame(width: 500)
@@ -350,7 +408,7 @@ struct ConfirmSheet: View {
                 Label("nie wiadomo, czy ktoś jest zalogowany", systemImage: "questionmark.circle")
                     .foregroundStyle(.secondary)
                     .font(.callout)
-                    .help("Stan komputera: \(reachability.label). Odśwież stan komputerów, aby to sprawdzić.")
+                    .help("Stan komputera: \(reachability.displayName.lowercased()). Odśwież stan komputerów, aby to sprawdzić.")
             }
         }
         .opacity(skipped ? 0.6 : 1)
@@ -417,27 +475,48 @@ enum JobDurationText {
     }
 }
 
-/// Counts of a batch: ✓ 12  ✗ 2  ⏭ 1.
+/// Counts of a batch: "✓ Gotowe: 12  ✗ Błędy: 2", or only the symbols and numbers where there is no room.
 struct BatchCounts: View {
     @ObservedObject var batch: Batch
 
     var body: some View {
-        HStack(spacing: 8) {
-            if !batch.finished {
-                Text("\(batch.completed)/\(batch.jobs.count)").monospacedDigit().foregroundStyle(.secondary)
-            }
-            count(batch.succeeded, .succeeded, "Gotowe")
-            count(batch.failed, .failed, "Błędy")
-            count(batch.cancelled, .cancelled, "Przerwane")
-            count(batch.skipped, .skipped, "Pominięte")
+        JobCounts(succeeded: batch.succeeded, failed: batch.failed, cancelled: batch.cancelled, skipped: batch.skipped,
+                  progress: batch.finished ? nil : "\(batch.completed)/\(batch.jobs.count)")
+    }
+}
+
+/// Results per state of a running, finished or saved batch, in words when there is room.
+struct JobCounts: View {
+    var succeeded = 0
+    var failed = 0
+    var cancelled = 0
+    var skipped = 0
+    /// "3/12" while the batch runs.
+    var progress: String?
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            counts(words: true)
+            counts(words: false)
         }
-        .font(.callout)
+    }
+
+    func counts(words: Bool) -> some View {
+        HStack(spacing: words ? 10 : 8) {
+            if let progress {
+                Text(progress).monospacedDigit().foregroundStyle(.secondary)
+            }
+            count(succeeded, .succeeded, "Gotowe", words)
+            count(failed, .failed, "Błędy", words)
+            count(cancelled, .cancelled, "Przerwane", words)
+            count(skipped, .skipped, "Pominięte", words)
+        }
         .fixedSize()
     }
 
-    @ViewBuilder func count(_ n: Int, _ state: Job.State, _ label: String) -> some View {
+    @ViewBuilder func count(_ n: Int, _ state: Job.State, _ label: String, _ words: Bool) -> some View {
         if n > 0 {
-            Label("\(n)", systemImage: state.symbol)
+            Label(words ? "\(label): \(n)" : "\(n)", systemImage: state.symbol)
                 .foregroundStyle(state.color)
                 .monospacedDigit()
                 .help("\(label): \(n)")
@@ -454,9 +533,9 @@ struct BatchActions: View {
     var body: some View {
         if !batch.finished {
             Button(role: .destructive) { batch.cancel() } label: {
-                Label("Anuluj", systemImage: "stop.circle")
+                Label("Przerwij", systemImage: "stop.circle")
             }
-            .help("Przerywa operację na wszystkich komputerach tej partii")
+            .help("Przerywa to działanie na wszystkich komputerach")
         } else {
             let retry = batch.retryableMachines
             if !retry.isEmpty, batch.rerun != nil {
@@ -465,7 +544,7 @@ struct BatchActions: View {
                     Label("Powtórz na nieudanych (\(retry.count))\(batch.confirmation == nil ? "" : "…")",
                           systemImage: "arrow.counterclockwise")
                 }
-                .help("Uruchamia to samo ponownie \(Polish.onComputers(retry.count)): "
+                .help("Uruchamia to samo jeszcze raz \(Polish.onComputers(retry.count)): "
                       + retry.map(\.name).joined(separator: ", ")
                       + (batch.confirmation == nil ? "" : ". Przed uruchomieniem trzeba to ponownie potwierdzić."))
             }
@@ -473,7 +552,7 @@ struct BatchActions: View {
                 Button { model.selectProblems(of: batch) } label: {
                     Label("Zaznacz nieudane", systemImage: "checklist")
                 }
-                .help("Zaznacza na liście komputery, na których operacja się nie udała lub została pominięta")
+                .help("Zaznacza na liście komputery, na których działanie się nie udało lub zostało pominięte")
             }
         }
     }
@@ -524,26 +603,25 @@ struct BatchResultsView: View {
     }
 
     @ViewBuilder var controls: some View {
-        BatchCounts(batch: batch)
+        BatchCounts(batch: batch).font(.callout)
         BatchActions(batch: batch)
             .controlSize(.small)
+        let allExpanded = expanded.count == batch.jobs.count
+        Button {
+            expanded = allExpanded ? [] : Set(batch.jobs.map(\.id))
+        } label: {
+            Label(allExpanded ? "Zwiń wszystkie" : "Rozwiń wszystkie",
+                  systemImage: allExpanded ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
+        }
+        .controlSize(.small)
+        .help(allExpanded ? "Zwiń wyniki wszystkich komputerów" : "Pokaż pełne wyniki wszystkich komputerów")
         Button {
             model.showJobs(batch.id)
         } label: {
-            Label("Pokaż w Zadaniach", systemImage: "list.bullet.rectangle")
+            Label("Pokaż w Zadaniach", systemImage: AppSection.jobs.icon)
         }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .help("Otwiera tę operację w sekcji Zadania (pełne wyniki, eksport, grupowanie)")
-        Button {
-            if expanded.count == batch.jobs.count { expanded = [] } else { expanded = Set(batch.jobs.map(\.id)) }
-        } label: {
-            Label(expanded.count == batch.jobs.count ? "Zwiń wszystkie" : "Rozwiń wszystkie",
-                  systemImage: expanded.count == batch.jobs.count ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
-        }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .help(expanded.count == batch.jobs.count ? "Zwiń wyniki wszystkich komputerów" : "Rozwiń wyniki wszystkich komputerów")
+        .controlSize(.small)
+        .help("Otwiera to działanie w dziale Zadania: pełne wyniki, grupowanie takich samych wyników, eksport")
     }
 }
 
@@ -653,7 +731,7 @@ struct LogTextView: NSViewRepresentable {
         tv.textContainerInset = NSSize(width: 4, height: 6)
         tv.drawsBackground = true
         tv.backgroundColor = .textBackgroundColor
-        tv.setAccessibilityLabel("Wynik operacji")
+        tv.setAccessibilityLabel("Wynik działania")
         scroll.borderType = .noBorder
         scroll.wantsLayer = true
         scroll.layer?.cornerRadius = 6
@@ -725,7 +803,7 @@ struct LastBatchView: View {
     var body: some View {
         if let batch = model.lastBatch[section] {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Wynik ostatniej operacji").font(.headline)
+                Text("Wynik ostatniego działania").font(.headline)
                 BatchResultsView(batch: batch)
             }
             .id(batch.id)
@@ -770,19 +848,29 @@ struct FileListEditor: View {
     @ViewState private var targeted = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            VStack(alignment: .leading, spacing: 2) {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 if items.isEmpty {
-                    Text(placeholder)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                    VStack(spacing: 6) {
+                        Image(systemName: "arrow.down.doc")
+                            .font(.title2)
+                            .foregroundStyle(targeted ? Color.accentColor : Color.secondary)
+                            .accessibilityHidden(true)
+                        Text(placeholder)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 70)
                 } else {
                     ForEach(items, id: \.self) { url in
-                        HStack {
+                        HStack(spacing: 8) {
                             Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
                                 .resizable()
-                                .frame(width: 18, height: 18)
+                                .frame(width: 20, height: 20)
+                                .accessibilityHidden(true)
                             Text(url.lastPathComponent)
+                                .lineLimit(1)
                             Text(url.deletingLastPathComponent().path)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -795,15 +883,17 @@ struct FileListEditor: View {
                             }
                             .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
                             .help("Usuń \(url.lastPathComponent) z listy (plik na dysku zostaje)")
                         }
                     }
                 }
             }
-            .padding(8)
+            .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5]))
+            .background(shape.fill(targeted ? Color.accentColor.opacity(0.08) : Color.clear))
+            .overlay(shape
+                .strokeBorder(style: StrokeStyle(lineWidth: targeted ? 2 : 1, dash: [5]))
                 .foregroundStyle(targeted ? Color.accentColor : Color.secondary.opacity(0.5)))
             .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
                 for p in providers {
@@ -821,6 +911,7 @@ struct FileListEditor: View {
                 } label: {
                     Label("Dodaj…", systemImage: "plus")
                 }
+                .help("Wybierz pliki lub foldery z tego Maca")
                 Button {
                     items.removeAll()
                 } label: {
@@ -828,6 +919,12 @@ struct FileListEditor: View {
                 }
                 .disabled(items.isEmpty)
                 .help("Usuwa wszystkie pozycje z listy (pliki na dysku zostają)")
+                Spacer()
+                if !items.isEmpty {
+                    Text("Na liście: \(Polish.count(items.count, "pozycja", "pozycje", "pozycji"))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }

@@ -48,7 +48,7 @@ struct ActionToastOverlay: View {
             if let toast = model.toast {
                 ActionToastView(toast: toast)
                     .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
-                    .padding(.bottom, 18)
+                    .padding(.bottom, 36)
             }
         }
         .animation(reduceMotion ? nil : .spring(duration: 0.3), value: model.toast)
@@ -69,11 +69,11 @@ private struct ActionToastView: View {
                 .lineLimit(2)
                 .frame(maxWidth: 460, alignment: .leading)
             if let id = toast.batchID, model.section != .jobs {
-                Button("Pokaż") {
+                Button("Pokaż wyniki") {
                     model.toast = nil
                     model.showJobs(id)
                 }
-                .help("Otwiera wyniki w sekcji Zadania")
+                .help("Otwiera wyniki z każdego komputera w dziale Zadania")
             }
             Button {
                 model.toast = nil
@@ -113,26 +113,18 @@ struct ActivityToolbarButton: View {
             showing.toggle()
         } label: {
             if running > 0 {
-                Label {
-                    Text("Trwające zadania: \(running)")
-                } icon: {
-                    HStack(spacing: 4) {
-                        ProgressView().controlSize(.small)
-                        Text("\(running)").monospacedDigit()
-                    }
-                }
-                .labelStyle(.iconOnly)
+                Label("W toku: \(running)", systemImage: "arrow.triangle.2.circlepath")
             } else {
-                Label("Zadania", systemImage: "list.bullet.rectangle")
+                Label("Aktywność", systemImage: "list.bullet.rectangle")
             }
         }
-        .help(running > 0 ? "W toku: \(Polish.jobs(running)). Kliknij, aby zobaczyć postęp lub anulować."
-                          : "Ostatnie operacje")
+        .help(running > 0 ? "W toku: \(Polish.jobs(running)). Kliknij, aby zobaczyć postęp lub przerwać."
+                          : "Ostatnie działania i ich wyniki")
+        .accessibilityLabel(running > 0 ? "Działania w toku: \(running)" : "Ostatnie działania")
         .popover(isPresented: $showing, arrowEdge: .bottom) {
             ActivityPopover(close: { showing = false })
                 .environmentObject(model)
         }
-        .disabled(model.batches.isEmpty)
     }
 }
 
@@ -142,24 +134,35 @@ private struct ActivityPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Operacje").font(.headline).padding([.horizontal, .top], 14).padding(.bottom, 6)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(model.batches.prefix(8)) { batch in
-                        ActivityRow(batch: batch) {
-                            close()
-                            model.showJobs(batch.id)
+            Text("Ostatnie działania").font(.headline).padding([.horizontal, .top], 14).padding(.bottom, 6)
+            if model.batches.isEmpty {
+                Text("W tej sesji nie uruchomiono jeszcze żadnego działania. Wcześniejsze wyniki są w historii zadań.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(model.batches.prefix(8)) { batch in
+                            ActivityRow(batch: batch) {
+                                close()
+                                model.showJobs(batch.id)
+                            }
+                            Divider()
                         }
-                        Divider()
                     }
                 }
+                .frame(maxHeight: 360)
             }
-            .frame(maxHeight: 360)
             HStack {
                 Spacer()
-                Button("Wszystkie zadania") {
+                Button {
                     close()
                     model.showJobs(nil)
+                } label: {
+                    Label("Otwórz Zadania", systemImage: AppSection.jobs.icon)
                 }
             }
             .padding(10)
@@ -187,11 +190,11 @@ private struct ActivityRow: View {
             Spacer()
             if !batch.finished {
                 Button(role: .destructive) { batch.cancel() } label: {
-                    Label("Anuluj", systemImage: "stop.circle")
+                    Label("Przerwij", systemImage: "stop.circle")
                 }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
-                .help("Anuluj „\(batch.title)”")
+                .help("Przerwij „\(batch.title)”")
             }
             Button(action: open) {
                 Label("Pokaż", systemImage: "chevron.right")
@@ -269,25 +272,64 @@ struct PasswordBanner: View {
     @ViewState private var editing = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "key.fill")
-                .foregroundStyle(.orange)
-                .accessibilityHidden(true)
-            Text("Brak hasła administratora – instalacje, aktualizacje i inne operacje wymagające uprawnień się nie powiodą.")
-                .font(.callout)
-                .lineLimit(2)
-            Spacer(minLength: 8)
-            Button("Ustaw hasło…") { editing = true }
-                .controlSize(.small)
+        // Side by side when there is room; in a narrow column (e.g. next to the inspector) the button goes below.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                icon
+                texts.frame(minWidth: 300, idealWidth: 380, maxWidth: .infinity, alignment: .leading)
+                button
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 10) {
+                    icon
+                    texts
+                }
+                button.padding(.leading, 30)
+            }
         }
-        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(Color.orange.opacity(0.12))
         .overlay(alignment: .bottom) { Divider() }
+        .accessibilityElement(children: .contain)
         .sheet(isPresented: $editing) {
             MissingPasswordSheet().environmentObject(model)
         }
     }
+
+    var icon: some View {
+        Image(systemName: "exclamationmark.triangle.fill")
+            .font(.title3)
+            .foregroundStyle(.orange)
+            .accessibilityHidden(true)
+    }
+
+    var texts: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text("Nie zapisano hasła administratora")
+                .font(.callout.weight(.semibold))
+            Text("Bez niego instalowanie programów, aktualizacje i inne działania wymagające uprawnień administratora nie zadziałają.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    var button: some View {
+        Button {
+            editing = true
+        } label: {
+            Label("Wpisz hasło…", systemImage: "key.fill")
+        }
+        .fixedSize()
+        .help("Zapisz hasło kont administratorów (imacNN) w Pęku kluczy tego Maca")
+    }
+
+    /// Sections where the window does not put the banner above the page: Konfiguracja asks for the password
+    /// itself, and the dashboard shows it above its table only (not across the inspector).
+    static let notAbove: Set<AppSection> = [.setup, .dashboard]
 
     static func isNeeded(_ model: AppModel) -> Bool {
         !model.hasSharedPassword && (ProcessInfo.processInfo.environment["CMCR_PASSWORD"] ?? "").isEmpty
