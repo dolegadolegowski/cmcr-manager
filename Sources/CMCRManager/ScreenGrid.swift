@@ -115,6 +115,12 @@ struct ScreenGrid: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: zoomed)
+        .task {
+            // Start-up hook for scripted UI checks: CMCR_ZOOM_FIRST_SCREEN=1 enlarges the first screen.
+            if ProcessInfo.processInfo.environment["CMCR_ZOOM_FIRST_SCREEN"] == "1", let first = machines.first {
+                zoom(first.id)
+            }
+        }
         .onChange(of: machines.map(\.id)) { _, ids in
             if let z = zoomed, !ids.contains(z) { zoomed = nil }
         }
@@ -213,20 +219,25 @@ struct ZoomedScreen: View {
     var body: some View {
         let actions = ScreenActions(model: model, center: center, openWindow: openWindow)
         VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                ScreenTitle(machine: machine, feed: feed)
-                    .layoutPriority(1)
-                Spacer(minLength: 12)
-                Text("\(position.index) z \(position.count)")
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-                ViewThatFits(in: .horizontal) {
+            // Titled buttons next to the name, under it in narrower windows, icons only as the last resort.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    heading
                     buttons(actions).labelStyle(.titleAndIcon)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    heading
+                    HStack {
+                        Spacer(minLength: 0)
+                        buttons(actions).labelStyle(.titleAndIcon)
+                    }
+                }
+                HStack(spacing: 10) {
+                    heading
                     buttons(actions).labelStyle(.iconOnly)
                 }
-                .popover(isPresented: $composing, arrowEdge: .bottom) { MessageComposer(targets: [machine]) }
             }
+            .popover(isPresented: $composing, arrowEdge: .bottom) { MessageComposer(targets: [machine]) }
             .controlSize(.regular)
             ScreenPicture(feed: feed, large: true)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -237,7 +248,20 @@ struct ZoomedScreen: View {
                 .onTapGesture(count: 2, perform: onClose)
         }
         .padding(14)
-        .background(.regularMaterial)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var heading: some View {
+        HStack(spacing: 10) {
+            ScreenTitle(machine: machine, feed: feed)
+                .layoutPriority(1)
+            Spacer(minLength: 12)
+            Text("\(position.index) z \(position.count)")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .help("Który to komputer z widocznych; strzałki przechodzą do kolejnych")
+        }
     }
 
     private func buttons(_ actions: ScreenActions) -> some View {
