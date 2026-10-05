@@ -101,10 +101,7 @@ struct ContentView: View {
         }
         .overlay(alignment: .bottom) { ActionToastOverlay() }
         .confirmation($model.retryConfirmation)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) { OpenScreenWallButton() }
-            ToolbarItem(placement: .primaryAction) { ActivityToolbarButton() }
-        }
+        .background(ToolbarTitlesShown())
         .updaterUI(model: model)
         .task {
             ClassroomModel.shared.attach(model)
@@ -280,16 +277,6 @@ struct MachineListView: View {
                 } else {
                     HostGroups.add(name, to: n.ids, in: &model.machines)
                 }
-            }
-        }
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    model.refreshStatus()
-                } label: {
-                    Label("Odśwież stan", systemImage: "arrow.clockwise")
-                }
-                .help("Odśwież stan wszystkich komputerów (⌘R)")
             }
         }
     }
@@ -668,6 +655,8 @@ struct DetailView: View {
             }
         }
         .navigationTitle(model.section?.title ?? "CMCR Manager")
+        // Declared after the section's own items, so the window-wide ones stay at the trailing end.
+        .overlay { Color.clear.allowsHitTesting(false).toolbar { MainToolbar() } }
     }
 }
 

@@ -62,37 +62,15 @@ struct DashboardView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                quickActions
-            }
-            ToolbarItemGroup {
-                Menu {
-                    Button {
-                        classroom.exportInventory(model)
-                    } label: {
-                        Label("Eksportuj raport CSV…", systemImage: "tablecells")
-                    }
-                    Button {
-                        showVersions = true
-                    } label: {
-                        Label("Wersje aplikacji…", systemImage: "app.badge.checkmark")
-                    }
-                } label: {
-                    Label("Raporty", systemImage: "doc.text.magnifyingglass")
-                }
-                .help("Raport o komputerach w pliku CSV i porównanie wersji aplikacji")
-                Button {
-                    showRename = true
-                } label: {
-                    Label("Zmień nazwy", systemImage: "character.cursor.ibeam")
-                }
-                .disabled(model.selection.isEmpty)
-                .help("Nadaj zaznaczonym komputerom nazwy (także w sieci .local)")
+                screenSharingButton
                 Button {
                     showInspector.toggle()
                 } label: {
-                    Label("Szczegóły", systemImage: "sidebar.trailing")
+                    Label("Szczegóły", systemImage: "info.circle")
                 }
-                .help(showInspector ? "Ukryj szczegóły komputera" : "Pokaż szczegóły zaznaczonego komputera")
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help(showInspector ? "Ukryj panel szczegółów (⌥⌘I)" : "Pokaż szczegóły i notatki zaznaczonego komputera (⌥⌘I)")
+                moreMenu
             }
         }
         .sheet(isPresented: $showRename) { RenameComputersSheet() }
@@ -101,43 +79,66 @@ struct DashboardView: View {
         .onChange(of: columns) { _, new in saveColumns(new) }
     }
 
-    // MARK: Quick actions
+    // MARK: Toolbar
 
     /// Terminal and Screen Sharing open one window per Mac, so they act on at most this many selected Macs.
     static let windowLimit = 4
 
-    @ViewBuilder var quickActions: some View {
+    var windowTargets: (machines: [Machine], note: String) {
         let selected = model.selectedMachines
-        let windows = Array(selected.prefix(Self.windowLimit))
-        let more = selected.count > Self.windowLimit ? " (pierwsze \(Self.windowLimit) z \(selected.count))" : ""
-        Button {
-            model.refreshStatus(selected)
+        let note = selected.count > Self.windowLimit ? " Otworzy się okno dla pierwszych \(Self.windowLimit) z \(selected.count) zaznaczonych." : ""
+        return (Array(selected.prefix(Self.windowLimit)), note)
+    }
+
+    var screenSharingButton: some View {
+        let targets = windowTargets
+        return Button {
+            targets.machines.forEach(model.openScreenSharing)
         } label: {
-            Label("Odśwież zaznaczone", systemImage: "arrow.clockwise")
+            Label("Steruj ekranem", systemImage: "rectangle.on.rectangle")
         }
-        .disabled(selected.isEmpty)
-        .help("Sprawdź stan tylko zaznaczonych komputerów")
-        Button {
-            windows.forEach(model.openTerminal)
+        .disabled(targets.machines.isEmpty)
+        .help("Przejmij mysz i klawiaturę zaznaczonego komputera w aplikacji Udostępnianie ekranu.\(targets.note)")
+    }
+
+    var moreMenu: some View {
+        let targets = windowTargets
+        return Menu {
+            Section("Zaznaczone komputery") {
+                Button {
+                    model.section = .screens
+                } label: {
+                    Label("Podgląd ekranów", systemImage: "eye")
+                }
+                Button {
+                    targets.machines.forEach(model.openTerminal)
+                } label: {
+                    Label("Otwórz w Terminalu (dla zaawansowanych)", systemImage: "terminal")
+                }
+                .help("Sesja SSH w aplikacji Terminal.\(targets.note)")
+                Button {
+                    showRename = true
+                } label: {
+                    Label("Zmień nazwy komputerów…", systemImage: "pencil")
+                }
+            }
+            .disabled(model.selection.isEmpty)
+            Section("Raporty") {
+                Button {
+                    classroom.exportInventory(model)
+                } label: {
+                    Label("Zapisz raport o komputerach (CSV)…", systemImage: "tablecells")
+                }
+                Button {
+                    showVersions = true
+                } label: {
+                    Label("Porównaj wersje aplikacji…", systemImage: "app.badge.checkmark")
+                }
+            }
         } label: {
-            Label("Terminal SSH", systemImage: "terminal")
+            Label("Więcej", systemImage: "ellipsis.circle")
         }
-        .disabled(selected.isEmpty)
-        .help("Otwórz sesję SSH w Terminalu dla zaznaczonych komputerów\(more)")
-        Button {
-            windows.forEach(model.openScreenSharing)
-        } label: {
-            Label("Udostępnianie ekranu", systemImage: "rectangle.on.rectangle")
-        }
-        .disabled(selected.isEmpty)
-        .help("Przejmij ekran w aplikacji Udostępnianie ekranu (VNC)\(more)")
-        Button {
-            model.section = .screens
-        } label: {
-            Label("Podgląd ekranów", systemImage: "eye")
-        }
-        .disabled(selected.isEmpty)
-        .help("Pokaż zrzuty ekranów zaznaczonych komputerów")
+        .help("Więcej działań: Terminal, zmiana nazw komputerów, raporty")
     }
 
     // MARK: Tiles

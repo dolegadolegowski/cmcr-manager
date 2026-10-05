@@ -26,6 +26,30 @@ extension Reachability {
         case .unknown: return "circle.dashed"
         }
     }
+
+    /// State in plain words for the window (the CLI keeps the short `label`).
+    var displayName: String {
+        switch self {
+        case .online: return "Włączony"
+        case .offline: return "Niedostępny"
+        case .authFailed: return "Błąd logowania"
+        case .error: return "Błąd połączenia"
+        case .checking: return "Sprawdzanie…"
+        case .unknown: return "Nie sprawdzono"
+        }
+    }
+
+    /// One sentence explaining the state, for tooltips.
+    var explanation: String {
+        switch self {
+        case .online: return "Komputer jest włączony i odpowiada."
+        case .offline: return "Komputer nie odpowiada – jest wyłączony, uśpiony albo poza siecią."
+        case .authFailed: return "Komputer odpowiada, ale nie przyjął hasła ani klucza. Sprawdź hasło w Konfiguracji."
+        case .error: return "Nie udało się sprawdzić komputera."
+        case .checking: return "Trwa sprawdzanie, czy komputer odpowiada."
+        case .unknown: return "Stan nie był jeszcze sprawdzany."
+        }
+    }
 }
 
 /// Status of a Mac: a coloured SF Symbol (or a spinner while checking) with an accessibility label.
@@ -43,9 +67,9 @@ struct StatusDot: View {
             }
         }
         .frame(width: 16, height: 16)
-        .help(reachability.label.capitalizedFirst)
+        .help("\(reachability.displayName). \(reachability.explanation)")
         .accessibilityElement()
-        .accessibilityLabel("Stan: \(reachability.label)")
+        .accessibilityLabel("Stan: \(reachability.displayName)")
     }
 }
 
@@ -53,7 +77,7 @@ extension String {
     var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }
 
-/// Header shown on every action page: which Macs the action will target.
+/// Header shown on every action page: the section's name, which Macs the action will reach and a short hint.
 struct TargetHeader: View {
     @EnvironmentObject var model: AppModel
     let section: AppSection
@@ -62,12 +86,12 @@ struct TargetHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .center, spacing: 16) {
                     title
-                    Spacer(minLength: 16)
+                    Spacer(minLength: 0)
                     TargetSummary()
                 }
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     title
                     TargetSummary()
                 }
@@ -88,10 +112,12 @@ struct TargetHeader: View {
         Label(section.title, systemImage: section.icon)
             .font(.title2.weight(.semibold))
             .lineLimit(1)
+            .fixedSize()
     }
 }
 
-/// "Cel: 6 komputerów" – counts only the Macs an action will really reach, names in the tooltip.
+/// "Działanie obejmie 6 komputerów" – counts only the Macs an action will really reach (the same number the
+/// action buttons use), names in the tooltip.
 struct TargetSummary: View {
     @EnvironmentObject var model: AppModel
 
@@ -99,48 +125,63 @@ struct TargetSummary: View {
         let selected = model.selectedMachines
         let unreachable = selected.filter { model.knownReachability($0).isUnreachable }
         if selected.isEmpty {
-            Label("Zaznacz komputery na liście", systemImage: "hand.point.left")
+            Label("Zaznacz komputery na liście obok", systemImage: "hand.point.left.fill")
+                .font(.callout)
                 .foregroundStyle(.secondary)
-                .font(.callout)
-                .symbolRenderingMode(.multicolor)
+                .fixedSize()
         } else {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Label {
-                    Text(summary(selected: selected.count, unreachable: unreachable.count))
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(Self.headline(reaching: model.actionTargets.count))
+                            .font(.callout.weight(.medium))
+                        if let note = note(selected: selected.count, unreachable: unreachable.count) {
+                            Text(note)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .lineLimit(1)
                 } icon: {
-                    Image(systemName: "scope")
+                    Image(systemName: "desktopcomputer")
+                        .foregroundStyle(Color.accentColor)
                 }
-                .font(.callout)
                 .help(names(selected))
                 if !unreachable.isEmpty {
                     Toggle("Pomiń niedostępne", isOn: $model.skipUnreachable)
                         .toggleStyle(.checkbox)
                         .controlSize(.small)
-                        .help("Niedostępne teraz: \(unreachable.map(\.name).joined(separator: ", ")). "
-                              + "Pominięte komputery pojawią się w wynikach – można później powtórzyć na nich operację.")
+                        .help("Niedostępne teraz: \(unreachable.map(\.name).joined(separator: ", ")). Pominięte "
+                              + "komputery pojawią się w wynikach – później można na nich powtórzyć działanie.")
                 }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .fixedSize()
         }
     }
 
-    func summary(selected: Int, unreachable: Int) -> String {
-        guard unreachable > 0 else { return "Cel: \(Polish.computers(selected))" }
-        if model.skipUnreachable {
-            return "Cel: \(Polish.computers(selected - unreachable)) (pominięte niedostępne: \(unreachable))"
-        }
-        return "Cel: \(Polish.computers(selected)), w tym niedostępne: \(unreachable)"
+    static func headline(reaching n: Int) -> String {
+        n == 0 ? "Żaden zaznaczony komputer nie odpowiada" : "Działanie obejmie \(Polish.computers(n))"
+    }
+
+    func note(selected: Int, unreachable: Int) -> String? {
+        guard unreachable > 0 else { return nil }
+        let count = Polish.count(unreachable, "niedostępny", "niedostępne", "niedostępnych")
+        return model.skipUnreachable ? "Pominięte: \(count) z \(selected) zaznaczonych"
+                                     : "W tym \(count) – trzeba będzie poczekać na ich odpowiedź"
     }
 
     func names(_ machines: [Machine]) -> String {
         let list = machines.map { m in
-            model.willSkip(m) ? "\(m.name) (pominięty – \(model.knownReachability(m).label))" : m.name
+            model.willSkip(m) ? "\(m.name) (pominięty – \(model.knownReachability(m).displayName.lowercased()))" : m.name
         }
-        return list.joined(separator: ", ")
+        return "Zaznaczone: " + list.joined(separator: ", ")
     }
 }
 
+/// A titled group of controls on an action page.
 struct SectionBox<Content: View>: View {
     let title: String
     let icon: String
@@ -150,15 +191,18 @@ struct SectionBox<Content: View>: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(6)
+                .padding(8)
         } label: {
-            Label(title, systemImage: icon).font(.headline)
+            Label(title, systemImage: icon)
+                .font(.headline)
+                .padding(.bottom, 2)
         }
     }
 }
 
 /// Action button for the selected Macs. Disabled when nothing reachable is selected; the tooltip says on how
-/// many Macs it will run (unreachable ones are skipped unless `includeUnreachable`, e.g. Wake-on-LAN).
+/// many Macs it will run (unreachable ones are skipped unless `includeUnreachable`, e.g. Wake-on-LAN) – the
+/// same count as `TargetSummary`.
 struct TargetButton: View {
     @EnvironmentObject var model: AppModel
     let title: String
@@ -173,21 +217,24 @@ struct TargetButton: View {
         let count = includeUnreachable ? selected : model.actionTargets.count
         let button = Button(role: role, action: action) {
             Label(title, systemImage: icon)
+                .labelStyle(.titleAndIcon)
         }
         .disabled(count == 0)
         .help(help(selected: selected, count: count))
         if prominent {
             button.buttonStyle(.borderedProminent)
+        } else if role == .destructive {
+            button.buttonStyle(.bordered).tint(.red)
         } else {
             button.buttonStyle(.bordered)
         }
     }
 
     func help(selected: Int, count: Int) -> String {
-        if selected == 0 { return "Najpierw zaznacz komputery na liście." }
+        if selected == 0 { return "Najpierw zaznacz komputery na liście obok." }
         if count == 0 {
-            return "Wszystkie zaznaczone komputery były niedostępne przy ostatnim sprawdzeniu. "
-                + "Odśwież stan komputerów albo wyłącz „Pomiń niedostępne”."
+            return "Żaden z zaznaczonych komputerów nie odpowiadał przy ostatnim sprawdzeniu. "
+                + "Kliknij „Odśwież” albo wyłącz „Pomiń niedostępne”."
         }
         if count == selected { return "\(title) – \(Polish.onComputers(count))." }
         return "\(title) – \(Polish.onComputers(count)) z \(selected) zaznaczonych (niedostępne zostaną pominięte)."
