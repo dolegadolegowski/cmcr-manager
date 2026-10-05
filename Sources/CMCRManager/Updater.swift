@@ -192,7 +192,8 @@ final class Updater: ObservableObject {
 
     /// Called from applicationWillTerminate: installs a verified update when "Instaluj automatycznie" is on.
     func applicationWillTerminate() {
-        guard installOnQuit, phase == .ready, canInstallOnQuit else { return }
+        guard installOnQuit, phase == .ready, canInstallOnQuit,
+              preparedArchive.map({ FileManager.default.fileExists(atPath: $0.path) }) == true else { return }
         do {
             try launchHelper(relaunch: false)
         } catch {
@@ -382,6 +383,16 @@ final class Updater: ObservableObject {
         }
         if let until = privilegedHelperBusyUntil, until > Date() {
             phase = .failed("Poprzednia próba instalacji jeszcze się nie zakończyła – spróbuj ponownie za minutę.")
+            return
+        }
+        if let zip = preparedArchive, !FileManager.default.fileExists(atPath: zip.path) {
+            // The verified archive disappeared from the cache (cleaned up meanwhile): fetch and verify it again
+            // instead of letting the installer fail after the app has quit.
+            ConfigStore.log("Uaktualnienie aplikacji: brak pobranego archiwum – pobieranie ponownie")
+            preparedArchive = nil
+            phase = .available
+            installWhenReady = true
+            startDownload()
             return
         }
         work = Task {
