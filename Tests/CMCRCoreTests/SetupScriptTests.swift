@@ -260,7 +260,7 @@ private let testKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDdtiSxiX/5C8QZGgQhHV
 @Test func readinessScriptIsValidBash() throws {
     let s = Scripts.readiness(student: "student", sharedFolder: "/Users/student/Public/cmcr", publicKey: testKey)
     #expect(!s.asRoot)
-    #expect(s.body.contains("KEYBLOB='AAAAC3NzaC1lZDI1NTE5AAAAIDdtiSxiX/5C8QZGgQhHVN+qsuG6QgBNdbXqFQMUqFft'"))
+    #expect(s.body.contains("KEYBLOB='AAAAC3NzaC1lZDI1NTE5AAAAIDdtiSxiX/5C8QZGgQhHVN+qsuG6QgBNdbXqFQMUqFft'"))  // gitleaks:allow – public test key
     #expect(try bashSyntaxCheck(s.render()))
 }
 
