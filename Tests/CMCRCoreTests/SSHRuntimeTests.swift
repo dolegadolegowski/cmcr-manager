@@ -437,3 +437,30 @@ struct HostEntryGuardTests {
         #expect(Array(a.suffix(2)) == ["--", "imac04@imac04.local"])
     }
 }
+
+/// vnc-without-host-key (AUDIT DOD-02): Screen Sharing goes through an ssh tunnel with the strict host key check,
+/// so a device answering to imacNN.local never gets the administrator's name or password; the URL is built safely.
+struct ScreenSharingTunnelTests {
+    @Test func refusedEntriesAndUnreachableMacsGiveNoTunnel() async {
+        var s = SSHSettings(connectTimeout: 2, askpassPath: "/tmp/askpass")
+        s.extraOptions = ["UserKnownHostsFile=/dev/null"]
+        let bad = Machine(name: "imac01", address: "127.0.0.1", user: "-oProxyCommand=true", port: 1)
+        guard case .failure(let r1) = await SSH.screenSharingTunnel(to: bad, password: nil, settings: s) else {
+            Issue.record("tunel dla odrzuconego wpisu"); return
+        }
+        #expect(r1.stderrText.contains("Niepoprawny wpis komputera"))
+        let closed = Machine(name: "imac02", address: "127.0.0.1", user: "nikt", port: 1)
+        guard case .failure = await SSH.screenSharingTunnel(to: closed, password: nil, settings: s) else {
+            Issue.record("tunel do zamkniętego portu"); return
+        }
+    }
+
+    @Test func theScreenSharingURLPointsAtTheTunnel() throws {
+        let url = try #require(SSH.screenSharingURL(user: "imac05", localPort: 55900))
+        #expect(url.absoluteString == "vnc://imac05@127.0.0.1:55900")
+        // Characters that would move the host part are encoded, never interpreted.
+        let odd = try #require(SSH.screenSharingURL(user: "a#b/c?d", localPort: 55900))
+        #expect(odd.host == "127.0.0.1")
+        #expect(odd.port == 55900)
+    }
+}

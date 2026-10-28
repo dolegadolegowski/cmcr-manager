@@ -126,3 +126,19 @@ if ls "$WORK"/dash-pwned* >/dev/null 2>&1; then
 else
   pass "żadne polecenie z listy komputerów nie uruchomiło się lokalnie (ProxyCommand)"
 fi
+
+section "Udostępnianie ekranu przez tunel SSH ze sprawdzeniem klucza (AUDIT DOD-02)"
+out="$(ctl __vnc-tunnel 1)"; code=$?
+expect_code "tunel VNC: kod 0 dla zaufanego komputera" "$code" 0 "$out"
+vport="$(printf '%s\n' "$out" | sed -n 's/^CMCR:TUNNEL port=//p' | head -1)"
+if [ -n "$vport" ] && nc -z 127.0.0.1 "$vport" 2>/dev/null; then pass "tunel VNC: lokalny port nasłuchuje ($vport)"
+else fail "tunel VNC: brak lokalnego portu" "$out"; fi
+expect "tunel VNC: adres przez tunel" "$out" "vnc://$ME@127.0.0.1:$vport"
+KH_SAVE="$WORK/known_hosts.dod02"
+cp "$WORK/known_hosts" "$KH_SAVE"
+ctl __forget-host-key 1 >/dev/null
+out="$(ctl __vnc-tunnel 1)"; code=$?
+expect_code "tunel VNC: niezaufany klucz – kod 1" "$code" 1 "$out"
+expect "tunel VNC: niezaufany klucz – odmowa przed logowaniem" "$out" "nie jest jeszcze zaufany"
+expect_not "tunel VNC: niezaufany klucz – brak adresu vnc://" "$out" "vnc://"
+cp "$KH_SAVE" "$WORK/known_hosts"

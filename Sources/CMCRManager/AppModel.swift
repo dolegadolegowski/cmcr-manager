@@ -219,6 +219,13 @@ final class OutputSink: @unchecked Sendable {
     }
 }
 
+/// A message for an alert: what failed and why.
+struct AppNotice: Identifiable, Equatable {
+    let id = UUID()
+    let title: String
+    let message: String
+}
+
 enum OwnerChoice: String, CaseIterable, Identifiable {
     case keep, student, console, admin, custom
     var id: String { rawValue }
@@ -254,6 +261,8 @@ final class AppModel: ObservableObject {
     @Published var configIssues: [String] = []
     /// A password could not be saved in (or removed from) the Keychain; shown as an alert.
     @Published var keychainError: String?
+    /// A problem to tell the user about in an alert (an action could not be done, a file could not be saved).
+    @Published var notice: AppNotice?
     @Published var statuses: [UUID: HostStatus] = [:] {
         didSet { rememberSettledReachability() }
     }
@@ -712,11 +721,27 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Opens the built-in Screen Sharing app (VNC) – full remote view/control, if enabled on the Mac.
+    /// Opens the built-in Screen Sharing app (VNC) – full remote view/control, if enabled on the Mac – through an
+    /// ssh tunnel with the strict host key check (`SSH.screenSharingTunnel`): a device answering to the Mac's
+    /// `.local` name never gets the administrator's name or password.
     func openScreenSharing(_ m: Machine) {
-        if let url = URL(string: "vnc://\(m.user)@\(m.address)") {
-            NSWorkspace.shared.open(url)
-            ConfigStore.log("Udostępnianie ekranu (VNC) → \(m.name)")
+        let host = current(m)
+        if let message = SSH.refusalMessage(for: host) {
+            notice = AppNotice(title: "Nie można połączyć z \(host.name)", message: message)
+            return
+        }
+        showToast(ActionToast(message: "Łączenie z \(host.name) przez szyfrowany tunel SSH…", icon: "lock.shield"))
+        let ss = sshSettings, pw = password(for: host)
+        Task {
+            switch await SSH.screenSharingTunnel(to: host, password: pw, settings: ss) {
+            case .success(let port):
+                if let url = SSH.screenSharingURL(user: host.user, localPort: port) { NSWorkspace.shared.open(url) }
+                ConfigStore.log("Udostępnianie ekranu (VNC, tunel SSH) → \(host.name)")
+            case .failure(let r):
+                notice = AppNotice(title: "Nie można połączyć z \(host.name)",
+                                   message: SSH.diagnose(r).1 + " Udostępnianie ekranu łączy się tylko przez SSH, "
+                                       + "więc działa wyłącznie z komputerami o zaufanym kluczu.")
+            }
         }
     }
 

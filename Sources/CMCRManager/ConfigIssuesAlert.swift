@@ -41,6 +41,14 @@ struct ConfigIssuesAlert: ViewModifier {
         } message: {
             Text(model.keychainError ?? "")
         }
+        .alert(model.notice?.title ?? "", isPresented: Binding(
+            get: { model.notice != nil },
+            set: { if !$0 { model.notice = nil } }
+        )) {
+            Button("OK", role: .cancel) { model.notice = nil }
+        } message: {
+            Text(model.notice?.message ?? "")
+        }
         .onSnapshotSubpage { sub in
             // Sample texts, only for the UI snapshots (see SnapshotRenderer); removed again with the sub-page.
             switch sub {
