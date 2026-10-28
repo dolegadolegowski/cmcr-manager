@@ -780,6 +780,26 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // question-skipped (AUDIT ZAJ-11): Macs left out of a question are marked, not „czeka na odpowiedź” forever.
+    @Test func aQuestionMarksTheMacsItLeftOut() {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        var off = HostStatus()
+        off.reachability = .offline
+        model.statuses[a.id] = off
+        let skip = model.skipUnreachable
+        model.skipUnreachable = true
+        defer { model.skipUnreachable = skip }
+        let question = classroom.config.lastQuestion
+        classroom.config.lastQuestion = "Czy skończyliście?"
+        defer { classroom.config.lastQuestion = question }
+        classroom.ask(model, [a], buttons: ["Tak", "Nie"])
+        #expect(classroom.question?.errors[a.id] == "pominięto – komputer niedostępny")
+        classroom.question?.batch?.cancel()
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false

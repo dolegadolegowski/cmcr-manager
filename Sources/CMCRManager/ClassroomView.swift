@@ -472,10 +472,10 @@ private struct LessonProgressSection: View {
         Section {
             HStack(spacing: 12) {
                 if run.finished {
-                    Image(systemName: run.failedHosts == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(run.failedHosts == 0 ? .green : .orange)
-                    Text(run.failedHosts == 0 ? "Gotowe na wszystkich komputerach."
-                         : "Problemy \(Polish.onComputers(run.failedHosts)) – szczegóły w dziale Zadania.")
+                    let outcome = run.outcome
+                    Image(systemName: outcome.clean ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(outcome.clean ? .green : .orange)
+                    Text(outcome.text)
                 } else if let left = run.countdownRange() {
                     Image(systemName: "timer")
                     Text("Kolejne kroki za ") + Text(timerInterval: left, countsDown: true).monospacedDigit()

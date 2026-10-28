@@ -28,4 +28,32 @@ import Testing
         run.countdownEnd = now.addingTimeInterval(60)
         #expect(run.countdownRange(now: now) == now...now.addingTimeInterval(60))
     }
+
+    /// lesson-summary (AUDIT ZAJ-13): „Gotowe na wszystkich komputerach” only when the routine ran everywhere.
+    @Test func theSummarySaysWhenMacsWereLeftOutOrTheRoutineStopped() {
+        let a = Machine(name: "imac01", address: "imac01.local", user: "imac01")
+        let b = Machine(name: "imac02", address: "imac02.local", user: "imac02")
+        var end = LessonEndConfig()
+        end.warn = false
+        end.logout = true
+        let plan = LessonPlan.end(end, settings: AppSettings())
+        let run = LessonRun(plan: plan, machines: [a, b])
+        for i in plan.steps.indices {
+            run.update(a.id, i, .done("ok"))
+            run.update(b.id, i, .skipped("pominięto – komputer niedostępny"))
+        }
+        #expect(!run.outcome.clean)
+        #expect(run.outcome.text.hasPrefix("Pominięto 1 komputer"))
+        for i in plan.steps.indices { run.update(b.id, i, .done("ok")) }
+        #expect(run.outcome.clean)
+        run.cancel()
+        #expect(run.outcome.text.hasPrefix("Przerwano"))
+    }
+
+    /// screen-menu (AUDIT ZAJ-17): a frame of one chosen screen does not hide the screen menu.
+    @Test func choosingOneScreenKeepsTheScreenCount() {
+        #expect(ScreenCenter.knownDisplayCount(1, previous: 3, shown: .number(2)) == 3)
+        #expect(ScreenCenter.knownDisplayCount(2, previous: 3, shown: .all) == 2)
+        #expect(ScreenCenter.knownDisplayCount(1, previous: 1, shown: .main) == 1)
+    }
 }

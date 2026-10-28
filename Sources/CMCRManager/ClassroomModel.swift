@@ -71,6 +71,24 @@ final class LessonRun: ObservableObject, Identifiable, @unchecked Sendable {
     var failedHosts: Int {
         states.values.filter { $0.contains { if case .failed = $0 { return true } else { return false } } }.count
     }
+
+    /// Macs where the routine did not run at all (left out as unreachable or with a logged-in student).
+    var skippedHosts: Int {
+        states.values.filter { row in
+            !row.isEmpty && row.allSatisfy { if case .skipped = $0 { return true } else { return false } }
+        }.count
+    }
+
+    /// The summary once the routine ended: only a routine that ran everywhere is „Gotowe” (AUDIT ZAJ-13).
+    var outcome: (text: String, clean: Bool) {
+        if cancelled { return ("Przerwano – pozostałe kroki nie zostały wykonane.", false) }
+        var parts: [String] = []
+        if failedHosts > 0 { parts.append("problemy \(Polish.onComputers(failedHosts))") }
+        if skippedHosts > 0 { parts.append("pominięto \(Polish.computers(skippedHosts))") }
+        if parts.isEmpty { return ("Gotowe na wszystkich komputerach.", true) }
+        let text = parts.joined(separator: ", ")
+        return (text.prefix(1).uppercased() + text.dropFirst() + " – szczegóły w dziale Zadania.", false)
+    }
 }
 
 struct LockInfo {
@@ -413,7 +431,12 @@ final class ClassroomModel: ObservableObject {
         let message = config.lockMessage, mode = config.lockMode, minutes = config.autoUnlockMinutes
         model.runScript("Tryb uwagi: zablokuj ekrany", on: targets, section: .classroom,
                         script: { _ in Scripts.lockScreen(message: message, mode: mode, autoUnlockMinutes: minutes) }) { m, r in
-            guard r.succeeded else { return }
+            guard r.succeeded else {
+                // The script takes the old lock off before starting the new one: once it ran, a failure leaves the
+                // screen unlocked – the app must not keep showing it as locked (AUDIT ZAJ-10).
+                if r.started { self.locks[m.id] = nil }
+                return
+            }
             let used = r.stdoutText.split(whereSeparator: \.isNewline)
                 .first { $0.hasPrefix("CMCR:LOCK:") }.map { String($0.dropFirst("CMCR:LOCK:".count)) } ?? ""
             if used == "lockscreen" || used == "overlay" {
@@ -459,6 +482,12 @@ final class ClassroomModel: ObservableObject {
                 round.errors[m.id] = SSH.diagnose(r).1
             }
             return r
+        }
+        // Macs left out (unreachable, „Pomiń niedostępne”) never answer: say so instead of waiting for them forever
+        // (AUDIT ZAJ-11).
+        for job in round.batch?.jobs ?? [] where job.state == .skipped {
+            round.errors[job.machine.id] = job.skipReason == .loggedInUser ? "pominięto – zalogowany użytkownik"
+                : "pominięto – komputer niedostępny"
         }
     }
 

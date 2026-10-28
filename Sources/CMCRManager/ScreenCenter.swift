@@ -265,6 +265,16 @@ final class ScreenCenter: ObservableObject {
 
     func display(for host: UUID) -> ScreenDisplay { displays[host] ?? .main }
 
+    /// How many screens the Mac has. A frame of one chosen screen reports a count of 1: keep the larger number seen
+    /// before, so the screen menu does not disappear after choosing „Ekran 2” (AUDIT ZAJ-17).
+    nonisolated static func knownDisplayCount(_ count: Int, previous: Int, shown: ScreenDisplay) -> Int {
+        switch shown {
+        case .all: return max(1, count)
+        case .number(let n): return max(previous, count, n)
+        case .main: return max(previous, count, 1)
+        }
+    }
+
     func setDisplay(_ display: ScreenDisplay, for host: UUID) {
         displays[host] = display
         sessions[host]?.displayImages = [:]
@@ -507,7 +517,8 @@ final class ScreenCenter: ObservableObject {
             let ordered = s.displayImages.keys.sorted().compactMap { s.displayImages[$0] }
             if count <= 1 || ordered.count >= count {
                 feed.image = count <= 1 ? image : ScreenImage.sideBySide(ordered)
-                feed.set(\.displayCount, max(1, count))
+                feed.set(\.displayCount, Self.knownDisplayCount(count, previous: feed.displayCount,
+                                                               shown: self.display(for: host)))
                 feed.confirmedAt = now
                 feed.set(\.issue, nil)
                 feed.set(\.phase, s.remotePaused ? .paused : .live)
