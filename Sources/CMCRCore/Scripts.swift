@@ -426,7 +426,7 @@ public enum Scripts {
         echo "⚠︎ $name: $why – instaluję mimo to (zezwolono na instalatory bez podpisu)." >&2
         return 0
       fi
-      echo "✘ $name: $why – nie instaluję. Programy bez ważnego podpisu i notaryzacji Apple mogą być podrobione albo zmienione po drodze. Jeśli to zaufany instalator (np. przygotowany w szkole), zaznacz „Zezwól na instalatory bez podpisu” w dziale Instalacja (cmcrctl: --allow-unsigned)." >&2
+      echo "✘ $name: $why – nie instaluję. Programy bez ważnego podpisu i notaryzacji Apple mogą być podrobione albo zmienione po drodze. Jeśli to zaufany instalator (np. przygotowany w szkole), zaznacz „Zezwalaj na instalatory bez podpisu Apple” w dziale Instalacja › Bezpieczeństwo (cmcrctl: --allow-unsigned)." >&2
       return 1
     }
     cmcr_skip_uninstaller() {
