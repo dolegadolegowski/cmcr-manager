@@ -274,8 +274,9 @@ public enum ConfigStore {
         try enc.encode(hosts).write(to: url, options: .atomic)
     }
 
+    /// A host list saved with „Zapisz listę do pliku…”; a broken file names the place (AUDIT KON-13), as in cmcrctl.
     public static func importHosts(from url: URL) throws -> [Machine] {
-        Machine.withUniqueIDs(try JSONDecoder().decode([Machine].self, from: Data(contentsOf: url))).hosts
+        try decodeHosts(Data(contentsOf: url))
     }
 
     /// Writes `value` as JSON; returns the reason when that failed (read-only folder, full disk, locked file).

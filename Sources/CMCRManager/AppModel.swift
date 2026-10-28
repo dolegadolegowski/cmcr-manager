@@ -425,6 +425,22 @@ final class AppModel: ObservableObject {
         if saved && !pw.isEmpty { recheckAfterCredentialChange(machines) }
     }
 
+    /// An own password the Keychain does not have (a list imported from another Mac, a failed save): such a Mac
+    /// quietly uses the shared password (AUDIT KON-12). Checked without reading the secret.
+    func ownPasswordMissing(_ m: Machine) -> Bool {
+        !m.usesSharedPassword && !Keychain.exists(Keychain.account(for: m))
+    }
+
+    /// Replaces the whole host list (a file, the generator) and removes from the Keychain the own passwords of the
+    /// entries that are gone – they could not be removed from the app afterwards (AUDIT KON-15).
+    func replaceHostList(with hosts: [Machine]) {
+        let kept = Set(hosts.map(\.id))
+        for m in machines where !kept.contains(m.id) && !m.usesSharedPassword { setPassword("", for: m) }
+        machines = hosts
+        selection.formIntersection(kept)
+        refreshStatus()
+    }
+
     func setPassword(_ pw: String, for m: Machine) {
         if !Keychain.set(pw, for: Keychain.account(for: m)) {
             keychainError = Self.keychainFailure(removing: pw.isEmpty)

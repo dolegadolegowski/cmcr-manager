@@ -178,14 +178,21 @@ struct HostsEditor: View {
             .width(min: 64, ideal: 80)
             .customizationID("user")
             TableColumn("Hasło") { m in
+                let missing = model.ownPasswordMissing(m)
                 Button {
                     passwordFor = m
                 } label: {
-                    Label(m.usesSharedPassword ? "Wspólne" : "Własne", systemImage: m.usesSharedPassword ? "key" : "key.fill")
+                    if missing {
+                        Label("Brak hasła", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    } else {
+                        Label(m.usesSharedPassword ? "Wspólne" : "Własne", systemImage: m.usesSharedPassword ? "key" : "key.fill")
+                    }
                 }
                 .controlSize(.small)
                 .help(m.usesSharedPassword ? "Używa wspólnego hasła administratora. Kliknij, aby ustawić własne hasło tego komputera."
-                                           : "Ma własne hasło zapisane w Pęku kluczy. Kliknij, aby je zmienić.")
+                      : missing ? "Ma ustawione własne hasło, ale nie ma go w Pęku kluczy tego Maca – połączenia użyją wspólnego hasła. Kliknij, aby je wpisać."
+                      : "Ma własne hasło zapisane w Pęku kluczy. Kliknij, aby je zmienić.")
             }
             .width(min: 72, ideal: 76)
             .customizationID("password")
@@ -299,7 +306,7 @@ struct HostsEditor: View {
             Button {
                 importHosts()
             } label: {
-                Label("Wczytaj listę z pliku…", systemImage: "square.and.arrow.down")
+                Label("Zastąp listę z pliku…", systemImage: "square.and.arrow.down")
             }
             Button {
                 if let url = Pickers.save(name: "cmcr-komputery.json") {
@@ -375,9 +382,16 @@ struct HostsEditor: View {
                 importError = "Plik nie zawiera żadnego komputera."
                 return
             }
-            model.machines = hosts
-            rows = []
-            model.refreshStatus()
+            // The whole list, with groups, notes, MACs and passwords, is replaced: ask first (AUDIT UI-05).
+            confirm = ConfirmRequest(
+                title: "Zastąpić listę komputerów listą z pliku?",
+                message: "Obecna lista (\(Polish.computers(model.machines.count))) zostanie zastąpiona listą z pliku "
+                    + "\(url.lastPathComponent) (\(Polish.computers(hosts.count))). Grupy, notatki i własne hasła wpisów, "
+                    + "których nie ma w pliku, przepadną.",
+                button: "Zastąp listę", targets: []) {
+                model.replaceHostList(with: hosts)
+                rows = []
+            }
         } catch {
             importError = "\(url.lastPathComponent): \(error.localizedDescription)"
         }
@@ -508,9 +522,7 @@ struct HostListGeneratorSheet: View {
         confirm = ConfirmRequest(title: "Zastąpić listę komputerów?",
                                  message: "Obecna lista (\(Polish.computers(model.machines.count))) zostanie zastąpiona wygenerowaną (\(Polish.computers(generated.count))). Grupy i własne hasła obecnych wpisów przepadną.",
                                  button: "Zastąp listę", targets: []) {
-            model.machines = generated
-            model.selection = []
-            model.refreshStatus()
+            model.replaceHostList(with: generated)
             dismiss()
         }
     }
@@ -534,7 +546,7 @@ struct HostPasswordSheet: View {
                 }
                 .pickerStyle(.radioGroup)
                 if !useShared {
-                    SecureField(text: $password, prompt: Text(machine.usesSharedPassword ? "Wpisz hasło" : "Bez zmian")) {
+                    SecureField(text: $password, prompt: Text(hasOwnPassword ? "Bez zmian" : "Wpisz hasło")) {
                         Text("Hasło konta \(machine.user)")
                     }
                     .onSubmit(save)
@@ -560,8 +572,11 @@ struct HostPasswordSheet: View {
         }
     }
 
+    /// The own password is in the Keychain (an imported list may say „own” without one, AUDIT KON-12).
+    private var hasOwnPassword: Bool { !model.ownPasswordMissing(machine) && !machine.usesSharedPassword }
+
     /// Switching to an own password needs one; an existing own password stays when the field is left empty.
-    private var canSave: Bool { useShared || !password.isEmpty || !machine.usesSharedPassword }
+    private var canSave: Bool { useShared || !password.isEmpty || hasOwnPassword }
 
     private func save() {
         guard canSave else { return }

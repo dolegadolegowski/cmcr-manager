@@ -640,6 +640,24 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // own-passwords (AUDIT KON-12, KON-15): an „own” password missing from the Keychain is noticed, and replacing
+    // the list removes the own passwords of the entries that are gone.
+    @Test func ownPasswordsFollowTheHostList() {
+        var a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        a.usesSharedPassword = false
+        b.usesSharedPassword = false
+        let model = AppTestEnvironment.makeModel([a, b])
+        Keychain.set(nil, for: Keychain.account(for: a))
+        #expect(model.ownPasswordMissing(a))
+        guard Keychain.set("haslo-imac02", for: Keychain.account(for: b)) else { return }   // no usable Keychain here
+        defer { Keychain.set(nil, for: Keychain.account(for: b)) }
+        #expect(!model.ownPasswordMissing(b))
+        model.replaceHostList(with: [a])
+        #expect(!Keychain.exists(Keychain.account(for: b)), "hasło usuniętego wpisu zostało w Pęku kluczy")
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false

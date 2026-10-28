@@ -331,8 +331,11 @@ struct PasswordBanner: View {
     /// itself, and the dashboard shows it above its table only (not across the inspector).
     static let notAbove: Set<AppSection> = [.setup, .dashboard]
 
+    /// Only when some Mac really has no password: a lab where every iMac has its own one needs no shared password
+    /// (AUDIT KON-09).
     static func isNeeded(_ model: AppModel) -> Bool {
         !model.hasSharedPassword && (ProcessInfo.processInfo.environment["CMCR_PASSWORD"] ?? "").isEmpty
+            && model.machines.contains { $0.usesSharedPassword || model.ownPasswordMissing($0) }
     }
 }
 

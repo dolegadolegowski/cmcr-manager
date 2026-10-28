@@ -159,6 +159,21 @@ struct ConfigRecoveryTests {
         #expect(ConfigStore.hostsChangedOutside(keeping: saved.hosts, at: url) == nil)
     }
 
+    /// AUDIT KON-13: a broken list file names the place, as cmcrctl does, not Foundation's generic text.
+    @Test func importingABrokenListNamesThePlace() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("lista.json")
+        let good = try String(data: JSONEncoder().encode([Machine(name: "imac01", address: "imac01.local", user: "imac01")]),
+                              encoding: .utf8)!
+        try (String(good.dropLast()) + #",{"name":"imac02"}]"#).write(to: url, atomically: true, encoding: .utf8)
+        #expect {
+            try ConfigStore.importHosts(from: url)
+        } throws: { error in
+            error.localizedDescription.contains("wpis nr 2")
+        }
+    }
+
     @Test func connectionSharingDefaultsToOn() throws {
         let s = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"connectTimeout": 4}"#.utf8))
         #expect(s.reuseConnections)
