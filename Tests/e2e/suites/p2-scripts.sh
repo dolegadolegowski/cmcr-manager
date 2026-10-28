@@ -300,3 +300,16 @@ if p2_setup_begin; then
   expect_not "setup: scutil odmawia – nie twierdzi, że ustawiono" "$out" "Nazwa komputera ustawiona"
 fi
 p2_setup_end
+
+section "P2: skrypt konfiguracyjny – teksty raportu (AUDIT TXT-23)"
+if p2_setup_begin; then
+  ssh-keygen -q -t ed25519 -N "" -f "$P2/txt23" -C txt23
+  out="$(p2s setup 1 --no-ssh-acl --dry-run --pubkey "$(cat "$P2/txt23.pub")")"
+  expect "setup: klucz SSH aplikacji (nie „menedżera”)" "$out" "Wymaga zmiany: zainstalować klucz SSH aplikacji dla $ME"
+  expect_not "setup: bez „menedżera”" "$out" "menedżera"
+  if [ "$(uname -m)" = arm64 ]; then
+    out="$(p2s setup 1 --no-ssh-acl --dry-run --rosetta)"
+    expect "setup: odmiana „Rosettę 2”" "$out" "Wymaga zmiany: zainstalować Rosettę 2."
+  fi
+fi
+p2_setup_end

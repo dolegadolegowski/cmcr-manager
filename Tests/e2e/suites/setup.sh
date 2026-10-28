@@ -55,7 +55,7 @@ expect_code "cmcrctl setup: błędne opcje odrzucone przed połączeniem" "$code
 clear_fakelog
 out="$(setup_run)"; code=$?
 expect_code "setup: pierwsze uruchomienie – kod 0" "$code" 0 "$out"
-expect "setup: zmiany w raporcie" "$out" "Włączono zdalne logowanie (SSH)" "Klucz SSH menedżera zainstalowany" \
+expect "setup: zmiany w raporcie" "$out" "Włączono zdalne logowanie (SSH)" "Klucz SSH aplikacji zainstalowany" \
   "050-cmcr-manager.conf" "Harmonogram ustawiony: pn wt śr cz pt: włączenie 07:30, wyłączenie 17:00" \
   "sudo bez hasła WŁĄCZONE" "Do zrobienia ręcznie" "→ imac01: Zmieniono"
 expect "setup: polecenia systemowe przez atrapy" "$(fakelog)" \
@@ -255,7 +255,7 @@ out="$(sctl readiness 1)"
 expect "readiness: brak folderu ucznia" "$out" "✘ Folder ucznia" "brak"
 
 out="$(ctlpw exec "/bin/bash $WORK/standalone.sh --verify --no-guide --no-ssh-acl" 1 --root)"; code=$?
-expect "skrypt zapisany z aplikacji: wbudowany klucz rozpoznany" "$out" "Klucz SSH menedżera jest już zainstalowany"
+expect "skrypt zapisany z aplikacji: wbudowany klucz rozpoznany" "$out" "Klucz SSH aplikacji jest już zainstalowany"
 expect "skrypt zapisany z aplikacji: folder z ustawień" "$out" "Wymaga zmiany" "$SHOME/Public/cmcr"
 
 section "Folder ucznia – brakujące foldery"

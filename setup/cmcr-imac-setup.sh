@@ -28,7 +28,7 @@ CMCR_SETUP_SCHEMA=1
 NL=$'\n'
 
 # >>> CMCR-DEFAULTS – CMCR Manager podmienia ten blok przy generowaniu skryptu >>>
-OPT_PUBKEYS=''            # klucze publiczne menedżera (po jednym w linii)
+OPT_PUBKEYS=''            # klucze publiczne aplikacji (po jednym w linii)
 OPT_ADMIN=''              # konto administracyjne; puste = konto, które wywołało sudo
 OPT_STUDENT='student'     # konto ucznia
 OPT_SHARED=''             # folder współdzielony; puste = /Users/<uczeń>/Public/cmcr
@@ -37,7 +37,7 @@ OPT_SHARED_ACL=1          # dziedziczone ACL: uczeń i grupa admin mają pełny 
 OPT_SSH_ACL=1             # SSH tylko dla administratorów (com.apple.access_ssh)
 OPT_SSH_TUNING=1          # /etc/ssh/sshd_config.d/050-cmcr-manager.conf (keepalive)
 OPT_SSH_KEY_ONLY=0        # wyłącz logowanie hasłem przez SSH (tylko klucze)
-OPT_KEY_FROM=''           # ogranicz klucz menedżera do adresów (from="…")
+OPT_KEY_FROM=''           # ogranicz klucz aplikacji do adresów (from="…")
 OPT_VNC=0                 # 1 = włącz Udostępnianie ekranu (tylko administratorzy)
 OPT_SUDO_NOPASSWD=''      # yes / no / puste = bez zmian
 OPT_HOSTNAME=''           # nazwa komputera; "auto" = nazwa konta administratora
@@ -46,7 +46,7 @@ OPT_NO_SLEEP=0            # 1 = komputer nie usypia się (pmset sleep 0)
 OPT_DISPLAY_SLEEP=''      # minuty do uśpienia ekranu; puste = bez zmian
 OPT_AUTORESTART=0         # 1 = uruchom po zaniku zasilania
 OPT_POWER_SCHEDULE=''     # "MTWRF 07:30 17:00 [shutdown|sleep]", "off" lub puste
-OPT_ROSETTA=0             # 1 = zainstaluj Rosetta 2 (Apple Silicon)
+OPT_ROSETTA=0             # 1 = zainstaluj Rosettę 2 (Apple Silicon)
 OPT_UPDATES=''            # check / download / auto / puste = bez zmian
 OPT_FIX_FIREWALL=0        # 1 = wyłącz „Blokuj wszystkie połączenia przychodzące”
 OPT_GUIDE='auto'          # auto / yes / no – prowadzenie przez kroki ręczne
@@ -85,7 +85,7 @@ Nazwa i zasilanie:
   --power-schedule "MTWRF 07:30 17:00 [shutdown|sleep]" | off
                            harmonogram włączania/wyłączania (dni: M T W R F S U)
 Inne:
-  --rosetta                zainstaluj Rosetta 2 (Apple Silicon)
+  --rosetta                zainstaluj Rosettę 2 (Apple Silicon)
   --updates check|download|auto
                            automatyczne aktualizacje: tylko sprawdzaj / pobieraj
                            i instaluj poprawki bezpieczeństwa / instaluj wszystko
@@ -463,7 +463,7 @@ step_ssh_key() {
   sshdir="$home/.ssh"; ak="$sshdir/authorized_keys"; grp="$(id -gn "$ADMIN" 2>/dev/null || echo staff)"
   if [ -z "$OPT_PUBKEYS" ]; then
     if [ -s "$ak" ]; then
-      record ssh_key skipped "Nie podano klucza (--pubkey) – w authorized_keys jest już $(grep -c . "$ak" 2>/dev/null) wpis(ów)."
+      record ssh_key skipped "Nie podano klucza (--pubkey) – authorized_keys nie jest pusty (wpisów: $(grep -c . "$ak" 2>/dev/null))."
     else
       record ssh_key warn "Nie podano klucza (--pubkey) – aplikacja będzie logować się hasłem."
     fi
@@ -521,7 +521,7 @@ EOF
       as_user "$ADMIN" /bin/sh -c 'cat > "$1"' sh "$tmp" < "$new" && chmod 600 "$tmp" && mv -f "$tmp" "$ak" \
         || { rm -f "$tmp"; record ssh_key fail "Nie udało się zapisać $ak."; return; }
     else
-      run "zapis $n_added klucza(y) do $ak"
+      run "zapis do $ak (kluczy: $n_added)"
     fi
   fi
   if [ $CHANGE -eq 1 ]; then
@@ -531,13 +531,13 @@ EOF
   # i trafia do setup.json.
   KEY_FPS="$fps"; KEY_OK=1
   if [ $n_added -gt 0 ]; then
-    changed_or_planned ssh_key "Klucz SSH menedżera zainstalowany dla $ADMIN ($KEY_FPS)." \
-      "zainstalować klucz SSH menedżera dla $ADMIN ($KEY_FPS)."
+    changed_or_planned ssh_key "Klucz SSH aplikacji zainstalowany dla $ADMIN ($KEY_FPS)." \
+      "zainstalować klucz SSH aplikacji dla $ADMIN ($KEY_FPS)."
   elif [ $home_fix -eq 1 ]; then
-    changed_or_planned ssh_key "Klucz SSH menedżera był już zainstalowany ($KEY_FPS); usunięto prawo zapisu grupy/innych z $home – bez tego sshd go odrzucał." \
-      "usunąć prawo zapisu grupy/innych z $home – bez tego sshd odrzuca klucz SSH menedżera ($KEY_FPS)."
+    changed_or_planned ssh_key "Klucz SSH aplikacji był już zainstalowany ($KEY_FPS); usunięto prawo zapisu grupy/innych z $home – bez tego sshd go odrzucał." \
+      "usunąć prawo zapisu grupy/innych z $home – bez tego sshd odrzuca klucz SSH aplikacji ($KEY_FPS)."
   else
-    record ssh_key ok "Klucz SSH menedżera jest już zainstalowany ($KEY_FPS)."
+    record ssh_key ok "Klucz SSH aplikacji jest już zainstalowany ($KEY_FPS)."
   fi
 }
 
@@ -859,10 +859,10 @@ step_rosetta() {
   if rosetta_installed; then record rosetta ok "Rosetta 2 jest zainstalowana."; return; fi
   [ "$OPT_ROSETTA" = 1 ] || { record rosetta skipped "Rosetta 2 nie jest zainstalowana (opcja --rosetta)."; return; }
   section "Rosetta 2"
-  if [ $CHANGE -eq 0 ]; then run softwareupdate --install-rosetta --agree-to-license; changed_or_planned rosetta "Instalacja Rosetta 2." "zainstalować Rosetta 2."; return; fi
+  if [ $CHANGE -eq 0 ]; then run softwareupdate --install-rosetta --agree-to-license; changed_or_planned rosetta "Instalacja Rosetty 2." "zainstalować Rosettę 2."; return; fi
   softwareupdate --install-rosetta --agree-to-license 2>&1 | tail -n 3 | sed 's/^/   /'
-  if rosetta_installed; then record rosetta changed "Zainstalowano Rosetta 2."
-  else record rosetta fail "Instalacja Rosetta 2 nie powiodła się (sprawdź połączenie z internetem)."; fi
+  if rosetta_installed; then record rosetta changed "Zainstalowano Rosettę 2."
+  else record rosetta fail "Instalacja Rosetty 2 nie powiodła się (sprawdź połączenie z internetem)."; fi
 }
 
 su_set() {   # su_set KLUCZ true|false
@@ -955,7 +955,7 @@ step_tcc() {
   case "$SC_REMOTE" in
     yes) if [ -z "$sc_why" ]; then record tcc_screen ok "Nagrywanie ekranu dla sesji SSH: zezwolono (podgląd ekranów działa)."
          else record tcc_screen ok "Nagrywanie ekranu dla sesji SSH: wpis w TCC zezwala – sprawdź w Gotowości ($sc_why)."; fi ;;
-    *)   record tcc_screen todo "Ustawienia › Prywatność i ochrona › Nagrywanie ekranu$([ "$OS_MAJOR" -ge 15 ] && echo ' i dźwięku systemowego') › „+” › ⌘⇧G › /usr/libexec/sshd-keygen-wrapper › włącz$([ "$OS_MAJOR" -ge 15 ] && echo '; jeśli podgląd nadal pokazuje tylko tapetę, dodaj tak samo /usr/libexec/sshd-session')$([ "$SC_REMOTE" = unknown ] && echo ' (stan pokaże CMCR Manager: Konfiguracja › Przygotowanie iMaców › Sprawdź)')."
+    *)   record tcc_screen todo "Ustawienia › Prywatność i ochrona › Nagrywanie ekranu$([ "$OS_MAJOR" -ge 15 ] && echo ' i dźwięku systemowego') › „+” › ⌘⇧G › /usr/libexec/sshd-keygen-wrapper › włącz$([ "$OS_MAJOR" -ge 15 ] && echo '; jeśli podgląd nadal pokazuje tylko tapetę, dodaj tak samo /usr/libexec/sshd-session')$([ "$SC_REMOTE" = unknown ] && echo ' (stan pokaże CMCR Manager: Konfiguracja › Przygotowanie iMaców › Sprawdź wszystkie)')."
          if open_pane "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"; then
            detail "Otworzyłem Nagrywanie ekranu: „+”, ⌘⇧G, wpisz /usr/libexec/sshd-keygen-wrapper, Otwórz, włącz przełącznik."
            detail "Jeśli „+” nie przyjmuje narzędzia (macOS 26.1–26.2): przeciągnij plik z Findera (⌘⇧G /usr/libexec/)."
