@@ -65,23 +65,19 @@ struct CMCRManagerApp: App {
                 Button("Odznacz wszystkie komputery") { model.selection = [] }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
             }
-            CommandGroup(replacing: .appSettings) {
-                Button("Konfiguracja…") { model.section = .setup }
-                    .keyboardShortcut(AppSection.setup.keyboardShortcut)
-            }
+            // The application menu keeps the system's „Ustawienia…” (⌘,), which opens the Settings window
+            // (AUDIT UI-01); the Konfiguracja section is in Przejdź (⇧⌘,).
             CommandMenu("Przejdź") {
                 ForEach(AppSection.sidebar, id: \.title) { group in
                     Section(group.title) {
                         ForEach(group.sections) { section in
-                            Button {
-                                model.section = section
-                            } label: {
-                                Label(section.title, systemImage: section.icon)
-                            }
-                            .keyboardShortcut(section.keyboardShortcut)
+                            GoToSectionButton(model: model, section: section)
                         }
                     }
                 }
+            }
+            CommandGroup(replacing: .help) {
+                HelpLinks()
             }
             ScreenCommands(center: model.screens)
         }
@@ -224,11 +220,11 @@ extension AppSection {
     }
 
     /// Every section has a shortcut, numbered in sidebar order: ⌘1…⌘9 and ⌘0 for the first ten, then ⇧⌘P for
-    /// Polecenia (like a command palette) and ⌘, for Konfiguracja (like Settings in every Mac app; also in the
-    /// application menu).
+    /// Polecenia (like a command palette) and ⇧⌘, for Konfiguracja (⌘, opens the Settings window, as in every
+    /// Mac app).
     var keyboardShortcut: KeyboardShortcut {
         switch self {
-        case .setup: return KeyboardShortcut(",", modifiers: .command)
+        case .setup: return KeyboardShortcut(",", modifiers: [.command, .shift])
         case .commands: return KeyboardShortcut("p", modifiers: [.command, .shift])
         default:
             let numbered = Self.sidebarOrder.filter { $0 != .setup && $0 != .commands }
@@ -737,6 +733,44 @@ struct Page<Content: View>: View {
             VStack(alignment: .leading, spacing: 16) { content }
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// A Przejdź menu item: shows the section in the main window, bringing the window forward (or opening it again
+/// when it was closed while jobs kept running) – otherwise the change would be invisible (AUDIT KON-10).
+struct GoToSectionButton: View {
+    @Environment(\.openWindow) private var openWindow
+    let model: AppModel
+    let section: AppSection
+
+    var body: some View {
+        Button {
+            model.section = section
+            MainWindow.bringToFront(openWindow)
+        } label: {
+            Label(section.title, systemImage: section.icon)
+        }
+        .keyboardShortcut(section.keyboardShortcut)
+    }
+}
+
+/// Pomoc: the manual is the README of the project (AUDIT UI-23, WŁ-01); the app has no Help Book.
+struct HelpLinks: View {
+    static let manual = URL(string: "https://github.com/\(UpdateKeys.repository)#readme")!
+    static let releases = URL(string: "https://github.com/\(UpdateKeys.repository)/releases")!
+
+    var body: some View {
+        Button {
+            NSWorkspace.shared.open(Self.manual)
+        } label: {
+            Label("Instrukcja CMCR Manager", systemImage: "book")
+        }
+        .keyboardShortcut("?", modifiers: .command)
+        Button {
+            NSWorkspace.shared.open(Self.releases)
+        } label: {
+            Label("Historia wersji", systemImage: "clock.arrow.circlepath")
         }
     }
 }
