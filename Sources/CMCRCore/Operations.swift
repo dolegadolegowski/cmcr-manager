@@ -43,13 +43,7 @@ public enum Operations {
         let r = await SSH.run(Scripts.pullArchive(source: source, asRoot: asRoot), on: host, password: password,
                               settings: settings, stdoutFile: tmp, handle: handle, onOutput: onOutput)
         guard r.succeeded else { return r }
-        do {
-            try FileManager.default.createDirectory(at: localDirectory, withIntermediateDirectories: true)
-        } catch {
-            return .failure("Nie można utworzyć \(localDirectory.path): \(error.localizedDescription)")
-        }
-        let x = await ProcessRunner.run("/usr/bin/tar", ["-xf", tmp.path, "-C", localDirectory.path])
-        guard x.succeeded else { return x }
+        if let x = await unpackUntrusted(tmp, into: localDirectory) { return x }
         let ls = await ProcessRunner.run("/bin/ls", ["-l", localDirectory.path])
         onOutput?(.stdout, Data("Pobrano do \(localDirectory.path):\n".utf8) + ls.stdout)
         return CommandResult(exitCode: 0, stdout: ls.stdout, stderr: r.stderr)

@@ -76,8 +76,7 @@ public extension Operations {
         } catch {
             return (.failure("Nie można utworzyć \(folder.path): \(error.localizedDescription)"), nil)
         }
-        let x = await ProcessRunner.run("/usr/bin/tar", ["-xf", tmp.path, "-C", staging.path])
-        guard x.succeeded else {
+        if let x = await unpackUntrusted(tmp, into: staging) {
             try? fm.removeItem(at: staging)
             return (x, nil)
         }
@@ -173,8 +172,7 @@ public extension Operations {
             return (.failure("Nie można utworzyć \(directory.path): \(error.localizedDescription)"), [])
         }
         defer { try? fm.removeItem(at: staging) }
-        let x = await ProcessRunner.run("/usr/bin/tar", ["-xf", archive.path, "-C", staging.path])
-        guard x.succeeded else { return (x, []) }
+        if let x = await unpackUntrusted(archive, into: staging) { return (x, []) }
         var saved: [URL] = []
         for name in ((try? fm.contentsOfDirectory(atPath: staging.path)) ?? []).sorted() {
             let dest = uniqueURL(directory.appendingPathComponent(name))
@@ -186,6 +184,21 @@ public extension Operations {
             }
         }
         return (nil, saved)
+    }
+
+    /// Unpacks a tar archive that came from an iMac into `directory` (created when missing), every item marked with
+    /// the quarantine attribute (see `Quarantine`). Returns the failure, or nil. Nothing is unpacked without the mark.
+    static func unpackUntrusted(_ archive: URL, into directory: URL) async -> CommandResult? {
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            return .failure("Nie można utworzyć \(directory.path): \(error.localizedDescription)")
+        }
+        guard Quarantine.mark(archive) else {
+            return .failure("Nie udało się oznaczyć pobranych plików kwarantanną (com.apple.quarantine) – nie zapisano ich.")
+        }
+        let x = await ProcessRunner.run("/usr/bin/tar", ["-xf", archive.path, "-C", directory.path])
+        return x.succeeded ? nil : x
     }
 
     /// `url` itself, or the first free `name (2).ext`, `name (3).ext`… next to it.

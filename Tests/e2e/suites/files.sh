@@ -212,3 +212,16 @@ expect "collect: pusty folder" "$out" "nic do zebrania"
   && pass "collect: pusty folder nie tworzy folderu hosta" || fail "collect: pusty folder" "$(ls -laR "$WORK/zebrane-puste")"
 out="$(ctl collect 1 --from "$WORK/nie ma" --to "$WORK/zebrane-brak")"; code=$?
 expect "collect: brak folderu źródłowego" "$out" "Brak folderu"
+
+section "Pliki z iMaców mają kwarantannę na Macu nauczyciela (AUDIT DOD-01)"
+mkdir -p "$WORK/remote/Public/cmcr/qtn"
+printf '#!/bin/sh\necho uczen\n' > "$WORK/remote/Public/cmcr/qtn/projekt.command"
+chmod +x "$WORK/remote/Public/cmcr/qtn/projekt.command"
+rm -rf "$WORK/local/127.0.0.1"
+out="$(ctl pull 1)"
+if xattr -p com.apple.quarantine "$WORK/local/127.0.0.1/qtn/projekt.command" >/dev/null 2>&1; then
+  pass "pull: plik ucznia z kwarantanną"
+else
+  fail "pull: plik ucznia bez kwarantanny" "$out"
+fi
+rm -rf "$WORK/remote/Public/cmcr/qtn"

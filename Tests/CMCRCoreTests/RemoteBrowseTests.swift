@@ -243,3 +243,32 @@ private extension RemoteBrowseError {
     #expect(link.isLink)
     #expect(files.count == 2, "the enumerator must not follow the link into /etc")
 }
+
+/// collected-files-quarantine (AUDIT DOD-01): files made by students arrive on the teacher's Mac with the
+/// quarantine attribute, so Gatekeeper checks an app or script before it can run on the teacher's account.
+@Test func filesFromIMacsAreQuarantined() async throws {
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("cmcr-qtn-\(UUID().uuidString)")
+    defer { try? fm.removeItem(at: dir) }
+    let src = dir.appendingPathComponent("src")
+    try fm.createDirectory(at: src.appendingPathComponent("Praca.pdf.app/Contents/MacOS"), withIntermediateDirectories: true)
+    try fm.copyItem(atPath: "/bin/echo", toPath: src.appendingPathComponent("Praca.pdf.app/Contents/MacOS/Praca").path)
+    try Data("#!/bin/sh\necho x\n".utf8).write(to: src.appendingPathComponent("projekt.command"))
+    let archive = dir.appendingPathComponent("a.tar")
+    let pack = await ProcessRunner.run("/usr/bin/tar", ["-cf", archive.path, "-C", src.path, "."],
+                                       environment: ["COPYFILE_DISABLE": "1"])
+    #expect(pack.succeeded)
+    let out = dir.appendingPathComponent("out")
+    try fm.createDirectory(at: out, withIntermediateDirectories: true)
+    let (error, saved) = await Operations.extract(archive, into: out)
+    #expect(error == nil)
+    #expect(saved.count == 2)
+    for path in ["projekt.command", "Praca.pdf.app", "Praca.pdf.app/Contents/MacOS/Praca"] {
+        #expect(Quarantine.isMarked(out.appendingPathComponent(path).path), "brak kwarantanny: \(path)")
+    }
+    // The other two ways files come over: "Zbierz prace" / end of lesson and cmcr-pull use the same unpacking.
+    let pulled = dir.appendingPathComponent("pulled")
+    let r = await Operations.unpackUntrusted(archive, into: pulled)
+    #expect(r == nil)
+    #expect(Quarantine.isMarked(pulled.appendingPathComponent("projekt.command").path))
+}
