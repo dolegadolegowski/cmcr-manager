@@ -368,3 +368,22 @@ struct P2PayloadTests {
         #expect(try String(contentsOf: out.appendingPathComponent("-Cdane.txt"), encoding: .utf8) == "treść -Cdane.txt\n")
     }
 }
+
+// MARK: - PLI-06: a Mac's name never becomes a path when its work is collected
+
+struct P2CollectFolderNameTests {
+    /// AUDIT PLI-06: the folder for a Mac named "Sala 3/iMac" pointed into a folder "Sala 3" that does not exist, so
+    /// moving the collected work there failed and it was dropped.
+    @Test func theFolderNameIsOneSafeComponent() {
+        #expect(Operations.collectFolderName("Sala 3/iMac") == "Sala 3-iMac")
+        #expect(Operations.collectFolderName("imac:07") == "imac-07")
+        #expect(Operations.collectFolderName(".ukryty") == "_ukryty")
+        #expect(Operations.collectFolderName("..") == "_.")
+        #expect(Operations.collectFolderName("  ") == "komputer")
+        #expect(Operations.collectFolderName("iMac ucznia ą") == "iMac ucznia ą")
+        for name in ["Sala 3/iMac", "a/../b", "..", "/"] {
+            let url = URL(fileURLWithPath: "/tmp/zebrane").appendingPathComponent(Operations.collectFolderName(name))
+            #expect(url.deletingLastPathComponent().path == "/tmp/zebrane", "\(name)")
+        }
+    }
+}

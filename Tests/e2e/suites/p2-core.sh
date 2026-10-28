@@ -22,3 +22,21 @@ expect_code "wysyłanie: pliki o nazwach od „-” – kod 0" "$code" 0 "$out"
 [ -f "$WORK/remote/p2-dest/-szkic p2.txt" ] && [ "$(cat "$WORK/remote/p2-dest/-Cdane p2.txt" 2>/dev/null)" = dane ] \
   && pass "wysyłanie: oba pliki o nazwach od „-” dotarły" \
   || fail "wysyłanie: brak plików o nazwach od „-”" "$out$(ls -la "$WORK/remote/p2-dest" 2>&1)"
+
+section "P2 core: zbieranie prac z komputera o nazwie z „/” (AUDIT PLI-06)"
+# The folder of a Mac named "Sala 3/iMac 01" pointed into a missing folder "Sala 3": the collected work was dropped.
+P2C="$WORK/config-p2-slash"
+mkdir -p "$P2C"
+cp "$WORK/config/settings.json" "$P2C/settings.json"
+python3 - "$WORK/config/hosts.json" "$P2C/hosts.json" <<'PY'
+import json, sys
+hosts = json.load(open(sys.argv[1]))
+hosts[0]["name"] = "Sala 3/iMac 01"
+json.dump(hosts, open(sys.argv[2], "w"))
+PY
+mkdir -p "$WORK/remote/p2-prace"
+echo "praca" > "$WORK/remote/p2-prace/praca.txt"
+out="$(CMCR_CONFIG_DIR="$P2C" CMCR_PASSWORD="$PASSWORD" "$CTL" collect 1 --from "$WORK/remote/p2-prace" --to "$WORK/p2-zebrane" --no-date 2>&1)"; code=$?
+expect_code "collect: komputer o nazwie z „/” – kod 0" "$code" 0 "$out"
+[ "$(cat "$WORK/p2-zebrane/Sala 3-iMac 01/praca.txt" 2>/dev/null)" = praca ] \
+  && pass "collect: prace w folderze „Sala 3-iMac 01”" || fail "collect: brak zebranych prac" "$out$(ls -laR "$WORK/p2-zebrane" 2>&1)"

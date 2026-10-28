@@ -87,7 +87,7 @@ public extension Operations {
             onOutput?(.stdout, Data("Folder \(source) jest pusty – nic do zebrania.\n".utf8))
             return (CommandResult(exitCode: 0), nil)
         }
-        let dest = uniqueURL(folder.appendingPathComponent(name, isDirectory: true))
+        let dest = uniqueURL(folder.appendingPathComponent(collectFolderName(name), isDirectory: true))
         do {
             try fm.moveItem(at: staging, to: dest)
             // The archive's "./" entry carries the remote folder's mode (e.g. 0700); make the copy browsable.
@@ -202,6 +202,15 @@ public extension Operations {
     }
 
     /// `url` itself, or the first free `name (2).ext`, `name (3).ext`… next to it.
+    /// Folder name for the work collected from one Mac: its name as one path component – "/" and ":" replaced,
+    /// never hidden or empty. A name such as "Sala 3/iMac" pointed into a folder that does not exist, so the
+    /// collected work from that Mac was dropped (AUDIT PLI-06).
+    static func collectFolderName(_ name: String) -> String {
+        var s = String(name.map { $0 == "/" || $0 == ":" ? "-" : $0 }).trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix(".") { s = "_" + s.dropFirst() }
+        return s.isEmpty ? "komputer" : s
+    }
+
     static func uniqueURL(_ url: URL) -> URL {
         let fm = FileManager.default
         func taken(_ u: URL) -> Bool { (try? fm.attributesOfItem(atPath: u.path)) != nil }
