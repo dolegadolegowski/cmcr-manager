@@ -149,3 +149,22 @@ struct P2CSVFormulaTests {
         #expect(text == "imac01\tAla\t'=1+1\nimac02\tOla\tdwie linie z tabulatorem")
     }
 }
+
+// MARK: - KON-07: MAC addresses accepted by Wake-on-LAN and cmcrctl are not flagged
+
+struct P2MACValidationTests {
+    /// AUDIT KON-07: "a483e7123456" or "a483.e712.3456" in the MAC column got „Adres MAC ma zły format”, although
+    /// Wake-on-LAN and `cmcrctl hosts set --mac` accept (and normalise) them.
+    @Test func everySpellingWakeOnLANAcceptsIsValid() {
+        for mac in ["a4:83:e7:12:34:56", "A4-83-E7-12-34-56", "a483e7123456", "a483.e712.3456", "0:1b:63:84:45:e6"] {
+            #expect(HostValidation.isValidMAC(mac), "\(mac)")
+            #expect(WakeOnLAN.parseMAC(mac) != nil, "\(mac)")
+        }
+        for mac in ["a4:83:e7:12:34", "a483e712345", "a4:83:e7:12:34:56:78", "zz:83:e7:12:34:56", "a4::83:e7:12:34"] {
+            #expect(!HostValidation.isValidMAC(mac), "\(mac)")
+        }
+        var m = Machine(name: "imac01", address: "imac01.local", user: "imac01")
+        m.macAddress = "a483e7123456"
+        #expect(HostValidation.issues(in: [m])[m.id] == nil)
+    }
+}
