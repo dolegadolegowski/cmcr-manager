@@ -243,12 +243,28 @@ public enum ConfigStore {
         ensureDirectory(url.deletingLastPathComponent())
         let stamp = ISO8601DateFormatter().string(from: Date())
         let data = Data("\(stamp) \(line)\n".utf8)
-        if let h = try? FileHandle(forWritingTo: url) {
-            h.seekToEndOfFile()
-            h.write(data)
-            try? h.close()
-        } else {
-            try? data.write(to: url)
+        if !append(data, to: url) {
+            NSLog("CMCR: nie można dopisać do %@: %s", url.path, strerror(errno))
+        }
+    }
+
+    /// Appends `data` to the file (created when missing, never truncated) and reports whether it worked. A full
+    /// disk only loses the line: the old FileHandle.write(_:) raised an Objective-C exception there, which Swift
+    /// cannot catch, so the app or cmcrctl stopped in the middle of the work.
+    static func append(_ data: Data, to url: URL) -> Bool {
+        let fd = Darwin.open(url.path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o644)
+        guard fd >= 0 else { return false }
+        defer { Darwin.close(fd) }
+        return data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) -> Bool in
+            guard let base = buffer.baseAddress else { return true }
+            var offset = 0
+            while offset < buffer.count {
+                let n = Darwin.write(fd, base + offset, buffer.count - offset)
+                if n < 0 && errno == EINTR { continue }
+                guard n > 0 else { return false }
+                offset += n
+            }
+            return true
         }
     }
 }

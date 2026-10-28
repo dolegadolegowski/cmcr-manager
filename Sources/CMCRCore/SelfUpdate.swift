@@ -770,7 +770,7 @@ public enum UpdateInstaller {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
         guard let h = FileHandle(forWritingAtPath: url.path) else { throw UpdateError.helperFailed("nie można otworzyć \(url.path)") }
-        h.seekToEndOfFile()
+        _ = try? h.seekToEnd()
         return h
     }
 

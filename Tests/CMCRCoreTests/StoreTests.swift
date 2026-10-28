@@ -179,3 +179,25 @@ struct KeychainCacheTests {
         #expect(!Keychain.exists(account))
     }
 }
+
+/// action-log-crash (AUDIT WSP-01): appending to the action log reports a failed write instead of raising an
+/// Objective-C exception (which ended the app on a full disk); the e2e suite core-runtime covers the real limit.
+struct ActionLogTests {
+    @Test func appendingCreatesAndExtendsWithoutTruncating() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("actions.log")
+        #expect(ConfigStore.append(Data("a\n".utf8), to: url))
+        #expect(ConfigStore.append(Data("b\n".utf8), to: url))
+        #expect(try String(contentsOf: url, encoding: .utf8) == "a\nb\n")
+    }
+
+    @Test func aFailedWriteIsReportedNotRaised() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // A folder where the log should be: open() fails – reported as false, nothing thrown.
+        let url = dir.appendingPathComponent("actions.log", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        #expect(!ConfigStore.append(Data("x\n".utf8), to: url))
+    }
+}
