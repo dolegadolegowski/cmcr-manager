@@ -173,14 +173,31 @@ public enum JobHistory {
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(output.utf8).write(to: url, options: .atomic)
         }
-        let line = try encodeLine(record)
-        let file = monthFile(for: record.finishedAt, in: dir)
-        if let h = try? FileHandle(forWritingTo: file) {
-            defer { try? h.close() }
-            try h.seekToEnd()
-            try h.write(contentsOf: line)
-        } else {
-            try line.write(to: file, options: .atomic)
+        try append(try encodeLine(record), to: monthFile(for: record.finishedAt, in: dir))
+    }
+
+    struct AppendError: LocalizedError {
+        let file: URL
+        let code: Int32
+        var errorDescription: String? { "nie można dopisać do \(file.path): \(String(cString: strerror(code)))" }
+    }
+
+    /// Appends one line to a month file, creating it when it does not exist yet. An existing file is never replaced:
+    /// a file that cannot be opened (e.g. no write permission in a shared CMCR_CONFIG_DIR) is reported instead of
+    /// being swapped for a new one with this line only, which lost the whole month of history (AUDIT ZAD-04).
+    static func append(_ line: Data, to file: URL) throws {
+        let fd = Darwin.open(file.path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o644)
+        guard fd >= 0 else { throw AppendError(file: file, code: errno) }
+        defer { Darwin.close(fd) }
+        try line.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+            guard let base = buffer.baseAddress else { return }
+            var offset = 0
+            while offset < buffer.count {
+                let n = Darwin.write(fd, base + offset, buffer.count - offset)
+                if n < 0 && errno == EINTR { continue }
+                guard n > 0 else { throw AppendError(file: file, code: n < 0 ? errno : EIO) }
+                offset += n
+            }
         }
     }
 
