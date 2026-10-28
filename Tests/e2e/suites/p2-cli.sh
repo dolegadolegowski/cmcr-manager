@@ -61,3 +61,25 @@ done
 out="$(p2 help exec)"
 expect "cmcrctl help exec: pomoc polecenia" "$out" "cmcrctl exec \"polecenie\""
 expect_not "cmcrctl help exec: bez pełnej pomocy" "$out" "Instalacja i inne"
+
+section "P2 cmcrctl – quit-app --force pyta o potwierdzenie (AUDIT APL-16)"
+mkdir -p "$WORK/P2Dummy.app/Contents/MacOS"
+cp /bin/sleep "$WORK/P2Dummy.app/Contents/MacOS/P2Dummy"
+codesign --force --sign - "$WORK/P2Dummy.app/Contents/MacOS/P2Dummy" >/dev/null 2>&1
+P2DUMMY="$("$WORK/P2Dummy.app/Contents/MacOS/P2Dummy" 300 >/dev/null 2>&1 & echo $!)"
+sleep 0.5
+out="$(p2pw quit-app P2Dummy 1 --force </dev/null)"; code=$?
+expect_code "quit-app --force bez terminala i bez --yes: kod 2" "$code" 2 "$out"
+expect "quit-app --force: pytanie z listą komputerów" "$out" "Wymusić zamknięcie „P2Dummy” na: imac01" "niezapisana praca uczniów przepadnie" "dodaj --yes"
+kill -0 "$P2DUMMY" 2>/dev/null && pass "quit-app --force bez potwierdzenia: aplikacja działa dalej" \
+  || fail "quit-app --force: zamknięto bez potwierdzenia" "$out"
+P2_ANSWER=n out="$(p2_tty quit-app P2Dummy 1 --force)"
+expect "quit-app --force w terminalu: pytanie i odmowa" "$out" "Wymusić zamknięcie „P2Dummy”" "Przerwano"
+kill -0 "$P2DUMMY" 2>/dev/null && pass "quit-app --force: odmowa – aplikacja działa dalej" || fail "quit-app --force: zamknięto mimo odmowy" "$out"
+out="$(p2pw quit-app P2Dummy 1 --force --yes)"; code=$?
+expect_code "quit-app --force --yes: kod 0" "$code" 0 "$out"
+sleep 0.3
+if kill -0 "$P2DUMMY" 2>/dev/null; then fail "quit-app --force --yes: aplikacja nadal działa" "$out"; kill -9 "$P2DUMMY"
+else pass "quit-app --force --yes: aplikacja zamknięta"; fi
+out="$(p2pw quit-app P2Dummy 1 </dev/null)"; code=$?
+expect_code "quit-app bez --force: bez pytania (kod 0)" "$code" 0 "$out"

@@ -30,7 +30,7 @@ Pliki
 Aplikacje
   apps nr                                  uruchomione aplikacje użytkownika
   open-app "Nazwa" [KOMP]                  uruchom aplikację u zalogowanego użytkownika
-  quit-app "Nazwa" [KOMP] [--force]        zamknij aplikację (--force: natychmiast)
+  quit-app "Nazwa" [KOMP] [--force]        zamknij aplikację (--force: natychmiast, po potwierdzeniu)
   open-url ADRES KOMP                      otwórz stronę lub plik u zalogowanego użytkownika
   kill PID KOMP [--force]                  zakończ proces (--force: SIGKILL)
   uninstall /Applications/X.app KOMP       usuń aplikację
@@ -72,7 +72,7 @@ Opcje
                     rename, setup, readiness, trust i ask – ask pyta wszystkie komputery naraz)
   --root            wykonaj jako root (sudo z hasłem administratora)
   --yes, -y         nie pytaj o potwierdzenie (wymagane bez terminala dla restartu, wylogowania, usuwania,
-                    power-later, zakończenia zajęć, zmiany nazw komputerów, collect --clean)
+                    quit-app --force, power-later, zakończenia zajęć, zmiany nazw komputerów, collect --clean)
   --                koniec opcji – dalsze argumenty dosłownie
 
 Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie (także opcja,
@@ -477,6 +477,11 @@ struct CLI: Sendable {
         guard let app = args[1] else { usageError("Podaj nazwę aplikacji.") }
         let list = targetsOrAllAtTerminal(args[2], command: open ? "open-app" : "quit-app")
         let hard = force
+        // As in the app („Wymuś zamknięcie…”): killing the app loses the students' unsaved work.
+        if !open && hard {
+            confirm("Wymusić zamknięcie „\(app)” na: \(names(list))? Aplikacja zostanie natychmiast zakończona – "
+                    + "niezapisana praca uczniów przepadnie.")
+        }
         return await runScript(on: list, header: { "\($0.name):" }) { _ in
             open ? Scripts.launchApp(app) : Scripts.quitApp(app, force: hard)
         }
