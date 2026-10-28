@@ -232,10 +232,14 @@ public extension Scripts {
         var warn = ""
         if let warning, !warning.isEmpty {
             let apple = "activate\ndisplay dialog \(appleScriptLiteral(warning)) with title \"Komunikat od nauczyciela\" buttons {\"OK\"} default button \"OK\" with icon caution giving up after \(max(60, secs))"
+            // The warning reaches only the session at the screen now; the teacher's result says when nobody got it.
             warn = #"""
             if [ -n "$CONSOLE_USER" ]; then
               echo \#(Data(apple.utf8).base64EncodedString()) | base64 -D | as_console_user /bin/sh -c 'S="$(cat)"; /usr/bin/osascript -e "$S" </dev/null >/dev/null 2>&1 &' \
                 && echo "Ostrzeżenie wyświetlone użytkownikowi $CONSOLE_USER."
+            else
+              BG="$(cmcr_gui_sessions | awk -v a="$CMCR_ADMIN_USER" 'NF && $2 != a {print $2}' | paste -sd, -)"
+              echo "⚠︎ Nikt nie jest zalogowany przy ekranie – ostrzeżenia nie wyświetlono${BG:+ (sesja w tle: $BG)}. Nie zobaczy go też nikt, kto zaloguje się przed czasem."
             fi
             """#
         }

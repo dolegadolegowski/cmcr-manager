@@ -158,3 +158,16 @@ out="$(ctlpw _builder quit-app 1 P2Nic)"; code=$?
 expect "quit-app, sesja ucznia w tle: komunikat" "$out" "w tle działa sesja: uczen-p2"
 expect_code "quit-app, sesja ucznia w tle: kod 1" "$code" 1 "$out"
 rm -f "$WORK/ps.sessions" "$WORK/fake-no-console" "$WORK/config/classroom.json"
+
+section "P2: opóźnione zasilanie – ostrzeżenie, którego nie było komu pokazać (AUDIT DOD-07)"
+# The delayed action waits in a detached /bin/bash – it must see the fakes too.
+p2_bg_ok() { [ "$(ctlpw exec '/bin/bash --noprofile --norc -c "type pmset shutdown pkill launchctl" 2>&1 | grep -c "is a function"' 1 --root | tail -1)" = 4 ]; }
+if p2_bg_ok; then
+  : > "$WORK/fake-no-console"
+  out="$(ctlpw power-later shutdown 30 1 --warn "Test P2" --yes)"
+  rm -f "$WORK/fake-no-console"
+  ctlpw power-cancel 1 >/dev/null
+  expect "power-later, nikt nie jest zalogowany: wynik mówi, że ostrzeżenia nie wyświetlono" "$out" "ostrzeżenia nie wyświetlono"
+else
+  fail "atrapy NIE są aktywne w procesach w tle – pominięto test opóźnionego wyłączenia"
+fi
