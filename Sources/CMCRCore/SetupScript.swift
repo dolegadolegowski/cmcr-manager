@@ -88,8 +88,10 @@ public struct SetupOptions: Codable, Equatable, Sendable {
             return (0...23).contains(h) && (0...59).contains(m)
         }
         if scheduleMode == .set {
-            if scheduleDays.isEmpty || !scheduleDays.allSatisfy({ "MTWRFSU".contains($0) }) {
-                return "Harmonogram: wybierz co najmniej jeden dzień."
+            if scheduleDays.isEmpty { return "Harmonogram: wybierz co najmniej jeden dzień." }
+            if !scheduleDays.allSatisfy({ "MTWRFSU".contains($0) }) {
+                // Days typed on the cmcrctl command line (AUDIT PRZ-10); the app only offers valid ones.
+                return "Harmonogram: dni to wielkie litery M T W R F S U (pn, wt, śr, cz, pt, so, nd), np. MTWRF."
             }
             if !validTime(scheduleOn) { return "Harmonogram: godzina włączenia w formacie GG:MM." }
             if !scheduleOff.isEmpty && !validTime(scheduleOff) { return "Harmonogram: godzina wyłączenia w formacie GG:MM." }
@@ -397,7 +399,8 @@ public struct SetupCommandLine: Sendable {
       --key-from WZORCE         ogranicz klucz do adresów, np. 192.168.1.0/24
       --no-ssh-acl              nie ograniczaj SSH do administratorów
       --no-ssh-tuning           bez ustawień sshd (keepalive)
-      --ssh-key-only            SSH wyłącznie kluczem (wyłącza logowanie hasłem)
+      --ssh-key-only            SSH wyłącznie kluczem (wyłącza logowanie hasłem); bez tej opcji jak
+                                w aplikacji, --no-ssh-key-only włącza logowanie hasłem z powrotem
       --no-shared-acl           folder ucznia bez dziedziczonych uprawnień ACL
       --enable-vnc              włącz Udostępnianie ekranu dla administratorów
       --sudo-nopasswd           sudo bez hasła (niezalecane); --no-sudo-nopasswd usuwa
@@ -408,6 +411,7 @@ public struct SetupCommandLine: Sendable {
       --display-sleep MIN       uśpienie ekranu po MIN minutach
       --autorestart             włącz po zaniku zasilania
       --power-schedule "MTWRF 07:30 17:00 [shutdown|sleep]" | off
+                                harmonogram włączania/wyłączania; dni: M T W R F S U (pn–nd)
       --rosetta                 zainstaluj Rosetta 2
       --updates check|download|auto
       --fix-firewall            wyłącz „Blokuj wszystkie połączenia przychodzące”
@@ -416,7 +420,13 @@ public struct SetupCommandLine: Sendable {
 
     public init() {}
 
-    public init(parsing arguments: [String]) throws {
+    /// `saved`: the options last chosen in the app (setup-options.json). Only „SSH wyłącznie kluczem” is taken from
+    /// them: it has no „bez zmian” state, so without it the script rewrites the sshd settings without
+    /// „PasswordAuthentication no” and logging in with a password silently comes back (AUDIT PRZ-11).
+    /// `--ssh-key-only`/`--no-ssh-key-only` choose explicitly; every other option keeps its command-line default.
+    public init(parsing arguments: [String], saved: SetupOptions = SetupOptions.load()) throws {
+        options.sshKeyOnly = saved.sshKeyOnly
+        var keyOnlyGiven = false
         var i = 0
         func value(_ flag: String) throws -> String {
             guard i + 1 < arguments.count else { throw ParseError(message: "Opcja \(flag) wymaga wartości.") }
@@ -440,7 +450,12 @@ public struct SetupCommandLine: Sendable {
             case "--key-from": options.keyFrom = try value(a)
             case "--no-ssh-acl": options.restrictSSH = false
             case "--no-ssh-tuning": options.sshKeepAlive = false
-            case "--ssh-key-only": options.sshKeyOnly = true
+            case "--ssh-key-only":
+                options.sshKeyOnly = true
+                keyOnlyGiven = true
+            case "--no-ssh-key-only":
+                options.sshKeyOnly = false
+                keyOnlyGiven = true
             case "--no-shared-acl": options.sharedACL = false
             case "--enable-vnc": options.enableVNC = true
             case "--sudo-nopasswd": options.sudo = .passwordless
@@ -469,6 +484,11 @@ public struct SetupCommandLine: Sendable {
                 positional.append(a)
             }
             i += 1
+        }
+        if options.sshKeyOnly && !keyOnlyGiven && !options.installKey {
+            throw ParseError(message: "W aplikacji (Przygotowanie iMaców) wybrano SSH wyłącznie z kluczem, a to wymaga "
+                             + "instalacji klucza – usuń --no-key albo dodaj --no-ssh-key-only (logowanie hasłem "
+                             + "zostanie wtedy włączone ponownie).")
         }
         if let problem = options.validationError() { throw ParseError(message: problem) }
     }

@@ -427,13 +427,48 @@ public enum ClassroomStore {
     static var configURL: URL { ConfigStore.directory.appendingPathComponent("classroom.json") }
     static var cacheURL: URL { ConfigStore.directory.appendingPathComponent("status-cache.json") }
 
+    private static let configIssue = Locked<String?>(nil)
+
+    /// Why classroom.json could not be used as it was, from the last `loadConfig()` (nil: it loaded fine or did not
+    /// exist yet). The app shows it with the other configuration problems; `ConfigStore.loadIssues` lists it too.
+    public static var loadIssue: String? { configIssue.withValue { $0 } }
+
+    /// Loads classroom.json like hosts.json and settings.json (AUDIT KOM-02): a damaged file is kept next to it as
+    /// `classroom.json.<date>.bak`, the values that are still valid are kept, and the problem is reported
+    /// (`loadIssue`); when no copy could be made, the file is not overwritten by later changes.
     public static func loadConfig() -> ClassroomConfig {
-        guard let data = try? Data(contentsOf: configURL),
-              let c = try? JSONDecoder().decode(ClassroomConfig.self, from: data) else { return ClassroomConfig() }
-        return c
+        let r = loadConfig(from: configURL)
+        configIssue.withValue { $0 = r.issue }
+        return ConfigStore.record(r, for: configURL)
     }
 
-    public static func saveConfig(_ c: ClassroomConfig) { write(c, to: configURL) }
+    static func loadConfig(from url: URL) -> ConfigStore.Loaded<ClassroomConfig> {
+        let data: Data
+        do {
+            guard let d = try ConfigStore.readIfPresent(url) else { return .init(value: ClassroomConfig()) }
+            data = d
+        } catch {
+            return .init(value: ClassroomConfig(),
+                         issue: "Nie można odczytać ustawień zajęć (\(url.path)): \(error.localizedDescription). Zmiany tych ustawień nie będą zapisywane.",
+                         protect: true)
+        }
+        if let c = try? JSONDecoder().decode(ClassroomConfig.self, from: data) { return .init(value: c) }
+        let backup = ConfigStore.backupCopy(of: url, data: data)
+        let note = ConfigStore.backupNote(backup)
+        if let (c, bad) = ConfigStore.salvage(ClassroomConfig.self, from: data) {
+            return .init(value: c,
+                         issue: "Niektóre ustawienia zajęć (\(url.lastPathComponent)) były nieprawidłowe i przywrócono im wartości domyślne (\(bad.joined(separator: ", "))). \(note)",
+                         protect: backup == nil)
+        }
+        return .init(value: ClassroomConfig(),
+                     issue: "Plik ustawień zajęć (\(url.lastPathComponent)) jest uszkodzony – przywrócono ustawienia domyślne (scenariusze zajęć, harmonogram zasilania, tryb uwagi). \(note)",
+                     protect: backup == nil)
+    }
+
+    /// Does nothing while the file is protected (see `loadConfig`).
+    public static func saveConfig(_ c: ClassroomConfig) { saveConfig(c, to: configURL) }
+
+    static func saveConfig(_ c: ClassroomConfig, to url: URL) { ConfigStore.save(c, to: url) }
 
     public static func loadSnapshots() -> [UUID: HostSnapshot] {
         let dec = JSONDecoder()
@@ -561,10 +596,29 @@ public enum CSV {
     public static let defaultSeparator: Character = ";"
 
     public static func escape(_ field: String, separator: Character = defaultSeparator) -> String {
+        let field = neutralized(field)
         let needsQuotes = field.contains(separator) || field.contains("\"") || field.contains("\n")
             || field.contains("\r") || field.hasPrefix(" ") || field.hasSuffix(" ")
         let body = field.replacingOccurrences(of: "\"", with: "\"\"")
         return needsQuotes ? "\"\(body)\"" : body
+    }
+
+    /// A cell a spreadsheet would read as a formula (starting with =, +, -, @, a tab or CR) gets a leading
+    /// apostrophe, as spreadsheets do themselves for text: the exports carry text from the iMacs (students'
+    /// answers, versions read from apps in the student's folder), which must not run as a formula such as
+    /// =HYPERLINK(…) when the file is opened in Excel or Numbers (AUDIT KOM-14, ZAJ-02). Plain numbers (-5, +3,
+    /// -1,5) are left as they are.
+    public static func neutralized(_ field: String) -> String {
+        guard let first = field.unicodeScalars.first, "=+-@\t\r".unicodeScalars.contains(first) else { return field }
+        if isPlainNumber(field) { return field }
+        return "'" + field
+    }
+
+    private static func isPlainNumber(_ s: String) -> Bool {
+        var digits = Substring(s)
+        if let sign = digits.first, sign == "-" || sign == "+" { digits = digits.dropFirst() }
+        let parts = digits.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "." || $0 == "," })
+        return (1...2).contains(parts.count) && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isASCII) && $0.allSatisfy(\.isNumber) }
     }
 
     /// RFC 4180 style text with CRLF line ends; `bom` adds the UTF-8 byte order mark Excel needs for "ą, ę".
@@ -572,6 +626,16 @@ public enum CSV {
         let body = rows.map { $0.map { escape($0, separator: separator) }.joined(separator: String(separator)) }
             .joined(separator: "\r\n")
         return (bom ? "\u{FEFF}" : "") + body + "\r\n"
+    }
+
+    /// Tab-separated rows for the clipboard („Kopiuj”), pasted into a spreadsheet one cell per value: cells are
+    /// neutralised like in the CSV export, and tabs or line breaks inside a cell become spaces.
+    public static func tsv(_ rows: [[String]]) -> String {
+        rows.map { row in
+            row.map { cell in
+                neutralized(cell).map { $0 == "\t" || $0.isNewline ? " " : String($0) }.joined()
+            }.joined(separator: "\t")
+        }.joined(separator: "\n")
     }
 }
 

@@ -3,10 +3,17 @@ import Security
 
 /// Persists hosts and settings as JSON in Application Support (override with `CMCR_CONFIG_DIR`).
 public enum ConfigStore {
-    public static var directory: URL {
-        if let custom = ProcessInfo.processInfo.environment["CMCR_CONFIG_DIR"], !custom.isEmpty {
-            return URL(fileURLWithPath: expandTilde(custom), isDirectory: true)
-        }
+    public static var directory: URL { directory(environment: ProcessInfo.processInfo.environment) }
+
+    /// The folder from `CMCR_CONFIG_DIR`; nil when the variable is not set or empty (e.g. an unset variable in a
+    /// script), which means the default locations – for the configuration and the log alike (AUDIT KON-08).
+    static func customDirectory(_ environment: [String: String]) -> URL? {
+        guard let custom = environment["CMCR_CONFIG_DIR"], !custom.isEmpty else { return nil }
+        return URL(fileURLWithPath: expandTilde(custom), isDirectory: true)
+    }
+
+    static func directory(environment: [String: String]) -> URL {
+        if let custom = customDirectory(environment) { return custom }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("CMCRManager", isDirectory: true)
     }
@@ -14,10 +21,10 @@ public enum ConfigStore {
     static var hostsURL: URL { directory.appendingPathComponent("hosts.json") }
     static var settingsURL: URL { directory.appendingPathComponent("settings.json") }
 
-    public static var logURL: URL {
-        if ProcessInfo.processInfo.environment["CMCR_CONFIG_DIR"] != nil {
-            return directory.appendingPathComponent("actions.log")
-        }
+    public static var logURL: URL { logURL(environment: ProcessInfo.processInfo.environment) }
+
+    static func logURL(environment: [String: String]) -> URL {
+        if let custom = customDirectory(environment) { return custom.appendingPathComponent("actions.log") }
         let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
         return lib.appendingPathComponent("Logs/CMCRManager/actions.log")
     }
@@ -150,7 +157,7 @@ public enum ConfigStore {
 
     public static func clearLoadIssues() { loadState.withValue { $0.issues = [] } }
 
-    private static func record<Value>(_ r: Loaded<Value>, for url: URL) -> Value {
+    static func record<Value>(_ r: Loaded<Value>, for url: URL) -> Value {
         loadState.withValue { s in
             if let issue = r.issue, !s.issues.contains(issue) { s.issues.append(issue) }
             if r.protect { s.protected.insert(url.path) }
@@ -159,7 +166,7 @@ public enum ConfigStore {
     }
 
     /// nil when the file does not exist yet.
-    private static func readIfPresent(_ url: URL) throws -> Data? {
+    static func readIfPresent(_ url: URL) throws -> Data? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         return try Data(contentsOf: url)
     }
@@ -211,34 +218,41 @@ public enum ConfigStore {
                           issue: "Nie można odczytać ustawień (\(url.path)): \(error.localizedDescription). Zmiany ustawień nie będą zapisywane.",
                           protect: true)
         }
-        let decoder = JSONDecoder()
-        if let s = try? decoder.decode(AppSettings.self, from: data) { return Loaded(value: s) }
+        if let s = try? JSONDecoder().decode(AppSettings.self, from: data) { return Loaded(value: s) }
         let backup = backupCopy(of: url, data: data)
         let note = backupNote(backup)
-        // Keep every setting that is still valid on its own.
-        if let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-            var good: [String: Any] = [:]
-            var bad: [String] = []
-            for (key, value) in object {
-                if let one = try? JSONSerialization.data(withJSONObject: [key: value]),
-                   (try? decoder.decode(AppSettings.self, from: one)) != nil {
-                    good[key] = value
-                } else {
-                    bad.append(key)
-                }
-            }
-            if let d = try? JSONSerialization.data(withJSONObject: good), let s = try? decoder.decode(AppSettings.self, from: d) {
-                return Loaded(value: s,
-                              issue: "Niektóre ustawienia były nieprawidłowe i przywrócono im wartości domyślne (\(bad.sorted().joined(separator: ", "))). \(note)",
-                              protect: backup == nil)
-            }
+        if let (s, bad) = salvage(AppSettings.self, from: data) {
+            return Loaded(value: s,
+                          issue: "Niektóre ustawienia były nieprawidłowe i przywrócono im wartości domyślne (\(bad.joined(separator: ", "))). \(note)",
+                          protect: backup == nil)
         }
         return Loaded(value: AppSettings(),
                       issue: "Plik ustawień (\(url.lastPathComponent)) jest uszkodzony – przywrócono ustawienia domyślne. \(note)",
                       protect: backup == nil)
     }
 
-    private static func backupNote(_ backup: URL?) -> String {
+    /// Keeps every top-level value of a damaged JSON object that is still valid on its own (the type's decoder
+    /// fills in defaults for the rest); returns the names of the dropped values, sorted. nil when the data is not a
+    /// JSON object at all.
+    static func salvage<T: Decodable>(_ type: T.Type, from data: Data) -> (value: T, dropped: [String])? {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        let decoder = JSONDecoder()
+        var good: [String: Any] = [:]
+        var bad: [String] = []
+        for (key, value) in object {
+            if let one = try? JSONSerialization.data(withJSONObject: [key: value]),
+               (try? decoder.decode(T.self, from: one)) != nil {
+                good[key] = value
+            } else {
+                bad.append(key)
+            }
+        }
+        guard let d = try? JSONSerialization.data(withJSONObject: good), let value = try? decoder.decode(T.self, from: d)
+        else { return nil }
+        return (value, bad.sorted())
+    }
+
+    static func backupNote(_ backup: URL?) -> String {
         if let backup { return "Oryginał zachowano jako \(backup.lastPathComponent) w \(backup.deletingLastPathComponent().path)." }
         return "Nie udało się zachować kopii oryginału, więc zmiany nie będą zapisywane."
     }

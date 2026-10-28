@@ -170,7 +170,7 @@ public enum LessonRunner {
             let step = plan.steps[i]
             if step != .wake, let limiter, !holdsSlot, !unreachable, handle?.isCancelled != true {
                 if await !limiter.tryAcquire() {
-                    say("Czekam na swoją kolej (najwyżej \(limiter.limit) komputerów naraz)…")
+                    say("Czekam na swoją kolej (najwyżej \(Polish.computers(limiter.limit)) naraz)…")
                     await limiter.acquire()
                 }
                 holdsSlot = true
