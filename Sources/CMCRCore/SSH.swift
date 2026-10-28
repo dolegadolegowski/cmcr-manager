@@ -788,7 +788,9 @@ public enum Payload {
             .appendingPathComponent("cmcr-payload-\(UUID().uuidString).tar")
         var args = ["-cf", out.path]
         for item in items {
-            args += ["-C", item.deletingLastPathComponent().path, item.lastPathComponent]
+            // "./" keeps a name such as "-szkic.txt" or "-Cdane" from being read as tar options (AUDIT PLI-07);
+            // the archive entry then extracts to the same name.
+            args += ["-C", item.deletingLastPathComponent().path, "./" + item.lastPathComponent]
         }
         let r = await ProcessRunner.run("/usr/bin/tar", args)
         // scp -p keeps this mode on the iMac: the archive waits in its /tmp, readable by the logged-in student

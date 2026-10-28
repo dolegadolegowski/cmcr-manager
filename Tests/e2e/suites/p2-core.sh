@@ -9,3 +9,16 @@ out="$(ctl __run-job 'echo "ssh: Could not resolve hostname github.com: nodename
 expect "zadanie z komunikatem ssh polecenia: komputer online" "$out" "exit=128" "started=true" "reach=online"
 out="$(ctl __run-job 'echo "ssh: connect to host inny.local port 22: Operation timed out" >&2; exit 255' 1)"
 expect "zadanie zakończone kodem 255: komputer online" "$out" "exit=255" "started=true" "reach=online"
+
+section "P2 core: wysyłanie plików o nazwach od „-” (AUDIT PLI-07)"
+# tar read a first name such as "-szkic.txt" as options („Nie udało się spakować plików: tar: Can't specify both -t
+# and -c”), and a later "-C…" name as a change of folder (the file was left out without an error).
+P2S="$WORK/p2-send"
+mkdir -p "$P2S"
+echo "szkic" > "$P2S/-szkic p2.txt"
+echo "dane" > "$P2S/-Cdane p2.txt"
+out="$(ctlpw _builder push 1 "$WORK/remote/p2-dest" "" 644 "$P2S/-szkic p2.txt" "$P2S/-Cdane p2.txt" --root)"; code=$?
+expect_code "wysyłanie: pliki o nazwach od „-” – kod 0" "$code" 0 "$out"
+[ -f "$WORK/remote/p2-dest/-szkic p2.txt" ] && [ "$(cat "$WORK/remote/p2-dest/-Cdane p2.txt" 2>/dev/null)" = dane ] \
+  && pass "wysyłanie: oba pliki o nazwach od „-” dotarły" \
+  || fail "wysyłanie: brak plików o nazwach od „-”" "$out$(ls -la "$WORK/remote/p2-dest" 2>&1)"

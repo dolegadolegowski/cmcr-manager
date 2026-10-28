@@ -340,3 +340,31 @@ struct P2ScreenIssueTextTests {
         }
     }
 }
+
+// MARK: - PLI-07: names starting with "-" are packed as files, not read as tar options
+
+struct P2PayloadTests {
+    /// AUDIT PLI-07: `tar -cf out -C folder -szkic.txt` read the name as options („Can't specify both -t and -c”),
+    /// and a later item named "-C…" was taken for a change of folder and silently left out.
+    @Test func itemsWhoseNamesLookLikeOptionsArePacked() async throws {
+        let dir = try p2TemporaryDirectory("payload")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let names = ["-szkic.txt", "zwykły.txt", "-Cdane.txt"]
+        for n in names { try Data("treść \(n)\n".utf8).write(to: dir.appendingPathComponent(n)) }
+        let archive: URL
+        switch await Payload.make(names.map { dir.appendingPathComponent($0) }) {
+        case .success(let url): archive = url
+        case .failure(let error):
+            Issue.record("pakowanie nie powiodło się: \(error.localizedDescription)")
+            return
+        }
+        defer { try? FileManager.default.removeItem(at: archive) }
+        let out = dir.appendingPathComponent("rozpakowane")
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let r = await ProcessRunner.run("/usr/bin/tar", ["-xf", archive.path, "-C", out.path])
+        #expect(r.succeeded, "\(r.stderrText)")
+        let unpacked = try FileManager.default.contentsOfDirectory(atPath: out.path).sorted()
+        #expect(unpacked == names.sorted())
+        #expect(try String(contentsOf: out.appendingPathComponent("-Cdane.txt"), encoding: .utf8) == "treść -Cdane.txt\n")
+    }
+}
