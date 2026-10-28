@@ -701,12 +701,16 @@ struct AccessSettings: View {
             LabeledContent {
                 if key != nil {
                     StatusText(text: "Gotowy", symbol: "checkmark.circle.fill", color: .green)
+                } else if configuredKey != nil {
+                    StatusText(text: "Brak pliku klucza", symbol: "exclamationmark.triangle.fill", color: .orange)
                 } else {
                     StatusText(text: "Brak klucza", symbol: "exclamationmark.triangle.fill", color: .orange)
                 }
             } label: {
                 SettingLabel(title: "Klucz logowania tego Maca",
-                             caption: key.map(\.path) ?? "Utwórz go, aby łączyć się z iMacami bez wpisywania hasła",
+                             caption: key.map(\.path)
+                                ?? configuredKey.map { "W Ustawieniach › Połączenie wybrano \($0), ale takiego pliku nie ma" }
+                                ?? "Utwórz go, aby łączyć się z iMacami bez wpisywania hasła",
                              icon: "key.horizontal.fill", color: .blue)
             }
             if let key {
@@ -720,7 +724,20 @@ struct AccessSettings: View {
                 }
                 .help("Ta część klucza nie jest tajna – trafia na iMaki przy rozsyłaniu")
             }
-            if key == nil || !defaultKeyExists {
+            if configuredKey != nil {
+                // A key chosen in Ustawienia › Połączenie is used instead of ~/.ssh: a new default key would be
+                // neither used nor sent to the iMacs (AUDIT KON-16).
+                HStack {
+                    Spacer()
+                    Button {
+                        model.settings.identityFile = ""
+                        keyRevision += 1
+                    } label: {
+                        Label("Użyj domyślnego klucza z ~/.ssh", systemImage: "arrow.uturn.backward")
+                    }
+                    .help("Przestań używać klucza wybranego w Ustawieniach › Połączenie")
+                }
+            } else if key == nil || !defaultKeyExists {
                 HStack {
                     Spacer()
                     Button {
@@ -750,6 +767,12 @@ struct AccessSettings: View {
     }
 
     private var currentKey: URL? { SSHKeys.currentPrivateKey(settings: model.settings) }
+
+    /// The key file chosen in Ustawienia › Połączenie (nil: the first key in ~/.ssh is used).
+    private var configuredKey: String? {
+        let file = model.settings.identityFile.trimmingCharacters(in: .whitespaces)
+        return file.isEmpty ? nil : file
+    }
 
     /// `SSHKeys.generate` creates ~/.ssh/id_ed25519 and refuses when it already exists.
     private var defaultKeyExists: Bool {
@@ -802,7 +825,8 @@ struct AccessSettings: View {
         TargetButton(title: "Roześlij klucz", icon: "paperplane", prominent: true, includeUnreachable: true) {
             model.distributeKey(model.selectedMachines)
         }
-        .disabled(currentKey == nil)
+        // The iMacs get the public half (.pub); without it there is nothing to send (AUDIT KON-17).
+        .disabled(model.managerPublicKey == nil)
     }
 }
 

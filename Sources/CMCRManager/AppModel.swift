@@ -1027,8 +1027,15 @@ final class AppModel: ObservableObject {
     // MARK: - Setup
 
     func distributeKey(_ targets: [Machine]) {
-        guard let key = SSHKeys.currentPrivateKey(settings: settings), let pub = SSHKeys.publicKey(for: key) else {
-            NSSound.beep()
+        guard let key = SSHKeys.currentPrivateKey(settings: settings) else {
+            notice = AppNotice(title: "Brak klucza logowania",
+                               message: "Utwórz klucz w Konfiguracji › Dostęp i hasła albo wybierz istniejący w Ustawieniach › Połączenie.")
+            return
+        }
+        guard let pub = SSHKeys.publicKey(for: key) else {
+            notice = AppNotice(title: "Brak klucza publicznego",
+                               message: "Obok klucza \(key.path) nie ma pliku \(key.lastPathComponent).pub, więc nie ma czego rozesłać. "
+                                   + "Odtworzysz go w Terminalu: ssh-keygen -y -f \(key.path) > \(key.path).pub")
             return
         }
         runScript("Dystrybucja klucza SSH (\(key.lastPathComponent).pub)", on: targets, includeUnreachable: true,

@@ -670,6 +670,25 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // key-without-pub (AUDIT KON-17): sending a key whose .pub is missing says so instead of only beeping.
+    @Test func sendingAKeyWithoutItsPublicHalfExplainsWhy() throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        let key = FileManager.default.temporaryDirectory.appendingPathComponent("cmcr-key-\(UUID().uuidString)")
+        try Data("prywatny".utf8).write(to: key)
+        defer { try? FileManager.default.removeItem(at: key) }
+        let before = model.settings.identityFile
+        model.settings.identityFile = key.path
+        defer { model.settings.identityFile = before }
+        model.notice = nil
+        #expect(model.managerPublicKey == nil)
+        model.distributeKey([a])
+        #expect(model.notice?.title == "Brak klucza publicznego")
+        #expect(!model.batches.contains { $0.title.hasPrefix("Dystrybucja klucza") })
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false
