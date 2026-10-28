@@ -88,8 +88,10 @@ public struct SetupOptions: Codable, Equatable, Sendable {
             return (0...23).contains(h) && (0...59).contains(m)
         }
         if scheduleMode == .set {
-            if scheduleDays.isEmpty || !scheduleDays.allSatisfy({ "MTWRFSU".contains($0) }) {
-                return "Harmonogram: wybierz co najmniej jeden dzień."
+            if scheduleDays.isEmpty { return "Harmonogram: wybierz co najmniej jeden dzień." }
+            if !scheduleDays.allSatisfy({ "MTWRFSU".contains($0) }) {
+                // Days typed on the cmcrctl command line (AUDIT PRZ-10); the app only offers valid ones.
+                return "Harmonogram: dni to wielkie litery M T W R F S U (pn, wt, śr, cz, pt, so, nd), np. MTWRF."
             }
             if !validTime(scheduleOn) { return "Harmonogram: godzina włączenia w formacie GG:MM." }
             if !scheduleOff.isEmpty && !validTime(scheduleOff) { return "Harmonogram: godzina wyłączenia w formacie GG:MM." }
@@ -408,6 +410,7 @@ public struct SetupCommandLine: Sendable {
       --display-sleep MIN       uśpienie ekranu po MIN minutach
       --autorestart             włącz po zaniku zasilania
       --power-schedule "MTWRF 07:30 17:00 [shutdown|sleep]" | off
+                                harmonogram włączania/wyłączania; dni: M T W R F S U (pn–nd)
       --rosetta                 zainstaluj Rosetta 2
       --updates check|download|auto
       --fix-firewall            wyłącz „Blokuj wszystkie połączenia przychodzące”

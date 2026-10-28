@@ -418,3 +418,30 @@ struct P2LessonQueueMessageTests {
         #expect(output.contains("Czekam na swoją kolej (\(expected))…"), "\(output)")
     }
 }
+
+// MARK: - PRZ-10: wrong day letters in a power schedule are explained
+
+struct P2ScheduleDaysTests {
+    /// AUDIT PRZ-10: `cmcrctl setup 1 --power-schedule "mtwrf 07:30"` said „wybierz co najmniej jeden dzień”
+    /// although days were given – only as letters the script does not know.
+    @Test func wrongDayLettersGetTheirOwnMessage() {
+        let letters = "Harmonogram: dni to wielkie litery M T W R F S U (pn, wt, śr, cz, pt, so, nd), np. MTWRF."
+        var o = SetupOptions()
+        o.scheduleMode = .set
+        for days in ["MTWXF", "mtwrf", "MTWRF "] {
+            o.scheduleDays = days
+            #expect(o.validationError() == letters, "\(days)")
+        }
+        o.scheduleDays = ""
+        #expect(o.validationError() == "Harmonogram: wybierz co najmniej jeden dzień.")
+        o.scheduleDays = "MTWRFSU"
+        #expect(o.validationError() == nil)
+        do {
+            _ = try SetupCommandLine(parsing: ["1", "--power-schedule", "mtwrf 07:30"])
+            Issue.record("błędne litery dni przyjęte")
+        } catch {
+            #expect(error.localizedDescription == letters)
+        }
+        #expect(SetupCommandLine.optionsHelp.contains("M T W R F S U"))
+    }
+}

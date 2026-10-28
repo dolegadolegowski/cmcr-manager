@@ -40,3 +40,9 @@ out="$(CMCR_CONFIG_DIR="$P2C" CMCR_PASSWORD="$PASSWORD" "$CTL" collect 1 --from 
 expect_code "collect: komputer o nazwie z „/” – kod 0" "$code" 0 "$out"
 [ "$(cat "$WORK/p2-zebrane/Sala 3-iMac 01/praca.txt" 2>/dev/null)" = praca ] \
   && pass "collect: prace w folderze „Sala 3-iMac 01”" || fail "collect: brak zebranych prac" "$out$(ls -laR "$WORK/p2-zebrane" 2>&1)"
+
+section "P2 core: litery dni harmonogramu w cmcrctl setup (AUDIT PRZ-10)"
+out="$(ctl setup 1 --power-schedule "mtwrf 07:30")"; code=$?
+expect_code "setup: złe litery dni – kod 2" "$code" 2 "$out"
+expect "setup: złe litery dni – objaśnienie liter" "$out" "M T W R F S U" "np. MTWRF"
+expect_not "setup: złe litery dni – nie „wybierz co najmniej jeden dzień”" "$out" "co najmniej jeden dzień"
