@@ -270,13 +270,16 @@ public extension Scripts {
         SRC="./$OLDNAME"; DST="./$NEWNAME"
         if [ ! -e "$SRC" ] && [ ! -L "$SRC" ]; then echo "CMCR:NOT_FOUND" >&2; echo "Nie znaleziono: $OLDREAL" >&2; exit 61; fi
         if [ "$(stat -f '%d:%i' "$SRC")" = "$(stat -f '%d:%i' "$DST" 2>/dev/null)" ]; then
-          # The same directory entry: only the letter case changes (mv -n would silently do nothing).
-          mv "$SRC" "$DST" || { echo "✘ Nie udało się zmienić nazwy $OLDREAL" >&2; exit 1; }
+          # The same directory entry: only the letter case changes (mv -n would silently do nothing). -h: a link
+          # planted at the new name meanwhile is replaced, never followed into another folder.
+          mv -h "$SRC" "$DST" || { echo "✘ Nie udało się zmienić nazwy $OLDREAL" >&2; exit 1; }
         else
           if [ -e "$DST" ] || [ -L "$DST" ]; then
             echo "CMCR:EXISTS" >&2; echo "Element o nazwie „${NEWNAME}” już istnieje." >&2; exit 66
           fi
-          mv -n "$SRC" "$DST" || { echo "✘ Nie udało się zmienić nazwy $OLDREAL" >&2; exit 1; }
+          # -h: the student owns this folder and may plant a link at the new name after the check above; mv must
+          # not follow it and move the item, as root, into the linked folder (-n then refuses to replace the link).
+          mv -hn "$SRC" "$DST" || { echo "✘ Nie udało się zmienić nazwy $OLDREAL" >&2; exit 1; }
           if [ -e "$SRC" ] || [ -L "$SRC" ]; then
             echo "CMCR:EXISTS" >&2; echo "Element o nazwie „${NEWNAME}” już istnieje." >&2; exit 66
           fi

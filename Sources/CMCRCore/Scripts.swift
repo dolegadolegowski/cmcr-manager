@@ -829,7 +829,7 @@ public enum Scripts {
             fi
             # -h: a link put in place of the old item meanwhile is replaced, not entered.
             if ! /bin/mv -h "$item" "$t"; then
-              if [ -e "$STAGE/old/$n" ] || [ -L "$STAGE/old/$n" ]; then /bin/mv "$STAGE/old/$n" "$t" 2>/dev/null; fi
+              if [ -e "$STAGE/old/$n" ] || [ -L "$STAGE/old/$n" ]; then /bin/mv -h "$STAGE/old/$n" "$t" 2>/dev/null; fi
               echo "✘ Nie można zapisać $DEST/$n" >&2; RC=1; continue
             fi
           fi
