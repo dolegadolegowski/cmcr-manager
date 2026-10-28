@@ -460,4 +460,21 @@ struct AppLogicTests {
         #expect(model.selection == [a.id])
         #expect(await AppTestEnvironment.wait { again.finished })
     }
+
+    // lesson-cancel-via-batch (AUDIT WSP-02): „Przerwij” on the warning batch (Zadania, Aktywność, the result box)
+    // stops the whole end of lesson – no countdown, no logging out afterwards.
+    @Test func cancellingTheWarningBatchStopsTheEndOfLesson() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        endPlan()
+        classroom.endLesson(model, targets: [a])
+        let run = try #require(classroom.run)
+        let warning = try #require(model.batches.first { $0.title == "Zakończenie zajęć – ostrzeżenie" })
+        warning.cancel()
+        #expect(await AppTestEnvironment.wait(5) { run.finished }, "zakończenie zajęć trwa dalej (\(run.phase))")
+        #expect(run.countdownEnd == nil)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(!model.batches.contains { $0.title == "Zakończenie zajęć" }, "po przerwaniu ruszyły kroki zakończenia")
+        #expect(!model.lessonInProgress)
+    }
 }

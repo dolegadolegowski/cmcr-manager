@@ -178,7 +178,15 @@ final class Batch: ObservableObject, Identifiable, @unchecked Sendable {
 
     var duration: TimeInterval { (finishedAt ?? Date()).timeIntervalSince(createdAt) }
 
-    func cancel() { jobs.forEach { $0.handle.cancel() } }
+    /// Called once by `cancel()`: a batch that is one part of something larger (a lesson routine) stops all of it.
+    var onCancel: (() -> Void)?
+
+    func cancel() {
+        jobs.forEach { $0.handle.cancel() }
+        let hook = onCancel
+        onCancel = nil
+        hook?()
+    }
 }
 
 struct HostApps {

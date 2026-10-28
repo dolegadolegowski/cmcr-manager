@@ -37,6 +37,7 @@ final class LessonRun: ObservableObject, Identifiable, @unchecked Sendable {
     }
 
     func cancel() {
+        guard !cancelled else { return }
         cancelled = true
         countdownEnd = nil
         batches.forEach { $0.cancel() }
@@ -381,6 +382,9 @@ final class ClassroomModel: ObservableObject {
         })
         guard let batch else { return }
         run.batches.append(batch)
+        // „Przerwij” on any of the routine's batches (Zadania, Aktywność, the result box) stops the whole routine:
+        // otherwise a cancelled warning would still be followed by the countdown, logging out and switching off.
+        batch.onCancel = { [weak run] in run?.cancel() }
         // Macs left out on purpose or known to be off never run their steps: say why in the lesson table.
         for job in batch.jobs where job.state == .skipped {
             let why = job.skipReason == .loggedInUser ? "pominięto – zalogowany użytkownik" : "pominięto – komputer niedostępny"
