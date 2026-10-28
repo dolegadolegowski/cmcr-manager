@@ -73,6 +73,13 @@ func fail(_ message: String, code: Int32 = ExitCode.failure) -> Never {
     exit(code)
 }
 
+/// Saves the host list; a failed write ends the command with the reason instead of a success message (AUDIT KON-03).
+func saveHostsOrFail(_ hosts: [Machine]) {
+    if let problem = ConfigStore.saveHosts(hosts) {
+        fail("✘ \(problem)\nLista komputerów nie została zmieniona.")
+    }
+}
+
 func usageError(_ message: String) -> Never {
     Console.err(message)
     Console.err("Pomoc: cmcrctl --help")

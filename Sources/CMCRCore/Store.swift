@@ -38,7 +38,9 @@ public enum ConfigStore {
         return hosts
     }
 
-    public static func saveHosts(_ hosts: [Machine]) {
+    /// Returns why the list could not be saved (nil when it was, or when the file is protected – see `loadIssues`).
+    @discardableResult
+    public static func saveHosts(_ hosts: [Machine]) -> String? {
         save(hosts, to: hostsURL)
     }
 
@@ -46,7 +48,9 @@ public enum ConfigStore {
         record(loadSettings(from: settingsURL), for: settingsURL)
     }
 
-    public static func saveSettings(_ settings: AppSettings) {
+    /// Returns why the settings could not be saved (nil when they were, or when the file is protected).
+    @discardableResult
+    public static func saveSettings(_ settings: AppSettings) -> String? {
         save(settings, to: settingsURL)
     }
 
@@ -205,18 +209,22 @@ public enum ConfigStore {
         Machine.withUniqueIDs(try JSONDecoder().decode([Machine].self, from: Data(contentsOf: url))).hosts
     }
 
-    private static func save<T: Encodable>(_ value: T, to url: URL) {
-        if loadState.withValue({ $0.protected.contains(url.path) }) { return }
+    /// Writes `value` as JSON; returns the reason when that failed (read-only folder, full disk, locked file).
+    @discardableResult
+    static func save<T: Encodable>(_ value: T, to url: URL) -> String? {
+        if loadState.withValue({ $0.protected.contains(url.path) }) { return nil }
         ensureDirectory(url.deletingLastPathComponent())
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         do {
             try enc.encode(value).write(to: url, options: .atomic)
             loadState.withValue { $0.lastSaveError = nil }
+            return nil
         } catch {
             let message = "Nie można zapisać \(url.path): \(error.localizedDescription)"
             loadState.withValue { $0.lastSaveError = message }
             NSLog("CMCR: %@", message)
+            return message
         }
     }
 

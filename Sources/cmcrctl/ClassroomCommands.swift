@@ -303,7 +303,7 @@ enum ClassroomCLI {
                 if let address = ComputerNames.addressAfterRename(hosts[i].address, localHostName: p.localHostName) {
                     hosts[i].address = address
                 }
-                ConfigStore.saveHosts(hosts)
+                saveHostsOrFail(hosts)
                 Console.out("Zaktualizowano listę komputerów: \(hosts[i].name) → \(hosts[i].address)")
             }
         }

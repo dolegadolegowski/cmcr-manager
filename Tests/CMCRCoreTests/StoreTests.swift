@@ -113,6 +113,22 @@ struct ConfigRecoveryTests {
         #expect(backups(in: dir, of: "settings.json").count == 1)
     }
 
+    /// AUDIT KON-03: a failed save is reported to the caller (the app shows it, cmcrctl stops with an error).
+    @Test func aFailedSaveIsReported() throws {
+        let dir = try temporaryDirectory()
+        defer {
+            chmod(dir.path, 0o700)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        let url = dir.appendingPathComponent("hosts.json")
+        #expect(ConfigStore.save([Machine](), to: url) == nil)
+        chmod(dir.path, 0o500)
+        let problem = ConfigStore.save(Machine.generate(), to: url)
+        #expect(problem?.contains(url.path) == true)
+        #expect(ConfigStore.lastSaveError == problem)
+        #expect(try JSONDecoder().decode([Machine].self, from: Data(contentsOf: url)).isEmpty)
+    }
+
     @Test func connectionSharingDefaultsToOn() throws {
         let s = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"connectTimeout": 4}"#.utf8))
         #expect(s.reuseConnections)

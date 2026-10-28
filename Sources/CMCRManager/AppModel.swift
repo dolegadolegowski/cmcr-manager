@@ -250,7 +250,7 @@ enum OwnerChoice: String, CaseIterable, Identifiable {
 final class AppModel: ObservableObject {
     @Published var machines: [Machine] {
         didSet {
-            ConfigStore.saveHosts(machines)
+            reportSaveProblem(ConfigStore.saveHosts(machines))
             pruneSelection()
             closeStaleConnections(oldMachines: oldValue)
         }
@@ -258,7 +258,7 @@ final class AppModel: ObservableObject {
     @Published var settings: AppSettings {
         didSet {
             if settings != oldValue {
-                ConfigStore.saveSettings(settings)
+                reportSaveProblem(ConfigStore.saveSettings(settings))
                 closeStaleConnections(oldSettings: oldValue)
             }
         }
@@ -362,6 +362,20 @@ final class AppModel: ObservableObject {
 
     /// The current host list entry of `m` (address, port, account, password choice), or `m` itself once removed.
     func current(_ m: Machine) -> Machine { machine(m.id) ?? m }
+
+    /// The save error last shown, so a folder that stays read-only does not raise an alert on every keystroke.
+    private var shownSaveProblem: String?
+
+    /// Tells the user once that hosts.json or settings.json could not be saved (AUDIT KON-03): the table and the
+    /// settings would otherwise look saved, and the changes would be gone after the next start.
+    func reportSaveProblem(_ problem: String?) {
+        defer { shownSaveProblem = problem }
+        guard let problem, problem != shownSaveProblem else { return }
+        notice = AppNotice(
+            title: "Nie udało się zapisać konfiguracji",
+            message: problem + "\n\nZmiany obowiązują do zamknięcia aplikacji, ale nie zostaną zachowane. "
+                + "Sprawdź uprawnienia folderu konfiguracji i wolne miejsce na dysku.")
+    }
 
     func setSharedPassword(_ pw: String) {
         let saved = Keychain.set(pw, for: Keychain.sharedAccount)

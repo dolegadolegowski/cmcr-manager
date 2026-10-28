@@ -477,4 +477,24 @@ struct AppLogicTests {
         #expect(!model.batches.contains { $0.title == "Zakończenie zajęć" }, "po przerwaniu ruszyły kroki zakończenia")
         #expect(!model.lessonInProgress)
     }
+
+    // config-save-silent (AUDIT KON-03): a list that cannot be saved is reported once, not on every change.
+    @Test func aFailedSaveOfTheHostListIsShown() async throws {
+        let model = AppTestEnvironment.makeModel([AppTestEnvironment.closedHost("imac01")])
+        model.notice = nil
+        let dir = ConfigStore.directory.path
+        chmod(dir, 0o500)
+        defer { chmod(dir, 0o700) }
+        model.machines[0].port = 2
+        let notice = try #require(model.notice, "błąd zapisu hosts.json nie został pokazany")
+        #expect(notice.title == "Nie udało się zapisać konfiguracji")
+        #expect(notice.message.contains("hosts.json"))
+        model.notice = nil
+        model.machines[0].port = 3
+        #expect(model.notice == nil, "ten sam błąd nie powinien wracać przy każdej zmianie")
+        chmod(dir, 0o700)
+        model.machines[0].port = 4
+        #expect(model.notice == nil)
+        #expect(ConfigStore.lastSaveError == nil)
+    }
 }

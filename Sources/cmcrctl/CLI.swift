@@ -356,8 +356,11 @@ struct CLI: Sendable {
             }
         }
         guard !updated.isEmpty else { return }
-        ConfigStore.saveHosts(current)
-        if !quiet { Console.err("Zapisano adres MAC (Wake-on-LAN): \(updated.joined(separator: ", "))") }
+        if let problem = ConfigStore.saveHosts(current) {
+            Console.err("Nie zapisano adresu MAC (Wake-on-LAN): \(problem)")
+        } else if !quiet {
+            Console.err("Zapisano adres MAC (Wake-on-LAN): \(updated.joined(separator: ", "))")
+        }
     }
 
     func exec() async -> Int32 {
