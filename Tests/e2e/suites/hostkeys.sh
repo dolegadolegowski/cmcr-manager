@@ -134,6 +134,9 @@ vport="$(printf '%s\n' "$out" | sed -n 's/^CMCR:TUNNEL port=//p' | head -1)"
 if [ -n "$vport" ] && nc -z 127.0.0.1 "$vport" 2>/dev/null; then pass "tunel VNC: lokalny port nasłuchuje ($vport)"
 else fail "tunel VNC: brak lokalnego portu" "$out"; fi
 expect "tunel VNC: adres przez tunel" "$out" "vnc://$ME@127.0.0.1:$vport"
+# The tunnel waits (linger) for Screen Sharing to connect; close it now, so its session does not outlive the suite.
+[ -n "$vport" ] && pkill -f -- "-L 127.0.0.1:$vport:127.0.0.1:5900" 2>/dev/null
+for _ in $(seq 1 50); do nc -z 127.0.0.1 "$vport" 2>/dev/null || break; sleep 0.1; done
 KH_SAVE="$WORK/known_hosts.dod02"
 cp "$WORK/known_hosts" "$KH_SAVE"
 ctl __forget-host-key 1 >/dev/null
