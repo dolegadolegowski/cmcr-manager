@@ -172,11 +172,11 @@ public struct ReadinessReport: Sendable {
         case "root", "ok": items[.sudo] = ReadinessItem(.ok, "OK", "sudo działa z zapisanym hasłem administratora.")
         case "nopasswd": items[.sudo] = ReadinessItem(.ok, "bez hasła", "sudo działa bez hasła (reguła NOPASSWD na tym iMacu).")
         case "nopassword": items[.sudo] = ReadinessItem(.unknown, "brak hasła",
-            "Nie zapisano hasła administratora – zapisz je w Konfiguracja › Dostęp i hasła. Bez sudo nie da się sprawdzić uprawnień nagrywania ekranu ani skonfigurować iMaca.")
+            "Nie zapisano hasła administratora – zapisz je w Konfiguracji › Dostęp i hasła. Bez sudo nie da się sprawdzić uprawnień nagrywania ekranu ani skonfigurować iMaca.")
         case "notadmin": items[.sudo] = ReadinessItem(.problem, "nie admin",
             "Konto \(v["admin"] ?? "SSH") nie jest administratorem tego iMaca – aplikacja potrzebuje konta z uprawnieniami administratora.")
         case "badpassword": items[.sudo] = ReadinessItem(.problem, "złe hasło",
-            "sudo odrzuciło zapisane hasło administratora. Popraw je w Konfiguracja › Dostęp i hasła (wspólne lub własne hasło komputera).")
+            "sudo odrzuciło zapisane hasło administratora. Popraw je w Konfiguracji › Dostęp i hasła (wspólne lub własne hasło komputera).")
         default: items[.sudo] = ReadinessItem(.problem, "błąd", "sudo nie działa: \(v["sudo_error"].flatMap { $0.isEmpty ? nil : $0 } ?? "nieznany błąd").")
         }
 
@@ -190,7 +190,7 @@ public struct ReadinessReport: Sendable {
                 "Uczeń „\(student)” jeszcze nigdy nie zalogował się na tym iMacu, więc nie ma folderu domowego (tworzy go macOS przy pierwszym logowaniu). Zaloguj się raz na konto ucznia przy komputerze, a potem użyj „Skonfiguruj zaznaczone”.")
         } else if folder == "nostudent" {
             items[.folder] = ReadinessItem(.problem, "brak konta",
-                "Na tym iMacu nie ma konta ucznia „\(student)”. Utwórz je w Ustawieniach (Użytkownicy i grupy) albo popraw nazwę w Konfiguracja › Ustawienia.")
+                "Na tym iMacu nie ma konta ucznia „\(student)”. Utwórz je w Ustawieniach systemowych › Użytkownicy i grupy albo popraw nazwę w Konfiguracji › Ustawienia.")
         } else if folder.hasPrefix("perm") {
             let p = folder.split(separator: " ")
             let owner = p.count > 1 ? String(p[1]) : "?", mode = p.count > 2 ? String(p[2]) : "?"

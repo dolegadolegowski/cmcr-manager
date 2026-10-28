@@ -876,7 +876,7 @@ public enum UpdateInstaller {
     cp "$NEW/Contents/Resources/bin/cmcrctl" "$WORK/cmcrctl" 2>/dev/null
 
     # 3. Swap. Afterwards $NEW holds the previous version, which becomes the backup.
-    swap "$NEW" "$DST" || die "nie można podmienić aplikacji (Ustawienia › Prywatność i ochrona › Zarządzanie aplikacjami?)"
+    swap "$NEW" "$DST" || die "nie można podmienić aplikacji (Ustawienia systemowe › Prywatność i ochrona › Zarządzanie aplikacjami?)"
     mv "$NEW" "$OLD" || log "uwaga: kopia zapasowa pozostaje w $NEW"
     [ -d "$OLD" ] || OLD="$NEW"
     touch "$DST"
