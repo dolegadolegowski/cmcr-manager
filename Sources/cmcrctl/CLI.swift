@@ -211,12 +211,17 @@ struct CLI: Sendable {
         let list = targets(nil, defaultAll: true)
         Console.err("Nie podano komputerów – \(command) na wszystkich: \(names(list)).")
         guard ask else { return list }
-        Console.err("Wykonać na wszystkich? [t/N] ", terminator: "")
-        let answer = (readLine() ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard ["t", "tak", "y", "yes"].contains(answer) else {
+        guard Self.askAtTerminal("Wykonać na wszystkich? [t/N] ") else {
             fail("Przerwano – nic nie zostało wykonane. W skryptach podaj komputery, np. all albo 4.")
         }
         return list
+    }
+
+    /// A question at the terminal that only the person at the keyboard answers (`--yes` does not): true for „t”.
+    static func askAtTerminal(_ question: String) -> Bool {
+        Console.err(question, terminator: "")
+        let answer = (readLine() ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["t", "tak", "y", "yes"].contains(answer)
     }
 
     func single(_ spec: String?, usage text: String) -> Machine {

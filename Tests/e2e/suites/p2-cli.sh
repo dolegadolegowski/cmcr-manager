@@ -229,3 +229,55 @@ expect_code "generate --replace na nieczytelnym pliku bez kopii: kod 1" "$code" 
 expect "generate --replace bez kopii: komunikat" "$out" "nie została zmieniona"
 cmp -s "$BADG/hosts.json" "$WORK/p2-badgen.orig" && pass "generate --replace bez kopii: plik nie został nadpisany" \
   || fail "generate --replace: nadpisano plik bez kopii" "$(cat "$BADG/hosts.json")"
+
+section "P2 cmcrctl – trust: zmieniony klucz nigdy razem z innymi (AUDIT CLI-14)"
+# Two names of the test sshd (127.0.0.1 and localhost) with their own known_hosts file; "changed" = another key
+# is trusted under the name, as when a device took over a switched-off iMac's name.
+TR="$WORK/cfg-p2-trust"
+mkdir -p "$TR"
+python3 - "$P2/settings.json" "$TR/settings.json" "$WORK/p2-known_hosts" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1])); s["extraSSHOptions"] = "UserKnownHostsFile=" + sys.argv[3]
+json.dump(s, open(sys.argv[2], "w"))
+PY
+cat > "$TR/hosts.json" <<EOF
+[
+ {"id":"31111111-1111-1111-1111-111111111111","name":"imac01","address":"127.0.0.1","user":"$ME","port":$PORT},
+ {"id":"32222222-2222-2222-2222-222222222222","name":"imac02","address":"localhost","user":"$ME","port":$PORT}
+]
+EOF
+ssh-keygen -q -t ed25519 -N "" -f "$WORK/p2-otherkey"
+P2_OTHER="$(cut -d' ' -f1-2 "$WORK/p2-otherkey.pub")"
+P2_OTHER_B64="$(cut -d' ' -f2 "$WORK/p2-otherkey.pub")"
+P2_REAL_B64="$(cut -d' ' -f2 "$WORK/hostkey.pub")"
+tctl() { CMCR_CONFIG_DIR="$TR" "$CTL" "$@" 2>&1; }
+known() { ssh-keygen -F "[$1]:$PORT" -f "$WORK/p2-known_hosts" 2>/dev/null | grep -v '^#'; }
+printf '[127.0.0.1]:%s %s\n[localhost]:%s %s\n' "$PORT" "$P2_OTHER" "$PORT" "$P2_OTHER" > "$WORK/p2-known_hosts"
+out="$(tctl trust all --dry-run)"
+expect "trust --dry-run: dwa zmienione klucze" "$out" "imac01" "imac02" "KLUCZ SIĘ ZMIENIŁ"
+out="$(tctl trust all --yes </dev/null)"; code=$?
+expect_code "trust all --yes bez terminala: zmienione klucze pominięte – kod 1" "$code" 1 "$out"
+expect "trust all --yes: wskazówka dla każdego komputera" "$out" "pominięto zmieniony klucz" "cmcrctl trust imac01" "cmcrctl trust imac02"
+expect_not "trust all --yes: nic nie zaufano" "$out" "zaufano"
+contains "" "$(known 127.0.0.1)" "$P2_OTHER_B64" && contains "" "$(known localhost)" "$P2_OTHER_B64" \
+  && pass "trust all --yes: known_hosts bez zmian" || fail "trust all --yes: zmieniono known_hosts" "$(cat "$WORK/p2-known_hosts")"
+# At a terminal each changed key gets its own question (--yes does not answer it): yes for imac01, no for imac02.
+out="$( (sleep 3; printf 't\n'; sleep 2; printf 'n\n'; sleep 2) | CMCR_CONFIG_DIR="$TR" script -q /dev/null "$CTL" trust all --yes 2>&1)"
+expect "trust w terminalu: osobne pytanie o każdy zmieniony klucz" "$out" \
+  "Zaufać ZMIENIONEMU kluczowi komputera imac01" "imac01: zaufano" "Zaufać ZMIENIONEMU kluczowi komputera imac02"
+contains "" "$(known 127.0.0.1)" "$P2_REAL_B64" && pass "trust w terminalu: zaufano tylko potwierdzonemu" \
+  || fail "trust w terminalu: imac01 nie zaufany" "$(cat "$WORK/p2-known_hosts")"
+contains "" "$(known localhost)" "$P2_OTHER_B64" && pass "trust w terminalu: odmowa – klucz imac02 bez zmian" \
+  || fail "trust w terminalu: zaufano mimo odmowy" "$(cat "$WORK/p2-known_hosts")"
+# One Mac named on its own: as before (hostkeys.sh: trust 98 --yes).
+out="$(tctl trust 2 --yes </dev/null)"; code=$?
+expect "trust nr --yes: zmieniony klucz jednego komputera" "$out" "imac02: zaufano"
+expect_code "trust nr --yes: kod 0" "$code" 0 "$out"
+# A new key and a changed one: --yes covers only the new one.
+printf '[localhost]:%s %s\n' "$PORT" "$P2_OTHER" > "$WORK/p2-known_hosts"
+out="$(tctl trust all --yes </dev/null)"; code=$?
+expect "trust all --yes: nowy klucz zaufany" "$out" "imac01: zaufano"
+expect "trust all --yes: zmieniony pominięty" "$out" "pominięto zmieniony klucz" "cmcrctl trust imac02"
+expect_code "trust all --yes: nowy i zmieniony – kod 1" "$code" 1 "$out"
+contains "" "$(known localhost)" "$P2_OTHER_B64" && pass "trust all --yes: zmieniony klucz bez zmian" \
+  || fail "trust all --yes: zaufano zmienionemu kluczowi" "$(cat "$WORK/p2-known_hosts")"
