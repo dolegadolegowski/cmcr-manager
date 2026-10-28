@@ -289,8 +289,12 @@ final class ClassroomModel: ObservableObject {
             if !sleeping.isEmpty { Task { _ = await send(sleeping) } }
         }
         var items: [URL] = []
+        var materialsProblem: String?
         if plan.steps.contains(.materials) {
-            items = materialItems(config.start.materialsFolder)
+            switch materials(config.start.materialsFolder) {
+            case .success(let found): items = found
+            case .failure(let problem): materialsProblem = problem.message
+            }
         }
         // Packed on first use and again for "Powtórz na nieudanych" after the cleanup (a retry reuses the batch's
         // operation, so a one-off archive would already be deleted then).
@@ -299,7 +303,7 @@ final class ClassroomModel: ObservableObject {
         // once, the other steps share the usual number of parallel connections.
         let limiter = plan.steps.contains(.wake) ? ConcurrencyLimiter(limit: model.settings.maxParallel) : nil
         launch(plan, run: run, title: "Rozpoczęcie zajęć", range: nil, model: model, payload: payload,
-               limiter: limiter) { [weak self] in
+               materialsProblem: materialsProblem, limiter: limiter) { [weak self] in
             payload?.discard()          // deferred until no job (a retry included) uses the archive
             run.complete()
             self?.syncLessonState(model)
@@ -356,8 +360,8 @@ final class ClassroomModel: ObservableObject {
     }
 
     private func launch(_ plan: LessonPlan, run: LessonRun, title: String, range: Range<Int>?, model: AppModel,
-                        payload: SharedPayload? = nil, limiter: ConcurrencyLimiter? = nil,
-                        completion: @escaping @MainActor () -> Void) {
+                        payload: SharedPayload? = nil, materialsProblem: String? = nil,
+                        limiter: ConcurrencyLimiter? = nil, completion: @escaping @MainActor () -> Void) {
         let ss = model.sshSettings
         // A lesson that starts by waking the Macs must not skip the ones that are still asleep.
         let batch = model.runBatch(title, on: run.machines, section: .classroom,
@@ -365,16 +369,16 @@ final class ClassroomModel: ObservableObject {
                                    includeUnreachable: plan.steps.contains(.wake), operation: { m, job in
             // A retry passes the batch's copy of the Mac; the host list entry may have changed since.
             let host = self.lessonHost(model.machine(m.id) ?? m, model)
-            let steps: @MainActor (URL?) async -> CommandResult = { materials in
-                await LessonRunner.run(plan, on: host, ssh: ss, materials: materials, range: range, limiter: limiter,
+            let steps: @MainActor (URL?, String?) async -> CommandResult = { materials, problem in
+                await LessonRunner.run(plan, on: host, ssh: ss, materials: materials, materialsProblem: problem,
+                                       range: range, limiter: limiter,
                                        handle: job.handle, onOutput: OutputSink(job).callback) { index, state in
                     DispatchQueue.main.async { run.update(m.id, index, state) }
                 }
             }
-            guard let payload else { return await steps(nil) }
+            guard let payload else { return await steps(nil, materialsProblem) }
             return await payload.useIfAvailable { materials, failure in
-                if let failure { job.note("Materiały: \(failure)") }
-                return await steps(materials)
+                await steps(materials, failure.map { "nie udało się spakować materiałów: \($0)" })
             }
         }, completion: { _ in
             // Step updates are queued on the main queue; run the completion after them.
@@ -392,9 +396,10 @@ final class ClassroomModel: ObservableObject {
         }
     }
 
-    /// Files and folders inside the materials folder (the folder itself is not sent); see `LessonMaterials`.
-    func materialItems(_ folder: String) -> [URL] {
-        (try? LessonMaterials.items(in: folder).get()) ?? []
+    /// Files and folders inside the materials folder (the folder itself is not sent), or why it cannot be read;
+    /// see `LessonMaterials`.
+    func materials(_ folder: String) -> Result<[URL], LessonMaterials.Problem> {
+        LessonMaterials.items(in: folder)
     }
 
     // MARK: - Attention mode

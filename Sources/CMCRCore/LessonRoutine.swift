@@ -149,9 +149,12 @@ public enum LessonRunner {
     }
 
     /// Runs `plan.steps[range]` (all by default). `materials` is the payload archive made from the materials
-    /// folder (see `Payload.make`); `nil` skips the materials step. With a `limiter`, every step except waking
-    /// runs inside one of its slots, so Macs that are still waking up do not hold back the others.
+    /// folder (see `Payload.make`); `nil` skips the materials step (an empty folder), unless `materialsProblem`
+    /// says why there is no archive (missing or unreadable folder, packing failed) – then the step fails, so the
+    /// lesson does not end as „Gotowe” while the students got nothing (AUDIT ZAJ-03). With a `limiter`, every step
+    /// except waking runs inside one of its slots, so Macs that are still waking up do not hold back the others.
     public static func run(_ plan: LessonPlan, on host: Host, ssh: SSHSettings, materials: URL?,
+                           materialsProblem: String? = nil,
                            range: Range<Int>? = nil, limiter: ConcurrencyLimiter? = nil, handle: ProcessHandle? = nil,
                            onOutput: Operations.Output? = nil, onStep: StepUpdate? = nil) async -> CommandResult {
         let indices = range ?? 0..<plan.steps.count
@@ -193,7 +196,8 @@ public enum LessonRunner {
             }
             onStep?(i, .running)
             say("▸ [\(i + 1)/\(plan.steps.count)] \(step.title)")
-            let state = await perform(step, plan: plan, host: host, ssh: ssh, materials: materials, context: context,
+            let state = await perform(step, plan: plan, host: host, ssh: ssh, materials: materials,
+                                      materialsProblem: materialsProblem, context: context,
                                       handle: handle, onOutput: onOutput)
             onStep?(i, state)
             switch state {
@@ -224,7 +228,7 @@ public enum LessonRunner {
     }
 
     static func perform(_ step: LessonStepKind, plan: LessonPlan, host: Host, ssh: SSHSettings, materials: URL?,
-                        context: StepContext = StepContext(),
+                        materialsProblem: String? = nil, context: StepContext = StepContext(),
                         handle: ProcessHandle?, onOutput: Operations.Output?) async -> StepState {
         let m = host.machine
         let pw = host.password
@@ -242,7 +246,8 @@ public enum LessonRunner {
             return await wake(host, ssh: ssh, minutes: plan.start.wakeWaitMinutes, handle: handle, onOutput: onOutput)
 
         case .materials:
-            guard let materials else { return .skipped("brak materiałów do wysłania") }
+            if let materialsProblem { return .failed(materialsProblem) }
+            guard let materials else { return .skipped("folder z materiałami jest pusty") }
             let dest = plan.materialsDestination
             let owner = plan.settings.studentUser
             let mode = plan.start.destination == .sharedFolder ? "777" : ""

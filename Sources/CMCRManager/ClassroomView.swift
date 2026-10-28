@@ -157,7 +157,7 @@ private struct StartLessonSection: View {
                 LabeledContent("Folder z materiałami") {
                     HStack {
                         Text(materialsText)
-                            .foregroundStyle(c.wrappedValue.materialsFolder.isEmpty ? .orange : .secondary)
+                            .foregroundStyle(materialsReadable ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange))
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Button("Wybierz…") {
@@ -263,8 +263,19 @@ private struct StartLessonSection: View {
     var materialsText: String {
         let folder = c.wrappedValue.materialsFolder
         if folder.isEmpty { return "Nie wybrano folderu" }
-        let n = classroom.materialItems(folder).count
-        return "\((folder as NSString).abbreviatingWithTildeInPath) – \(Polish.count(n, "element", "elementy", "elementów"))"
+        switch classroom.materials(folder) {
+        case .success(let items):
+            let n = items.count
+            return "\((folder as NSString).abbreviatingWithTildeInPath) – \(Polish.count(n, "element", "elementy", "elementów"))"
+        case .failure(let problem):
+            return problem.message
+        }
+    }
+
+    /// A folder that is missing or cannot be read is shown in orange before the lesson starts.
+    var materialsReadable: Bool {
+        if case .success = classroom.materials(c.wrappedValue.materialsFolder) { return true }
+        return false
     }
 
     var summary: String {

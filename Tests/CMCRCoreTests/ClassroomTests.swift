@@ -255,6 +255,26 @@ import Testing
     #expect(states.all == [StepRecord(index: 0, state: .skipped("nie zebrano prac – folder pozostawiono"))])
 }
 
+/// AUDIT ZAJ-03: materials that could not be read or packed fail their step (the lesson is not „Gotowe”); only
+/// an empty folder skips it.
+@Test func materialsThatCouldNotBeSentFailTheStep() async {
+    var plan = LessonPlan.start(LessonStartConfig(), settings: AppSettings())
+    plan.steps = [.materials]
+    let host = LessonRunner.Host(machine: Machine(name: "x", address: "192.0.2.1", user: "admin"), password: nil, macs: [])
+    let ssh = SSHSettings(askpassPath: "/usr/bin/false")
+    let failed = StepRecorder()
+    let r = await LessonRunner.run(plan, on: host, ssh: ssh, materials: nil,
+                                   materialsProblem: "Folder z materiałami nie istnieje: /nie/ma",
+                                   onStep: { i, st in failed.add(i, st) })
+    #expect(!r.succeeded)
+    #expect(r.stderrText.contains("Folder z materiałami nie istnieje"))
+    #expect(failed.all.last == StepRecord(index: 0, state: .failed("Folder z materiałami nie istnieje: /nie/ma")))
+    let empty = StepRecorder()
+    let e = await LessonRunner.run(plan, on: host, ssh: ssh, materials: nil, onStep: { i, st in empty.add(i, st) })
+    #expect(e.succeeded)
+    #expect(empty.all.last == StepRecord(index: 0, state: .skipped("folder z materiałami jest pusty")))
+}
+
 private struct StepRecord: Equatable {
     var index: Int
     var state: StepState
