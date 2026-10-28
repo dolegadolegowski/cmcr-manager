@@ -533,15 +533,17 @@ struct CLI: Sendable {
                 let h = io.host
                 let r = await SSH.run(Scripts.listUpdates(), on: h, password: Keychain.password(for: h), settings: ssh)
                 guard r.succeeded else { return io.report(r) }
-                let titles = Parsers.softwareUpdates(r.stdoutText)
-                if !titles.isEmpty {
+                switch Parsers.softwareUpdateCheck(r) {
+                case .available(let titles):
                     io.out("\(h.name): \(plural(titles.count, "aktualizacja", "aktualizacje", "aktualizacji"))")
                     for t in titles { io.out("  • \(TerminalText.escape(t, keepBackslash: true))") }
-                } else if r.stdoutText.contains("No new software available") {
+                case .upToDate:
                     io.out("\(h.name): brak aktualizacji")
-                } else {
-                    io.out("\(h.name): brak rozpoznanych aktualizacji, odpowiedź softwareupdate:")
+                case .failed:
+                    // Same rule as the app: without "No new software available" the check did not succeed.
+                    io.out("\(h.name): nie udało się sprawdzić aktualizacji, odpowiedź softwareupdate:")
                     for line in Parsers.lines(r.stdoutText) { io.out("  \(TerminalText.escape(line, keepBackslash: true))") }
+                    return ExitCode.failure
                 }
                 return ExitCode.success
             }

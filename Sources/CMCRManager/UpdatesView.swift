@@ -57,19 +57,34 @@ struct UpdatesView: View {
 
     func updateRow(_ m: Machine, _ info: UpdateInfo) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: info.titles.isEmpty ? "checkmark.seal.fill" : "arrow.down.circle.fill")
-                .foregroundStyle(info.titles.isEmpty ? Color.green : Color.orange)
-                .frame(width: 18)
-                .accessibilityHidden(true)
+            Group {
+                switch info.check {
+                case .upToDate:
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                case .available:
+                    Image(systemName: "arrow.down.circle.fill").foregroundStyle(.orange)
+                case .failed:
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+                }
+            }
+            .frame(width: 18)
+            .accessibilityHidden(true)
             Text(m.name)
                 .fontWeight(.medium)
                 .frame(minWidth: 80, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
-                if info.titles.isEmpty {
+                switch info.check {
+                case .upToDate:
                     Text("System jest aktualny")
                         .foregroundStyle(.secondary)
-                } else {
-                    ForEach(info.titles, id: \.self) { Text($0) }
+                case .available(let titles):
+                    ForEach(titles, id: \.self) { Text($0) }
+                case .failed(let reason):
+                    Text("Nie udało się sprawdzić aktualizacji")
+                    Text(reason)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
                 }
             }
             Spacer(minLength: 8)

@@ -118,6 +118,26 @@ import Testing
         #expect(Parsers.softwareUpdates(text) == ["Old Format Update-1.0", "Another", "Last-3.0"])
     }
 
+    /// AUDIT APL-04: only "No new software available" means up to date; an error or a timeout is a failed check.
+    @Test func failedUpdateCheckIsNotUpToDate() {
+        func result(_ text: String, code: Int32 = 0, timedOut: Bool = false) -> CommandResult {
+            CommandResult(exitCode: code, stdout: Data(text.utf8), timedOut: timedOut, started: true)
+        }
+        let header = "Software Update Tool\n\nFinding available software\n"
+        #expect(Parsers.softwareUpdateCheck(result(header + "No new software available.\n")) == .upToDate)
+        #expect(Parsers.softwareUpdateCheck(result(header + "* Label: Safari99-1\n\tTitle: Safari, Version: 99,\n"))
+                == .available(["Safari"]))
+        guard case .failed(let offline) = Parsers.softwareUpdateCheck(
+            result(header + "Cannot connect to the server. The Internet connection appears to be offline.\n", code: 1))
+        else { Issue.record("offline counted as checked"); return }
+        #expect(offline.contains("Cannot connect"))
+        guard case .failed(let slow) = Parsers.softwareUpdateCheck(result(header, code: -1, timedOut: true))
+        else { Issue.record("timeout counted as checked"); return }
+        #expect(slow.contains("w wyznaczonym czasie"))
+        guard case .failed = Parsers.softwareUpdateCheck(result(header))
+        else { Issue.record("header only counted as up to date"); return }
+    }
+
     @Test func linesSkipsEmptyOnes() {
         #expect(Parsers.lines("a\n\n b\r\nc") == ["a", " b", "c"])
     }

@@ -197,9 +197,15 @@ struct HostApps {
 }
 
 struct UpdateInfo {
-    var titles: [String] = []
+    var check: Parsers.SoftwareUpdateCheck
     var raw = ""
     var checkedAt = Date()
+
+    /// Updates offered by softwareupdate; empty also when the check failed.
+    var titles: [String] {
+        if case .available(let t) = check { return t }
+        return []
+    }
 }
 
 /// Forwards process output into a job's log; the job coalesces it before it reaches the UI.
@@ -924,8 +930,10 @@ final class AppModel: ObservableObject {
     func checkUpdates(_ targets: [Machine]) {
         runScript("Sprawdzanie aktualizacji macOS", on: targets, timeout: OperationTimeout.updateList,
                   script: { _ in Scripts.listUpdates() }) { m, r in
-            if r.succeeded || !r.stdout.isEmpty {
-                self.updates[m.id] = UpdateInfo(titles: Parsers.softwareUpdates(r.stdoutText), raw: r.stdoutText)
+            // A cancelled check keeps the previous answer; a failed one replaces it, so an old "up to date" never
+            // stays on screen after softwareupdate could not reach Apple's server.
+            if !r.cancelled {
+                self.updates[m.id] = UpdateInfo(check: Parsers.softwareUpdateCheck(r), raw: r.stdoutText)
             }
         }
     }
