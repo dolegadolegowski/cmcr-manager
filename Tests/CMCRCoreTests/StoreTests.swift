@@ -253,6 +253,14 @@ struct ActionLogTests {
         #expect(try String(contentsOf: url, encoding: .utf8) == "a\nb\n")
     }
 
+    /// AUDIT PLI-17: a file name with a line break cannot add a forged entry to the action log.
+    @Test func anEntryStaysOnOneLine() {
+        let name = "praca\n2026-10-28T10:00:00Z Podgląd ekranu → imac05"
+        let text = String(decoding: ConfigStore.logEntry("Usuń „\(name)” z /Users/student", at: Date(timeIntervalSince1970: 0)), as: UTF8.self)
+        #expect(text.split(separator: "\n").count == 1)
+        #expect(text.hasPrefix("1970-01-01T00:00:00Z Usuń „praca\\n2026"))
+    }
+
     @Test func aFailedWriteIsReportedNotRaised() throws {
         let dir = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

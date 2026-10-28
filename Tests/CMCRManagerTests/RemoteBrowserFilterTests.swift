@@ -30,4 +30,12 @@ import Testing
         #expect(found.map(\.name) == ["notatki.txt"])
         #expect(RemoteBrowserModel.keptSelection(Set(all.map(\.id)), visible: found) == ["notatki.txt"])
     }
+
+    /// AUDIT DOD-13: a direction override in a student's file name is shown, not applied (no „pracadnammoc.pdf”).
+    @Test func namesFromTheIMacsShowDirectionOverrides() {
+        let entry = RemoteEntry(name: "praca\u{202E}fdp.command", kind: .file)
+        #expect(entry.displayName == "praca\\u{202E}fdp.command")
+        #expect(RemoteEntry(name: "a\nb", kind: .file).displayName == "a\\nb")
+        #expect(TerminalText.visibleDirectionOverrides("✔ praca\u{202E}fdp.command\n") == "✔ praca<U+202E>fdp.command\n")
+    }
 }

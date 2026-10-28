@@ -331,11 +331,16 @@ public enum ConfigStore {
         defer { logLock.unlock() }
         let url = logURL
         ensureDirectory(url.deletingLastPathComponent())
-        let stamp = ISO8601DateFormatter().string(from: Date())
-        let data = Data("\(stamp) \(line)\n".utf8)
+        let data = logEntry(line, at: Date())
         if !append(data, to: url) {
             NSLog("CMCR: nie można dopisać do %@: %s", url.path, strerror(errno))
         }
+    }
+
+    /// One entry is one line: names from the iMacs (files, folders) may hold line breaks or other control
+    /// characters that would forge entries, so they are written visibly escaped (AUDIT PLI-17).
+    static func logEntry(_ line: String, at date: Date) -> Data {
+        Data("\(ISO8601DateFormatter().string(from: date)) \(TerminalText.escape(line, keepBackslash: true))\n".utf8)
     }
 
     /// Appends `data` to the file (created when missing, never truncated) and reports whether it worked. A full

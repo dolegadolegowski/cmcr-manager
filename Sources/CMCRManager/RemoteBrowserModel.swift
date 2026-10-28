@@ -276,7 +276,8 @@ final class RemoteBrowserModel: ObservableObject {
         let target = RemotePaths.join(l.path, name)
         let root = needsRoot(l)
         pendingSelection = name
-        runChange("Nowy folder: \(target)", on: m, activity: "Tworzenie folderu „\(name)”…") { job in
+        runChange("Nowy folder: \(TerminalText.escape(target, keepBackslash: true))", on: m,
+                  activity: "Tworzenie folderu „\(TerminalText.escape(name, keepBackslash: true))”…") { job in
             await self.app.ssh(Scripts.makeDirectory(target, asRoot: root), on: m, job: job)
         }
     }
@@ -286,7 +287,8 @@ final class RemoteBrowserModel: ObservableObject {
         let source = RemotePaths.join(l.path, entry.name)
         let root = needsRoot(l, entries: [entry])
         pendingSelection = newName
-        runChange("Zmiana nazwy: \(entry.name) → \(newName)", on: m, activity: "Zmiana nazwy…") { job in
+        runChange("Zmiana nazwy: \(entry.displayName) → \(TerminalText.escape(newName, keepBackslash: true))", on: m,
+                  activity: "Zmiana nazwy…") { job in
             await self.app.ssh(Scripts.renameItem(source, to: newName, asRoot: root), on: m, job: job)
         }
     }
@@ -295,8 +297,8 @@ final class RemoteBrowserModel: ObservableObject {
         guard let m = host, let l = listing, !entries.isEmpty else { return }
         let paths = entries.map { RemotePaths.join(l.path, $0.name) }
         let root = needsRoot(l, entries: entries)
-        let what = entries.count == 1 ? "„\(entries[0].name)”" : Polish.count(entries.count, "element", "elementy", "elementów")
-        runChange("Usuń \(what) z \(l.path)", on: m, activity: "Usuwanie \(what)…") { job in
+        let what = entries.count == 1 ? "„\(entries[0].displayName)”" : Polish.count(entries.count, "element", "elementy", "elementów")
+        runChange("Usuń \(what) z \(TerminalText.escape(l.path, keepBackslash: true))", on: m, activity: "Usuwanie \(what)…") { job in
             await self.app.ssh(Scripts.deleteItems(paths, asRoot: root), on: m, job: job)
         }
     }

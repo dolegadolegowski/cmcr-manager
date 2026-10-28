@@ -4,10 +4,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 extension RemoteEntry {
-    /// Name safe for a single line (newlines and tabs made visible).
-    var displayName: String {
-        name.replacingOccurrences(of: "\n", with: "⏎").replacingOccurrences(of: "\t", with: "⇥")
-    }
+    /// The name as it can be shown safely in one line: control characters and the bidirectional overrides (which
+    /// SwiftUI text applies, e.g. „praca\u{202E}fdp.command” shown as „pracadnammoc.pdf”) made visible (AUDIT DOD-13).
+    var displayName: String { TerminalText.escape(name, keepBackslash: true) }
 
     var contentType: UTType {
         if isPackage { return fileExtension == "app" ? .applicationBundle : (UTType(filenameExtension: fileExtension) ?? .package) }

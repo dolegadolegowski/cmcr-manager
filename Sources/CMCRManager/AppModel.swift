@@ -220,7 +220,7 @@ final class OutputSink: @unchecked Sendable {
         { [self] channel, data in
             let text = channel == .stdout ? out.decode(data) : err.decode(data)
             guard !text.isEmpty else { return }
-            job?.receive(text)
+            job?.receive(TerminalText.visibleDirectionOverrides(text))      // names from the iMacs (AUDIT DOD-13)
         }
     }
 }
