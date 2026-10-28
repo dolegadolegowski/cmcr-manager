@@ -660,7 +660,7 @@ struct MachineContextMenu: View {
             Button {
                 targets.prefix(4).forEach(model.openTerminal)
             } label: {
-                Label(targets.count > 4 ? "Otwórz w Terminalu (pierwsze 4)" : "Otwórz w Terminalu (SSH)",
+                Label(targets.count > 4 ? "Sesja SSH w Terminalu (pierwsze 4)" : "Sesja SSH w Terminalu",
                       systemImage: "terminal")
             }
             Divider()

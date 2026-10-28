@@ -119,7 +119,7 @@ struct DashboardView: View {
                 Button {
                     targets.machines.forEach(model.openTerminal)
                 } label: {
-                    Label("Otwórz w Terminalu (dla zaawansowanych)", systemImage: "terminal")
+                    Label("Sesja SSH w Terminalu (dla zaawansowanych)", systemImage: "terminal")
                 }
                 .help("Sesja SSH w aplikacji Terminal.\(targets.note)")
                 Button {

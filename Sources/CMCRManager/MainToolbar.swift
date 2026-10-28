@@ -56,7 +56,7 @@ struct ScreenWallToolbarButton: View {
         } label: {
             Label("Ściana ekranów", systemImage: "rectangle.split.3x3")
         }
-        .help("Pokaż ekrany wszystkich zaznaczonych komputerów w osobnym oknie, np. na drugim monitorze (⇧⌘E)")
+        .help("Pokaż ekrany komputerów w osobnym oknie, np. na drugim monitorze – domyślnie wszystkich z listy, co zmienisz polem „Pokaż” w oknie (⇧⌘E)")
     }
 }
 

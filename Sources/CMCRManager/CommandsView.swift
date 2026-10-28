@@ -65,7 +65,7 @@ struct CommandsView: View {
                 Button {
                     model.selectedMachines.prefix(4).forEach(model.openTerminal)
                 } label: {
-                    Label("Otwórz w Terminalu", systemImage: "terminal")
+                    Label("Sesja SSH w Terminalu", systemImage: "terminal")
                 }
                 .disabled(model.selection.isEmpty)
                 .help("Otwiera okno Terminala z połączeniem (SSH) do zaznaczonych komputerów – najwyżej 4 naraz (jak cmcr-go)")

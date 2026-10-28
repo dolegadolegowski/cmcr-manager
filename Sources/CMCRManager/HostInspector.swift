@@ -68,7 +68,7 @@ struct HostInspector: View {
                     Gauge(value: total - free, in: 0...total) {
                         Text("Zajęte")
                     } currentValueLabel: {
-                        Text(String(format: "%.0f GB wolne z %.0f GB", free, total))
+                        Text(String(format: "Wolne: %.0f z %.0f GB", free, total))
                     }
                     .tint(free < DashboardRow.lowDiskGB ? .orange : .accentColor)
                 }
@@ -85,8 +85,8 @@ struct HostInspector: View {
             Section("Bezpieczeństwo i zasilanie") {
                 LabeledContent("Szyfrowanie dysku") {
                     switch st.fileVaultOn ?? classroom.fileVault[m.id] {
-                    case .some(true): Label("włączony", systemImage: "lock.shield").foregroundStyle(.orange)
-                    case .some(false): Text("wyłączony")
+                    case .some(true): Label("włączone (FileVault)", systemImage: "lock.shield").foregroundStyle(.orange)
+                    case .some(false): Text("wyłączone")
                     case .none: Text(classroom.fileVaultErrors[m.id] ?? "nie sprawdzono").foregroundStyle(.secondary)
                     }
                 }
@@ -128,7 +128,7 @@ struct HostInspector: View {
                                 help: "Wyślij sygnał budzenia (Wake-on-LAN) – działa, gdy komputer jest uśpiony") { model.wake([m]) }
                 InspectorAction(title: "Odśwież stan", icon: "arrow.clockwise",
                                 help: "Sprawdź jeszcze raz ten komputer") { model.refreshStatus([m]) }
-                InspectorAction(title: "Otwórz w Terminalu", icon: "terminal",
+                InspectorAction(title: "Sesja SSH w Terminalu", icon: "terminal",
                                 help: "Sesja SSH w aplikacji Terminal (dla zaawansowanych)") { model.openTerminal(m) }
             }
         }
