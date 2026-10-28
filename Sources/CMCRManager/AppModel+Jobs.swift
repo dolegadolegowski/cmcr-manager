@@ -133,7 +133,15 @@ extension AppModel {
 
     /// Repeats `batch` on `hosts`. A batch that had to be confirmed (restart, log out, wipe a folder…) is
     /// confirmed again with the hosts and their logged-in users listed, never re-run straight away.
-    func retry(_ batch: Batch, on hosts: [Machine]) {
+    func retry(_ batch: Batch, on requested: [Machine]) {
+        // The batch kept the Macs as they were when it started; a repeat uses the host list as it is now (a fixed
+        // address, port or own password) and leaves out Macs removed from the list meanwhile.
+        let hosts = requested.compactMap { machine($0.id) }
+        let removed = requested.count - hosts.count
+        if removed > 0 {
+            showToast(ActionToast(message: "Pominięto \(Polish.computers(removed)) usunięte z listy komputerów.",
+                                  icon: "exclamationmark.triangle.fill"))
+        }
         guard let rerun = batch.rerun, !hosts.isEmpty else { return }
         guard let confirmation = batch.confirmation else {
             rerun(hosts)
@@ -212,7 +220,7 @@ extension AppModel {
 
     /// Selects the hosts where the batch did not succeed.
     func selectProblems(of batch: Batch) {
-        let ids = Set(batch.problemMachines.map(\.id))
+        let ids = Set(batch.problemMachines.map(\.id)).intersection(machines.map(\.id))
         if !ids.isEmpty { selection = ids }
     }
 

@@ -360,7 +360,9 @@ struct BatchDetailView: View {
         .contextMenu(forSelectionType: UUID.self) { ids in
             let jobs = batch.jobs.filter { ids.contains($0.id) }
             if !jobs.isEmpty {
-                Button("Zaznacz na liście komputerów") { model.selection = Set(jobs.map(\.machine.id)) }
+                Button("Zaznacz na liście komputerów") {
+                    model.selection = Set(jobs.map(\.machine.id)).intersection(model.machines.map(\.id))
+                }
                 if batch.finished, batch.rerun != nil {
                     let suffix = batch.confirmation == nil ? "" : "…"
                     Button("Powtórz \(jobs.count == 1 ? "na \(jobs[0].machine.name)" : Polish.onComputers(jobs.count))\(suffix)") {

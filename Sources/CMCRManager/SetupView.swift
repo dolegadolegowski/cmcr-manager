@@ -568,8 +568,10 @@ struct HostPasswordSheet: View {
         if let i = model.machines.firstIndex(where: { $0.id == machine.id }) {
             model.machines[i].usesSharedPassword = useShared
         }
-        if !useShared && !password.isEmpty { model.setPassword(password, for: machine) }
-        if useShared { model.setPassword("", for: machine) }
+        // The entry as saved just now: the re-check after a new password must use it, not the shared one.
+        let updated = model.current(machine)
+        if !useShared && !password.isEmpty { model.setPassword(password, for: updated) }
+        if useShared { model.setPassword("", for: updated) }
         dismiss()
     }
 }

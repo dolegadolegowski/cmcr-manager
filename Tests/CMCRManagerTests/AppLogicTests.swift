@@ -438,4 +438,26 @@ struct AppLogicTests {
         #expect(browser.deleteConfirmation([]) == nil)
         #expect(RemoteBrowserModel.names(["a", "b", "c", "d", "e", "f"]) == "„a”, „b”, „c”, „d”, „e” i 1 inny")
     }
+
+    // retry-stale-machine (AUDIT ZAD-01, KON-05): a repeat uses the host list as it is now, and the password of a
+    // Mac follows its current „own/shared” choice, not the copy a job or a sheet kept.
+    @Test func repeatsAndPasswordsUseTheCurrentHostEntry() async throws {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        let batch = try #require(model.runBatch("Test", on: [a, b]) { _, _ in .failure("x") })
+        #expect(await AppTestEnvironment.wait { batch.finished })
+        // Meanwhile imac01 got an own password and a new port; imac02 was removed from the list.
+        model.machines[0].usesSharedPassword = false
+        model.machines[0].port = 2
+        model.machines.removeLast()
+        #expect(model.current(a).usesSharedPassword == false)
+        model.retry(batch, on: batch.retryableMachines)
+        let again = try #require(model.batches.first { $0.title == "Test (ponowienie)" })
+        #expect(again.jobs.map(\.machine.id) == [a.id], "usunięty komputer nie może wrócić w powtórzeniu")
+        #expect(again.jobs.first?.machine.port == 2)
+        #expect(again.jobs.first?.machine.usesSharedPassword == false)
+        model.selectProblems(of: batch)
+        #expect(model.selection == [a.id])
+        #expect(await AppTestEnvironment.wait { again.finished })
+    }
 }

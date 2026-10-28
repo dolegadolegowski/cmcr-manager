@@ -331,9 +331,14 @@ final class AppModel: ObservableObject {
 
     func status(_ m: Machine) -> HostStatus { statuses[m.id] ?? HostStatus() }
 
-    func password(for m: Machine) -> String? { Keychain.password(for: m) }
+    /// The password of the Mac as the host list has it now: a copy kept by a job or a sheet may still say "shared
+    /// password" after the teacher set an own one (or the other way round).
+    func password(for m: Machine) -> String? { Keychain.password(for: current(m)) }
 
     func machine(_ id: UUID) -> Machine? { machines.first { $0.id == id } }
+
+    /// The current host list entry of `m` (address, port, account, password choice), or `m` itself once removed.
+    func current(_ m: Machine) -> Machine { machine(m.id) ?? m }
 
     func setSharedPassword(_ pw: String) {
         let saved = Keychain.set(pw, for: Keychain.sharedAccount)
