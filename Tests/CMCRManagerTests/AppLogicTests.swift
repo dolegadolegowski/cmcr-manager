@@ -658,6 +658,18 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // generator-validation (AUDIT KON-14): the list generator refuses what cmcrctl hosts generate refuses.
+    @Test func theListGeneratorRefusesBadPatterns() {
+        #expect(HostListGeneratorSheet.patternProblem(prefix: "imac", domain: "local") == nil)
+        #expect(HostListGeneratorSheet.patternProblem(prefix: "imac", domain: "") == nil)
+        for prefix in ["imac ", "-x", "imac;", "im,ac", ""] {
+            #expect(HostListGeneratorSheet.patternProblem(prefix: prefix, domain: "local") != nil, "\(prefix)")
+        }
+        #expect(HostListGeneratorSheet.patternProblem(prefix: "imac", domain: "lo cal") != nil)
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false

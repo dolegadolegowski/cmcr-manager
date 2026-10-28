@@ -69,8 +69,18 @@ struct HostsEditor: View {
     @ViewState private var newGroupFor: Set<UUID>?
     @ViewState private var importError: String?
     @ViewState private var showGenerator = false
-    /// Columns shown in the table (right-click the header to change); Port is hidden by default.
-    @ViewState private var columns = TableColumnCustomization<Machine>()
+    /// Columns shown in the table (right-click the header to change); Port is hidden by default. Remembered like
+    /// the Komputery table's columns (AUDIT KON-11).
+    @ViewState private var columns = Self.savedColumns
+    @AppStorage("hostsTableColumns") private var columnsState = ""
+
+    static var savedColumns: TableColumnCustomization<Machine> {
+        guard let state = UserDefaults.standard.string(forKey: "hostsTableColumns"), let data = Data(base64Encoded: state),
+              let saved = try? JSONDecoder().decode(TableColumnCustomization<Machine>.self, from: data) else {
+            return TableColumnCustomization<Machine>()
+        }
+        return saved
+    }
 
     var body: some View {
         let issues = HostValidation.issues(in: model.machines)
@@ -249,6 +259,9 @@ struct HostsEditor: View {
             }
         }
         .onDeleteCommand { askDelete(rows) }
+        .onChange(of: columns) { _, new in
+            if let data = try? JSONEncoder().encode(new) { columnsState = data.base64EncodedString() }
+        }
     }
 
     var listButtons: some View {
@@ -478,9 +491,10 @@ struct HostListGeneratorSheet: View {
                 Button(role: .destructive) {
                     askReplace()
                 } label: {
-                    DestructiveLabel(title: "Zastąp całą listę…", icon: "arrow.triangle.2.circlepath", enabled: !preview.isEmpty)
+                    DestructiveLabel(title: "Zastąp całą listę…", icon: "arrow.triangle.2.circlepath",
+                                     enabled: !preview.isEmpty && patternProblem == nil)
                 }
-                .disabled(preview.isEmpty)
+                .disabled(preview.isEmpty || patternProblem != nil)
                 .help("Usuwa obecną listę i wstawia wygenerowaną (grupy i własne hasła obecnych wpisów przepadną)")
                 Spacer()
                 Button("Anuluj", role: .cancel) { dismiss() }
@@ -494,7 +508,7 @@ struct HostListGeneratorSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(missing.isEmpty)
+                .disabled(missing.isEmpty || patternProblem != nil)
                 .help("Dodaje tylko komputery, których adresu jeszcze nie ma na liście")
             }
             .padding(16)
@@ -509,7 +523,19 @@ struct HostListGeneratorSheet: View {
         return Array(all.prefix(3)) + ["…", last]
     }
 
+    /// The pattern becomes names, accounts and addresses: refused like in `cmcrctl hosts generate` (AUDIT KON-14).
+    static func patternProblem(prefix: String, domain: String) -> String? {
+        if let p = HostEntry.problem(prefix, as: .name) ?? HostEntry.problem(prefix, as: .sshPart) {
+            return "Przedrostek nazwy \(p) – popraw go, zanim utworzysz listę."
+        }
+        if let p = HostEntry.problem(domain, as: .domain) { return "Domena \(p) – popraw ją, zanim utworzysz listę." }
+        return nil
+    }
+
+    private var patternProblem: String? { Self.patternProblem(prefix: prefix, domain: domain) }
+
     private var footerText: String {
+        if let patternProblem { return patternProblem }
         if preview.isEmpty { return "Wzór nie daje żadnego komputera." }
         if missing.isEmpty { return "Wszystkie te komputery już są na liście." }
         let present = preview.count - missing.count
