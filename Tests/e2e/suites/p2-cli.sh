@@ -402,3 +402,13 @@ expect "exec ryzykowne bez root: bez pytania" "$out" "wykonano-42"
 out="$(p2pw exec "$RISKY" 1 --root </dev/null)"; code=$?
 expect "exec --root w skrypcie: wykonane jak dotąd, z ostrzeżeniem" "$out" "wykonano-42" "Uwaga: polecenie zawiera: wyłączenie lub restart"
 expect_code "exec --root w skrypcie: kod 0" "$code" 0 "$out"
+
+section "P2 cmcrctl – screen-watch zgłasza nieudany zapis klatki (AUDIT ZAJ-15)"
+mkdir -p "$WORK/p2-watch-ro"
+chmod 555 "$WORK/p2-watch-ro"
+out="$(p2pw screen-watch 1 "$WORK/p2-watch-ro" --frames 2 --interval 2)"; code=$?
+chmod 755 "$WORK/p2-watch-ro"
+expect_code "screen-watch do folderu tylko do odczytu: kod 1" "$code" 1 "$out"
+expect "screen-watch: czytelny błąd zapisu" "$out" "✘ Nie można zapisać" "p2-watch-ro/klatka-001"
+expect_not "screen-watch: niezapisana klatka nie jest podawana jako zapisana" "$out" "→ $WORK/p2-watch-ro"
+[ -z "$(ls -A "$WORK/p2-watch-ro")" ] && pass "screen-watch: folder pusty" || fail "screen-watch: pliki w folderze" "$(ls -la "$WORK/p2-watch-ro")"

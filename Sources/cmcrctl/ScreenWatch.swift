@@ -48,6 +48,12 @@ func screenWatchCommand(_ arguments: [String]) async -> Int32 {
         DispatchQueue.global().asyncAfter(deadline: .now() + limit) { stream.kill() }
     }
     let summary = watch.summary
+    if let failure = summary.writeError {
+        // The preview stops at the first frame that cannot be saved (read-only or full disk): it is not reported
+        // as saved, and the command does not end with 0 while the folder has no image.
+        Console.err("✘ \(failure) – podgląd przerwany.")
+        return ExitCode.failure
+    }
     if summary.frames > 0 || (summary.cycles > 0 && summary.issue == nil) {
         Console.out("Zakończono: \(plural(summary.cycles, "cykl", "cykle", "cykli")), "
                     + "\(plural(summary.frames, "nowy obraz", "nowe obrazy", "nowych obrazów")).")
@@ -69,19 +75,21 @@ private final class WatchState: @unchecked Sendable {
     private var cycles = 0
     private var frames = 0
     private var issue: ScreenIssue?
+    /// Why a frame could not be saved; the session ends there.
+    private var writeError: String?
 
     init(limit: Int) { self.limit = limit }
 
     var done: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return cycles >= limit
+        return cycles >= limit || writeError != nil
     }
 
-    var summary: (cycles: Int, frames: Int, issue: ScreenIssue?) {
+    var summary: (cycles: Int, frames: Int, issue: ScreenIssue?, writeError: String?) {
         lock.lock()
         defer { lock.unlock() }
-        return (cycles, frames, issue)
+        return (cycles, frames, issue, writeError)
     }
 
     func handle(_ event: ScreenEvent, dir: URL) -> String? {
@@ -95,9 +103,14 @@ private final class WatchState: @unchecked Sendable {
             return "Użytkownik: \(user.map { TerminalText.escape($0) } ?? "—") · na pierwszym planie: "
                 + (front.map { TerminalText.escape($0, keepBackslash: true) } ?? "—")
         case .frame(let d, let n, _, let data):
-            frames += 1
             let url = dir.appendingPathComponent(String(format: "klatka-%03d-ekran%d.jpg", cycles + 1, d))
-            try? data.write(to: url)
+            do {
+                try data.write(to: url)
+            } catch {
+                if writeError == nil { writeError = "Nie można zapisać \(url.path): \(error.localizedDescription)" }
+                return nil
+            }
+            frames += 1
             if d >= n { cycles += 1 }
             return "Klatka \(d >= n ? cycles : cycles + 1): nowy obraz (ekran \(d)/\(n), \(data.count) B) → \(url.path)"
         case .unchanged(let d, let n, _):
