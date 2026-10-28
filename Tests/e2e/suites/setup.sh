@@ -315,4 +315,21 @@ expect "szybka naprawa VNC: wyłączona lista przywrócona" "$(fakelog)" \
   "dscl . -change /Groups/com.apple.access_screensharing-disabled RecordName com.apple.access_screensharing-disabled com.apple.access_screensharing"
 rm -rf "$SS/groups"
 
+section "cmcrctl setup/readiness/setup-script – nadmiarowe argumenty i obce opcje (AUDIT PRZ-03, PRZ-17)"
+clear_fakelog
+out="$(sctl setup --hostname imac07 1)"; code=$?
+expect_code "setup --hostname NAZWA nr: kod 2" "$code" 2 "$out"
+expect "setup: nadmiarowy argument nazwany" "$out" "Nadmiarowy argument „1”"
+expect_not "setup: przy błędzie nic nie uruchomiono" "$(fakelog)" "setup"
+out="$(sctl setup 1 1)"; code=$?
+expect_code "setup nr nr: kod 2" "$code" 2 "$out"
+out="$(sctl setup-script --verify)"; code=$?
+expect_code "setup-script --verify: kod 2" "$code" 2 "$out"
+expect "setup-script --verify: wskazówka" "$out" "dotyczy polecenia setup"
+expect_not "setup-script --verify: skrypt nie wypisany" "$out" "#!/bin/bash"
+out="$(sctl setup-script nadmiar)"; code=$?
+expect_code "setup-script z argumentem: kod 2" "$code" 2 "$out"
+out="$(sctl readiness 1 --ssh-key-only)"; code=$?
+expect_code "readiness z opcją konfiguracji: kod 2" "$code" 2 "$out"
+
 rm -rf "$SS"

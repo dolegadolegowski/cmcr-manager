@@ -376,6 +376,8 @@ func polishCount(_ n: Int, _ one: String, _ few: String, _ many: String) -> Stri
 
 /// Parsed command line of `cmcrctl setup` and `cmcrctl setup-script`.
 public struct SetupCommandLine: Sendable {
+    /// Options that change the configuration (not the key or the mode): `readiness` only checks, so it refuses them.
+    public var configurationFlags: [String] = []
     public struct ParseError: LocalizedError, Sendable {
         public let message: String
         public var errorDescription: String? { message }
@@ -423,6 +425,9 @@ public struct SetupCommandLine: Sendable {
         }
         while i < arguments.count {
             let a = arguments[i]
+            if a.hasPrefix("-"), !["--no-key", "--pubkey", "--pubkey-file", "--verify", "--dry-run"].contains(a) {
+                configurationFlags.append(a)
+            }
             switch a {
             case "--no-key": options.installKey = false
             case "--pubkey": publicKey = try value(a)

@@ -32,6 +32,23 @@ enum SetupCommands {
             err("✘ \(error.localizedDescription)\nPomoc: cmcrctl \(command) --help")
             return 2
         }
+        // As every other command: a surplus argument or an option the command does not use is an error and nothing
+        // runs (`setup --hostname imac07 3` would otherwise configure imac07; `setup 3 7` would skip imac07).
+        let maxPositional = command == "setup-script" ? 0 : 1
+        if cl.positional.count > maxPositional {
+            err("✘ Nadmiarowy argument „\(cl.positional[maxPositional])” w poleceniu \(command). Nic nie zostało wykonane."
+                + (command == "setup" ? " Kilka komputerów: lista po przecinku, np. 3,7 albo zakres 1-5." : "")
+                + "\nPomoc: cmcrctl \(command) --help")
+            return 2
+        }
+        if command == "setup-script", cl.mode != .apply {
+            err("✘ Opcja --verify/--dry-run dotyczy polecenia setup. Przy iMacu sprawdź zapisany skrypt: sudo bash \(SetupScript.fileName) --verify\nPomoc: cmcrctl setup-script --help")
+            return 2
+        }
+        if command == "readiness", let flag = cl.configurationFlags.first {
+            err("✘ Polecenie readiness tylko sprawdza gotowość – opcja \(flag) dotyczy polecenia setup. Nic nie zostało wykonane.\nPomoc: cmcrctl readiness --help")
+            return 2
+        }
         let key = cl.publicKey ?? appPublicKey(settings)
         switch command {
         case "setup-script":
