@@ -303,7 +303,7 @@ struct RemoteBrowserStatus: View {
                 } actions: {
                     if browser.hiddenCount > 0 {
                         Button { browser.showHidden = true } label: {
-                            Label("Pokaż ukryte pliki", systemImage: "eye")
+                            Label("Pokaż ukryte pliki", systemImage: "eye.slash")
                         }
                     }
                 }
@@ -382,7 +382,7 @@ struct RemoteBrowseErrorView: View {
         case .accessDenied: return "lock"
         case .privacyDenied: return "hand.raised"
         case .noConsoleUser: return "person.crop.circle.badge.questionmark"
-        case .unreachable: return "wifi.slash"
+        case .unreachable: return "moon.zzz.fill"
         case .authentication: return "key"
         default: return "exclamationmark.triangle"
         }

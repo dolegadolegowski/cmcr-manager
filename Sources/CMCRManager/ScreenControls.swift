@@ -132,7 +132,7 @@ struct ScreenSizeSlider: View {
         Slider(value: $tileWidth, in: range) {
             Text("Rozmiar ekranów")
         } minimumValueLabel: {
-            Image(systemName: "square.grid.3x3").accessibilityLabel("Mniejsze")
+            Image(systemName: "rectangle.grid.3x2").accessibilityLabel("Mniejsze")
         } maximumValueLabel: {
             Image(systemName: "square").accessibilityLabel("Większe")
         }

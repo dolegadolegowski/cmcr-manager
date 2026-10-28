@@ -33,7 +33,7 @@ struct RefreshToolbarButton: View {
             Button {
                 model.refreshStatus(model.selectedMachines)
             } label: {
-                Label("Odśwież tylko zaznaczone (\(model.selection.count))", systemImage: "checklist")
+                Label("Odśwież tylko zaznaczone (\(model.selection.count))", systemImage: "checkmark.square")
             }
             .disabled(model.selection.isEmpty)
         } label: {

@@ -587,7 +587,7 @@ struct HistoryDetailView: View {
                 Button {
                     model.selection = Set(existing.map(\.id))
                 } label: {
-                    Label("Zaznacz nieudane", systemImage: "checklist")
+                    Label("Zaznacz nieudane", systemImage: "checkmark.square")
                 }
                 .disabled(existing.isEmpty)
                 .help("Zaznacza na liście komputery, na których działanie się nie udało")

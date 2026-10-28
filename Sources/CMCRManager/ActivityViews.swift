@@ -113,7 +113,7 @@ struct ActivityToolbarButton: View {
             showing.toggle()
         } label: {
             if running > 0 {
-                Label("W toku: \(running)", systemImage: "arrow.triangle.2.circlepath")
+                Label("W toku: \(running)", systemImage: "hourglass")
             } else {
                 Label("Aktywność", systemImage: "list.bullet.rectangle")
             }

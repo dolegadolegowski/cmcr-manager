@@ -51,7 +51,7 @@ struct UpdatesView: View {
                 if let info = model.updates[m.id] { updateRow(m, info) }
             }
         } header: {
-            Label("Aktualizacje macOS", systemImage: "apple.logo")
+            Label("Aktualizacje macOS", systemImage: "gear.badge")
         }
     }
 

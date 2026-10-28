@@ -264,7 +264,7 @@ public enum RemotePaths {
                          icon: "person.crop.rectangle"),
             RemoteFolder(id: "usersShared", title: "Wspólny folder (Shared)", path: "/Users/Shared", icon: "person.2"),
             RemoteFolder(id: "applications", title: "Aplikacje", path: "/Applications", icon: "square.grid.2x2"),
-            RemoteFolder(id: "adminHome", title: "Katalog domowy administratora", path: adminHome, icon: "person.badge.key"),
+            RemoteFolder(id: "adminHome", title: "Katalog domowy administratora", path: adminHome, icon: "person.badge.shield.checkmark"),
         ]
     }
 

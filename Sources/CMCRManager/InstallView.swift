@@ -218,7 +218,7 @@ struct InstallView: View {
             .font(.body.monospacedDigit())
             FormActionRow("Android SDK",
                           caption: "Narzędzia do budowania gier na Androida – w podanych wersjach API, dla edytora Unity z modułem Android.") {
-                TargetButton(title: "Zainstaluj Android SDK", icon: "iphone.gen2", prominent: false) {
+                TargetButton(title: "Zainstaluj Android SDK", icon: "cpu", prominent: false) {
                     let v = unityVersion
                     let apis = androidAPIs.split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
                     model.runScript("sdkmanager API \(apis.joined(separator: ","))", on: model.selectedMachines) { _ in

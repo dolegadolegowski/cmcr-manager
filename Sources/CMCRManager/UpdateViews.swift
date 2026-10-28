@@ -355,7 +355,7 @@ struct UpdateSettingsSection: View {
                                  icon: "arrow.down.circle.fill", color: .accentColor)
                 }
             }
-            OptionToggle(title: "Sprawdzaj automatycznie", icon: "arrow.triangle.2.circlepath", color: .blue,
+            OptionToggle(title: "Sprawdzaj automatycznie", icon: "arrow.clockwise.circle", color: .blue,
                          detail: "Przy uruchomieniu aplikacji i raz dziennie (wydania na GitHubie)",
                          isOn: $updater.automaticChecks)
             OptionToggle(title: "Pobieraj uaktualnienia w tle", icon: "arrow.down.circle.fill", color: .green,

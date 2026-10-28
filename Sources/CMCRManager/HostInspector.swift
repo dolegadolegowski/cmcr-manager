@@ -85,7 +85,7 @@ struct HostInspector: View {
             Section("Bezpieczeństwo i zasilanie") {
                 LabeledContent("Szyfrowanie dysku") {
                     switch st.fileVaultOn ?? classroom.fileVault[m.id] {
-                    case .some(true): Label("włączone (FileVault)", systemImage: "lock.shield").foregroundStyle(.orange)
+                    case .some(true): Label("włączone (FileVault)", systemImage: "lock.doc").foregroundStyle(.orange)
                     case .some(false): Text("wyłączone")
                     case .none: Text(classroom.fileVaultErrors[m.id] ?? "nie sprawdzono").foregroundStyle(.secondary)
                     }

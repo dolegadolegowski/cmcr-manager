@@ -142,15 +142,15 @@ struct PowerView: View {
                     }
                 }
             }
-            PowerActionRow(title: "Uśpienie", icon: "moon.zzz",
+            PowerActionRow(title: "Uśpienie", icon: "powersleep",
                            caption: "Komputery zasną – obudzisz je przyciskiem „Obudź”.") {
-                TargetButton(title: "Uśpij…", icon: "moon.zzz", prominent: false) {
+                TargetButton(title: "Uśpij…", icon: "powersleep", prominent: false) {
                     request = PowerRequest(kind: .sleep, machines: model.selectedMachines, delay: delay, warn: warnUsers)
                 }
             }
-            PowerActionRow(title: "Ponowne uruchomienie", icon: "arrow.clockwise.circle",
+            PowerActionRow(title: "Ponowne uruchomienie", icon: "restart",
                            caption: "Zalogowani uczniowie stracą niezapisane prace.") {
-                CriticalTargetButton(title: "Uruchom ponownie…", icon: "arrow.clockwise.circle") {
+                CriticalTargetButton(title: "Uruchom ponownie…", icon: "restart") {
                     request = PowerRequest(kind: .restart, machines: model.selectedMachines, delay: delay, warn: warnUsers)
                 }
             }
@@ -333,7 +333,7 @@ struct PowerConfirmSheet: View {
                     .frame(height: min(220, CGFloat(request.machines.count) * 26 + 10))
             }
             if request.kind == .restart && fileVaultCount > 0 {
-                Label(fileVaultWarning, systemImage: "lock.shield")
+                Label(fileVaultWarning, systemImage: "lock.doc")
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -388,7 +388,7 @@ struct PowerConfirmSheet: View {
                     .foregroundStyle(.secondary)
             } else {
                 if request.kind == .restart, classroom.fileVault[m.id] == true {
-                    Label("FileVault", systemImage: "lock.shield")
+                    Label("FileVault", systemImage: "lock.doc")
                         .foregroundStyle(.orange)
                         .help("Po ponownym uruchomieniu komputer zatrzyma się na ekranie odblokowania dysku.")
                 }
@@ -408,8 +408,8 @@ struct PowerConfirmSheet: View {
     var icon: String {
         switch request.kind {
         case .gentleLogout, .logout: return "rectangle.portrait.and.arrow.right"
-        case .sleep: return "moon.zzz.fill"
-        case .restart: return "arrow.clockwise.circle.fill"
+        case .sleep: return "powersleep"
+        case .restart: return "restart.circle.fill"
         case .shutdown: return "power.circle.fill"
         }
     }

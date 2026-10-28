@@ -247,7 +247,7 @@ struct HostsEditor: View {
                     Button {
                         passwordFor = m
                     } label: {
-                        Label("Hasło tego komputera…", systemImage: "key")
+                        Label("Hasło tego komputera…", systemImage: "key.fill")
                     }
                 }
                 Divider()
@@ -491,7 +491,7 @@ struct HostListGeneratorSheet: View {
                 Button(role: .destructive) {
                     askReplace()
                 } label: {
-                    DestructiveLabel(title: "Zastąp całą listę…", icon: "arrow.triangle.2.circlepath",
+                    DestructiveLabel(title: "Zastąp całą listę…", icon: "arrow.2.squarepath",
                                      enabled: !preview.isEmpty && patternProblem == nil)
                 }
                 .disabled(preview.isEmpty || patternProblem != nil)
@@ -795,7 +795,7 @@ struct AccessSettings: View {
                              caption: selected.isEmpty ? "Zaznacz komputery na liście obok"
                                  : offline.isEmpty ? nil
                                  : "W tym niedostępne przy ostatnim sprawdzeniu: \(offline.count) – te operacje i tak spróbują się z nimi połączyć",
-                             icon: "checklist", color: .blue)
+                             icon: "checkmark.square", color: .blue)
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { Spacer(minLength: 0); targetButtons }
@@ -894,7 +894,7 @@ struct StudentFolderSettings: View {
                 }
             } label: {
                 SettingLabel(title: "Folder na tym Macu", caption: "Zebrane prace i pliki do rozesłania",
-                             icon: "macbook", color: .gray)
+                             icon: "laptopcomputer", color: .gray)
             }
         } header: {
             Text("Uczniowie i foldery")
@@ -949,7 +949,7 @@ struct ConnectionSettings: View {
                              caption: "Na ilu komputerach jednocześnie wykonywać polecenia i kopiować pliki",
                              icon: "square.stack.3d.up.fill", color: .indigo)
             }
-            OptionToggle(title: "Szybsze połączenia", icon: "bolt.fill", color: .green,
+            OptionToggle(title: "Szybsze połączenia", icon: "hare", color: .green,
                          detail: "Kolejne operacje na tym samym iMacu korzystają z jednego połączenia, więc podgląd ekranów i polecenia startują szybciej",
                          isOn: $model.settings.reuseConnections)
             DisclosureGroup {

@@ -109,7 +109,7 @@ struct CommandsView: View {
                     ForEach(all.filter { $0.category == category }) { s in
                         Button { use(s) } label: {
                             if s.asRoot {
-                                Label(s.name, systemImage: "lock.fill")
+                                Label(s.name, systemImage: "lock.shield")
                             } else {
                                 Text(s.name)
                             }
@@ -157,7 +157,7 @@ struct CommandsView: View {
         Section {
             ForEach(model.settings.snippets) { s in
                 HStack(spacing: 10) {
-                    Image(systemName: s.asRoot ? "lock.fill" : "text.alignleft")
+                    Image(systemName: s.asRoot ? "lock.shield" : "text.alignleft")
                         .foregroundStyle(.secondary)
                         .frame(width: 18)
                         .help(s.asRoot ? "Wymaga uprawnień administratora" : "Zwykłe polecenie")
@@ -231,7 +231,7 @@ struct SnippetSaveSheet: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if model.commandAsRoot {
-                        Label("Z uprawnieniami administratora", systemImage: "lock.fill")
+                        Label("Z uprawnieniami administratora", systemImage: "lock.shield")
                             .foregroundStyle(.secondary)
                     }
                 }

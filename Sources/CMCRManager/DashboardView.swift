@@ -269,7 +269,7 @@ struct DashboardView: View {
                 StatusDot(reachability: row.status.reachability)
                 Text(row.status.reachability.displayName).lineLimit(1)
                 if row.locked {
-                    Image(systemName: "lock.fill")
+                    Image(systemName: "lock.display")
                         .foregroundStyle(.secondary)
                         .help("Ekran zablokowany (tryb uwagi)")
                         .accessibilityLabel("Ekran zablokowany")

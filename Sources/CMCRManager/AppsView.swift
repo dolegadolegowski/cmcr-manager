@@ -139,7 +139,7 @@ struct AppsView: View {
                 .disabled(urlToOpen.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         } header: {
-            Label("Otwórz stronę internetową lub plik", systemImage: "safari")
+            Label("Otwórz stronę internetową lub plik", systemImage: "globe")
         }
     }
 
@@ -351,7 +351,7 @@ struct AppsView: View {
                 }
             }
         } header: {
-            Label("Zainstalowane aplikacje", systemImage: "square.grid.3x3")
+            Label("Zainstalowane aplikacje", systemImage: "square.grid.2x2")
         }
     }
 

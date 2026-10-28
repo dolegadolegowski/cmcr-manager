@@ -20,8 +20,8 @@ enum ClassroomTab: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .start: return "play.circle"
-        case .end: return "stop.circle"
-        case .attention: return "eye.slash"
+        case .end: return "flag.checkered"
+        case .attention: return "lock.display"
         case .questions: return "questionmark.bubble"
         }
     }
@@ -107,7 +107,7 @@ struct ClassroomView: View {
             Label {
                 Text("Tryb uwagi jest włączony – zablokowane ekrany: \(lockedCount)")
             } icon: {
-                Image(systemName: "lock.fill").foregroundStyle(.orange)
+                Image(systemName: "lock.display").foregroundStyle(.orange)
             }
             Button("Pokaż") { tab = .attention }
                 .buttonStyle(.link)
@@ -402,7 +402,7 @@ private struct EndLessonSection: View {
                 Button(role: disruptive ? .destructive : nil) {
                     askToEnd()
                 } label: {
-                    Label(disruptive ? "Zakończ zajęcia…" : "Zakończ zajęcia", systemImage: "stop.fill")
+                    Label(disruptive ? "Zakończ zajęcia…" : "Zakończ zajęcia", systemImage: "flag.checkered")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(disruptive ? .red : nil)
@@ -411,7 +411,7 @@ private struct EndLessonSection: View {
                 .help(buttonHelp)
             }
         } header: {
-            Label("Zakończ zajęcia", systemImage: "stop.circle")
+            Label("Zakończ zajęcia", systemImage: "flag.checkered")
         } footer: {
             Text("Folder cmcr ucznia jest czyszczony tylko razem ze zbieraniem prac i tylko na komputerach, z których udało się je zebrać. Gdy zbieranie się nie uda, folder Pobrane rzeczy też zostaje nietknięty. Aplikacje są zamykane przed zbieraniem prac.")
                 .foregroundStyle(.secondary)
@@ -504,7 +504,7 @@ private struct LessonProgressSection: View {
                     Button(role: .cancel) {
                         run.cancel()
                     } label: {
-                        Label("Przerwij", systemImage: "xmark.circle")
+                        Label("Przerwij", systemImage: "stop.circle")
                     }
                     .help("Zatrzymaj scenariusz – kroki, które już się wykonały, nie zostaną cofnięte")
                 }
@@ -550,7 +550,7 @@ struct StepStateIcon: View {
         case .done:
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityLabel("wykonano")
         case .skipped:
-            Image(systemName: "minus.circle.fill").foregroundStyle(.secondary).accessibilityLabel("pominięto")
+            Image(systemName: "forward.end.circle").foregroundStyle(.secondary).accessibilityLabel("pominięto")
         case .failed:
             Image(systemName: "xmark.octagon.fill").foregroundStyle(.red).accessibilityLabel("błąd")
         }
@@ -599,7 +599,7 @@ private struct AttentionSection: View {
                 LabeledContent {
                     Text(lockedNames).foregroundStyle(.secondary).lineLimit(2)
                 } label: {
-                    Label("Zablokowane teraz", systemImage: "lock.fill")
+                    Label("Zablokowane teraz", systemImage: "lock.display")
                 }
             }
             HStack(spacing: 12) {
@@ -609,19 +609,19 @@ private struct AttentionSection: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                TargetButton(title: "Odblokuj ekrany", icon: "lock.open", prominent: false) {
+                TargetButton(title: "Odblokuj ekrany", icon: "lock.open.display", prominent: false) {
                     classroom.unlock(model, model.selectedMachines)
                 }
                 .keyboardShortcut("u", modifiers: [.command, .shift])
                 .help("Zdejmij blokadę z zaznaczonych komputerów (⇧⌘U)")
-                TargetButton(title: "Zablokuj ekrany", icon: "lock.fill") {
+                TargetButton(title: "Zablokuj ekrany", icon: "lock.display") {
                     classroom.lock(model, model.selectedMachines)
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
                 .help("Zakryj ekrany zaznaczonych komputerów komunikatem (⇧⌘L)")
             }
         } header: {
-            Label("Tryb uwagi", systemImage: "eye.slash")
+            Label("Tryb uwagi", systemImage: "lock.display")
         } footer: {
             Text("Blokada systemowa korzysta z narzędzia wbudowanego w macOS (LockScreen z Apple Remote Desktop): zakrywa wszystkie ekrany i blokuje klawiaturę. Apple go nie dokumentuje, więc gdy się nie uruchomi, tryb automatyczny pokaże komunikat na pełnym ekranie. Komunikat ukrywa Dock i pasek menu, ale nie jest zabezpieczeniem – nie powstrzyma np. wyłączenia komputera przyciskiem.")
                 .foregroundStyle(.secondary)

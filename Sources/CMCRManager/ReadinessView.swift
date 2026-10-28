@@ -454,7 +454,7 @@ struct ReadinessView: View {
                 .disabled(model.actionTargets.isEmpty)
             }
             Section("Klucze komputerów (pierwsze połączenie, reinstalacja)") {
-                Button("Sprawdź klucz komputera…", systemImage: "lock.shield") {
+                Button("Sprawdź klucz komputera…", systemImage: "key.viewfinder") {
                     model.reviewHostKeys(model.selectedMachines)
                 }
                 .help("Pokazuje odcisk klucza SSH zaznaczonych iMaców do potwierdzenia – przy pierwszym połączeniu albo po reinstalacji lub wymianie iMaca.")
@@ -493,7 +493,7 @@ struct ReadinessView: View {
             ReadinessChip(title: "Wizyta przy komputerze", value: "\(visit.count)",
                           icon: "hand.raised.fill", color: visit.isEmpty ? .secondary : .blue, machines: visit),
             ReadinessChip(title: "Bez połączenia", value: "\(offline.count)",
-                          icon: "wifi.slash", color: offline.isEmpty ? .secondary : .red, machines: offline),
+                          icon: "moon.zzz.fill", color: offline.isEmpty ? .secondary : .red, machines: offline),
         ]
         return VStack(alignment: .leading, spacing: 6) {
             // One row only when every chip fits whole at the same width; otherwise two rows of two.
@@ -802,7 +802,7 @@ struct ReadinessCellDetail: View {
                 model.reviewHostKeys([machine])
                 onDone()
             } label: {
-                Label("Sprawdź klucz komputera…", systemImage: "lock.shield")
+                Label("Sprawdź klucz komputera…", systemImage: "key.viewfinder")
             }
             .help(connectionFailure == .hostKeyChanged
                   ? "Tylko jeśli ten iMac był reinstalowany lub wymieniony – inaczej zmieniony klucz może oznaczać, że w sieci podszywa się pod niego inne urządzenie."

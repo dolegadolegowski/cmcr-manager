@@ -44,7 +44,7 @@ enum ScreenWallSource: String, CaseIterable, Identifiable {
         switch self {
         case .all: return "desktopcomputer"
         case .selected: return "checklist"
-        case .online: return "power"
+        case .online: return "checkmark.circle"
         case .withUser: return "person.crop.rectangle"
         }
     }
@@ -231,7 +231,7 @@ struct ScreenWallView: View {
             Button {
                 (window ?? NSApp.keyWindow)?.toggleFullScreen(nil)
             } label: {
-                Label("Pełny ekran", systemImage: "arrow.up.left.and.arrow.down.right.rectangle")
+                Label("Pełny ekran", systemImage: "arrow.up.left.and.arrow.down.right")
                     .labelStyle(.titleAndIcon)
             }
             .help("Pełny ekran – np. na drugim monitorze lub projektorze (⌃⌘F)")

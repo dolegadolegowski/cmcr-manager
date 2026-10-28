@@ -210,10 +210,10 @@ struct SetupOptionsSheet: View {
             OptionToggle(title: "Budzenie przez sieć", icon: "dot.radiowaves.left.and.right", color: .green,
                          detail: "Pozwala obudzić uśpionego iMaca z aplikacji, przez kabel Ethernet (Wake-on-LAN).",
                          isOn: $o.wakeOnLAN)
-            OptionToggle(title: "Nie usypiaj komputera", icon: "moon.zzz.fill", color: .indigo,
+            OptionToggle(title: "Nie usypiaj komputera", icon: "powersleep", color: .indigo,
                          detail: "iMac nie przechodzi w uśpienie, więc zawsze odpowiada; ekran nadal może się wyłączać.",
                          isOn: $o.noSleep)
-            OptionToggle(title: "Włączaj po zaniku zasilania", icon: "bolt.fill", color: .yellow,
+            OptionToggle(title: "Włączaj po zaniku zasilania", icon: "powerplug", color: .yellow,
                          detail: "Po powrocie prądu iMac uruchomi się sam (jeśli model to obsługuje).",
                          isOn: $o.autoRestart)
             Picker(selection: $o.scheduleMode) {
@@ -284,7 +284,7 @@ struct SetupOptionsSheet: View {
                              caption: "sudo bez hasła: każdy, kto ma klucz tej aplikacji, miałby pełne uprawnienia bez hasła.",
                              icon: "lock.open.fill", color: .red)
             }
-            OptionToggle(title: "Logowanie zdalne tylko kluczem", icon: "lock.fill", color: .blue,
+            OptionToggle(title: "Logowanie zdalne tylko kluczem", icon: "key.horizontal.fill", color: .blue,
                          detail: "Wyłącza logowanie hasłem przez SSH. Wymaga instalacji klucza tej aplikacji.",
                          isOn: $o.sshKeyOnly)
                 .disabled(!o.installKey)

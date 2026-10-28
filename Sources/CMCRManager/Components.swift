@@ -22,7 +22,7 @@ extension Reachability {
         case .offline: return "moon.zzz.fill"
         case .authFailed: return "key.slash"
         case .error: return "exclamationmark.triangle.fill"
-        case .checking: return "arrow.triangle.2.circlepath"
+        case .checking: return "hourglass"
         case .unknown: return "circle.dashed"
         }
     }
@@ -431,7 +431,7 @@ extension Job.State {
     var symbol: String {
         switch self {
         case .queued: return "clock"
-        case .running: return "arrow.triangle.2.circlepath"
+        case .running: return "hourglass"
         case .succeeded: return "checkmark.circle.fill"
         case .failed: return "xmark.octagon.fill"
         case .cancelled: return "stop.circle"
@@ -551,7 +551,7 @@ struct BatchActions: View {
             }
             if !batch.problemMachines.isEmpty {
                 Button { model.selectProblems(of: batch) } label: {
-                    Label("Zaznacz nieudane", systemImage: "checklist")
+                    Label("Zaznacz nieudane", systemImage: "checkmark.square")
                 }
                 .help("Zaznacza na liście komputery, na których działanie się nie udało lub zostało pominięte")
             }
@@ -916,7 +916,7 @@ struct FileListEditor: View {
                 Button {
                     items.removeAll()
                 } label: {
-                    Label("Wyczyść listę", systemImage: "xmark.circle")
+                    Label("Wyczyść listę", systemImage: "eraser")
                 }
                 .disabled(items.isEmpty)
                 .help("Usuwa wszystkie pozycje z listy (pliki na dysku zostają)")

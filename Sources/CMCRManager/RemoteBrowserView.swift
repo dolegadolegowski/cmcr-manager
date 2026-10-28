@@ -136,7 +136,7 @@ private struct RemoteBrowserPage: View {
     var viewToggles: some View {
         HStack(spacing: 8) {
             Toggle(isOn: $browser.showHidden) {
-                Label("Ukryte pliki", systemImage: browser.showHidden ? "eye" : "eye.slash")
+                Label("Ukryte pliki", systemImage: "eye.slash")
             }
             .toggleStyle(.button)
             .help(hiddenHelp)
@@ -153,7 +153,7 @@ private struct RemoteBrowserPage: View {
     var viewMenu: some View {
         Menu {
             Toggle(isOn: $browser.showHidden) {
-                Label("Pokaż ukryte pliki", systemImage: "eye")
+                Label("Pokaż ukryte pliki", systemImage: "eye.slash")
             }
             .help(hiddenHelp)
             Toggle(isOn: asRoot) {
@@ -161,7 +161,7 @@ private struct RemoteBrowserPage: View {
             }
             .help(asRootHelp)
         } label: {
-            Label("Widok", systemImage: browser.showHidden || browser.asRoot ? "eye.fill" : "eye")
+            Label("Widok", systemImage: "slider.horizontal.3")
         }
         .fixedSize()
         .help("Pokazywanie ukrytych plików i przeglądanie z uprawnieniami administratora")

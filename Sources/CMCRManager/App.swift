@@ -636,7 +636,7 @@ struct MachineContextMenu: View {
                 Button {
                     model.selection = ids
                 } label: {
-                    Label(targets.count == 1 ? "Zaznacz tylko ten" : "Zaznacz tylko te", systemImage: "checklist")
+                    Label(targets.count == 1 ? "Zaznacz tylko ten" : "Zaznacz tylko te", systemImage: "checkmark.square")
                 }
             }
             Divider()

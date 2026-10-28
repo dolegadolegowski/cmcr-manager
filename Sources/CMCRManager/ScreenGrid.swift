@@ -23,8 +23,8 @@ enum ScreenGridLayout: String, CaseIterable, Identifiable {
         switch self {
         case .fit: return "aspectratio"
         case .adaptive: return "slider.horizontal.3"
-        case .two: return "square.grid.2x2"
-        case .three: return "square.grid.3x3"
+        case .two: return "rectangle.grid.2x2"
+        case .three: return "rectangle.grid.3x2"
         default: return "square.grid.4x3.fill"
         }
     }

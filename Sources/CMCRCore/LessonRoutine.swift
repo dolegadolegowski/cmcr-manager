@@ -34,7 +34,7 @@ public enum LessonStepKind: String, Codable, CaseIterable, Sendable {
         case .cleanShared: return "folder.badge.minus"
         case .cleanDownloads: return "arrow.down.circle.dotted"
         case .logout: return "rectangle.portrait.and.arrow.right"
-        case .sleep: return "moon.zzz"
+        case .sleep: return "powersleep"
         case .shutdown: return "power"
         }
     }
