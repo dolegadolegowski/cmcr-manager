@@ -377,4 +377,50 @@ struct AppLogicTests {
         #expect(review.chosenScans.map(\.host.id) == [a.id])
         _ = model
     }
+
+    /// A Mac with a student logged in (the status says so; connections are refused by the closed port).
+    func withStudent(_ m: Machine, _ model: AppModel) {
+        var st = HostStatus()
+        st.reachability = .online
+        st.info["console"] = "uczen"
+        model.statuses[m.id] = st
+    }
+
+    // power-retry-without-confirmation (AUDIT KOM-01): a restart confirmed in the power sheet is confirmed again
+    // before „Powtórz na nieudanych”, and Macs left out because a student is logged in are skipped jobs.
+    @Test func powerActionsRememberTheirConfirmationAndSkippedMacs() async throws {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        withStudent(a, model)
+        var online = HostStatus()
+        online.reachability = .online
+        model.statuses[b.id] = online
+        PowerRequest(kind: .restart, machines: [a, b]).start(model: model, classroom: classroom, skipLoggedIn: true)
+        let batch = try #require(model.batches.first)
+        #expect(batch.confirmation?.button == "Uruchom ponownie")
+        #expect(batch.confirmation?.destructive == true)
+        let skipped = try #require(batch.jobs.first { $0.machine.id == a.id })
+        #expect(skipped.state == .skipped && skipped.skipReason == .loggedInUser)
+        #expect(await AppTestEnvironment.wait { batch.finished })
+        let before = model.batches.count
+        model.retry(batch, on: [b])
+        #expect(model.retryConfirmation != nil, "powtórzenie restartu musi zapytać ponownie")
+        #expect(model.batches.count == before)
+        model.retryConfirmation = nil
+    }
+
+    // logout-without-confirmation (AUDIT UI-03): the gentle log out goes through the same sheet and is confirmed
+    // again on a retry, but is not destructive (the apps ask the students to save).
+    @Test func gentleLogoutIsConfirmedButNotDestructive() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        withStudent(a, model)
+        let request = PowerRequest(kind: .gentleLogout, machines: [a])
+        #expect(request.verb == "Wyloguj")
+        request.start(model: model, classroom: classroom, skipLoggedIn: false)
+        let batch = try #require(model.batches.first)
+        #expect(batch.confirmation?.button == "Wyloguj")
+        #expect(batch.confirmation?.destructive == false)
+        #expect(await AppTestEnvironment.wait { batch.finished })
+    }
 }

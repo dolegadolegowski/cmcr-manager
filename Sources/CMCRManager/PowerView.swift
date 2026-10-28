@@ -96,10 +96,8 @@ struct PowerView: View {
             }
             PowerActionRow(title: "Wylogowanie", icon: "rectangle.portrait.and.arrow.right",
                            caption: "Jak „Wyloguj” w menu Apple – aplikacje zapytają ucznia o zapisanie zmian.") {
-                TargetButton(title: "Wyloguj", icon: "rectangle.portrait.and.arrow.right", prominent: false) {
-                    model.runScript("Wylogowanie (z pytaniem o zapis)", on: model.selectedMachines, section: .power) { _ in
-                        Scripts.logoutUser(force: false)
-                    }
+                TargetButton(title: "Wyloguj…", icon: "rectangle.portrait.and.arrow.right", prominent: false) {
+                    request = PowerRequest(kind: .gentleLogout, machines: model.selectedMachines)
                 }
             }
             PowerActionRow(title: "Natychmiastowe wylogowanie", icon: "rectangle.portrait.and.arrow.right.fill",
@@ -232,7 +230,8 @@ struct PowerActionRow<Action: View>: View {
 // MARK: - Confirmation sheet
 
 struct PowerRequest: Identifiable {
-    enum Kind { case logout, sleep, restart, shutdown }
+    /// `gentleLogout` is „Wyloguj” from the Apple menu (the apps ask to save); `logout` ends the sessions at once.
+    enum Kind { case gentleLogout, logout, sleep, restart, shutdown }
 
     let id = UUID()
     let kind: Kind
@@ -242,7 +241,7 @@ struct PowerRequest: Identifiable {
 
     var action: PowerAction? {
         switch kind {
-        case .logout: return nil
+        case .gentleLogout, .logout: return nil
         case .sleep: return .sleep
         case .restart: return .restart
         case .shutdown: return .shutdown
@@ -251,6 +250,7 @@ struct PowerRequest: Identifiable {
 
     var verb: String {
         switch kind {
+        case .gentleLogout: return "Wyloguj"
         case .logout: return "Wyloguj natychmiast"
         case .sleep: return "Uśpij"
         case .restart: return "Uruchom ponownie"
@@ -262,10 +262,44 @@ struct PowerRequest: Identifiable {
     func question(_ n: Int) -> String {
         let what = Polish.computers(n)
         switch kind {
-        case .logout: return "Wylogować uczniów \(Polish.onComputers(n))?"
+        case .gentleLogout, .logout: return "Wylogować uczniów \(Polish.onComputers(n))?"
         case .sleep: return "Uśpić \(what)?"
         case .restart: return "Uruchomić ponownie \(what)?"
         case .shutdown: return "Wyłączyć \(what)?"
+        }
+    }
+
+    /// Can make students lose unsaved work (the confirmation button is red, a repeat is confirmed as destructive).
+    var isDestructive: Bool { kind != .sleep && kind != .gentleLogout }
+
+    /// Starts the confirmed action. Every target is handed to the batch: Macs left out because a student is logged in
+    /// become skipped jobs, and the batch remembers the confirmation, so „Powtórz na nieudanych” asks again.
+    @MainActor
+    func start(model: AppModel, classroom: ClassroomModel, skipLoggedIn: Bool) {
+        let skip = skipLoggedIn ? Set(machines.filter { model.status($0).consoleUser != nil }.map(\.id)) : []
+        let confirmation = BatchConfirmation(button: verb, destructive: isDestructive)
+        model.perform(skipping: skip, reason: .loggedInUser, confirmation: confirmation) {
+            switch kind {
+            case .gentleLogout:
+                model.runScript("Wylogowanie (z pytaniem o zapis)", on: machines, section: .power) { _ in
+                    Scripts.logoutUser(force: false)
+                }
+            case .logout:
+                model.runScript("Wylogowanie użytkownika", on: machines, section: .power) { _ in Scripts.logoutUser() }
+            case .sleep, .restart, .shutdown:
+                guard let action else { return }
+                classroom.delayedPower(model, action, minutes: delay, warning: warning(for: action), machines)
+            }
+        }
+    }
+
+    /// The message shown on the students' screens before a delayed action (nil: none).
+    func warning(for action: PowerAction) -> String? {
+        guard delay > 0 && warn else { return nil }
+        switch action {
+        case .restart: return "Komputer zostanie uruchomiony ponownie za \(delay) min. Zapisz swoją pracę."
+        case .shutdown: return "Komputer zostanie wyłączony za \(delay) min. Zapisz swoją pracę."
+        default: return "Komputer zostanie uśpiony za \(delay) min. Zapisz swoją pracę."
         }
     }
 }
@@ -284,7 +318,7 @@ struct PowerConfirmSheet: View {
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: icon)
                     .font(.system(size: 34))
-                    .foregroundStyle(request.kind == .sleep ? Color.accentColor : .red)
+                    .foregroundStyle(request.isDestructive ? Color.red : .accentColor)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 6) {
                     Text(request.question(effective.count)).font(.headline)
@@ -321,13 +355,13 @@ struct PowerConfirmSheet: View {
                 Button("Anuluj", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 // Never the default action: Return must not restart a classroom.
-                Button(role: request.kind == .sleep ? nil : .destructive) {
+                Button(role: request.isDestructive ? .destructive : nil) {
                     perform()
                     dismiss()
                 } label: {
                     Text("\(request.verb) (\(effective.count))")
                 }
-                .tint(request.kind == .sleep ? nil : .red)
+                .tint(request.isDestructive ? .red : nil)
                 .buttonStyle(.borderedProminent)
                 .disabled(effective.isEmpty || (needsAcknowledgement && !understood))
             }
@@ -374,7 +408,7 @@ struct PowerConfirmSheet: View {
 
     var icon: String {
         switch request.kind {
-        case .logout: return "rectangle.portrait.and.arrow.right"
+        case .gentleLogout, .logout: return "rectangle.portrait.and.arrow.right"
         case .sleep: return "moon.zzz.fill"
         case .restart: return "arrow.clockwise.circle.fill"
         case .shutdown: return "power.circle.fill"
@@ -383,6 +417,9 @@ struct PowerConfirmSheet: View {
 
     var subtitle: String {
         if request.kind == .logout { return "Sesje zostaną zakończone natychmiast – aplikacje nie zapytają o zapisanie zmian." }
+        if request.kind == .gentleLogout {
+            return "Jak „Wyloguj” w menu Apple – aplikacje zapytają uczniów o zapisanie zmian, więc wylogowanie może chwilę potrwać."
+        }
         if request.delay > 0 {
             return "Za \(request.delay) min\(request.warn ? ", po wcześniejszym komunikacie na ekranie" : ""). Do tego czasu możesz to odwołać przyciskiem „Odwołaj” (Zaplanowane na później)."
         }
@@ -398,37 +435,15 @@ struct PowerConfirmSheet: View {
     var fileVaultCount: Int { reached.filter { classroom.fileVault[$0.id] == true }.count }
 
     var needsAcknowledgement: Bool {
-        request.kind != .sleep && request.delay == 0 && effective.filter { model.status($0).consoleUser != nil }.count >= 5
+        request.isDestructive && request.delay == 0 && effective.filter { model.status($0).consoleUser != nil }.count >= 5
     }
 
     var effective: [Machine] {
         skipLoggedIn ? reached.filter { model.status($0).consoleUser == nil } : reached
     }
 
-    /// What is handed to the batch: unreachable Macs stay in it (as skipped jobs, so they can be retried).
-    var targets: [Machine] {
-        skipLoggedIn ? request.machines.filter { model.status($0).consoleUser == nil } : request.machines
-    }
-
     func perform() {
-        let list = targets
         guard !effective.isEmpty else { return }
-        switch request.kind {
-        case .logout:
-            model.runScript("Wylogowanie użytkownika", on: list, section: .power) { _ in Scripts.logoutUser() }
-        case .sleep, .restart, .shutdown:
-            guard let action = request.action else { return }
-            let warning: String?
-            if request.delay > 0 && request.warn {
-                switch action {
-                case .restart: warning = "Komputer zostanie uruchomiony ponownie za \(request.delay) min. Zapisz swoją pracę."
-                case .shutdown: warning = "Komputer zostanie wyłączony za \(request.delay) min. Zapisz swoją pracę."
-                default: warning = "Komputer zostanie uśpiony za \(request.delay) min. Zapisz swoją pracę."
-                }
-            } else {
-                warning = nil
-            }
-            classroom.delayedPower(model, action, minutes: request.delay, warning: warning, list)
-        }
+        request.start(model: model, classroom: classroom, skipLoggedIn: skipLoggedIn)
     }
 }
