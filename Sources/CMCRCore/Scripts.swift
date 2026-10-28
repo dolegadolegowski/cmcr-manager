@@ -120,7 +120,7 @@ public enum Scripts {
         RemoteScript(#"""
         echo "USER:$CONSOLE_USER"
         [ -z "$CONSOLE_USER" ] && exit 0
-        ps -axww -o pid=,user=,comm= | awk -v u="$CONSOLE_USER" '$2 == u'
+        cmcr_ps -axww -o pid=,user=,comm= | awk -v u="$CONSOLE_USER" '$2 == u'
         """#)
     }
 
@@ -209,6 +209,7 @@ public enum Scripts {
     /// cannot receive Apple Events and get SIGTERM. `force` sends SIGKILL immediately.
     public static func quitApp(_ app: String, force: Bool, terminateIfRunning: Bool = false,
                                wait: Int = 10) -> RemoteScript {
+        let app = app.precomposedStringWithCanonicalMapping       // cmcr_ps lists precomposed names (NFC)
         let needle = app.hasSuffix(".app") && app.hasPrefix("/")
             ? app + "/Contents/MacOS/"
             : "/" + (app.hasSuffix(".app") ? String(app.dropLast(4)) : app) + ".app/Contents/MacOS/"
@@ -217,14 +218,14 @@ public enum Scripts {
         NEEDLE=\#(shQuote(needle)); NAME=\#(shQuote(name))
         FORCE=\#(force ? 1 : 0); FALLBACK=\#(terminateIfRunning ? 1 : 0); WAIT=\#(max(1, wait))
         if [ -z "$CONSOLE_USER" ]; then echo "Brak zalogowanego użytkownika."; exit 0; fi
-        app_pids() { ps -axww -o pid=,user=,comm= | awk -v u="$CONSOLE_USER" -v n="$NEEDLE" '$2 == u && index($0, n) > 0 {print $1}'; }
+        app_pids() { cmcr_ps -axww -o pid=,user=,comm= | awk -v u="$CONSOLE_USER" -v n="$NEEDLE" '$2 == u && index($0, n) > 0 {print $1}'; }
         PIDS="$(app_pids)"
         if [ -z "$PIDS" ]; then echo "Aplikacja nie jest uruchomiona."; exit 0; fi
         if [ $FORCE = 1 ]; then
           asroot kill -KILL $PIDS && echo "Wymuszono zamknięcie $NAME (SIGKILL, procesy: $(echo $PIDS))."
           exit
         fi
-        EXE="$(ps -o comm= -p "$(echo "$PIDS" | head -1)" 2>/dev/null)"
+        EXE="$(cmcr_ps -o comm= -p "$(echo "$PIDS" | head -1)" 2>/dev/null)"
         BID=""; PL="${EXE%%.app/Contents/MacOS/*}.app/Contents/Info.plist"
         case "$EXE" in
           *.app/Contents/MacOS/*) [ -f "$PL" ] && BID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PL" 2>/dev/null)" ;;
@@ -295,7 +296,7 @@ public enum Scripts {
         PARENT="$(cmcr_realdir "$(dirname "$APP")")"; RAPPS="$(cmcr_realdir "$APPS")"
         case "$PARENT/" in "$RAPPS"/*) ;; *) echo "Odmowa: $APP wskazuje poza $APPS ($PARENT)." >&2; exit 2 ;; esac
         NAME="$(basename "$APP" .app)"
-        PIDS="$(ps -axww -o pid=,comm= | awk -v n="/$NAME.app/Contents/MacOS/" 'index($0, n) > 0 {print $1}')"
+        PIDS="$(cmcr_ps -axww -o pid=,comm= | awk -v n="/$NAME.app/Contents/MacOS/" 'index($0, n) > 0 {print $1}')"
         [ -n "$PIDS" ] && kill -KILL $PIDS 2>/dev/null
         if rm -rf "$APP" 2>"$CMCR_TMP/rm.err" && [ ! -e "$APP" ]; then
           echo "Usunięto $APP"

@@ -49,6 +49,10 @@ public struct RemoteScript: Sendable {
     # Every GUI session – the one at the screen and the ones left running in the background after "Switch User"
     # (the screen then shows the login window): "uid account" per line. Each logged-in account runs its own
     # loginwindow; at the login window only root's is left.
+    # ps with names as people see them: the scripts run with LC_ALL=C, where ps escapes every byte outside ASCII
+    # ("Zółw" → "ZM-CM-3…"), so a search by name never matched. Raw UTF-8, precomposed (names typed in the app are
+    # NFC, names from the disk may be decomposed).
+    cmcr_ps() { LC_ALL=en_US.UTF-8 ps "$@" | iconv -c -f UTF-8-MAC -t UTF-8; }
     cmcr_gui_sessions() {
       ps -axo uid=,user=,comm= 2>/dev/null | awk '$1 >= 501 && $3 ~ /\/loginwindow$/ {print $1, $2}' | sort -u
     }

@@ -378,7 +378,7 @@ public extension Scripts {
     static func quitAllApps() -> RemoteScript {
         RemoteScript(#"""
         if [ -z "$CONSOLE_USER" ]; then echo "Nikt nie jest zalogowany – nie ma czego zamykać."; exit 0; fi
-        PIDS="$(ps -axww -o pid=,user=,comm= | awk -v u="$CONSOLE_USER" '$2 == u {
+        PIDS="$(cmcr_ps -axww -o pid=,user=,comm= | awk -v u="$CONSOLE_USER" '$2 == u {
           p = $0; sub(/^ *[0-9]+ +[^ ]+ +/, "", p)
           if (p ~ /^(\/Applications\/|\/System\/Applications\/|\/System\/Volumes\/Preboot\/Cryptexes\/App\/System\/Applications\/|\/System\/Cryptexes\/App\/System\/Applications\/|\/Users\/[^\/]+\/Applications\/)/ && p ~ /\.app\/Contents\/MacOS\/[^\/]+$/ && p !~ /\.app\/.*\.app\//) print $1
         }')"
