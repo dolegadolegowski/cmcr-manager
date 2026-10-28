@@ -422,11 +422,13 @@ public extension Scripts {
           kv sudo "$SUDO"
           printf '%s\n' "$ROOTOUT" | grep -v '^root='
         else
-          ERR="$(grep -v '^ *$' "$CMCR_TMP/readiness.err" 2>/dev/null | head -n 1)"
-          case "$ERR" in
-            *"incorrect password"*|*"Sorry, try again"*|*"no password was provided"*) kv sudo badpassword ;;
-            *) kv sudo error; kv sudo_error "$ERR" ;;
-          esac
+          # The whole answer counts: before an account's first successful sudo, macOS prints its warning ("WARNING:
+          # Improper use of the sudo command…") ahead of "Sorry, try again". The last line is the error itself.
+          if grep -qE 'incorrect password|Sorry, try again|no password was provided' "$CMCR_TMP/readiness.err" 2>/dev/null; then
+            kv sudo badpassword
+          else
+            kv sudo error; kv sudo_error "$(grep -v '^ *$' "$CMCR_TMP/readiness.err" 2>/dev/null | tail -n 1)"
+          fi
         fi
         """#)
     }

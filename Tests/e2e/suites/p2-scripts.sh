@@ -221,3 +221,10 @@ expect "ls ~: zawartość katalogu domowego" "$out" "Library"
 out="$(ctlpw clean "~/cmcr-p2-nie-istnieje-$$" 1 --yes)"; code=$?
 expect "clean ~: odmowa z właściwym powodem" "$out" "folder domowy administratora"
 expect_not "clean ~: bez mylącej rady o pełnej ścieżce" "$out" "podaj pełną ścieżkę"
+
+section "P2: gotowość – ostrzeżenie sudo przed złym hasłem (AUDIT PRZ-08)"
+: > "$WORK/sudo.lecture"
+out="$(CMCR_PASSWORD="zle-haslo-p2" "$CTL" readiness 1 2>&1)"
+rm -f "$WORK/sudo.lecture"
+expect "readiness: złe hasło rozpoznane mimo ostrzeżenia sudo" "$out" "złe hasło"
+expect_not "readiness: ostrzeżenie sudo nie jest pokazywane jako błąd" "$out" "Improper use"

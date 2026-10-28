@@ -25,6 +25,11 @@ sudo() {
   fi
   if [ $nonint = 1 ]; then echo "sudo: a password is required" >&2; return 1; fi
   if [ $askpass = 0 ]; then echo "sudo: a terminal is required to read the password" >&2; return 1; fi
+  # $CMCR_E2E_WORK/sudo.lecture: the warning macOS sudo prints before the first successful authentication of an
+  # account (on stderr when it has no terminal), ahead of "Sorry, try again" (AUDIT PRZ-08).
+  if [ -e "${CMCR_E2E_WORK:-/nonexistent}/sudo.lecture" ]; then
+    printf '\nWARNING: Improper use of the sudo command could lead to data loss\nor the deletion of important system files. Please double-check your\ntyping when using sudo. Type "man sudo" for more information.\n\nTo proceed, enter your password, or type Ctrl-C to abort.\n\n' >&2
+  fi
   local pw
   pw="$("$SUDO_ASKPASS" "Password:")" || { echo "sudo: no password was provided" >&2; return 1; }
   if [ "$pw" != "${CMCR_E2E_PASSWORD:-}" ]; then
