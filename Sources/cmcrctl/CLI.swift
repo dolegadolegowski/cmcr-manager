@@ -51,7 +51,8 @@ Sesja i zasilanie
                                            --force: wyloguj natychmiast (także sesje w tle)
   power restart|shutdown|sleep|display-sleep KOMP
                                            uruchom ponownie | wyłącz | uśpij | uśpij ekran
-  wake KOMP [--dry-run]                    obudź przez sieć (Wake-on-LAN, wymaga adresu MAC)
+  wake KOMP [--wait] [--dry-run]           obudź przez sieć (Wake-on-LAN, wymaga adresu MAC; najpierw MAC
+                                           karty Ethernet); --wait: czekaj do 3 min, aż komputery odpowiedzą
 
 Konfiguracja
   hosts [list]                             komputery ze szczegółami (port, MAC, hasło)
@@ -152,7 +153,7 @@ struct CLI: Sendable {
         case "message": return await message()
         case "logout": return await logout()
         case "power": return await power()
-        case "wake": return wake()
+        case "wake": return await wake()
         case "hosts": return hostsCommand()
         case "password": return password()
         case "trust": return await trust()
@@ -351,12 +352,15 @@ struct CLI: Sendable {
         return combine(codes)
     }
 
-    /// Like the app: a MAC address reported by a running Mac is stored for Wake-on-LAN when none is set.
+    /// Like the app: a MAC address reported by a running Mac is stored for Wake-on-LAN when none is set – that of the
+    /// wired port when the Mac has one (`HostStatus.mac`), not of the default route, which may be Wi-Fi.
     func rememberMACs(_ list: [Machine], _ results: [CommandResult?], quiet: Bool) {
         var learned: [(host: Machine, mac: String)] = []
         for (h, r) in zip(list, results) where h.macAddress.isEmpty {
-            guard let r, r.succeeded, let mac = Parsers.keyValues(r.stdoutText)["mac"].flatMap(HostEntry.normalizedMAC)
-            else { continue }
+            guard let r, r.succeeded else { continue }
+            var status = HostStatus()
+            status.info = Parsers.keyValues(r.stdoutText)
+            guard let mac = status.mac.flatMap(HostEntry.normalizedMAC) else { continue }
             learned.append((h, mac))
         }
         guard !learned.isEmpty else { return }
@@ -656,37 +660,78 @@ struct CLI: Sendable {
         return await runScript(on: list) { _ in Scripts.power(action) }
     }
 
-    func wake() -> Int32 {
-        args.expect("wake", options: ["--dry-run"], positional: 2)
+    /// Wake-on-LAN as in the app: packets for the Ethernet MAC the Mac reported last (status-cache.json of the app),
+    /// the MAC on the list and the default route's MAC, also to the broadcast of the subnet it was last seen in.
+    /// `--wait`: every Mac at once waits (up to 3 min, resending) until it answers over SSH.
+    func wake() async -> Int32 {
+        args.expect("wake", options: ["--dry-run", "--wait"], positional: 2)
         let list = targets(args[1])
-        let dryRun = args.has("--dry-run")
-        var code = ExitCode.success
-        for h in list {
-            guard !h.macAddress.isEmpty else {
-                Console.err("✘ \(h.name): brak adresu MAC – uruchom „cmcrctl status”, gdy komputer jest włączony, lub ustaw: cmcrctl hosts set \(h.name) --mac aa:bb:cc:dd:ee:ff.")
-                code = ExitCode.failure
-                continue
+        let dryRun = args.has("--dry-run"), wait = args.has("--wait")
+        if dryRun && wait { usageError("Opcja --wait nie działa z --dry-run (próba niczego nie wysyła).") }
+        let snapshots = ClassroomStore.loadSnapshots()
+        func target(_ h: Machine) -> LessonRunner.Host {
+            let info = snapshots[h.id]?.info ?? [:]
+            return LessonRunner.Host(machine: h, password: Keychain.password(for: h),
+                                     macs: WakeOnLAN.candidateMACs(listed: h.macAddress, lastStatus: info),
+                                     extraBroadcasts: WakeOnLAN.lastSeenBroadcasts(info))
+        }
+        /// Sends the packets for one Mac; the line to print and whether it worked.
+        @Sendable func send(_ t: LessonRunner.Host) -> (String, Bool) {
+            let h = t.machine
+            guard !t.macs.isEmpty else {
+                let why = h.macAddress.isEmpty ? "brak adresu MAC" : "niepoprawny adres MAC „\(h.macAddress)”"
+                return ("✘ \(h.name): \(why) – uruchom „cmcrctl status”, gdy komputer jest włączony, lub ustaw: "
+                        + "cmcrctl hosts set \(h.name) --mac aa:bb:cc:dd:ee:ff.", false)
             }
-            guard let bytes = WakeOnLAN.parseMAC(h.macAddress) else {
-                Console.err("✘ \(h.name): niepoprawny adres MAC „\(h.macAddress)”.")
-                code = ExitCode.failure
-                continue
-            }
-            let mac = bytes.map { String(format: "%02x", $0) }.joined(separator: ":")
+            let extra = t.extraBroadcasts.isEmpty ? "" : " (także na \(t.extraBroadcasts.joined(separator: ", ")))"
             if dryRun {
-                Console.out("\(h.name): pakiet Wake-on-LAN dla \(mac) (próba – nic nie wysłano)")
-                continue
+                return ("\(h.name): pakiet Wake-on-LAN dla \(t.macs.joined(separator: ", "))\(extra) (próba – nic nie wysłano)", true)
             }
-            do {
-                for _ in 0..<3 { try WakeOnLAN.wake(mac: h.macAddress) }
-                Console.out("✔ \(h.name): wysłano pakiet Wake-on-LAN do \(mac)")
-            } catch {
-                Console.err("✘ \(h.name): \(error.localizedDescription)")
-                code = ExitCode.failure
+            var sent: [String] = []
+            var failure: String?
+            for mac in t.macs {
+                do {
+                    try WakeOnLAN.wake(mac: mac, extraBroadcasts: t.extraBroadcasts)
+                    sent.append(mac)
+                } catch {
+                    failure = error.localizedDescription
+                }
             }
+            guard !sent.isEmpty else { return ("✘ \(h.name): \(failure ?? "nie wysłano pakietu")", false) }
+            return ("✔ \(h.name): wysłano pakiet Wake-on-LAN do \(sent.joined(separator: ", "))\(extra)", true)
+        }
+        var code = ExitCode.success
+        if wait {
+            // Packets first for every Mac, then all of them wait at once (a Mac without a MAC may still be on).
+            let hosts = list.map(target)
+            let ssh = sshSettings()
+            let codes = await runHosts(list, jobs: max(1, list.count), prefixLines: false) { io in
+                let t = hosts[io.index]
+                if !t.macs.isEmpty {
+                    let (line, ok) = send(t)
+                    if ok { io.out(line) } else { io.err(line) }
+                }
+                switch await LessonRunner.wake(t, ssh: ssh, minutes: 3, handle: nil, onOutput: nil) {
+                case .done(let s):
+                    io.out("✔ \(t.machine.name): \(s)")
+                    return ExitCode.success
+                case .failed(let s), .skipped(let s):
+                    io.err("✘ \(t.machine.name): \(s)")
+                    return ExitCode.failure
+                default:
+                    return ExitCode.failure
+                }
+            }
+            return combine(codes)
+        }
+        for h in list {
+            let (line, ok) = send(target(h))
+            if ok { Console.out(line) } else { Console.err(line) }
+            if !ok { code = ExitCode.failure }
         }
         if code == ExitCode.success && !dryRun {
-            Console.err("Wake-on-LAN działa przy połączeniu Ethernet i włączonej opcji „Budź przy dostępie do sieci”.")
+            Console.err("Wake-on-LAN działa przy połączeniu Ethernet i włączonej opcji „Budź przy dostępie do sieci”; "
+                        + "--wait czeka, aż komputery odpowiedzą.")
         }
         return code
     }

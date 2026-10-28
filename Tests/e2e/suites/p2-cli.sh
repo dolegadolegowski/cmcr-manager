@@ -315,3 +315,36 @@ expect_not "install plik all: folder all nie jest instalatorem" "$out" "nie-wysy
 out="$(cd "$INS" && CMCR_CONFIG_DIR="$P2" CMCR_PASSWORD="$PASSWORD" "$CTL" install P2Test.pkg ./all </dev/null 2>&1)"; code=$?
 expect_code "install plik ./all: ./all to plik, bez KOMP w skrypcie – kod 2" "$code" 2 "$out"
 expect "install plik ./all: prośba o komputery" "$out" "Podaj komputery dla polecenia install"
+
+section "P2 cmcrctl – Wake-on-LAN: MAC karty Ethernet i czekanie na komputer (AUDIT KOM-13)"
+WK="$WORK/cfg-p2-wake"
+mkdir -p "$WK"
+cp "$P2/settings.json" "$WK/"
+cat > "$WK/hosts.json" <<EOF
+[
+ {"id":"41111111-1111-1111-1111-111111111111","name":"imac01","address":"127.0.0.1","user":"$ME","port":$PORT},
+ {"id":"42222222-2222-2222-2222-222222222222","name":"imac02","address":"imac02.cmcr-e2e.invalid","user":"x","port":22,
+  "macAddress":"00:11:22:33:44:55"}
+]
+EOF
+# Last status saved by the app: Wi-Fi carries the default route, the wired port has another MAC.
+cat > "$WK/status-cache.json" <<'EOF'
+{"42222222-2222-2222-2222-222222222222": {"reachability": "offline", "message": "",
+  "info": {"mac": "00:11:22:33:44:55", "mac_ethernet": "aa:bb:cc:00:11:22", "ip": "10.0.5.23"}}}
+EOF
+wctl() { CMCR_CONFIG_DIR="$WK" "$CTL" "$@" 2>&1; }
+out="$(wctl wake 2 --dry-run)"; code=$?
+expect "wake --dry-run: najpierw MAC karty Ethernet z ostatniego stanu, potem MAC z listy" "$out" \
+  "imac02: pakiet Wake-on-LAN dla aa:bb:cc:00:11:22, 00:11:22:33:44:55" "10.0.5.255"
+expect_code "wake --dry-run: kod 0" "$code" 0 "$out"
+out="$(wctl wake 1 --wait)"; code=$?
+expect "wake --wait: włączony komputer odpowiada (bez pakietów)" "$out" "imac01: komputer jest włączony"
+expect_code "wake --wait: kod 0" "$code" 0 "$out"
+out="$(wctl wake 1 --wait --dry-run)"; code=$?
+expect_code "wake --wait --dry-run: kod 2" "$code" 2 "$out"
+# status stores the MAC Wake-on-LAN needs: the wired port when the Mac has one (like the app), not the default route's.
+json="$(wctl status 1 --json)"
+expected="$(printf '%s' "$json" | python3 -c 'import json,sys; i=json.load(sys.stdin)[0]["info"]; print((i.get("mac_ethernet") or i.get("mac") or "").lower())')"
+saved="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[0].get("macAddress",""))' "$WK/hosts.json")"
+[ -n "$saved" ] && [ "$saved" = "$expected" ] && pass "status: zapamiętany MAC karty Ethernet ($saved)" \
+  || fail "status: zapamiętany MAC „$saved”, oczekiwano „$expected”" "$json"

@@ -12,3 +12,27 @@ public extension ConfigStore {
         return backupCopy(of: url, data: data)
     }
 }
+
+public extension WakeOnLAN {
+    /// Where Wake-on-LAN packets for a Mac go, in the app's order (ClassroomModel.wakeMACs): the Ethernet MAC the Mac
+    /// reported last (`lastStatus`, e.g. from status-cache.json), the MAC on the host list, then – only when it reported
+    /// no wired port – the MAC of its default route (`HostStatus.mac`). Normalised, without repeats.
+    static func candidateMACs(listed: String, lastStatus info: [String: String]) -> [String] {
+        var status = HostStatus()
+        status.info = info
+        var out: [String] = []
+        for candidate in [status.ethernetMAC, listed, status.mac] {
+            guard let c = candidate, let mac = normalizeMAC(c), !out.contains(mac) else { continue }
+            out.append(mac)
+        }
+        return out
+    }
+
+    /// The directed broadcast of the subnet the Mac was last seen in, an extra target besides this Mac's own
+    /// networks (as in the app); empty when its address is not known.
+    static func lastSeenBroadcasts(_ info: [String: String]) -> [String] {
+        var status = HostStatus()
+        status.info = info
+        return status.ip.flatMap(subnetBroadcast(forIPv4:)).map { [$0] } ?? []
+    }
+}
