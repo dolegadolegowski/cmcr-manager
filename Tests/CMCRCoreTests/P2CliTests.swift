@@ -34,6 +34,24 @@ struct P2CliTests {
     }
 }
 
+struct P2CliCollectTests {
+    /// AUDIT PLI-19: cmcrctl collect reads private folders as root by itself, like the app's „Zbierz prace”.
+    @Test func privateFoldersOfAnAccountNeedRoot() {
+        var s = AppSettings()
+        s.studentUser = "uczen"
+        s.sharedFolder = "/Users/{student}/Public/cmcr"
+        #expect(RemotePaths.collectNeedsRoot("/Users/uczen/Desktop", settings: s))
+        #expect(RemotePaths.collectNeedsRoot("/Users/{student}/Documents/Projekt", settings: s))
+        #expect(RemotePaths.collectNeedsRoot("/Users/inny/Desktop", settings: s))
+        #expect(!RemotePaths.collectNeedsRoot("/Users/uczen/Public/cmcr", settings: s))
+        #expect(!RemotePaths.collectNeedsRoot("/Users/uczen/Public/cmcr/3A", settings: s))
+        #expect(!RemotePaths.collectNeedsRoot(s.studentFolder, settings: s))
+        #expect(!RemotePaths.collectNeedsRoot("/Users/Shared/prace", settings: s))
+        #expect(!RemotePaths.collectNeedsRoot("~/Desktop", settings: s))
+        #expect(!RemotePaths.collectNeedsRoot("/tmp/prace", settings: s))
+    }
+}
+
 struct P2CliWakeTests {
     /// AUDIT KOM-13: cmcrctl wake prefers the Ethernet MAC, like the app.
     @Test func ethernetMACFirstThenListThenDefaultRoute() {

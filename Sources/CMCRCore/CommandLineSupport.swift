@@ -13,6 +13,19 @@ public extension ConfigStore {
     }
 }
 
+public extension RemotePaths {
+    /// Whether collecting students' work from `path` needs root, as for the app's „Zbierz prace” sources
+    /// (FilesState.useCollectSource): an account's private folders (Desktop, Documents…) cannot be read by the
+    /// administrator. The student's shared folder (cmcr) with its subfolders, /Users/Shared and the administrator's
+    /// own home can; paths outside /Users (/tmp, /Volumes…) keep the caller's choice.
+    static func collectNeedsRoot(_ path: String, settings s: AppSettings) -> Bool {
+        let p = tokenize(path, studentUser: s.studentUser)
+        let shared = tokenize(s.sharedFolder, studentUser: s.studentUser)
+        guard p.hasPrefix("/Users/") else { return false }
+        return !(p == shared || p.hasPrefix(shared + "/") || p == "/Users/Shared" || p.hasPrefix("/Users/Shared/"))
+    }
+}
+
 public extension WakeOnLAN {
     /// Where Wake-on-LAN packets for a Mac go, in the app's order (ClassroomModel.wakeMACs): the Ethernet MAC the Mac
     /// reported last (`lastStatus`, e.g. from status-cache.json), the MAC on the host list, then – only when it reported

@@ -11,7 +11,8 @@ enum BrowseCLI {
       cmcrctl rename nr ścieżka nowa-nazwa [--root]   zmień nazwę pliku lub folderu
       cmcrctl get nr ścieżka… katalog [--root]  pobierz wybrane elementy (z jednego folderu)
       cmcrctl collect KOMP [--from folder] [--to katalog] [--no-date] [--clean] [--root]
-                                                zbierz prace do <katalog>/<data godzina>/<host>
+                                                zbierz prace do <katalog>/<data godzina>/<host> (z folderów
+                                                prywatnych konta, np. Biurka, zawsze jako root – jak w aplikacji)
     """
 
     static let specs: [String: ModuleSpec] = [
@@ -127,14 +128,17 @@ enum BrowseCLI {
             let folder = Operations.collectionFolder(base: a.value("--to") ?? prefs.collectBase(s),
                                                      timestamped: !a.has("--no-date") && prefs.collectTimestamped)
             let clean = a.has("--clean")
+            // As in the app: an account's private folders (Desktop, Documents…) are read as root.
+            let collectAsRoot = asRoot || RemotePaths.collectNeedsRoot(source, settings: s)
             if clean {
                 CLI.confirm("Zebrać prace z \(source) i usunąć zebrane pliki z komputerów: \(ModuleHosts.names(list))?",
                             yes: a.yes)
             }
-            Console.out("Zbieranie prac z \(source) do \(folder.path)")
+            Console.out("Zbieranie prac z \(source) do \(folder.path)"
+                        + (collectAsRoot && !asRoot ? " (jako root – folder prywatny konta)" : ""))
             return await eachHost(list, a) { io in
                 let (r, _) = await Operations.collect(source: source, from: io.host, into: folder, name: io.host.name,
-                                                      asRoot: asRoot, cleanAfter: clean,
+                                                      asRoot: collectAsRoot, cleanAfter: clean,
                                                       password: Keychain.password(for: io.host), settings: ssh,
                                                       onOutput: io.stream)
                 return report(r, io)

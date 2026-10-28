@@ -348,3 +348,27 @@ expected="$(printf '%s' "$json" | python3 -c 'import json,sys; i=json.load(sys.s
 saved="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[0].get("macAddress",""))' "$WK/hosts.json")"
 [ -n "$saved" ] && [ "$saved" = "$expected" ] && pass "status: zapamiętany MAC karty Ethernet ($saved)" \
   || fail "status: zapamiętany MAC „$saved”, oczekiwano „$expected”" "$json"
+
+section "P2 cmcrctl – collect z folderu prywatnego konta jako root, jak w aplikacji (AUDIT PLI-19)"
+# A folder of the student's account outside the shared folder (Desktop on a real iMac). Here the student is the
+# test account, so the folder must not exist: nothing is read from this Mac's real home folder.
+clear_fakelog
+out="$(p2pw collect 1 --from "/Users/{student}/cmcr-e2e-brak-$$" --to "$WORK/p2-collected" --no-date)"; code=$?
+expect "collect z folderu konta: informacja o sudo" "$out" "jako root – folder prywatny konta" "Brak folderu"
+expect "collect z folderu konta: przez sudo" "$(fakelog)" "sudo "
+clear_fakelog
+out="$(p2 collect 1 --from "/Users/{student}/cmcr-e2e-brak-$$" --to "$WORK/p2-collected" --no-date)"; code=$?
+expect "collect z folderu konta bez hasła: wymaga hasła (root)" "$out" "Brak zapisanego hasła administratora"
+clear_fakelog
+echo "wspolna" > "$WORK/remote/Public/cmcr/p2-wspolna.txt"
+out="$(p2 collect 1 --to "$WORK/p2-collected2" --no-date)"; code=$?
+expect_code "collect z folderu cmcr: bez sudo i bez hasła (kod 0)" "$code" 0 "$out"
+expect_not "collect z folderu cmcr: bez informacji o sudo" "$out" "jako root"
+expect_not "collect z folderu cmcr: bez sudo" "$(fakelog)" "sudo "
+rm -f "$WORK/remote/Public/cmcr/p2-wspolna.txt"
+mkdir -p "$WORK/p2-collect-src"
+echo "praca" > "$WORK/p2-collect-src/praca.txt"
+out="$(p2 collect 1 --from "$WORK/p2-collect-src" --to "$WORK/p2-collected3" --no-date)"; code=$?
+expect_code "collect spoza /Users: jak dotąd bez sudo (kod 0)" "$code" 0 "$out"
+out="$(p2 push --help)"
+expect "push --help: opis właściciela plików bez --root" "$out" "bez --root" "właściciel"

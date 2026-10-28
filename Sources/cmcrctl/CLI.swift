@@ -22,7 +22,9 @@ Stan i polecenia
   render "polecenie" [--root]              pokaż skrypt wykonywany zdalnie
 
 Pliki
-  push KOMP [--root]                       cmcr-push: ~/Public/cmcr/{all,<host>}/* → folder ucznia
+  push KOMP [--root]                       cmcr-push: ~/Public/cmcr/{all,<host>}/* → folder ucznia; bez --root
+                                           właścicielem plików jest konto administratora, z --root – uczeń
+                                           (jak „Wyślij” w aplikacji)
   pull KOMP [--root]                       cmcr-pull: folder ucznia → ~/Public/cmcr/<host>
   ls ŚCIEŻKA KOMP [--root]                 zawartość folderu ({console} = zalogowany użytkownik)
   clean ŚCIEŻKA KOMP                       usuń zawartość folderu (/Users/<konto>/…, /tmp, /Volumes)
