@@ -383,3 +383,22 @@ expect "clean: pytanie z rozwiniętą ścieżką" "$out" "/Users/$ME/cmcr-e2e-br
 out="$(p2pw clean "/Users/{student}/cmcr-e2e-brak-$$" 1 --yes)"; code=$?
 expect "clean /Users/{student}/…: ścieżka konta ucznia" "$out" "Brak folderu: /Users/$ME/cmcr-e2e-brak-$$"
 expect_not "clean: bez dosłownego {student}" "$out" "{student}"
+
+section "P2 cmcrctl – exec --root z ryzykownym poleceniem pyta w terminalu (AUDIT ZAD-15)"
+RISKY='echo "wykonano-$((40 + 2))"; true || shutdown -h +60'
+P2_ANSWER=n out="$(p2_tty exec "$RISKY" 1 --root)"
+expect "exec --root w terminalu: pytanie z ryzykiem i listą komputerów" "$out" \
+  "Polecenie zawiera: wyłączenie lub restart" "jako root na: imac01" "Przerwano"
+expect_not "exec --root w terminalu: odmowa – nic nie wykonano" "$out" "wykonano-42"
+P2_ANSWER=t out="$(p2_tty exec "$RISKY" 1 --root)"
+expect "exec --root w terminalu: po zgodzie wykonano" "$out" "wykonano-42"
+P2_ANSWER=n out="$(p2_tty exec "$RISKY" 1 --root --yes)"
+expect "exec --root --yes w terminalu: bez pytania" "$out" "wykonano-42"
+P2_ANSWER=n out="$(p2_tty exec 'echo "zwykle-$((1 + 1))"; asroot true' 1)"
+expect "exec bez ryzyka w terminalu: bez pytania" "$out" "zwykle-2"
+expect_not "exec bez ryzyka: bez ostrzeżenia" "$out" "Polecenie zawiera"
+P2_ANSWER=n out="$(p2_tty exec "$RISKY" 1)"
+expect "exec ryzykowne bez root: bez pytania" "$out" "wykonano-42"
+out="$(p2pw exec "$RISKY" 1 --root </dev/null)"; code=$?
+expect "exec --root w skrypcie: wykonane jak dotąd, z ostrzeżeniem" "$out" "wykonano-42" "Uwaga: polecenie zawiera: wyłączenie lub restart"
+expect_code "exec --root w skrypcie: kod 0" "$code" 0 "$out"

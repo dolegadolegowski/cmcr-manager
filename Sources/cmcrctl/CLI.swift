@@ -17,7 +17,8 @@ cmcrctl POLECENIE --help – pomoc jednego polecenia (niczego nie wykonuje).
 Stan i polecenia
   list                                     lista komputerów
   status [KOMP] [--json]                   stan komputerów (równolegle); zapamiętuje adresy MAC
-  exec "polecenie" [KOMP] [--root]         cmcr-exec: wykonaj polecenie
+  exec "polecenie" [KOMP] [--root]         cmcr-exec: wykonaj polecenie (jako root z rm -r, shutdown, diskutil…
+                                           – w terminalu po potwierdzeniu)
   go nr                                    cmcr-go: interaktywna sesja ssh
   render "polecenie" [--root]              pokaż skrypt wykonywany zdalnie
 
@@ -394,6 +395,17 @@ struct CLI: Sendable {
         guard let command = args[1] else { usageError("Podaj polecenie.") }
         let list = targetsOrAllAtTerminal(args[2], command: "exec")
         let asRoot = root
+        // As in the app (Polecenia): a root command that deletes folders, restarts, formats… is confirmed – at the
+        // terminal; scripts keep working as before and only get the warning.
+        let risks = CommandRisk.risks(in: command)
+        if CommandRisk.usesRoot(command, asRoot: asRoot), !risks.isEmpty {
+            let what = "Polecenie zawiera: \(risks.joined(separator: ", "))."
+            if isatty(STDIN_FILENO) != 0 {
+                confirm("\(what) Uruchomić je jako root na: \(names(list))?")
+            } else if !args.yes {
+                Console.err("Uwaga: p" + what.dropFirst() + " Wykonywane jako root na: \(names(list)).")
+            }
+        }
         return await runScript(on: list, passThrough: true, header: { "Running command on \($0.destination) ..." }) { _ in
             RemoteScript(command, asRoot: asRoot)
         }
