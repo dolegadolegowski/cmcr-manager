@@ -174,6 +174,15 @@ EOF
 
 installer() {
   _e2e_log "installer $*"
+  # $CMCR_E2E_WORK/installer.cancel: the job is cancelled while the package installs – SIGTERM to the shell of
+  # the job, as the remote cancel sends it (AUDIT APL-08). One time only.
+  if [ -e "${CMCR_E2E_WORK:-/nonexistent}/installer.cancel" ]; then
+    rm -f "$CMCR_E2E_WORK/installer.cancel"
+    _e2e_log "installer: anulowano"
+    builtin kill -TERM $$
+    sleep 2 & wait $!
+    return 143
+  fi
   local pkg=""
   while [ $# -gt 0 ]; do case "$1" in -pkg) pkg="$2"; shift 2 ;; *) shift ;; esac; done
   [ -e "$pkg" ] || { echo "installer: Error - the package path specified was invalid: '$pkg'." >&2; return 1; }

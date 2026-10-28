@@ -74,3 +74,38 @@ sleep 0.3
 if p2_alive "$pid"; then fail "uninstall: proces usuniętej aplikacji nadal działa"; kill "$pid"; else pass "uninstall: proces aplikacji zakończony"; fi
 left="$(ls -A "$WORK/Applications" | grep -c cmcr-)"
 [ "$left" = 0 ] && pass "uninstall: brak pozostałości" || fail "uninstall: pozostałości" "$(ls -A "$WORK/Applications")"
+
+section "P2: anulowana instalacja z obrazu dysku odmontowuje obraz (AUDIT APL-08)"
+# A name of its own: the image is mounted from the uploaded copy in the job's temporary folder.
+P2DMG="$WORK/in/p2-anulowanie-$$.dmg"
+p2_detach() { # p2_detach NAME – detaches what is left of image NAME, so the run never leaves a volume mounted
+  local dev
+  for dev in $(hdiutil info 2>/dev/null | awk -v img="/$1" '/^image-path/ {m = index($0, img) > 0} m && /^\/dev\/disk[0-9]+[ \t]/ {print $1}'); do
+    hdiutil detach "$dev" -force -quiet 2>/dev/null
+  done
+}
+mkdir -p "$P2/pkgroot/cmcr" "$P2/dmgsrc"
+echo x > "$P2/pkgroot/cmcr/plik.txt"
+if pkgbuild --quiet --root "$P2/pkgroot" --identifier pl.cmcr.e2e.p2 --version 1.0 --install-location /tmp/cmcr-e2e-never \
+     "$P2/dmgsrc/P2.pkg" >/dev/null 2>&1 \
+   && hdiutil create -quiet -srcfolder "$P2/dmgsrc" -volname "CMCR P2" -format UDZO "$P2DMG" 2>/dev/null; then
+  : > "$WORK/installer.cancel"
+  clear_fakelog
+  out="$(ctlpw install "$P2DMG" 1 --allow-unsigned)"; code=$?
+  rm -f "$WORK/installer.cancel"
+  expect "dmg: instalacja przerwana w trakcie (anulowanie)" "$(fakelog)" "installer: anulowano"
+  sleep 0.5
+  name="$(basename "$P2DMG")"
+  if hdiutil info | grep -qF "/$name"; then
+    fail "dmg: po anulowaniu obraz nadal zamontowany" "$(hdiutil info | grep -F -A6 "/$name")"
+  else
+    pass "dmg: po anulowaniu obraz odmontowany"
+  fi
+  base="$(fakelog | sed -n 's/.*installer -pkg \(\/[^ ]*\/cmcr-mnt\.[A-Za-z0-9]*\)\/.*/\1/p' | head -n 1)"
+  if [ -n "$base" ] && [ ! -e "$base" ]; then pass "dmg: po anulowaniu folder montowania usunięty"
+  else fail "dmg: po anulowaniu został folder montowania (${base:-?})" "$(fakelog)"; fi
+  p2_detach "$name"
+  [ -n "$base" ] && rmdir "$base"/* "$base" 2>/dev/null
+else
+  fail "pkgbuild/hdiutil niedostępne – pominięto test anulowania instalacji z .dmg"
+fi

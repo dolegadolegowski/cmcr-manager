@@ -460,18 +460,34 @@ public enum Scripts {
       echo "→ installer -pkg $(basename "$1")"
       installer -pkg "$1" -target / && echo "✔ Zainstalowano pakiet $(basename "$1")"
     }
+    # Disk images still mounted when the job ends early (cancelled: SIGTERM to the job) are detached by the EXIT trap,
+    # so a hidden (-nobrowse) volume does not stay until the next restart.
+    CMCR_DMG_BASES=""; CMCR_DMG_TRAP=0
+    cmcr_dmg_cleanup() {
+      local b m
+      for b in $CMCR_DMG_BASES; do
+        for m in "$b"/*; do
+          [ -d "$m" ] || continue
+          hdiutil detach "$m" -force -quiet 2>/dev/null
+          rmdir "$m" 2>/dev/null
+        done
+        rmdir "$b" 2>/dev/null
+      done
+    }
     cmcr_install_dmg() {
       local base err mnt rc=0 found=0 p
       base="$(mktemp -d /tmp/cmcr-mnt.XXXXXX)" || return 1
       # In the private $CMCR_TMP: a name derived from $base in world-writable /tmp could be pre-created
       # as a symlink by another user and root would overwrite its target.
       err="$(mktemp "$CMCR_TMP/hdiutil.XXXXXX")" || { rmdir "$base"; return 1; }
+      [ $CMCR_DMG_TRAP = 1 ] || { cmcr_on_exit cmcr_dmg_cleanup; CMCR_DMG_TRAP=1; }
+      CMCR_DMG_BASES="$CMCR_DMG_BASES $base"
       echo "→ Montowanie $(basename "$1")"
       # PAGER=cat + yes: images with a licence agreement would otherwise wait for "Agree Y/N?".
       # -mountrandom also copes with images that contain several volumes.
       if ! yes | PAGER=cat hdiutil attach "$1" -readonly -nobrowse -noverify -noautoopen -mountrandom "$base" >/dev/null 2>"$err"; then
         echo "✘ Nie można zamontować obrazu dysku: $(grep -v deprecated "$err" | head -3)" >&2
-        rm -f "$err"; rmdir "$base" 2>/dev/null; return 1
+        rm -f "$err"; rmdir "$base" 2>/dev/null; CMCR_DMG_BASES="${CMCR_DMG_BASES// $base/}"; return 1
       fi
       rm -f "$err"
       for mnt in "$base"/*; do
@@ -496,6 +512,8 @@ public enum Scripts {
         rmdir "$mnt" 2>/dev/null
       done
       rmdir "$base" 2>/dev/null
+      # Detached: the trap must not touch the name later (another job may get the same one from mktemp).
+      CMCR_DMG_BASES="${CMCR_DMG_BASES// $base/}"
       if [ $found = 0 ]; then echo "✘ W obrazie nie ma pliku .pkg ani .app" >&2; return 1; fi
       return $rc
     }
