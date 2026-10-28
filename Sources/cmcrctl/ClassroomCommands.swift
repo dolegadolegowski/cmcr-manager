@@ -193,7 +193,9 @@ enum ClassroomCLI {
             }
 
         case "report":
-            return await inventoryReport(to: a[0], hosts: ConfigStore.loadHosts(), ssh: ssh)
+            // The list every other command uses (an unreadable hosts.json is reported, never copied or repaired here).
+            legacyCLI.warnIfDefaultHosts()
+            return await inventoryReport(to: a[0], hosts: legacyCLI.hosts, ssh: ssh)
 
         default:
             use(usage)

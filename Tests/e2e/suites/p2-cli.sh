@@ -145,3 +145,21 @@ expect "logout --force: pytanie o natychmiastowe wylogowanie" "$out" "Wylogować
 out="$(p2pw logout 1 --force --yes)"; code=$?
 expect "logout --force: launchctl bootout" "$(fakelog)" "launchctl bootout gui/$(id -u)"
 expect_code "logout --force: kod 0" "$code" 0 "$out"
+
+section "P2 cmcrctl – report czyta listę jak inne polecenia (AUDIT CLI-06)"
+# ProxyCommand=/usr/bin/false: the default list (imac01…imac15.local) must not reach the network here.
+RPT="$WORK/cfg-p2-report"
+mkdir -p "$RPT"
+python3 - "$P2/settings.json" "$RPT/settings.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1])); s["extraSSHOptions"] = s.get("extraSSHOptions", "") + "\nProxyCommand=/usr/bin/false"
+json.dump(s, open(sys.argv[2], "w"))
+PY
+printf '%s\n' '[{"name":"sala1","address":"sala1.cmcr-e2e.invalid","macAddress":"aa:bb:cc:dd:ee:ff"},' \
+  ' {"name":"sala2","adress":"sala2.cmcr-e2e.invalid"}]' > "$RPT/hosts.json"
+cp "$RPT/hosts.json" "$WORK/p2-report-hosts.orig"
+out="$(CMCR_CONFIG_DIR="$RPT" "$CTL" report 2>&1)"; code=$?
+expect "report: ostrzeżenie o nieczytelnym hosts.json" "$out" "Uwaga: nie można odczytać" "brak pola „address” (wpis nr 2)"
+expect_code "report: kod 1 (komputery niedostępne)" "$code" 1 "$out"
+[ -z "$(ls "$RPT"/*.bak 2>/dev/null)" ] && pass "report: bez kopii .bak (lista tylko czytana)" || fail "report: utworzono kopię" "$(ls "$RPT")"
+cmp -s "$RPT/hosts.json" "$WORK/p2-report-hosts.orig" && pass "report: hosts.json bez zmian" || fail "report: hosts.json zmieniony"
