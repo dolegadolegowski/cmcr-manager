@@ -689,6 +689,11 @@ public enum SSH {
 
     static let sessionLost = "Połączenie zerwane – komputer przestał odpowiadać (uśpiony, wyłączony lub poza siecią)."
     static let sessionClosed = "Połączenie zostało przerwane – polecenie mogło nadal działać na komputerze."
+    /// macOS 15+ gives ssh and nc started by an app without the local network permission exactly these errors
+    /// ("No route to host", unresolvable .local names), as does this Mac being off the network – then every iMac
+    /// fails the same way (AUDIT DOD-05).
+    static let localNetworkHint = " Jeśli dotyczy to wszystkich iMaców, sprawdź na tym Macu połączenie z siecią i zgodę na "
+        + "dostęp do sieci lokalnej (Ustawienia systemowe › Prywatność i ochrona › Sieć lokalna)."
 
     /// Turns an ssh failure into a status and a human readable (Polish) explanation.
     public static func diagnose(_ r: CommandResult) -> (Reachability, String) {
@@ -729,7 +734,7 @@ public enum SSH {
                 return (.authFailed, "Odmowa dostępu – brak klucza SSH na komputerze lub błędne hasło administratora.")
             }
             if lower.contains("could not resolve hostname") || lower.contains("nodename nor servname") {
-                return (.offline, "Nie można odnaleźć nazwy hosta w sieci (Bonjour/.local).")
+                return (.offline, "Nie można odnaleźć nazwy hosta w sieci (Bonjour/.local)." + localNetworkHint)
             }
             if lower.contains("connection refused") {
                 return (.error, "Połączenie odrzucone – na tym iMacu włącz „Zdalne logowanie” (Ustawienia systemowe › Ogólne › "
@@ -740,7 +745,10 @@ public enum SSH {
                 // (AUDIT DOD-06).
                 return (.error, "Ten Mac nie jest połączony z siecią – sprawdź Wi‑Fi lub kabel.")
             }
-            if lower.contains("timed out") || lower.contains("no route to host") || lower.contains("host is down") {
+            if lower.contains("no route to host") {
+                return (.offline, "Komputer nie odpowiada (wyłączony lub poza siecią)." + localNetworkHint)
+            }
+            if lower.contains("timed out") || lower.contains("host is down") {
                 return (.offline, "Komputer nie odpowiada (wyłączony lub poza siecią).")
             }
             if lower.contains("kex_exchange_identification") || lower.contains("banner exchange") {

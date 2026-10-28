@@ -309,4 +309,21 @@ struct P2DiagnoseTests {
         #expect(reach == .error, "nie .offline: iMac nie jest wyłączony, to ten Mac nie ma sieci")
         #expect(message == "Ten Mac nie jest połączony z siecią – sprawdź Wi‑Fi lub kabel.")
     }
+
+    /// AUDIT DOD-05: without the macOS permission for the local network (macOS 15+), ssh started by the app gets
+    /// "No route to host" for IP addresses and cannot resolve .local names – every iMac looked switched off and
+    /// nothing pointed at this Mac.
+    @Test func errorsThatADeniedLocalNetworkGivesMentionIt() {
+        let route = SSH.diagnose(p2Result(255, "ssh: connect to host 10.0.5.23 port 22: No route to host\n"))
+        #expect(route.0 == .offline)
+        #expect(route.1.hasPrefix("Komputer nie odpowiada (wyłączony lub poza siecią)."))
+        #expect(route.1.contains("Prywatność i ochrona › Sieć lokalna"), "\(route.1)")
+        let name = SSH.diagnose(p2Result(255, "ssh: Could not resolve hostname imac01.local: nodename nor servname provided, or not known\n"))
+        #expect(name.0 == .offline)
+        #expect(name.1.hasPrefix("Nie można odnaleźć nazwy hosta w sieci (Bonjour/.local)."))
+        #expect(name.1.contains("Prywatność i ochrona › Sieć lokalna"), "\(name.1)")
+        // A plain timeout is not caused by the permission: the message stays short.
+        let slow = SSH.diagnose(p2Result(255, "ssh: connect to host 10.0.5.23 port 22: Operation timed out\n"))
+        #expect(slow == (.offline, "Komputer nie odpowiada (wyłączony lub poza siecią)."))
+    }
 }
