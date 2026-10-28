@@ -44,6 +44,37 @@ struct ConfigRecoveryTests {
         #expect(backups(in: dir, of: "hosts.json").count == 1)
     }
 
+    /// duplicate-host-id (AUDIT KON-02): a copied entry keeps the "id" of the original; two Macs with one id crash
+    /// the lesson routines (Dictionary(uniqueKeysWithValues:)) and share one row, status and own password.
+    @Test func repeatedIDsGetNewOnesWithAWarning() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("hosts.json")
+        let id = "11111111-2222-3333-4444-555555555555"
+        try Data("""
+        [{"id":"\(id)","name":"imac01","address":"imac01.local","user":"imac01","usesSharedPassword":false},
+         {"id":"\(id)","name":"imac02","address":"imac02.local","user":"imac02","usesSharedPassword":false},
+         {"id":"\(id)","name":"imac03","address":"imac03.local","user":"imac03"}]
+        """.utf8).write(to: url)
+        let r = ConfigStore.loadHosts(from: url)
+        #expect(r.value.map(\.name) == ["imac01", "imac02", "imac03"])
+        #expect(Set(r.value.map(\.id)).count == 3)
+        #expect(r.value[0].id.uuidString == id, "pierwszy wpis zachowuje identyfikator (i swoje hasło)")
+        // A copy cannot use the first entry's own password (the Keychain item belongs to the old id).
+        #expect(r.value[1].usesSharedPassword)
+        #expect(!r.value[0].usesSharedPassword)
+        #expect(r.issue?.contains("imac02") == true && r.issue?.contains("imac03") == true, "\(r.issue ?? "-")")
+        #expect(r.renumbered)
+        let imported = try ConfigStore.importHosts(from: url)
+        #expect(Set(imported.map(\.id)).count == 3)
+        let decoded = try ConfigStore.decodeHosts(Data(contentsOf: url))
+        #expect(Set(decoded.map(\.id)).count == 3)
+        // A list without repeated ids is left exactly as it is.
+        let fine = Machine.generate(count: 3)
+        #expect(Machine.withUniqueIDs(fine).hosts == fine)
+        #expect(Machine.withUniqueIDs(fine).renamed.isEmpty)
+    }
+
     @Test func unreadableHostListFallsBackToDefaultsWithABackup() throws {
         let dir = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

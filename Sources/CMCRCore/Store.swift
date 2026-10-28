@@ -27,7 +27,15 @@ public enum ConfigStore {
     }
 
     public static func loadHosts() -> [Machine] {
-        record(loadHosts(from: hostsURL), for: hostsURL)
+        let loaded = loadHosts(from: hostsURL)
+        let hosts = record(loaded, for: hostsURL)
+        // Repeated ids were replaced: keep the original next to the list and save the repaired one, so that the new
+        // ids (selection, own passwords) stay the same on the next start.
+        if loaded.renumbered, !loaded.protect, let data = try? Data(contentsOf: hostsURL),
+           backupCopy(of: hostsURL, data: data) != nil {
+            saveHosts(hosts)
+        }
+        return hosts
     }
 
     public static func saveHosts(_ hosts: [Machine]) {
@@ -49,6 +57,8 @@ public enum ConfigStore {
         var issue: String?
         /// The original could not be preserved, so it must not be overwritten.
         var protect = false
+        /// Repeated host ids were replaced (`Machine.withUniqueIDs`).
+        var renumbered = false
     }
 
     private struct LoadState {
@@ -82,6 +92,19 @@ public enum ConfigStore {
     }
 
     static func loadHosts(from url: URL) -> Loaded<[Machine]> {
+        var r = loadHostsKeepingIDs(from: url)
+        let (hosts, renamed) = Machine.withUniqueIDs(r.value)
+        guard !renamed.isEmpty else { return r }
+        r.value = hosts
+        r.renumbered = true
+        let note = "Na liście komputerów powtarzał się identyfikator wpisu (np. skopiowany wpis w pliku): "
+            + "\(renamed.joined(separator: ", ")) – nadano nowe. Te komputery używają teraz wspólnego hasła; "
+            + "własne hasło ustaw ponownie w Konfiguracji › Komputery."
+        r.issue = [r.issue, note].compactMap { $0 }.joined(separator: " ")
+        return r
+    }
+
+    private static func loadHostsKeepingIDs(from url: URL) -> Loaded<[Machine]> {
         let data: Data
         do {
             guard let d = try readIfPresent(url) else { return Loaded(value: Machine.generate()) }
@@ -179,7 +202,7 @@ public enum ConfigStore {
     }
 
     public static func importHosts(from url: URL) throws -> [Machine] {
-        try JSONDecoder().decode([Machine].self, from: Data(contentsOf: url))
+        Machine.withUniqueIDs(try JSONDecoder().decode([Machine].self, from: Data(contentsOf: url))).hosts
     }
 
     private static func save<T: Encodable>(_ value: T, to url: URL) {

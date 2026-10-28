@@ -57,6 +57,27 @@ public struct Machine: Identifiable, Codable, Hashable, Sendable {
         }
     }
 
+    /// The list with every repeated `id` replaced by a new one (the first entry keeps it). A copied hosts.json entry
+    /// keeps the original's id: two Macs with one id share a row, a status and an own password, and the lesson
+    /// routines (dictionaries by id) would stop the app. The copy falls back to the shared password, because the
+    /// Keychain item of an own password belongs to the old id. `renamed` lists the entries that got a new id.
+    public static func withUniqueIDs(_ hosts: [Machine]) -> (hosts: [Machine], renamed: [String]) {
+        var seen = Set<UUID>()
+        var renamed: [String] = []
+        let fixed = hosts.map { host -> Machine in
+            guard seen.insert(host.id).inserted else {
+                var copy = host
+                copy.id = UUID()
+                copy.usesSharedPassword = true
+                seen.insert(copy.id)
+                renamed.append(host.name)
+                return copy
+            }
+            return host
+        }
+        return (fixed, renamed)
+    }
+
     /// Number embedded in the host name (`imac04` → 4); used by the CLI like `cmcr-exec cmd 4`.
     public var number: Int? {
         let digits = name.reversed().prefix { $0.isNumber }

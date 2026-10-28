@@ -22,8 +22,12 @@ final class LessonRun: ObservableObject, Identifiable, @unchecked Sendable {
 
     init(plan: LessonPlan, machines: [Machine]) {
         self.plan = plan
-        self.machines = machines
-        states = Dictionary(uniqueKeysWithValues: machines.map { ($0.id, Array(repeating: StepState.pending, count: plan.steps.count)) })
+        // One row per Mac, also when the host list repeats an id.
+        var seen = Set<UUID>()
+        let unique = machines.filter { seen.insert($0.id).inserted }
+        self.machines = unique
+        states = Dictionary(unique.map { ($0.id, Array(repeating: StepState.pending, count: plan.steps.count)) },
+                            uniquingKeysWith: { first, _ in first })
     }
 
     func update(_ host: UUID, _ index: Int, _ state: StepState) {
@@ -534,7 +538,7 @@ final class ClassroomModel: ObservableObject {
 
     /// Renames the Macs; on success optionally updates the app's host list (name and `.local` address).
     func rename(_ model: AppModel, _ entries: [RenameEntry], updateList: Bool) {
-        let byID = Dictionary(uniqueKeysWithValues: entries.map { ($0.machine.id, $0) })
+        let byID = Dictionary(entries.map { ($0.machine.id, $0) }, uniquingKeysWith: { first, _ in first })
         model.runScript("Zmiana nazw komputerów", on: entries.map(\.machine), section: .dashboard,
                         script: { m in
                             let e = byID[m.id]!
