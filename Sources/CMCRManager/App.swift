@@ -53,18 +53,20 @@ struct CMCRManagerApp: App {
             // Widok: refresh (like Reload in Safari) and Show/Hide Sidebar (⌃⌘S), which replaces the toolbar button.
             SidebarCommands()
             CommandGroup(before: .sidebar) {
-                Button("Odśwież stan komputerów") { model.refreshStatus() }
+                Button { model.refreshStatus() } label: { Label("Odśwież stan komputerów", systemImage: "arrow.clockwise") }
                     .keyboardShortcut("r", modifiers: [.command])
                 Divider()
             }
             // Edycja, next to "Zaznacz wszystko" (which keeps selecting text).
             CommandGroup(after: .pasteboard) {
                 Divider()
-                Button("Zaznacz wszystkie komputery") { model.selection = Set(model.machines.map(\.id)) }
-                    .keyboardShortcut("a", modifiers: [.command, .shift])
-                Button("Zaznacz włączone komputery") { model.selectOnline() }
+                Button { model.selection = Set(model.machines.map(\.id)) } label: {
+                    Label("Zaznacz wszystkie komputery", systemImage: "checkmark.square")
+                }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                Button { model.selectOnline() } label: { Label("Zaznacz włączone komputery", systemImage: "checkmark.circle") }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
-                Button("Odznacz wszystkie komputery") { model.selection = [] }
+                Button { model.selection = [] } label: { Label("Odznacz wszystkie komputery", systemImage: "square") }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
             }
             // The application menu keeps the system's „Ustawienia…” (⌘,), which opens the Settings window
@@ -245,6 +247,7 @@ struct MachineListView: View {
     @EnvironmentObject var model: AppModel
     @ViewState private var query = HostQuery()
     @ViewState private var naming: GroupNaming?
+    @ViewState private var confirmGroupRemoval: ConfirmRequest?
     @AppStorage("hostListSortByStatus") private var sortByStatus = false
     @AppStorage("hostListDetailed") private var detailed = false
 
@@ -314,6 +317,7 @@ struct MachineListView: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) { header(visible) }
         .safeAreaInset(edge: .bottom, spacing: 0) { footer(visible) }
+        .confirmation($confirmGroupRemoval)
         .sheet(item: $naming) { n in
             GroupNameSheet(title: n.renaming == nil ? "Nowa grupa (\(Polish.computers(n.ids.count)))" : "Zmień nazwę grupy",
                            initial: n.renaming ?? "") { name in
@@ -423,13 +427,25 @@ struct MachineListView: View {
                         query.group = query.group == g ? nil : g
                     }
                     .contextMenu {
-                        Button("Zaznacz komputery z grupy") { model.selectGroup(g) }
-                        Button("Dodaj grupę do zaznaczenia") { model.selectGroup(g, adding: true) }
+                        Button { model.selectGroup(g) } label: { Label("Zaznacz komputery z grupy", systemImage: "checkmark.square") }
+                        Button { model.selectGroup(g, adding: true) } label: {
+                            Label("Dodaj grupę do zaznaczenia", systemImage: "plus.square")
+                        }
                         Divider()
-                        Button("Zmień nazwę…") { naming = GroupNaming(renaming: g) }
-                        Button("Usuń grupę", role: .destructive) {
-                            HostGroups.remove(g, from: Set(model.machines.map(\.id)), in: &model.machines)
-                            if query.group == g { query.group = nil }
+                        Button { naming = GroupNaming(renaming: g) } label: { Label("Zmień nazwę…", systemImage: "pencil") }
+                        Divider()
+                        // Removes the group from every Mac: asked first (AUDIT UI-24).
+                        Button(role: .destructive) {
+                            let members = HostGroups.members(of: g, in: model.machines).count
+                            confirmGroupRemoval = ConfirmRequest(
+                                title: "Usunąć grupę „\(g)”?",
+                                message: "Grupa zniknie z \(Polish.computers(members)). Same komputery zostają na liście.",
+                                button: "Usuń grupę", targets: []) {
+                                HostGroups.remove(g, from: Set(model.machines.map(\.id)), in: &model.machines)
+                                if query.group == g { query.group = nil }
+                            }
+                        } label: {
+                            Label("Usuń grupę…", systemImage: "trash")
                         }
                     }
                 }
@@ -503,18 +519,20 @@ struct SelectionMenuItems: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        Button("Wszystkie") { model.selection = Set(model.machines.map(\.id)) }
-        Button("Włączone") { model.selectOnline() }
-        Button("Odwróć zaznaczenie") { model.invertSelection() }
+        Button { model.selection = Set(model.machines.map(\.id)) } label: { Label("Wszystkie", systemImage: "checkmark.square") }
+        Button { model.selectOnline() } label: { Label("Włączone", systemImage: "checkmark.circle") }
+        Button { model.invertSelection() } label: { Label("Odwróć zaznaczenie", systemImage: "arrow.left.arrow.right.square") }
         if !model.groups.isEmpty {
-            Menu("Grupa") {
+            Menu {
                 ForEach(model.groups, id: \.self) { g in
                     Button(g) { model.selectGroup(g) }
                 }
+            } label: {
+                Label("Grupa", systemImage: "tag")
             }
         }
         Divider()
-        Button("Żadne") { model.selection = [] }
+        Button { model.selection = [] } label: { Label("Żadne", systemImage: "square") }
     }
 }
 

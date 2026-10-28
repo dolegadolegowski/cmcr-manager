@@ -102,15 +102,6 @@ private struct RemoteBrowserPage: View {
                 .disabled(browser.selection.isEmpty)
                 .help("Pobierz zaznaczone elementy na ten Mac")
                 .fixedSize()
-                Button(role: .destructive) {
-                    confirmDelete(browser.selectedEntries)
-                } label: {
-                    Label("Usuń…", systemImage: "trash")
-                        .destructiveLabel()
-                }
-                .disabled(browser.selection.isEmpty)
-                .help("Usuń zaznaczone elementy z komputera – nie trafią do Kosza (z potwierdzeniem; także klawisz Delete)")
-                .fixedSize()
                 Button {
                     uploadWithPanel()
                 } label: {
@@ -119,6 +110,17 @@ private struct RemoteBrowserPage: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(browser.listing == nil)
                 .help("Wyślij pliki z tego Maca do bieżącego folderu (możesz też przeciągnąć je z Findera)")
+                .fixedSize()
+                // The destructive action stands apart from the others (AUDIT UI-24).
+                Divider().frame(height: 18)
+                Button(role: .destructive) {
+                    confirmDelete(browser.selectedEntries)
+                } label: {
+                    Label("Usuń…", systemImage: "trash")
+                        .destructiveLabel()
+                }
+                .disabled(browser.selection.isEmpty)
+                .help("Usuń zaznaczone elementy z komputera – nie trafią do Kosza (z potwierdzeniem; także klawisz Delete)")
                 .fixedSize()
                 Spacer(minLength: 12)
                 ViewThatFits(in: .horizontal) {

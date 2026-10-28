@@ -501,7 +501,8 @@ private struct LessonProgressSection: View {
                     .help("Pokaż folder z zebranymi pracami w Finderze")
                 }
                 if !run.finished {
-                    Button(role: .cancel) {
+                    // The same role as „Przerwij” of jobs (AUDIT UI-24).
+                    Button(role: .destructive) {
                         run.cancel()
                     } label: {
                         Label("Przerwij", systemImage: "stop.circle")

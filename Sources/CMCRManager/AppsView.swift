@@ -323,12 +323,6 @@ struct AppsView: View {
                 installedTable(shown, checked: checked, filter: filter)
                     .frame(height: 300)
                 HStack(spacing: 10) {
-                    Text(selected.map { "Zaznaczona: \(Self.appName($0.path))" } ?? "Zaznacz aplikację na liście.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 12)
                     Button(role: .destructive) {
                         if let selected { confirmUninstall(selected) }
                     } label: {
@@ -340,6 +334,13 @@ struct AppsView: View {
                         ? "Usuń \(Self.appName($0.path)) z folderu Aplikacje na zaznaczonych komputerach (z potwierdzeniem)"
                         : "Aplikacji systemowych i spoza folderu Aplikacje nie można tu odinstalować." }
                         ?? "Zaznacz aplikację na liście.")
+                    Divider().frame(height: 18)
+                    Text(selected.map { "Zaznaczona: \(Self.appName($0.path))" } ?? "Zaznacz aplikację na liście.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 12)
                     Button {
                         if let selected { model.launchApp(selected.path, on: model.selectedMachines) }
                     } label: {
@@ -459,13 +460,6 @@ struct RunningAppRow: View {
                     .help("Proces nr \(app.pid): \(app.bundlePath)")
             }
             Spacer(minLength: 8)
-            Button {
-                onQuit(false)
-            } label: {
-                Label("Zamknij", systemImage: "xmark.circle")
-            }
-            .controlSize(.small)
-            .help("Zamknij \(app.name) – aplikacja może zapytać o zapisanie zmian")
             Button(role: .destructive) {
                 onQuit(true)
             } label: {
@@ -474,6 +468,14 @@ struct RunningAppRow: View {
             }
             .controlSize(.small)
             .help("Wymuś zamknięcie \(app.name) od razu (z potwierdzeniem) – niezapisane zmiany przepadną")
+            Divider().frame(height: 14)
+            Button {
+                onQuit(false)
+            } label: {
+                Label("Zamknij", systemImage: "xmark.circle")
+            }
+            .controlSize(.small)
+            .help("Zamknij \(app.name) – aplikacja może zapytać o zapisanie zmian")
         }
         .accessibilityElement(children: .contain)
     }

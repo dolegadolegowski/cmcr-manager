@@ -402,7 +402,7 @@ struct ScreenCommands: Commands {
         CommandGroup(before: .windowArrangement) {
             OpenScreenWallButton()
                 .keyboardShortcut("e", modifiers: [.command, .shift])
-            Toggle("Wstrzymaj podgląd ekranów", isOn: $center.paused)
+            Toggle(isOn: $center.paused) { Label("Wstrzymaj podgląd ekranów", systemImage: "pause.circle") }
                 .keyboardShortcut("p", modifiers: [.command, .option])
             Divider()
         }
@@ -415,8 +415,10 @@ struct OpenScreenWindowMenuItem: View {
     let machine: Machine
 
     var body: some View {
-        Button("Podgląd ekranu w nowym oknie") {
+        Button {
             openWindow(id: ScreenWindowView.windowID, value: machine.id)
+        } label: {
+            Label("Podgląd ekranu w nowym oknie", systemImage: "macwindow.badge.plus")
         }
     }
 }

@@ -108,11 +108,7 @@ struct CommandsView: View {
                 Section(category) {
                     ForEach(all.filter { $0.category == category }) { s in
                         Button { use(s) } label: {
-                            if s.asRoot {
-                                Label(s.name, systemImage: "lock.shield")
-                            } else {
-                                Text(s.name)
-                            }
+                            Label(s.name, systemImage: s.asRoot ? "lock.shield" : "text.alignleft")
                         }
                     }
                 }
@@ -121,7 +117,7 @@ struct CommandsView: View {
             Label("Wstaw polecenie", systemImage: "text.badge.plus")
         }
         .fixedSize()
-        .help("Wstaw do edytora gotowe polecenie (z kłódką – wymaga uprawnień administratora)")
+        .help("Wstaw do edytora gotowe polecenie (z tarczą – wymaga uprawnień administratora)")
     }
 
     var helpText: some View {

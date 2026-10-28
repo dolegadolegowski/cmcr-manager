@@ -88,14 +88,15 @@ struct EnergyScheduleSection: View {
                 }
             }
             HStack(spacing: 12) {
+                // Destructive on the left, set apart from the safe actions (AUDIT UI-24).
+                CriticalTargetButton(title: "Usuń harmonogram…", icon: "calendar.badge.minus") {
+                    confirmClear = true
+                }
+                Spacer(minLength: 8)
                 TargetButton(title: "Sprawdź obecny", icon: "calendar", prominent: false) {
                     classroom.loadSchedules(model, model.selectedMachines)
                 }
                 .help("Odczytaj harmonogram zapisany teraz na zaznaczonych komputerach")
-                Spacer(minLength: 8)
-                CriticalTargetButton(title: "Usuń harmonogram…", icon: "calendar.badge.minus") {
-                    confirmClear = true
-                }
                 TargetButton(title: "Zastosuj harmonogram", icon: "calendar.badge.checkmark") {
                     classroom.applySchedule(model, model.selectedMachines)
                 }

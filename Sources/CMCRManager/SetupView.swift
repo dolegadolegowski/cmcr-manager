@@ -289,6 +289,7 @@ struct HostsEditor: View {
         .buttonStyle(.borderedProminent)
         .keyboardShortcut("n", modifiers: [.command, .option])
         .help("Dodaje kolejny komputer z pierwszym wolnym numerem, np. imac16 (⌥⌘N)")
+        Divider().frame(height: 18)
         Button(role: .destructive) {
             askDelete(rows)
         } label: {

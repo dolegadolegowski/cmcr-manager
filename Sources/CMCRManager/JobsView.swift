@@ -319,11 +319,13 @@ struct BatchDetailView: View {
 
     var exportMenu: some View {
         Menu {
-            Button("Kopiuj wyniki wszystkich komputerów") {
+            Button {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(BatchExport.text(batch), forType: .string)
+            } label: {
+                Label("Kopiuj wyniki wszystkich komputerów", systemImage: "doc.on.doc")
             }
-            Button("Zapisz do pliku…") { BatchExport.save(batch) }
+            Button { BatchExport.save(batch) } label: { Label("Zapisz do pliku…", systemImage: "square.and.arrow.down") }
         } label: {
             Label("Eksportuj", systemImage: "square.and.arrow.up")
         }
@@ -360,18 +362,25 @@ struct BatchDetailView: View {
         .contextMenu(forSelectionType: UUID.self) { ids in
             let jobs = batch.jobs.filter { ids.contains($0.id) }
             if !jobs.isEmpty {
-                Button("Zaznacz na liście komputerów") {
+                Button {
                     model.selection = Set(jobs.map(\.machine.id)).intersection(model.machines.map(\.id))
+                } label: {
+                    Label("Zaznacz na liście komputerów", systemImage: "checkmark.square")
                 }
                 if batch.finished, batch.rerun != nil {
                     let suffix = batch.confirmation == nil ? "" : "…"
-                    Button("Powtórz \(jobs.count == 1 ? "na \(jobs[0].machine.name)" : Polish.onComputers(jobs.count))\(suffix)") {
+                    Button {
                         model.retry(batch, on: jobs.map(\.machine))
+                    } label: {
+                        Label("Powtórz \(jobs.count == 1 ? "na \(jobs[0].machine.name)" : Polish.onComputers(jobs.count))\(suffix)",
+                              systemImage: "arrow.counterclockwise")
                     }
                 }
-                Button("Kopiuj wynik") {
+                Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(jobs.map(\.fullOutput).joined(separator: "\n"), forType: .string)
+                } label: {
+                    Label("Kopiuj wynik", systemImage: "doc.on.doc")
                 }
             }
         }

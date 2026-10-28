@@ -394,7 +394,7 @@ struct GroupMembershipMenu: View {
         }
         if let newGroup {
             if !model.groups.isEmpty { Divider() }
-            Button("Nowa grupa…", action: newGroup)
+            Button(action: newGroup) { Label("Nowa grupa…", systemImage: "plus") }
         } else if model.groups.isEmpty {
             Text("Brak grup – utwórz je w Konfiguracji › Komputery")
         }
