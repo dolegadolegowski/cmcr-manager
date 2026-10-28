@@ -103,7 +103,9 @@ extension CLI {
     func hostsGenerate() -> Int32 {
         args.expect("hosts generate", options: ["--start", "--count", "--digits", "--domain", "--replace", "--append"],
                     positional: 3)
-        let prefix = checked(args[2] ?? "imac", .sshPart, "Niepoprawny prefiks")
+        // The prefix starts every generated name as well as every address and account, so it must pass both checks
+        // (a comma would make the names impossible to select: it separates the Macs in KOMP).
+        let prefix = checked(checked(args[2] ?? "imac", .name, "Niepoprawny prefiks"), .sshPart, "Niepoprawny prefiks")
         let start = args.int("--start", in: 0...999) ?? 1
         let count = args.int("--count", in: 1...250) ?? 15
         let digits = args.int("--digits", in: 1...4) ?? 2

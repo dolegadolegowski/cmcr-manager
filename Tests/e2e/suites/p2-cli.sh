@@ -191,3 +191,16 @@ expect "ask: czas na odpowiedź z aplikacji (1 min)" "$out" "Czas na odpowiedź:
 out="$(p2pw ask "Jest tam ktoś?" 1 --timeout 30)"
 expect "ask --timeout: podany czas" "$out" "Czas na odpowiedź: 30 s"
 rm -f "$WORK/ask.timeout" "$P2/classroom.json"
+
+section "P2 cmcrctl – hosts generate: prefiks to też nazwa komputera (AUDIT CLI-09)"
+GEN="$WORK/cfg-p2-generate"
+mkdir -p "$GEN"
+cp "$P2/settings.json" "$GEN/"
+out="$(CMCR_CONFIG_DIR="$GEN" "$CTL" hosts generate "lab,b" --count 2 2>&1)"; code=$?
+expect_code "hosts generate: przecinek w prefiksie – kod 2" "$code" 2 "$out"
+expect "hosts generate: przecinek w prefiksie – komunikat" "$out" "Niepoprawny prefiks „lab,b”: zawiera przecinek"
+out="$(CMCR_CONFIG_DIR="$GEN" "$CTL" hosts generate "lab,b" --count 2 --replace --yes 2>&1)"; code=$?
+expect_code "hosts generate --replace: przecinek w prefiksie – kod 2" "$code" 2 "$out"
+[ ! -e "$GEN/hosts.json" ] && pass "hosts generate: nic nie zapisano" || fail "hosts generate: zapisano listę" "$(cat "$GEN/hosts.json")"
+out="$(CMCR_CONFIG_DIR="$GEN" "$CTL" hosts generate lab-b --count 2 2>&1)"; code=$?
+expect "hosts generate: zwykły prefiks działa" "$out" "lab-b01@lab-b01.local"
