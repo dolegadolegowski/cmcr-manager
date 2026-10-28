@@ -44,6 +44,13 @@ final class LessonRun: ObservableObject, Identifiable, @unchecked Sendable {
 
     func state(_ host: UUID, _ index: Int) -> StepState { states[host]?[index] ?? .pending }
 
+    /// The time left in the end-of-lesson countdown for `Text(timerInterval:)`. The countdown loop clears
+    /// `countdownEnd` up to half a second after the end, and a view drawn in between must not build `now...end`
+    /// with `end` already in the past (Swift stops the program on such a range).
+    func countdownRange(now: Date = Date()) -> ClosedRange<Date>? {
+        countdownEnd.map { now...max(now, $0) }
+    }
+
     /// Marks the run finished; steps that never ran (cancelled, or a phase that was not started) are skipped.
     func complete() {
         for (id, row) in states where row.contains(where: { !$0.isFinished }) {

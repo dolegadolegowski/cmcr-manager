@@ -16,4 +16,16 @@ import Testing
         #expect(run.states.count == 1)
         #expect(run.state(m.id, 0) == .pending || plan.steps.isEmpty)
     }
+
+    /// countdown-range-crash (AUDIT ZAJ-16): the countdown text is drawn also in the moment after its end.
+    @Test func theCountdownRangeIsValidAfterTheEnd() throws {
+        let run = LessonRun(plan: LessonPlan.end(LessonEndConfig(), settings: AppSettings()), machines: [])
+        #expect(run.countdownRange() == nil)
+        let now = Date()
+        run.countdownEnd = now.addingTimeInterval(-0.4)
+        let late = try #require(run.countdownRange(now: now))
+        #expect(late.lowerBound == now && late.upperBound == now)
+        run.countdownEnd = now.addingTimeInterval(60)
+        #expect(run.countdownRange(now: now) == now...now.addingTimeInterval(60))
+    }
 }

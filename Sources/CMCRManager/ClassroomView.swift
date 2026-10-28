@@ -465,9 +465,9 @@ private struct LessonProgressSection: View {
                         .foregroundStyle(run.failedHosts == 0 ? .green : .orange)
                     Text(run.failedHosts == 0 ? "Gotowe na wszystkich komputerach."
                          : "Problemy \(Polish.onComputers(run.failedHosts)) – szczegóły w dziale Zadania.")
-                } else if let end = run.countdownEnd {
+                } else if let left = run.countdownRange() {
                     Image(systemName: "timer")
-                    Text("Kolejne kroki za ") + Text(timerInterval: Date()...end, countsDown: true).monospacedDigit()
+                    Text("Kolejne kroki za ") + Text(timerInterval: left, countsDown: true).monospacedDigit()
                     Button {
                         run.skipCountdown = true
                     } label: {
