@@ -324,9 +324,17 @@ public struct RunningApp: Identifiable, Hashable, Sendable {
     public var name: String
     public var bundlePath: String
     public var id: Int { pid }
-    /// Background agents and system UI services (anything outside the Applications folders).
+    /// Background agents and system UI services (Finder, Dock, menu extras, agents in Library folders). Everything else
+    /// is the student's app: Safari (since macOS 13 it runs from a cryptex), apps started from Downloads, a disk
+    /// image (Gatekeeper's App Translocation copy) or a USB stick.
     public var isSystem: Bool {
-        !(bundlePath.hasPrefix("/Applications/") || bundlePath.hasPrefix("/System/Applications/")
-          || (bundlePath.hasPrefix("/Users/") && bundlePath.contains("/Applications/")))
+        let p = bundlePath
+        if p.contains("/AppTranslocation/") { return false }
+        if p.hasPrefix("/System/Volumes/Preboot/Cryptexes/") { return !p.contains("/Applications/") }
+        if p.hasPrefix("/System/Applications/") { return false }
+        if ["/System/", "/Library/", "/usr/", "/private/", "/opt/", "/bin/", "/sbin/"].contains(where: { p.hasPrefix($0) }) {
+            return true
+        }
+        return p.hasPrefix("/Users/") && p.contains("/Library/")
     }
 }
