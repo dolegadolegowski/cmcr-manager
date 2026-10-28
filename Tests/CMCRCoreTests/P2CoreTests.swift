@@ -494,6 +494,63 @@ struct P2SetupKeyOnlyTests {
     }
 }
 
+// MARK: - ZAD-06: a cancel right after the start still stops the command on the Mac
+
+/// A TCP port that accepts connections but never sends an SSH banner: ssh hangs before the login.
+private final class P2SilentListener {
+    let fd: Int32
+    let port: Int
+
+    init?() {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return nil }
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, len) }
+        }
+        guard bound == 0, listen(fd, 16) == 0 else { close(fd); return nil }
+        _ = withUnsafeMutablePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) }
+        }
+        self.fd = fd
+        port = Int(UInt16(bigEndian: addr.sin_port))
+    }
+
+    deinit { close(fd) }
+}
+
+struct P2CancelBeforeTheMarkerTests {
+    /// AUDIT ZAD-06 (the e2e suite p2-core.sh reproduces the race itself): without the start marker the Mac is
+    /// asked to stop the job only when the login could have succeeded. Through a shared connection that is known at
+    /// once – there is no shared connection before a login – so a Mac that never answered costs no remote stop.
+    @Test func aCancelWhileStillLoggingInThroughASharedConnectionNeedsNoRemoteStop() async throws {
+        let listener = try #require(P2SilentListener())
+        let host = Machine(name: "cisza", address: "127.0.0.1", user: "nikt", port: listener.port)
+        let settings = SSHSettings(connectTimeout: 30, extraOptions: ["UserKnownHostsFile=/dev/null"],
+                                   askpassPath: "/tmp/askpass", reuseConnections: true)
+        try #require(SSH.controlDirectory() != nil)
+        let handle = ProcessHandle()
+        let log = Locked("")
+        Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            handle.cancel()
+        }
+        let start = Date()
+        let r = await SSH.run(RemoteScript("echo x"), on: host, password: nil, settings: settings, handle: handle,
+                              onOutput: { _, d in log.withValue { $0 += String(decoding: d, as: UTF8.self) } })
+        await handle.cancellationFinished()
+        let text = log.withValue { $0 }
+        #expect(r.cancelled)
+        #expect(text.contains("Polecenie nie zostało uruchomione"), "\(text)")
+        #expect(!text.contains("zatrzymać"))
+        #expect(Date().timeIntervalSince(start) < 3, "bez próby łączenia się, by zatrzymać polecenie")
+    }
+}
+
 // MARK: - PRZ-09: the installer running as root never opens the log in the user's folder
 
 struct P2PrivilegedUpdateLogTests {

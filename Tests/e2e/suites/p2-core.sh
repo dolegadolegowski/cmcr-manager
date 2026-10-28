@@ -62,3 +62,57 @@ expect_code "setup --no-key przy kluczu z aplikacji: kod 2" "$code" 2 "$out"
 expect "setup --no-key przy kluczu z aplikacji: wskazówka" "$out" "--no-ssh-key-only"
 out="$("$CTL" setup-script 2>/dev/null)"
 expect "setup-script bez zapisanych opcji: domyślnie bez SSH wyłącznie z kluczem" "$out" "OPT_SSH_KEY_ONLY=0"
+
+section "P2 core: przerwanie tuż po starcie zatrzymuje polecenie na iMacu (AUDIT ZAD-06)"
+# The wrapper prints its start marker before it registers the job; a cancel while the marker is still on its way
+# skipped the remote stop („Polecenie nie zostało uruchomione”), and the command ran to the end on the Mac.
+# A second sshd on [::1] (same port, other address) delivers every session's stderr – where the marker travels –
+# 3 s late, like a slow link; stdout is not delayed.
+SLOW="$WORK/p2-slow"
+mkdir -p "$SLOW"
+cat > "$SLOW/env.sh" <<EOF
+. "$ROOT/Tests/e2e/fakes.sh"
+exec 2> >(sleep 3; exec cat >&2)
+EOF
+cat > "$SLOW/sshd_config" <<EOF
+Port $PORT
+ListenAddress ::1
+HostKey $WORK/hostkey
+PidFile $SLOW/sshd.pid
+AuthorizedKeysFile $WORK/authorized_keys
+StrictModes no
+UsePAM no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+EOF
+printf 'SetEnv BASH_ENV=%s CMCR_E2E_LOG=%s CMCR_APPS_DIR=%s CMCR_E2E_WORK=%s CMCR_E2E_PASSWORD="%s"\n' \
+  "$SLOW/env.sh" "$WORK/fake.log" "$WORK/Applications" "$WORK" "$PASSWORD" >> "$SLOW/sshd_config"
+/usr/sbin/sshd -D -e -f "$SLOW/sshd_config" 2>"$SLOW/sshd.log" &
+SLOW_PID=$!
+for _ in $(seq 1 50); do nc -z ::1 "$PORT" 2>/dev/null && break; sleep 0.1; done
+if nc -z ::1 "$PORT" 2>/dev/null; then
+  cp "$WORK/config/hosts.json" "$SLOW/hosts-backup.json"
+  python3 - "$WORK/config/hosts.json" "$ME" "$PORT" <<'PY'
+import json, sys
+p, me, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
+hosts = json.load(open(p))
+hosts.append({"id": "97979797-9797-9797-9797-979797979797", "name": "imac97", "address": "::1", "user": me, "port": port})
+json.dump(hosts, open(p, "w"))
+PY
+  ctl trust 97 --yes >/dev/null
+  out="$(ctl __run-job "echo szybkie-p2" 97)"
+  expect "wolne stderr: połączenie działa" "$out" "szybkie-p2" "exit=0"
+  rm -f "$SLOW/koniec"
+  out="$(ctl __run-job "sleep 4; echo koniec > '$SLOW/koniec'" 97 --cancel-after 1.5)"
+  expect "przerwanie przed znacznikiem startu: zatrzymano na komputerze" "$out" "cancelled=true" "Zatrzymano polecenie na komputerze"
+  expect_not "przerwanie przed znacznikiem startu: nie „nie zostało uruchomione”" "$out" "nie zostało uruchomione"
+  sleep 4
+  [ ! -e "$SLOW/koniec" ] && pass "przerwanie przed znacznikiem startu: polecenie nie dokończyło pracy" \
+    || fail "przerwanie przed znacznikiem startu: polecenie dokończyło pracę na komputerze" "$out"
+  cp "$SLOW/hosts-backup.json" "$WORK/config/hosts.json"
+else
+  echo "  (brak IPv6 na ::1 – pominięto test przerwania przed znacznikiem startu)"
+fi
+kill "$SLOW_PID" 2>/dev/null
+wait "$SLOW_PID" 2>/dev/null

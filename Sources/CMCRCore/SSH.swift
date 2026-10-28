@@ -227,7 +227,8 @@ public struct RemoteScript: Sendable {
     """#
 
     /// First line the wrapper writes to stderr. Until it arrives nothing has run on the Mac, so a failure is
-    /// safe to retry and a cancel needs no remote stop; SSH.run removes it from the output.
+    /// safe to retry; a cancel still asks the Mac to stop the job, as the line may be on its way (AUDIT ZAD-06).
+    /// SSH.run removes it from the output.
     public static let startMarker = "CMCR:SESSION-STARTED"
 
     /// Full script text that is executed by `/bin/bash` on the remote side.
@@ -428,16 +429,38 @@ public enum SSH {
         if handle?.isCancelled == true || Task.isCancelled { return .cancelledResult }
 
         let started = OutputFlag()
+        // nil until ssh is started; then whether that attempt went through a shared connection.
+        let attempt = Locked<Bool?>(nil)
         var cancelToken: UUID?
         if let handle, let id = script.jobID {
             cancelToken = handle.addCancelAction {
-                // Before the wrapper starts there is nothing to stop, and the Mac may not even be reachable.
-                guard started.isSet else {
-                    onOutput?(.stderr, Data("▸ Polecenie nie zostało uruchomione na komputerze.\n".utf8))
+                let notStarted = Data("▸ Polecenie nie zostało uruchomione na komputerze.\n".utf8)
+                // Before ssh was started there is nothing to stop, and the Mac may not even be reachable.
+                guard let shared = attempt.withValue({ $0 }) else {
+                    onOutput?(.stderr, notStarted)
                     return
                 }
-                let outcome = await cancelRemote(jobID: id, on: host, password: password, settings: settings)
-                onOutput?(.stderr, Data("▸ \(outcome.message)\n".utf8))
+                var stop = settings
+                var retry = SSHRetryPolicy.transient
+                if !started.isSet {
+                    // The wrapper prints its start marker before it registers the job, and the marker may still be
+                    // on its way (AUDIT ZAD-06): the Mac is asked to stop the job anyway – one that registers later
+                    // finds the cancel marker and stops at once. A shared connection exists only after a login, so
+                    // without one nothing can have started; without sharing a silent Mac gets only a short try.
+                    if shared {
+                        guard await sharedConnectionIsUp(to: host, settings: settings) else {
+                            onOutput?(.stderr, notStarted)
+                            return
+                        }
+                    } else {
+                        stop.connectTimeout = min(settings.connectTimeout, 3)
+                        retry = .none
+                    }
+                }
+                let outcome = await cancelRemote(jobID: id, on: host, password: password, settings: stop, retry: retry)
+                var nothingThere = outcome == .notRunning
+                if case .failed = outcome { nothingThere = true }
+                onOutput?(.stderr, nothingThere && !started.isSet ? notStarted : Data("▸ \(outcome.message)\n".utf8))
             }
             if cancelToken == nil { return .cancelledResult }
         }
@@ -447,7 +470,9 @@ public enum SSH {
         let command = script.remoteCommand()
         var r = await runWithRetry(on: host, settings: settings, retry: retry, handle: handle, stdoutFile: stdoutFile,
                                    started: started, onOutput: onOutput) { mux, output in
-            await ProcessRunner.run(sshPath, options(settings, password: password, mux: mux)
+            let shared = mux && settings.reuseConnections && controlDirectory() != nil
+            attempt.withValue { $0 = shared }
+            return await ProcessRunner.run(sshPath, options(settings, password: password, mux: mux)
                                         + ["-T", "-p", String(host.port), "--", host.destination, command],
                                     environment: environment(settings, password: password), stdin: stdin,
                                     stdoutFile: stdoutFile, timeout: timeout, maxCapture: maxCapture,
@@ -641,6 +666,14 @@ public enum SSH {
         _ = await ProcessRunner.run(sshPath, args, environment: ["SSH_ASKPASS_REQUIRE": "never"], timeout: 5)
     }
 
+    /// Whether a shared connection (ControlMaster) to the Mac is up; ssh creates it only once a login succeeded.
+    /// Asks the local control socket only, so it answers at once.
+    static func sharedConnectionIsUp(to host: Machine, settings: SSHSettings) async -> Bool {
+        guard refusal(for: host) == nil else { return false }
+        let args = options(settings, password: nil) + ["-O", "check", "-p", String(host.port), "--", host.destination]
+        return await ProcessRunner.run(sshPath, args, environment: ["SSH_ASKPASS_REQUIRE": "never"], timeout: 5).succeeded
+    }
+
     public static func closeMasters(_ hosts: [Machine], settings: SSHSettings) async {
         await withTaskGroup(of: Void.self) { group in
             for h in hosts { group.addTask { await closeMaster(h, settings: settings) } }
@@ -659,13 +692,13 @@ public enum SSH {
 
     /// Stops a remote job started by `run` with a handle (kills its process group, as root if needed).
     public static func cancelRemote(jobID: String, on host: Machine, password: String?,
-                                    settings: SSHSettings) async -> RemoteCancelOutcome {
+                                    settings: SSHSettings, retry: SSHRetryPolicy = .transient) async -> RemoteCancelOutcome {
         guard RemoteJobs.isValidID(jobID) else { return .failed("nieprawidłowy identyfikator zadania") }
         if let message = refusalMessage(for: host) { return .failed(message) }
         let stdin = Data(((password ?? "") + "\n").utf8)
         // Not gated: it must get through while the job it stops still holds a session slot.
         let command = RemoteJobs.cancelScript(jobID: jobID).remoteCommand()
-        let r = await runWithRetry(on: host, settings: settings, retry: .transient, handle: nil, stdoutFile: nil,
+        let r = await runWithRetry(on: host, settings: settings, retry: retry, handle: nil, stdoutFile: nil,
                                    onOutput: nil) { mux, output in
             await ProcessRunner.run(sshPath, options(settings, password: password, mux: mux)
                                         + ["-T", "-p", String(host.port), "--", host.destination, command],
