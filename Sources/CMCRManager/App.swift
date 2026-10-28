@@ -249,7 +249,6 @@ extension AppSection {
 /// transient and only picks rows for the context menu, so clicking a row never replaces the checked targets.
 struct MachineListView: View {
     @EnvironmentObject var model: AppModel
-    @ViewState private var highlighted: Set<UUID> = []
     @ViewState private var query = HostQuery()
     @ViewState private var naming: GroupNaming?
     @AppStorage("hostListSortByStatus") private var sortByStatus = false
@@ -282,7 +281,7 @@ struct MachineListView: View {
 
     var body: some View {
         let visible = self.visible
-        List(selection: $highlighted) {
+        List(selection: $model.highlightedMachines) {
             ForEach(visible) { m in
                 MachineRow(machine: m, status: model.status(m), detailed: detailed, isTarget: isTarget(m.id))
                     .tag(m.id)
@@ -294,8 +293,8 @@ struct MachineListView: View {
             toggleTargets(ids)
         }
         .onKeyPress(.space) {
-            guard !highlighted.isEmpty else { return .ignored }
-            toggleTargets(highlighted)
+            guard !model.highlightedMachines.isEmpty else { return .ignored }
+            toggleTargets(model.highlightedMachines)
             return .handled
         }
         .overlay {

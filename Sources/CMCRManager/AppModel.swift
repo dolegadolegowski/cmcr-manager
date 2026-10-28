@@ -282,6 +282,15 @@ final class AppModel: ObservableObject {
         didSet { if selection != oldValue { TargetUIState.selection = selection } }
     }
     @Published var section: AppSection? = .dashboard
+    /// Rows highlighted (clicked) in the host list – not the checked targets. In the file browser one clicked Mac
+    /// shows the same folder on that Mac (README, AUDIT PLI-23), even when several Macs are checked.
+    @Published var highlightedMachines: Set<UUID> = [] {
+        didSet {
+            guard highlightedMachines != oldValue, section == .browser, highlightedMachines.count == 1,
+                  let id = highlightedMachines.first, machine(id) != nil else { return }
+            files.browser.setHost(id)
+        }
+    }
     @Published var batches: [Batch] = []
     @Published var lastBatch: [AppSection: Batch] = [:]
     /// Jobs started and not finished yet (stored, so that the sidebar badge and Dock badge stay current).

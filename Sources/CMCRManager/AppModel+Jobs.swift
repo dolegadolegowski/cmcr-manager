@@ -88,6 +88,7 @@ extension AppModel {
     func pruneSelection() {
         let ids = Set(machines.map(\.id))
         if !selection.isSubset(of: ids) { selection.formIntersection(ids) }
+        if !highlightedMachines.isSubset(of: ids) { highlightedMachines.formIntersection(ids) }
     }
 
     var groups: [String] { HostGroups.all(in: machines) }

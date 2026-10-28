@@ -516,4 +516,25 @@ struct AppLogicTests {
         let saved = try JSONDecoder().decode([Machine].self, from: Data(contentsOf: file))
         #expect(saved == model.machines)
     }
+
+    // browser-follows-click (AUDIT PLI-23): clicking another Mac in the list shows the same folder on it, also
+    // when many Macs are checked; outside the file browser a click does not start a listing.
+    @Test func clickingAMacInTheListSwitchesTheFileBrowser() async throws {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        model.selection = [a.id, b.id]
+        let browser = model.files.browser
+        browser.setHost(a.id)
+        model.section = .dashboard
+        model.highlightedMachines = [b.id]
+        #expect(browser.hostID == a.id)
+        model.section = .browser
+        model.highlightedMachines = [a.id, b.id]
+        #expect(browser.hostID == a.id, "kilka podświetlonych wierszy nie zmienia komputera")
+        model.highlightedMachines = [b.id]
+        #expect(browser.hostID == b.id)
+        model.machines.removeLast()
+        #expect(model.highlightedMachines.isEmpty)
+        model.section = .dashboard
+    }
 }
