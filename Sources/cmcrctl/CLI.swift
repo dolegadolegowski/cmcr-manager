@@ -47,7 +47,8 @@ Aktualizacje macOS
 
 Sesja i zasilanie
   message "tytuł" "treść" KOMP [--notification]   okno z wiadomością (lub powiadomienie)
-  logout KOMP                              wyloguj zalogowanego użytkownika
+  logout KOMP [--force]                    poproś o wylogowanie (aplikacje mogą zapytać o zapis);
+                                           --force: wyloguj natychmiast (także sesje w tle)
   power restart|shutdown|sleep|display-sleep KOMP
                                            uruchom ponownie | wyłącz | uśpij | uśpij ekran
   wake KOMP [--dry-run]                    obudź przez sieć (Wake-on-LAN, wymaga adresu MAC)
@@ -252,7 +253,7 @@ struct CLI: Sendable {
     /// hint for the terminal after a host's output (e.g. the cmcrctl option for what the script skipped).
     func runScript(on list: [Machine], jobs: Int? = nil, passThrough: Bool = false,
                    header makeHeader: (@Sendable (Machine) -> String)? = nil,
-                   note: (@Sendable (CommandResult) -> String?)? = nil,
+                   note: (@Sendable (Machine, CommandResult) -> String?)? = nil,
                    _ script: @escaping @Sendable (Machine) -> RemoteScript) async -> Int32 {
         let ssh = sshSettings()
         let defaultHeader = header
@@ -260,7 +261,7 @@ struct CLI: Sendable {
             io.out(makeHeader?(io.host) ?? defaultHeader(io.host))
             let r = await SSH.run(script(io.host), on: io.host, password: Keychain.password(for: io.host),
                                   settings: ssh, onOutput: io.stream)
-            if let text = note?(r) { io.err(text) }
+            if let text = note?(io.host, r) { io.err(text) }
             return io.report(r, passThrough: passThrough)
         }
         return combine(codes, passThrough: passThrough)
@@ -586,7 +587,7 @@ struct CLI: Sendable {
                         + (major ? " Nowej wersji systemu nie da się potem cofnąć." : ""))
             }
             // The script names the app's switch; at the terminal the same choice is --major.
-            let hint: @Sendable (CommandResult) -> String? = { r in
+            let hint: @Sendable (Machine, CommandResult) -> String? = { _, r in
                 r.stdoutText.contains("Pominięto przejście na nową wersję systemu")
                     ? "  (cmcrctl: dodaj --major, aby zainstalować także nową wersję macOS)" : nil
             }
@@ -615,11 +616,23 @@ struct CLI: Sendable {
         return await runScript(on: list) { _ in Scripts.message(title: title, text: text, asDialog: dialog) }
     }
 
+    /// Like the app's „Wyloguj”: loginwindow is asked to log out and apps may ask to save (or cancel). `--force` is
+    /// „Wyloguj natychmiast”: the sessions end at once (launchctl bootout), unsaved work is lost.
     func logout() async -> Int32 {
-        args.expect("logout", options: Self.parallel, positional: 2)
+        args.expect("logout", options: Self.parallel.union(["--force"]), positional: 2)
         let list = targets(args[1])
-        confirm("Wylogować użytkowników na: \(names(list))? Niezapisane dane przepadną.")
-        return await runScript(on: list) { _ in Scripts.logoutUser() }
+        let now = force
+        if now {
+            confirm("Wylogować natychmiast użytkowników na: \(names(list))? Niezapisane dane przepadną.")
+        } else {
+            confirm("Poprosić o wylogowanie użytkowników na: \(names(list))? Aplikacje mogą zapytać o zapisanie zmian "
+                    + "(albo wstrzymać wylogowanie).")
+        }
+        // The script points to the app's „Wyloguj natychmiast”; at the terminal that is --force.
+        let hint: @Sendable (Machine, CommandResult) -> String? = { h, r in
+            r.succeeded ? nil : "  (cmcrctl logout \(h.name) --force – wylogowanie natychmiastowe, niezapisane dane przepadną)"
+        }
+        return await runScript(on: list, note: now ? nil : hint) { _ in Scripts.logoutUser(force: now) }
     }
 
     func power() async -> Int32 {

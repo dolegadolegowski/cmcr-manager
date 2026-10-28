@@ -123,3 +123,25 @@ sleep 0.3
 if kill -0 "$P2K" 2>/dev/null; then fail "kill PID nr: proces nadal działa" "$out"; kill "$P2K"; else pass "kill PID nr: proces zakończony"; fi
 out="$(p2 kill --help)"
 expect "kill --help: PID nr" "$out" "cmcrctl kill PID nr [--force]"
+
+section "P2 cmcrctl – logout prosi o wylogowanie, --force wylogowuje natychmiast (AUDIT CLI-05)"
+# macOS refuses the Apple Event here (fake-ae-denied), so the polite request fails at once instead of waiting
+# for the test user's session to end.
+: > "$WORK/fake-ae-denied"
+clear_fakelog
+out="$(p2pw logout 1 </dev/null)"; code=$?
+expect_code "logout: bez --yes – kod 2" "$code" 2 "$out"
+expect "logout: pytanie o wylogowanie z pytaniem o zapis" "$out" "Poprosić o wylogowanie" "imac01"
+out="$(p2pw logout 1 --yes)"; code=$?
+expect "logout: prośba do loginwindow (Apple Event), jak „Wyloguj” w aplikacji" "$(fakelog)" "aevtrlgo"
+expect_not "logout: bez --force nie ma launchctl bootout" "$(fakelog)" "launchctl bootout"
+expect "logout: odmowa macOS – podpowiedź --force dla cmcrctl" "$out" "cmcrctl logout imac01 --force"
+expect_code "logout: odmowa macOS – kod 1" "$code" 1 "$out"
+rm -f "$WORK/fake-ae-denied"
+clear_fakelog
+out="$(p2pw logout 1 --force </dev/null)"; code=$?
+expect_code "logout --force: bez --yes – kod 2" "$code" 2 "$out"
+expect "logout --force: pytanie o natychmiastowe wylogowanie" "$out" "Wylogować natychmiast" "Niezapisane dane przepadną"
+out="$(p2pw logout 1 --force --yes)"; code=$?
+expect "logout --force: launchctl bootout" "$(fakelog)" "launchctl bootout gui/$(id -u)"
+expect_code "logout --force: kod 0" "$code" 0 "$out"
