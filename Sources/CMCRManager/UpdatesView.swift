@@ -143,8 +143,12 @@ struct UpdatesView: View {
             title: major ? "Zainstalować aktualizacje i nową wersję macOS?" : "Zainstalować aktualizacje macOS?",
             message: message,
             button: "Zainstaluj", destructive: r || major) {
-            model.runScript("softwareupdate --install\(r ? " --restart" : "")", on: model.selectedMachines) { _ in
-                Scripts.installUpdates(restart: r, recommendedOnly: rec, downloadOnly: false, allowMajorUpgrade: major)
+            model.runScript("softwareupdate --install\(r ? " --restart" : "")", on: model.selectedMachines,
+                            script: { _ in
+                                Scripts.installUpdates(restart: r, recommendedOnly: rec, downloadOnly: false, allowMajorUpgrade: major)
+                            }) { m, result in
+                // Installed: the list and the sidebar badge must not keep offering them (AUDIT APL-15).
+                if result.succeeded { model.updates[m.id] = nil }
             }
         }
     }

@@ -8,7 +8,23 @@ import SwiftUI
 struct UpdateCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .appInfo) {
-            Button("Sprawdź uaktualnienia…") { Updater.shared.checkNow() }
+            CheckForUpdatesButton()
+        }
+    }
+}
+
+/// The result of a check is a sheet on the main window: bring that window forward first, also when it was closed
+/// or the Settings window covers it – otherwise the check looked like it did nothing (AUDIT PRZ-18).
+struct CheckForUpdatesButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var title = "Sprawdź uaktualnienia…"
+
+    var body: some View {
+        Button {
+            MainWindow.bringToFront(openWindow)
+            Updater.shared.checkNow()
+        } label: {
+            Label(title, systemImage: "arrow.clockwise")
         }
     }
 }
@@ -354,7 +370,7 @@ struct UpdateSettingsSection: View {
             SettingLabel(title: "Lokalizacja aplikacji", caption: locationText, icon: "folder.fill", color: .gray)
                 .textSelection(.enabled)
             HStack {
-                Button("Sprawdź teraz", systemImage: "arrow.clockwise") { updater.checkNow() }
+                CheckForUpdatesButton(title: "Sprawdź teraz")
                     .disabled(!updater.isConfigured)
                     .help("Sprawdź od razu, czy jest nowa wersja CMCR Manager (także menu CMCR Manager › Sprawdź uaktualnienia…)")
                 Button("Historia wersji", systemImage: "clock.arrow.circlepath") {

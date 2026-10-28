@@ -743,6 +743,29 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // install-and-open-input (AUDIT APL-12, APL-13): pasted addresses are trimmed, Homebrew names may be separated
+    // by commas as the field's example shows.
+    @Test func pastedAddressesAndPackageListsAreCleanedUp() throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        model.openURL("  https://example.com/zadanie \n", on: [a])
+        #expect(model.batches.contains { $0.title == "Otwórz: https://example.com/zadanie" })
+        #expect(InstallView.brewArguments("google-chrome, visual-studio-code") == "'google-chrome' 'visual-studio-code'")
+    }
+
+    // remind-later (AUDIT PRZ-02): „Przypomnij później” cancels installing after the download.
+    @Test func remindingLaterDoesNotInstallAfterTheDownload() throws {
+        let (updater, cleanup) = try isolatedUpdater()
+        defer { cleanup() }
+        updater.install(jobsConfirmed: true)
+        #expect(updater.confirmedWork != nil)
+        updater.remindLater()
+        #expect(updater.confirmedWork == nil)
+        #expect(!updater.installsWhenDownloaded)
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false

@@ -142,7 +142,7 @@ public extension Snippet {
         Snippet(category: "Podstawowe", name: "Konta użytkowników", command: "dscl . list /Users UniqueID | awk '$2 >= 500'"),
         Snippet(category: "Podstawowe", name: "Zawartość folderu cmcr ucznia", command: "ls -la /Users/student/Public/cmcr"),
         Snippet(category: "Unity Hub (notes.md)", name: "Lista zainstalowanych edytorów",
-                command: "\(unityHub) -- --headless editors --all"),
+                command: "\(unityHub) -- --headless editors --installed"),
         Snippet(category: "Unity Hub (notes.md)", name: "Instalacja edytora 6000.3.7f1",
                 command: "\(unityHub) -- --headless install --version 6000.3.7f1 --architecture $(uname -m)"),
         Snippet(category: "Unity Hub (notes.md)", name: "Moduł Android dla 6000.3.7f1",

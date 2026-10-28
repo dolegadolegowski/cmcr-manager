@@ -989,6 +989,7 @@ final class AppModel: ObservableObject {
     }
 
     func openURL(_ url: String, on targets: [Machine]) {
+        let url = url.trimmingCharacters(in: .whitespacesAndNewlines)        // AUDIT APL-12
         runScript("Otwórz: \(url)", on: targets) { _ in Scripts.openURL(url) }
     }
 
