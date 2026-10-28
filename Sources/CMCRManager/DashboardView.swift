@@ -53,7 +53,7 @@ struct DashboardView: View {
             if PasswordBanner.isNeeded(model) { PasswordBanner() }
             VStack(alignment: .leading, spacing: 14) {
                 TargetHeader(section: .dashboard,
-                             subtitle: "Kliknij kafelek, aby zaznaczyć pasujące komputery. Dwukrotne kliknięcie wiersza pokazuje szczegóły komputera.")
+                             subtitle: "Kliknij kafelek, aby zaznaczyć pasujące komputery. Kliknięcie wiersza pokazuje jego szczegóły w panelu (⌥⌘I) i nie zmienia zaznaczenia.")
                 tiles
                 VStack(alignment: .leading, spacing: 6) {
                     table
@@ -75,7 +75,7 @@ struct DashboardView: View {
                     Label("Szczegóły", systemImage: "info.circle")
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
-                .help(showInspector ? "Ukryj panel szczegółów (⌥⌘I)" : "Pokaż szczegóły i notatki zaznaczonego komputera (⌥⌘I)")
+                .help(showInspector ? "Ukryj panel szczegółów (⌥⌘I)" : "Pokaż szczegóły i notatki klikniętego komputera (⌥⌘I)")
                 moreMenu
             }
         }
@@ -229,7 +229,9 @@ struct DashboardView: View {
     typealias Column = TableColumnContent<DashboardRow, KeyPathComparator<DashboardRow>>
 
     var table: some View {
-        Table(rows.sorted(using: sortOrder), selection: $model.selection, sortOrder: $sortOrder,
+        // Clicking a row only highlights it (as in the host list): the checked Macs, the targets of every action,
+        // stay as they are (AUDIT KOM-09).
+        Table(rows.sorted(using: sortOrder), selection: $model.highlightedMachines, sortOrder: $sortOrder,
               columnCustomization: $columns) {
             mainColumns
             detailColumns
@@ -238,7 +240,7 @@ struct DashboardView: View {
             // Right-clicking a selected row hands over every selected Mac: the menu acts on all of them.
             if ids.count == 1, let id = ids.first {
                 Button {
-                    model.selection = [id]
+                    model.highlightedMachines = [id]
                     showInspector = true
                 } label: {
                     Label("Pokaż szczegóły", systemImage: "info.circle")
@@ -247,9 +249,9 @@ struct DashboardView: View {
             }
             if !ids.isEmpty { MachineContextMenu(ids: ids) }
         } primaryAction: { ids in
-            // Double-click or Return on one row shows its details; with several rows the targets stay as they are.
+            // Double-click or Return on one row shows its details.
             if ids.count == 1, let id = ids.first {
-                model.selection = [id]
+                model.highlightedMachines = [id]
                 showInspector = true
             }
         }

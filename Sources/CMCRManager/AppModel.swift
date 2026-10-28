@@ -282,7 +282,15 @@ final class AppModel: ObservableObject {
         didSet { if selection != oldValue { TargetUIState.selection = selection } }
     }
     @Published var section: AppSection? = .dashboard
-    /// Rows highlighted (clicked) in the host list – not the checked targets. In the file browser one clicked Mac
+    /// The Mac whose details the inspector shows: the one clicked in the host list or the Komputery table, or else
+    /// the only checked one.
+    var inspectedMachine: Machine? {
+        if highlightedMachines.count == 1, let id = highlightedMachines.first, let m = machine(id) { return m }
+        if highlightedMachines.isEmpty, selection.count == 1, let id = selection.first { return machine(id) }
+        return nil
+    }
+
+    /// Rows highlighted (clicked) in the host list or the Komputery table – not the checked targets. In the file browser one clicked Mac
     /// shows the same folder on that Mac (README, AUDIT PLI-23), even when several Macs are checked.
     @Published var highlightedMachines: Set<UUID> = [] {
         didSet {

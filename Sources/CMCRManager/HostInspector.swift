@@ -8,10 +8,11 @@ struct HostInspector: View {
     @ObservedObject private var classroom = ClassroomModel.shared
 
     var body: some View {
-        if model.selection.count == 1, let id = model.selection.first, let m = model.machine(id) {
+        if let m = model.inspectedMachine {
             details(m)
         } else {
-            ContentUnavailableView(model.selection.isEmpty ? "Nie zaznaczono komputera" : "Zaznaczone: \(Polish.computers(model.selection.count))",
+            let n = max(model.highlightedMachines.count, model.selection.count)
+            ContentUnavailableView(n == 0 ? "Nie wybrano komputera" : "Wybrane: \(Polish.computers(n))",
                                    systemImage: "info.circle",
                                    description: Text("Kliknij jeden komputer w tabeli, aby zobaczyć jego szczegóły i notatki."))
         }

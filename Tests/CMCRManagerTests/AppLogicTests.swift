@@ -597,6 +597,21 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // table-click-keeps-targets (AUDIT KOM-09): a clicked row is what the details panel shows; the checked Macs stay.
+    @Test func clickingARowShowsItsDetailsWithoutChangingTheTargets() {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        model.selection = [a.id, b.id]
+        model.highlightedMachines = [b.id]
+        #expect(model.inspectedMachine?.id == b.id)
+        #expect(model.selection == [a.id, b.id])
+        model.highlightedMachines = []
+        model.selection = [a.id]
+        #expect(model.inspectedMachine?.id == a.id)
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false
