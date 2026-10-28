@@ -262,3 +262,34 @@ struct P2ClassroomConfigRecoveryTests {
         #expect(try Data(contentsOf: url) == original)
     }
 }
+
+// MARK: - SSH.diagnose
+
+private func p2Result(_ code: Int32, _ stderr: String, started: Bool = false) -> CommandResult {
+    CommandResult(exitCode: code, stderr: Data(stderr.utf8), started: started)
+}
+
+struct P2DiagnoseTests {
+    /// AUDIT ZAD-07: exit code 255 or "ssh:" in the output of a command that already ran on the Mac (git or another
+    /// ssh without network) was taken for a failed connection: the working iMac became „wyłączony” and was skipped.
+    @Test func sshMessagesFromACommandThatRanAreItsOwnError() {
+        let git = p2Result(128, "ssh: Could not resolve hostname github.com: nodename nor servname provided, or not known\n"
+                           + "fatal: Could not read from remote repository.\n", started: true)
+        #expect(SSH.diagnose(git).0 == .online)
+        #expect(SSH.diagnose(git).1 == "Polecenie zakończone kodem 128.")
+        let nested = p2Result(255, "ssh: connect to host inny.local port 22: Operation timed out\n", started: true)
+        #expect(SSH.diagnose(nested).0 == .online)
+        #expect(SSH.diagnose(nested).1 == "Polecenie zakończone kodem 255.")
+        let key = p2Result(255, "git@github.com: Permission denied (publickey).\n", started: true)
+        #expect(SSH.diagnose(key).0 == .online)
+        // The session itself breaking off is still a connection problem.
+        #expect(SSH.diagnose(p2Result(255, "Timeout, server 10.0.0.5 not responding.\n", started: true)).0 == .offline)
+        let closed = SSH.diagnose(p2Result(255, "Connection to 10.0.0.5 closed by remote host.\n", started: true))
+        #expect(closed.0 == .error && closed.1.contains("przerwane"))
+        let pipe = SSH.diagnose(p2Result(255, "client_loop: send disconnect: Broken pipe\n", started: true))
+        #expect(pipe.0 == .error && pipe.1.contains("przerwane"))
+        // Before the start nothing changes.
+        #expect(SSH.diagnose(p2Result(255, "ssh: Could not resolve hostname imac01.local: nodename nor servname provided\n")).0 == .offline)
+        #expect(SSH.diagnose(p2Result(255, "imac01@10.0.0.5: Permission denied (publickey,password).\n")).0 == .authFailed)
+    }
+}

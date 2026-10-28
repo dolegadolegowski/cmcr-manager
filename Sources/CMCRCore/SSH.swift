@@ -687,6 +687,9 @@ public enum SSH {
         refusalMessage(for: host).map { CommandResult.failure($0, code: 255) }
     }
 
+    static let sessionLost = "Połączenie zerwane – komputer przestał odpowiadać (uśpiony, wyłączony lub poza siecią)."
+    static let sessionClosed = "Połączenie zostało przerwane – polecenie mogło nadal działać na komputerze."
+
     /// Turns an ssh failure into a status and a human readable (Polish) explanation.
     public static func diagnose(_ r: CommandResult) -> (Reachability, String) {
         let err = r.stderrText
@@ -713,7 +716,15 @@ public enum SSH {
                         + "podszywać się pod ten komputer.")
             }
         }
-        if r.exitCode == 255 || lower.contains("ssh:") {
+        if r.started {
+            // The script ran on the Mac, so the Mac answered: ssh messages in the output come from the command
+            // itself (git, scp or another ssh without network) – only the session breaking off is a connection
+            // problem, and the Mac is not marked as off or skipped because of its command (AUDIT ZAD-07).
+            if r.exitCode == 255 {
+                if lower.contains("timeout, server") || lower.contains("not responding") { return (.offline, sessionLost) }
+                if lower.contains("closed by remote host") || lower.contains("broken pipe") { return (.error, sessionClosed) }
+            }
+        } else if r.exitCode == 255 || lower.contains("ssh:") {
             if lower.contains("permission denied") || lower.contains("too many authentication failures") {
                 return (.authFailed, "Odmowa dostępu – brak klucza SSH na komputerze lub błędne hasło administratora.")
             }
@@ -735,12 +746,8 @@ public enum SSH {
             if lower.contains("session open refused by peer") || lower.contains("mux_client_request_session") {
                 return (.error, "Przekroczono limit jednoczesnych sesji SSH na komputerze – spróbuj ponownie lub zmniejsz liczbę równoległych operacji.")
             }
-            if lower.contains("timeout, server") || lower.contains("not responding") {
-                return (.offline, "Połączenie zerwane – komputer przestał odpowiadać (uśpiony, wyłączony lub poza siecią).")
-            }
-            if lower.contains("closed by remote host") || lower.contains("broken pipe") {
-                return (.error, "Połączenie zostało przerwane – polecenie mogło nadal działać na komputerze.")
-            }
+            if lower.contains("timeout, server") || lower.contains("not responding") { return (.offline, sessionLost) }
+            if lower.contains("closed by remote host") || lower.contains("broken pipe") { return (.error, sessionClosed) }
             return (.error, err.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? "Błąd połączenia SSH (kod 255)." : err.trimmingCharacters(in: .whitespacesAndNewlines))
         }
