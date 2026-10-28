@@ -97,6 +97,10 @@ struct SetupOptionsSheet: View {
         return machines.count > 8 ? "\(names) i \(machines.count - 8) innych" : names
     }
 
+    /// Options that cannot work, as `cmcrctl setup` refuses them: also a student folder outside /Users/<konto>,
+    /// which every iMac would reject with code 2 (AUDIT PRZ-14).
+    var blocked: Bool { o.validationError() != nil || SetupScript.sharedFolderProblem(model.settings) != nil }
+
     var footer: some View {
         HStack {
             if !isSave {
@@ -106,7 +110,7 @@ struct SetupOptionsSheet: View {
                     Label("Tylko sprawdź", systemImage: "checklist")
                 }
                 .help("Uruchamia skrypt w trybie sprawdzania: raport pokaże, co zostałoby zmienione, nic nie jest zmieniane.")
-                .disabled(o.validationError() != nil || reachable.isEmpty)
+                .disabled(blocked || reachable.isEmpty)
             }
             Spacer()
             Button("Anuluj", role: .cancel) { dismiss() }
@@ -119,7 +123,7 @@ struct SetupOptionsSheet: View {
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
-            .disabled(o.validationError() != nil || (!isSave && reachable.isEmpty))
+            .disabled(blocked || (!isSave && reachable.isEmpty))
             .help(isSave ? "Wybierz, gdzie zapisać skrypt" : "Uruchamia skrypt \(Polish.onComputers(reachable.count)) i wprowadza zaznaczone ustawienia")
         }
         .padding(16)

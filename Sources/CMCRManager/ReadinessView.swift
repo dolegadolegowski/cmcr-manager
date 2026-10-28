@@ -12,6 +12,9 @@ final class ReadinessStore: ObservableObject {
     @Published private(set) var reports: [UUID: ReadinessReport] = [:]
     @Published private(set) var checking: Set<UUID> = []
     @Published private(set) var lastCheck: Date?
+    /// Asked to check again while a check was running (e.g. right after a fix): run once that one ends, so the
+    /// older result does not stay in the table (AUDIT PRZ-12).
+    private var recheck: Set<UUID> = []
 
     func check(_ machines: [Machine], model: AppModel) {
         let settings = model.settings
@@ -20,6 +23,7 @@ final class ReadinessStore: ObservableObject {
         let folder = settings.studentFolder
         let script = Scripts.readiness(student: student, sharedFolder: folder, publicKey: model.managerPublicKey)
         let timeout = TimeInterval(settings.connectTimeout + 45)
+        recheck.formUnion(machines.filter { checking.contains($0.id) }.map(\.id))
         let jobs = machines.filter { !checking.contains($0.id) }.map { ($0, model.password(for: $0)) }
         guard !jobs.isEmpty else { return }
         checking.formUnion(jobs.map(\.0.id))
@@ -36,7 +40,7 @@ final class ReadinessStore: ObservableObject {
                         let report = r.succeeded
                             ? ReadinessReport.parse(r.stdoutText, student: student, sharedFolder: folder)
                             : ReadinessReport.unreachable(r)
-                        await self.finish(m.id, report)
+                        await self.finish(m.id, report, model: model)
                     }
                     active += 1
                 }
@@ -44,11 +48,15 @@ final class ReadinessStore: ObservableObject {
         }
     }
 
-    private func finish(_ id: UUID, _ report: ReadinessReport) {
+    private func finish(_ id: UUID, _ report: ReadinessReport, model: AppModel) {
         reports[id] = report
         checking.remove(id)
         lastCheck = Date()
+        if recheck.remove(id) != nil, let m = model.machine(id) { check([m], model: model) }
     }
+
+    /// Whether a check of the Mac waits for the running one (for tests).
+    func isRecheckPending(_ id: UUID) -> Bool { recheck.contains(id) }
 }
 
 /// Hides the machine-readable JSON block of the setup report from the job log (the app reads it from stdout).
@@ -778,6 +786,9 @@ struct ReadinessCellDetail: View {
     @ViewBuilder var fixButton: some View {
         switch (check, item.state) {
         case (_, .ok):
+            EmptyView()
+        // No button can fix these: the account has to be created, or made an administrator, at the iMac (PRZ-13).
+        case (.folder, .problem) where item.short == "brak konta", (.sudo, .problem) where item.short == "nie admin":
             EmptyView()
         case (.ssh, .warning):
             fix("Zainstaluj klucz logowania", "key.horizontal", .key)

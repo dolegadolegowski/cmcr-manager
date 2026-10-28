@@ -766,6 +766,20 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // readiness-recheck (AUDIT PRZ-12): a check asked for while one is running (after a fix) runs afterwards.
+    @Test func aReadinessCheckAskedDuringAnotherRunsAfterIt() async {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        let store = ReadinessStore.shared
+        store.check([a], model: model)
+        store.check([a], model: model)
+        #expect(store.isRecheckPending(a.id))
+        #expect(await AppTestEnvironment.wait(30) { !store.isRecheckPending(a.id) && !store.checking.contains(a.id) })
+        #expect(store.reports[a.id] != nil)
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false
