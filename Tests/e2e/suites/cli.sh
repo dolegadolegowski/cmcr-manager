@@ -52,8 +52,12 @@ for cmd in open-app quit-app; do
   out="$(mctl $cmd CMCRDummy </dev/null)"; code=$?
   expect_code "wybór: $cmd bez komputerów w skrypcie – kod 2" "$code" 2 "$out"
 done
-# At a terminal the cmcr-exec default (all Macs) stays, announced on stderr.
-out="$(CMCR_CONFIG_DIR="$MULTI" script -q /dev/null "$CTL" exec 'echo "wszystkie-$((40 + 2))"' </dev/null 2>&1)"; code=$?
+# At a terminal the cmcr-exec default (all Macs) stays, announced on stderr – after a question that only the person
+# at the keyboard can answer (AUDIT CLI-02: a script started from Terminal inherits the terminal; --yes is no answer).
+out="$(CMCR_CONFIG_DIR="$MULTI" script -q /dev/null "$CTL" exec 'echo "nie-powinno"' --yes </dev/null 2>&1)"; code=$?
+expect "wybór: exec bez komputerów w terminalu – pytanie" "$out" "Wykonać na wszystkich? [t/N]" "Przerwano"
+expect_not "wybór: exec bez komputerów – --yes nie odpowiada na pytanie" "$out" "nie-powinno"
+out="$( (sleep 1; printf 't\n'; sleep 2) | CMCR_CONFIG_DIR="$MULTI" script -q /dev/null "$CTL" exec 'echo "wszystkie-$((40 + 2))"' 2>&1)"; code=$?
 expect_code "wybór: exec bez komputerów w terminalu – kod 0" "$code" 0 "$out"
 expect "wybór: exec bez komputerów w terminalu – informacja i wszystkie komputery" "$out" \
   "Nie podano komputerów – exec na wszystkich: imac01, imac02, imac03 (3 komputery)" "wszystkie-42"

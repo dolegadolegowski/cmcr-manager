@@ -10,8 +10,8 @@ KOMP – wybór komputerów: all | numer z nazwy (4 → imac04) | lista (1,3,7) 
        | pozycja na liście (@2) | nazwa, adres lub konto (imac04, imac04.local).
 Bez KOMP polecenia, które tylko odczytują (status, readiness, filevault, app-version, schedule show),
 działają na wszystkich komputerach; polecenia, które coś zmieniają (exec, open-app, quit-app, lock,
-lesson, install…) – tylko w terminalu (z informacją, na których), a w skryptach wymagają podania KOMP,
-np. all. rename (nazwy komputerów) zawsze wymaga KOMP.
+lesson, install…) – tylko w terminalu, po pytaniu „Wykonać na wszystkich?” (--yes na nie nie odpowiada),
+a w skryptach wymagają podania KOMP, np. all. rename (nazwy komputerów) zawsze wymaga KOMP.
 cmcrctl POLECENIE --help – pomoc jednego polecenia (niczego nie wykonuje).
 
 Stan i polecenia
@@ -186,9 +186,12 @@ struct CLI: Sendable {
         }
     }
 
-    /// exec, open-app and quit-app keep cmcr-exec's "no list = every Mac", but only at a terminal and announced
-    /// there. In a script a dropped argument – an unquoted `#3` is a comment – must not widen the command to the lab.
-    func targetsOrAllAtTerminal(_ spec: String?, command: String) -> [Machine] {
+    /// exec, open-app and quit-app keep cmcr-exec's "no list = every Mac", but only at a terminal, announced and
+    /// asked there. In a script a dropped argument – an unquoted `#3` is a comment – must not widen the command to the
+    /// lab: without a terminal it is an error, and a script started from Terminal (it inherits the terminal) gets the
+    /// question too, which `--yes` does not answer – only the person at the keyboard can (`ask: false` for trust,
+    /// which shows every key and asks about it anyway).
+    func targetsOrAllAtTerminal(_ spec: String?, command: String, ask: Bool = true) -> [Machine] {
         guard spec == nil else { return targets(spec) }
         guard isatty(STDIN_FILENO) != 0 else {
             usageError("Podaj komputery dla polecenia \(command) (all, numer 4, lista 1,3, zakres 1-5 lub pozycja @2) "
@@ -196,6 +199,12 @@ struct CLI: Sendable {
         }
         let list = targets(nil, defaultAll: true)
         Console.err("Nie podano komputerów – \(command) na wszystkich: \(names(list)).")
+        guard ask else { return list }
+        Console.err("Wykonać na wszystkich? [t/N] ", terminator: "")
+        let answer = (readLine() ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard ["t", "tak", "y", "yes"].contains(answer) else {
+            fail("Przerwano – nic nie zostało wykonane. W skryptach podaj komputery, np. all albo 4.")
+        }
         return list
     }
 
@@ -218,7 +227,7 @@ struct CLI: Sendable {
             usageError("\(question)\nTo polecenie wymaga potwierdzenia – dodaj --yes.")
         }
         Console.err("\(question) Kontynuować? [t/N] ", terminator: "")
-        let answer = (readLine() ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+        let answer = (readLine() ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard ["t", "tak", "y", "yes"].contains(answer) else { fail("Przerwano.") }
     }
 

@@ -13,7 +13,7 @@ extension CLI {
     /// confirmation (`--yes` in scripts). A changed key is named loudly: it may mean a device impersonating the Mac.
     func trust() async -> Int32 {
         args.expect("trust", options: ["--dry-run"], positional: 2)
-        let list = targetsOrAllAtTerminal(args[1], command: "trust")
+        let list = targetsOrAllAtTerminal(args[1], command: "trust", ask: false)
         let ssh = sshSettings()
         var scans = Array(repeating: HostTrust.Scan?.none, count: list.count)
         await withTaskGroup(of: (Int, HostTrust.Scan).self) { group in

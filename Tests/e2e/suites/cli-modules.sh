@@ -21,6 +21,9 @@ EOF
 mm() { CMCR_CONFIG_DIR="$MM" CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }
 # At a terminal (stdin, stdout and stderr on a pty).
 mm_tty() { CMCR_CONFIG_DIR="$MM" CMCR_PASSWORD="$PASSWORD" script -q /dev/null "$CTL" "$@" </dev/null 2>&1; }
+# At a terminal, answering „t” to the question about all Macs.
+# (Typed after the question: what script(1) passes on before the program reads is lost.)
+mm_tty_yes() { (sleep 1; printf 't\n'; sleep 2) | CMCR_CONFIG_DIR="$MM" CMCR_PASSWORD="$PASSWORD" script -q /dev/null "$CTL" "$@" 2>&1; }
 delayed_power() { pgrep -U "$(id -u)" -f cmcr-delayed-power 2>/dev/null; }
 # Bytes a terminal would interpret: C0 controls other than tab/LF (CR LF from the pty is fine), DEL, C1 (C2 80–9F),
 # and bidi overrides (U+202A–U+202E, U+2066–U+2069) that reorder what is shown.
@@ -136,6 +139,8 @@ expect_code "filevault (tylko odczyt) bez komputerów: kod 0" "$code" 0 "$out"
 [ "$(printf '%s\n' "$out" | grep -c 'FileVault')" = 3 ] && pass "filevault bez komputerów: wszystkie trzy" \
   || fail "filevault bez komputerów: liczba wyników" "$out"
 out="$(mm_tty unlock)"
+expect "unlock bez komputerów w terminalu: pytanie, bez odpowiedzi nic się nie dzieje" "$out" "Wykonać na wszystkich?" "Przerwano"
+out="$(mm_tty_yes unlock)"
 expect "unlock bez komputerów w terminalu: informacja i wszystkie komputery" "$out" \
   "Nie podano komputerów – unlock na wszystkich: imac01, imac02, imac03 (3 komputery)" "imac03:"
 
