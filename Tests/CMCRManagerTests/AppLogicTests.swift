@@ -800,6 +800,21 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // app-lists (AUDIT WSP-06, UI-07): reading the app lists shows progress, and a failure keeps its reason.
+    @Test func appListsShowLoadingAndFailures() async {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        model.refreshInstalledApps([a])
+        model.refreshRunningApps([a])
+        #expect(model.installedAppsLoading.contains(a.id))
+        #expect(model.runningAppsLoading.contains(a.id))
+        #expect(await AppTestEnvironment.wait(30) { model.installedAppsErrors[a.id] != nil && model.runningApps[a.id] != nil })
+        #expect(model.installedAppsLoading.isEmpty)
+        #expect(!model.runningAppsLoading.contains(a.id))
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false

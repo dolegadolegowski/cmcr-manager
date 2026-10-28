@@ -349,6 +349,10 @@ final class AppModel: ObservableObject {
     var toastTask: Task<Void, Never>?
     @Published var runningApps: [UUID: HostApps] = [:]
     @Published var installedApps: [UUID: [String]] = [:]
+    /// Lists being read now, and why the last reading of a Mac failed (AUDIT WSP-06, UI-07).
+    @Published var runningAppsLoading: Set<UUID> = []
+    @Published var installedAppsLoading: Set<UUID> = []
+    @Published var installedAppsErrors: [UUID: String] = [:]
     @Published var updates: [UUID: UpdateInfo] = [:]
     @Published var hasSharedPassword = false
 
@@ -931,6 +935,7 @@ final class AppModel: ObservableObject {
     func refreshRunningApps(_ targets: [Machine]) {
         let ss = sshSettings
         let jobs = targets.map { ($0, password(for: $0)) }
+        runningAppsLoading.formUnion(targets.map(\.id))
         Task {
             await withTaskGroup(of: Void.self) { group in
                 for (m, pw) in jobs {
@@ -938,6 +943,7 @@ final class AppModel: ObservableObject {
                         let r = await SSH.run(Scripts.runningApps(), on: m, password: pw, settings: ss,
                                               timeout: OperationTimeout.list)
                         await MainActor.run {
+                            self.runningAppsLoading.remove(m.id)
                             if r.succeeded {
                                 let parsed = Parsers.runningApps(r.stdoutText)
                                 self.runningApps[m.id] = HostApps(user: parsed.user, apps: parsed.apps)
@@ -954,6 +960,7 @@ final class AppModel: ObservableObject {
     func refreshInstalledApps(_ targets: [Machine]) {
         let ss = sshSettings
         let jobs = targets.map { ($0, password(for: $0)) }
+        installedAppsLoading.formUnion(targets.map(\.id))
         Task {
             await withTaskGroup(of: Void.self) { group in
                 for (m, pw) in jobs {
@@ -961,7 +968,13 @@ final class AppModel: ObservableObject {
                         let r = await SSH.run(Scripts.installedApps(), on: m, password: pw, settings: ss,
                                               timeout: OperationTimeout.list)
                         await MainActor.run {
-                            if r.succeeded { self.installedApps[m.id] = Parsers.lines(r.stdoutText) }
+                            self.installedAppsLoading.remove(m.id)
+                            if r.succeeded {
+                                self.installedApps[m.id] = Parsers.lines(r.stdoutText)
+                                self.installedAppsErrors[m.id] = nil
+                            } else {
+                                self.installedAppsErrors[m.id] = SSH.diagnose(r).1
+                            }
                         }
                     }
                 }

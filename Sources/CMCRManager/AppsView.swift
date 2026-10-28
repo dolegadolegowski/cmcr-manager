@@ -39,6 +39,13 @@ struct AppsView: View {
         .onAppear {
             if !model.selectedMachines.isEmpty { model.refreshRunningApps(model.selectedMachines) }
         }
+        // Macs checked later are read too, instead of waiting as „Wczytywanie listy…” for good (AUDIT UI-07).
+        .onChange(of: model.selection) { _, _ in
+            let missing = model.selectedMachines.filter {
+                model.runningApps[$0.id] == nil && !model.runningAppsLoading.contains($0.id)
+            }
+            if !missing.isEmpty { model.refreshRunningApps(missing) }
+        }
         .confirmation($confirm)
     }
 
@@ -189,7 +196,11 @@ struct AppsView: View {
         }
         for m in model.selectedMachines {
             guard let info = model.runningApps[m.id] else {
-                add("Wczytywanie listy…", "hourglass", .secondary, m)
+                if model.runningAppsLoading.contains(m.id) {
+                    add("Wczytywanie listy…", "hourglass", .secondary, m)
+                } else {
+                    add("Nie wczytano – kliknij „Odśwież listę”.", "arrow.clockwise", .secondary, m)
+                }
                 continue
             }
             if let error = info.error {
@@ -279,19 +290,32 @@ struct AppsView: View {
 
     var installedSection: some View {
         let checked = model.selectedMachines.filter { model.installedApps[$0.id] != nil }.count
+        let loading = model.selectedMachines.filter { model.installedAppsLoading.contains($0.id) }.count
+        let failed = model.selectedMachines.compactMap { m in model.installedAppsErrors[m.id].map { (m.name, $0) } }
         let rows = installedRows
         let filter = installedFilter.trimmingCharacters(in: .whitespaces)
         let shown = filter.isEmpty ? rows : rows.filter { Self.appName($0.path).localizedStandardContains(filter) }
         let selected = shown.first { $0.id == installedSelection }
         return Section {
             FormActionRow("Aplikacje w folderach Aplikacje",
-                          caption: checked == 0
+                          caption: loading > 0
+                              ? "Wczytywanie listy \(Polish.onComputers(loading))…"
+                              : checked == 0
                               ? "Pobierz listę, aby zobaczyć, na ilu komputerach jest każda aplikacja."
                               : "Sprawdzono \(Polish.computers(checked)). Pomarańczowa liczba – aplikacji brakuje na części z nich.") {
                 TargetButton(title: checked == 0 ? "Pobierz listę" : "Odśwież listę",
                              icon: "arrow.down.circle", prominent: false) {
                     model.refreshInstalledApps(model.selectedMachines)
                 }
+            }
+            // Macs whose list could not be read say why, instead of quietly missing from the counts (AUDIT WSP-06).
+            ForEach(failed.prefix(4), id: \.0) { name, error in
+                Label("\(name): \(error)", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.callout)
+            }
+            if failed.count > 4 {
+                Text("… i \(Polish.computers(failed.count - 4)) z błędem").font(.callout).foregroundStyle(.secondary)
             }
             if !rows.isEmpty {
                 SearchField(text: $installedFilter, prompt: "Szukaj aplikacji")
