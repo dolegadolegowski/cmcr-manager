@@ -228,3 +228,49 @@ out="$(CMCR_PASSWORD="zle-haslo-p2" "$CTL" readiness 1 2>&1)"
 rm -f "$WORK/sudo.lecture"
 expect "readiness: złe hasło rozpoznane mimo ostrzeżenia sudo" "$out" "złe hasło"
 expect_not "readiness: ostrzeżenie sudo nie jest pokazywane jako błąd" "$out" "Improper use"
+
+section "P2: skrypt konfiguracyjny – katalog domowy zapisywalny dla grupy (AUDIT PRZ-15)"
+SR="$WORK/setup-root"
+SS="$WORK/setup-sys"
+SCONF="$WORK/config-p2-setup"
+SHOME="$SR/Users/$ME"
+p2s() { CMCR_CONFIG_DIR="$SCONF" CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }
+# p2_setup_begin – a configured iMac in $WORK/setup-root (as in suites/setup.sh); fails when the redirection is
+# off. Each section ends with p2_setup_end: later suites (suites/setup.sh) start from a fresh state.
+p2_setup_begin() {
+  mkdir -p "$SHOME/Public" "$SR/etc/ssh/sshd_config.d" "$SR/private/etc/sudoers.d" "$SR/Library/Preferences" "$SS" "$SCONF"
+  chmod 755 "$SHOME"
+  printf '# test\nInclude /etc/ssh/sshd_config.d/*\nPasswordAuthentication yes\n' > "$SR/etc/ssh/sshd_config"
+  printf 'root ALL = (ALL) ALL\n#includedir /private/etc/sudoers.d\n' > "$SR/etc/sudoers"
+  printf 'womp 1\nsleep 1\ntcpkeepalive 1\n' > "$SS/pmset"
+  echo false > "$SS/screen-preflight"
+  echo "FileVault is Off." > "$SS/filevault"
+  cp "$WORK/config/hosts.json" "$SCONF/hosts.json"
+  cat > "$SCONF/settings.json" <<EOF
+{"identityFile":"$WORK/client","extraSSHOptions":"UserKnownHostsFile=$WORK/known_hosts",
+ "sharedFolder":"/Users/{student}/Public/cmcr","localFolder":"$WORK/local","studentUser":"$ME","connectTimeout":3}
+EOF
+  out="$(p2s setup 1 --no-ssh-acl)"; code=$?
+  if ! contains "" "$out" "(TEST: pliki systemowe przekierowane do $SR)"; then
+    fail "setup: przekierowanie ścieżek nieaktywne – pominięto testy skryptu konfiguracyjnego" "$out"
+    return 1
+  fi
+  expect_code "setup: przygotowanie – kod 0" "$code" 0 "$out"
+}
+p2_setup_end() { rm -rf "$SS" "$SR" "$SCONF"; }
+if p2_setup_begin; then
+  # sshd (StrictModes) refuses the key while the home folder is writable for the group.
+  chmod 775 "$SHOME"
+  out="$(p2s setup 1 --no-ssh-acl --verify)"; code=$?
+  expect "setup --verify: katalog domowy zapisywalny dla grupy – do zmiany" "$out" \
+    "Wymaga zmiany: usunąć prawo zapisu grupy/innych z $SHOME" '"pending_count": 1,'
+  expect_not "setup --verify: nie twierdzi, że usunięto prawo zapisu" "$out" "Usunięto prawo zapisu"
+  [ "$(stat -f %Lp "$SHOME")" = 775 ] && pass "setup --verify: nic nie zmieniono" || fail "setup --verify: zmieniono uprawnienia"
+  out="$(p2s setup 1 --no-ssh-acl)"; code=$?
+  expect_code "setup: usunięcie prawa zapisu – kod 0" "$code" 0 "$out"
+  expect "setup: usunięcie prawa zapisu policzone jako zmiana" "$out" "usunięto prawo zapisu grupy/innych z $SHOME" \
+    '"changed_count": 1,'
+  expect_not "setup: nie „bez zmian”" "$out" "Bez zmian – wszystko było już skonfigurowane"
+  [ "$(stat -f %Lp "$SHOME")" = 755 ] && pass "setup: katalog domowy 755" || fail "setup: uprawnienia $(stat -f %Lp "$SHOME")"
+fi
+p2_setup_end

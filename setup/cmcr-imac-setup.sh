@@ -470,9 +470,19 @@ step_ssh_key() {
     return
   fi
   if [ -L "$sshdir" ] || [ -L "$ak" ]; then record ssh_key fail "$sshdir lub authorized_keys jest dowiązaniem – przerwano ze względów bezpieczeństwa."; return; fi
-  # StrictModes w sshd odrzuca klucze, gdy katalog domowy jest zapisywalny dla grupy/innych.
+  # StrictModes w sshd odrzuca klucze, gdy katalog domowy jest zapisywalny dla grupy/innych – to też zmiana
+  # (w trybie --verify/--dry-run: do zrobienia), nawet gdy klucz już jest w authorized_keys.
+  local home_fix=0
   case "$(stat -f %Lp "$home" 2>/dev/null)" in
-    *[2367]?|*?[2367]) run chmod go-w "$home"; detail "Usunięto prawo zapisu grupy/innych z $home (wymóg sshd)." ;;
+    *[2367]?|*?[2367])
+      home_fix=1
+      if [ $CHANGE -eq 1 ]; then
+        chmod go-w "$home" || { record ssh_key fail "Nie udało się usunąć prawa zapisu grupy/innych z $home – sshd odrzuci klucz."; return; }
+        detail "Usunięto prawo zapisu grupy/innych z $home (wymóg sshd)."
+      else
+        run chmod go-w "$home"
+        detail "Do zmiany: usunąć prawo zapisu grupy/innych z $home (wymóg sshd)."
+      fi ;;
   esac
   [ -d "$sshdir" ] || run as_user "$ADMIN" /bin/mkdir -m 700 "$sshdir"
   local cur="$WORK/ak.cur" new="$WORK/ak.new"
@@ -523,6 +533,9 @@ EOF
   if [ $n_added -gt 0 ]; then
     changed_or_planned ssh_key "Klucz SSH menedżera zainstalowany dla $ADMIN ($KEY_FPS)." \
       "zainstalować klucz SSH menedżera dla $ADMIN ($KEY_FPS)."
+  elif [ $home_fix -eq 1 ]; then
+    changed_or_planned ssh_key "Klucz SSH menedżera był już zainstalowany ($KEY_FPS); usunięto prawo zapisu grupy/innych z $home – bez tego sshd go odrzucał." \
+      "usunąć prawo zapisu grupy/innych z $home – bez tego sshd odrzuca klucz SSH menedżera ($KEY_FPS)."
   else
     record ssh_key ok "Klucz SSH menedżera jest już zainstalowany ($KEY_FPS)."
   fi
