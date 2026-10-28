@@ -32,7 +32,7 @@ Aplikacje
   open-app "Nazwa" [KOMP]                  uruchom aplikację u zalogowanego użytkownika
   quit-app "Nazwa" [KOMP] [--force]        zamknij aplikację (--force: natychmiast, po potwierdzeniu)
   open-url ADRES KOMP                      otwórz stronę lub plik u zalogowanego użytkownika
-  kill PID KOMP [--force]                  zakończ proces (--force: SIGKILL)
+  kill PID nr [--force]                    zakończ proces na jednym komputerze (--force: SIGKILL)
   uninstall /Applications/X.app KOMP       usuń aplikację
   brew "argumenty" KOMP                    Homebrew, np.: cmcrctl brew "install --cask firefox" all
   screenshot nr plik.jpg                   zrzut ekranu zalogowanego użytkownika
@@ -110,7 +110,7 @@ struct CLI: Sendable {
 
     /// Core commands that accept `parallel` (their help describes -j and --prefix).
     static let parallelCommands: Set<String> = [
-        "status", "exec", "push", "pull", "ls", "clean", "open-app", "quit-app", "open-url", "kill", "uninstall", "brew",
+        "status", "exec", "push", "pull", "ls", "clean", "open-app", "quit-app", "open-url", "uninstall", "brew",
         "updates", "message", "logout", "power",
     ]
 
@@ -498,12 +498,15 @@ struct CLI: Sendable {
         return await runScript(on: list) { _ in Scripts.openURL(url) }
     }
 
+    /// A PID means something on one Mac only (like the app, which kills a process on the Mac its list came from):
+    /// the same number on the other Macs is some other process, e.g. a student's app with unsaved work.
     func kill() async -> Int32 {
-        args.expect("kill", options: Self.parallel.union(["--force"]), positional: 3)
-        guard let raw = args[1], let pid = Int(raw), pid > 1 else { usageError("Użycie: cmcrctl kill PID KOMP [--force]") }
-        let list = targets(args[2])
+        let use = "Użycie: cmcrctl kill PID nr [--force]"
+        args.expect("kill", options: ["--force"], positional: 3)
+        guard let raw = args[1], let pid = Int(raw), pid > 1 else { usageError(use) }
+        let h = single(args[2], usage: use)
         let hard = force
-        return await runScript(on: list) { _ in Scripts.killProcess(pid, force: hard) }
+        return await runScript(on: [h]) { _ in Scripts.killProcess(pid, force: hard) }
     }
 
     func uninstall() async -> Int32 {

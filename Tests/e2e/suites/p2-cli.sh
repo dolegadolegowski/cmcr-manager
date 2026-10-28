@@ -104,3 +104,22 @@ clear_fakelog
 out="$(p2pw updates install 1 --major --download </dev/null)"; code=$?
 expect_code "updates install --major --download: samo pobieranie bez pytania (kod 0)" "$code" 0 "$out"
 expect "updates install --major --download: pobiera także nową wersję" "$(fakelog)" "softwareupdate --download macOS Testowy 99.1-99A123"
+
+section "P2 cmcrctl – kill PID tylko na jednym komputerze (AUDIT CLI-04)"
+P2K="$(sleep 300 >/dev/null 2>&1 & echo $!)"
+clear_fakelog
+for spec in 1,2 all 1-2; do
+  out="$(p2pw kill "$P2K" "$spec")"; code=$?
+  expect_code "kill PID $spec: kilka komputerów – kod 2" "$code" 2 "$out"
+done
+expect "kill PID kilka komputerów: wskazówka" "$out" "Podaj jeden komputer"
+expect_not "kill PID kilka komputerów: nic nie wysłano" "$(fakelog)" "kill -TERM"
+kill -0 "$P2K" 2>/dev/null && pass "kill PID kilka komputerów: proces działa dalej" || fail "kill PID: zabito proces mimo błędu"
+out="$(p2pw kill "$P2K")"; code=$?
+expect_code "kill PID bez komputera: kod 2" "$code" 2 "$out"
+out="$(p2pw kill "$P2K" imac02)"; code=$?
+expect_code "kill PID nr: kod 0" "$code" 0 "$out"
+sleep 0.3
+if kill -0 "$P2K" 2>/dev/null; then fail "kill PID nr: proces nadal działa" "$out"; kill "$P2K"; else pass "kill PID nr: proces zakończony"; fi
+out="$(p2 kill --help)"
+expect "kill --help: PID nr" "$out" "cmcrctl kill PID nr [--force]"
