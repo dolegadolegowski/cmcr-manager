@@ -76,7 +76,9 @@ func runEach(_ list: [Machine], _ a: ModuleArguments, ssh: SSHSettings, timeout:
 /// Commands contributed by feature modules, dispatched before the main argument parser.
 enum ExtraCommands {
     static var usage: String {
-        [ScriptCommands.usage, SetupCommands.usage, BrowseCLI.usage, ClassroomCLI.usage, screenWatchUsage, SelfUpdateCommand.usage].joined(separator: "\n")
+        // The classroom commands have a heading of their own: a blank line before it, like before every section.
+        [ScriptCommands.usage, SetupCommands.usage, BrowseCLI.usage, "\n" + ClassroomCLI.usage, screenWatchUsage,
+         SelfUpdateCommand.usage].joined(separator: "\n")
     }
 
     /// Commands parsed with `ModuleArguments` (setup, setup-script and readiness have their own parser and help).
@@ -158,7 +160,7 @@ enum ExtraCommands {
     }
 }
 
-var fullUsage: String { usage + "\nInstalacja i inne\n" + ExtraCommands.usage }
+var fullUsage: String { usage + "\n\nInstalacja i inne\n" + ExtraCommands.usage }
 
 let screenWatchUsage = """
   cmcrctl screen-watch nr katalog [--frames N] [--interval S] [--size PX] [--display main|all|N]

@@ -62,11 +62,11 @@ Konfiguracja
   password clear [--host nr]               usuń zapisane hasło
   password status                          czy hasła są zapisane
 \(CLI.trustUsage)
-  selftest                                sprawdź składnię wszystkich skryptów zdalnych (bash -n)
+  selftest                                 sprawdź składnię wszystkich skryptów zdalnych (bash -n)
 
 Opcje
-  -j N, --jobs N    ile komputerów obsługiwać naraz (domyślnie 1; status i updates list: \(AppSettings().maxParallel)
-                    lub „Równoległe operacje” z ustawień); wyniki zawsze w kolejności listy
+  -j N, --jobs N    ile komputerów obsługiwać naraz (domyślnie 1; status i updates list: „Komputery obsługiwane
+                    naraz” z Konfiguracja › Ustawienia, domyślnie \(AppSettings().maxParallel)); wyniki zawsze w kolejności listy
   --prefix          poprzedź każdy wiersz wyniku nazwą komputera, np. [imac04]
                     (-j i --prefix: polecenia z argumentem KOMP, poza wake, hosts remove, lesson,
                     rename, setup, readiness i ask – ask pyta wszystkie komputery naraz)
