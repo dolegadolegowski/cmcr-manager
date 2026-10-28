@@ -743,8 +743,7 @@ private struct AnswersView: View {
                 }
                 Button {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(rows.dropFirst().map { $0.joined(separator: "\t") }.joined(separator: "\n"),
-                                                   forType: .string)
+                    NSPasteboard.general.setString(CSV.tsv(Array(rows.dropFirst())), forType: .string)
                 } label: {
                     Label("Kopiuj", systemImage: "doc.on.doc")
                 }

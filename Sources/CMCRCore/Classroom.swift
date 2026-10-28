@@ -561,10 +561,29 @@ public enum CSV {
     public static let defaultSeparator: Character = ";"
 
     public static func escape(_ field: String, separator: Character = defaultSeparator) -> String {
+        let field = neutralized(field)
         let needsQuotes = field.contains(separator) || field.contains("\"") || field.contains("\n")
             || field.contains("\r") || field.hasPrefix(" ") || field.hasSuffix(" ")
         let body = field.replacingOccurrences(of: "\"", with: "\"\"")
         return needsQuotes ? "\"\(body)\"" : body
+    }
+
+    /// A cell a spreadsheet would read as a formula (starting with =, +, -, @, a tab or CR) gets a leading
+    /// apostrophe, as spreadsheets do themselves for text: the exports carry text from the iMacs (students'
+    /// answers, versions read from apps in the student's folder), which must not run as a formula such as
+    /// =HYPERLINK(…) when the file is opened in Excel or Numbers (AUDIT KOM-14, ZAJ-02). Plain numbers (-5, +3,
+    /// -1,5) are left as they are.
+    public static func neutralized(_ field: String) -> String {
+        guard let first = field.unicodeScalars.first, "=+-@\t\r".unicodeScalars.contains(first) else { return field }
+        if isPlainNumber(field) { return field }
+        return "'" + field
+    }
+
+    private static func isPlainNumber(_ s: String) -> Bool {
+        var digits = Substring(s)
+        if let sign = digits.first, sign == "-" || sign == "+" { digits = digits.dropFirst() }
+        let parts = digits.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "." || $0 == "," })
+        return (1...2).contains(parts.count) && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isASCII) && $0.allSatisfy(\.isNumber) }
     }
 
     /// RFC 4180 style text with CRLF line ends; `bom` adds the UTF-8 byte order mark Excel needs for "ą, ę".
@@ -572,6 +591,16 @@ public enum CSV {
         let body = rows.map { $0.map { escape($0, separator: separator) }.joined(separator: String(separator)) }
             .joined(separator: "\r\n")
         return (bom ? "\u{FEFF}" : "") + body + "\r\n"
+    }
+
+    /// Tab-separated rows for the clipboard („Kopiuj”), pasted into a spreadsheet one cell per value: cells are
+    /// neutralised like in the CSV export, and tabs or line breaks inside a cell become spaces.
+    public static func tsv(_ rows: [[String]]) -> String {
+        rows.map { row in
+            row.map { cell in
+                neutralized(cell).map { $0 == "\t" || $0.isNewline ? " " : String($0) }.joined()
+            }.joined(separator: "\t")
+        }.joined(separator: "\n")
     }
 }
 
