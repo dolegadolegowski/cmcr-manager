@@ -53,31 +53,30 @@ Ocena poszczególnych miejsc jest w tabelach usterek (kategoria współbieżnoś
 
 | Priorytet | Znalezione | Naprawione | Pominięte | Czeka na decyzję | Otwarte |
 |---|---:|---:|---:|---:|---:|
-| P0 | 8 | 0 | 0 | 0 | 8 |
-| P1 | 29 | 0 | 0 | 0 | 29 |
-| P2 | 144 | 0 | 0 | 0 | 144 |
-| **Razem** | **181** | **0** | **0** | **0** | **181** |
+| P0 | 9 | 4 | 0 | 0 | 5 |
+| P1 | 26 | 0 | 0 | 0 | 26 |
+| P2 | 156 | 0 | 0 | 0 | 156 |
+| **Razem** | **191** | **4** | **0** | **0** | **187** |
 
 P0 – awaria, utrata danych lub bezpieczeństwo; P1 – funkcja opisana w README nie działa; P2 – UX, drobne, teksty. Plik i linia wskazują stan sprzed poprawki (gałąź `main` @ `c7d00ec`). Szczegóły każdej pozycji są niżej, w sekcji „Szczegóły”.
 
 ## Jak powstała lista
 
-Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obszaru: działy z paska bocznego (Pracownia, Pliki i programy, Administracja), `cmcrctl`, współbieżność i cykl życia okien, polskie teksty oraz interfejs względem Apple HIG. Każdy prześledził funkcje z README ścieżką widok → model → CMCRCore → skrypt bash. Zgłoszenia każdego obszaru sprawdza następnie niezależny, sceptyczny recenzent, który potwierdza je w kodzie, odrzuca albo zmienia priorytet. Powtarzające się zgłoszenia różnych agentów są scalone w jedną pozycję („także: …”). Kilka pozycji dodałem sam (obszar „Własne”) po przejrzeniu zrzutów i opisu menu.
-
-> **Stan dokumentu:** wyniki analizy zapisane przed zakończeniem weryfikacji. Priorytety mogą się jeszcze zmienić, a zgłoszenia odrzucone przez recenzentów trafią do sekcji „Odrzucone przy weryfikacji”.
+Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obszaru: działy z paska bocznego (Pracownia, Pliki i programy, Administracja), `cmcrctl`, współbieżność i cykl życia okien, polskie teksty oraz interfejs względem Apple HIG. Każdy prześledził funkcje z README ścieżką widok → model → CMCRCore → skrypt bash. Zgłoszenia każdego obszaru sprawdził potem niezależny, sceptyczny recenzent: potwierdził je w kodzie (często uruchamiając fragmenty skryptów lub `cmcrctl` w izolowanej konfiguracji), odrzucił albo zmienił priorytet. Usterki, które recenzenci zauważyli przy okazji, są oznaczone jako „zgłoszone przy weryfikacji” i sprawdzam je przy naprawie. Powtarzające się zgłoszenia różnych agentów są scalone w jedną pozycję („także: …”). Kilka pozycji dodałem sam (obszar „Własne”) po przejrzeniu zrzutów i opisu menu.
 
 ## P0 – awarie, utrata danych, bezpieczeństwo
 
 | ID | Obszar | Plik:linia | Usterka | Status |
 |---|---|---|---|---|
-| [APL-01](#apl-01) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Scripts.swift:336` | „override=” w nazwie pliku wyłącza sprawdzanie notaryzacji instalatora | otwarte |
+| [APL-01](#apl-01) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Scripts.swift:336` | „override=” w nazwie pliku wyłącza sprawdzanie notaryzacji instalatora | naprawione (2f96309) |
 | [CLI-01](#cli-01) | cmcrctl | `Sources/cmcrctl/ClassroomCommands.swift:332` | lesson start wysyła uczniom zawartość bieżącego katalogu, gdy folder materiałów jest pusty | otwarte |
-| [KON-01](#kon-01) | Konfiguracja | `Sources/CMCRCore/HostTrust.swift:169` | Konto zaczynające się od „-” (np. z importowanej listy) wykonuje polecenie na Macu nauczyciela przy sprawdzaniu klucza | otwarte |
-| [KON-02](#kon-02) | Konfiguracja | `Sources/CMCRCore/Store.swift:182` | Powtórzone „id” w importowanej liście lub hosts.json powoduje awarię aplikacji przy „Rozpocznij zajęcia” | otwarte |
-| [PLI-01](#pli-01) | Pliki, przeglądarka | `Sources/CMCRCore/Scripts+Browse.swift:279` | Zmiana nazwy jako root może przenieść plik przez dowiązanie podstawione w trakcie (mv bez -h) | otwarte |
-| [PRZ-01](#prz-01) | Przygotowanie iMaców, uaktualnienia | `Sources/CMCRCore/Scripts.swift:1109` | Szybka naprawa „Włącz Udostępnianie ekranu” otwiera VNC dla wszystkich kont, także konta ucznia | otwarte |
-| [WSP-01](#wsp-01) | Współbieżność | `Sources/CMCRCore/Store.swift:225` | Dziennik działań zapisywany API rzucającym wyjątek – crash przy pełnym dysku | otwarte |
-| [ZAJ-01](#zaj-01) | Zajęcia, podgląd | `Sources/CMCRCore/LessonRoutine.swift:287` | Czyszczenie folderu cmcr na koniec zajęć usuwa pliki zapisane po zebraniu prac | otwarte |
+| [KON-01](#kon-01) | Konfiguracja | `Sources/CMCRCore/HostTrust.swift:169` | Konto zaczynające się od „-” (np. z importowanej listy) wykonuje polecenie na Macu nauczyciela przy sprawdzaniu klucza | naprawione (26edf17) |
+| [KON-02](#kon-02) | Konfiguracja | `Sources/CMCRCore/Store.swift:182` | Powtórzone „id” w importowanej liście lub hosts.json powoduje awarię aplikacji przy „Rozpocznij zajęcia” | naprawione (332b819) |
+| [PLI-01](#pli-01) | Pliki, przeglądarka | `Sources/CMCRCore/Scripts+Browse.swift:279` | Zmiana nazwy jako root: mv bez -h podąża za dowiązaniem podstawionym po sprawdzeniu | otwarte |
+| [PRZ-01](#prz-01) | Przygotowanie iMaców, uaktualnienia | `Sources/CMCRCore/Scripts.swift:1109` | Szybka naprawa „Włącz Udostępnianie ekranu” włącza VNC bez listy dostępu (dla wszystkich kont, także ucznia) | otwarte |
+| [WSP-01](#wsp-01) | Współbieżność | `Sources/CMCRCore/Store.swift:225` | Dziennik działań zapisywany API rzucającym wyjątek – crash przy pełnym dysku | naprawione (a085a2a) |
+| [ZAJ-01](#zaj-01) | Zajęcia, podgląd | `Sources/CMCRCore/LessonRoutine.swift:287` | Koniec zajęć: „Wyczyść folder cmcr” kasuje też pliki zapisane po migawce zbierania prac | otwarte |
+| [ZAJ-16](#zaj-16) | Zajęcia, podgląd | `Sources/CMCRManager/ClassroomView.swift:470` | Awaria po upływie odliczania końca zajęć: zakres Date()...end z odwróconymi granicami (zgłoszone przy weryfikacji) | otwarte |
 
 ## P1 – funkcje, które nie działają zgodnie z README
 
@@ -86,6 +85,7 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [APL-02](#apl-02) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Models.swift:292` | Safari i programy spoza folderów Programy ukryte jako „działające w tle” | otwarte |
 | [APL-03](#apl-03) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Scripts.swift:219` | Zamykanie aplikacji o nazwach spoza ASCII zgłasza sukces, choć nic nie zamyka | otwarte |
 | [APL-04](#apl-04) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRManager/AppModel.swift:889` | Nieudane sprawdzenie aktualizacji pokazywane jako „System jest aktualny” | otwarte |
+| [APL-18](#apl-18) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Scripts.swift:696` | „Historia instalacji” pokazuje najstarsze wpisy, a najnowsze aktualizacje są ucinane (zgłoszone przy weryfikacji) | otwarte |
 | [CLI-02](#cli-02) | cmcrctl | `Sources/cmcrctl/CLI.swift:193` | Skrypt uruchomiony z Terminala bez listy komputerów działa na całej pracowni | otwarte |
 | [KOM-01](#kom-01) | Komputery, zasilanie | `Sources/CMCRManager/PowerView.swift:413` | Powtórzenie restartu/wyłączenia/wylogowania z „Sesja i zasilanie” bez ponownego potwierdzenia | otwarte |
 | [KON-03](#kon-03) | Konfiguracja | `Sources/CMCRCore/Store.swift:195` | Błąd zapisu hosts.json/settings.json nie jest pokazywany – zmiany giną po zamknięciu aplikacji | otwarte |
@@ -94,21 +94,17 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [KON-06](#kon-06) | Konfiguracja | `Sources/CMCRManager/SetupView.swift:915` | Ustawienie „Powiadamiaj o podglądzie” wyłącza komunikat dla ucznia, który README opisuje jako stały | otwarte |
 | [PLI-02](#pli-02) | Pliki, przeglądarka | `Sources/CMCRCore/Operations.swift:17` | Archiwum wysyłanych plików w /tmp jest czytelne dla wszystkich (0644) i zostaje po przerwaniu | otwarte |
 | [PLI-03](#pli-03) | Pliki, przeglądarka | `Sources/CMCRManager/AppModel.swift:740` | Konwencja cmcr-push oraz cmcrctl push/pull nie rozwijają {student} w folderze ucznia z ustawień | otwarte |
-| [PLI-04](#pli-04) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserView.swift:66` | Kliknięcie innego komputera na liście nie przełącza Przeglądarki plików | otwarte |
-| [PRZ-02](#prz-02) | Przygotowanie iMaców, uaktualnienia | `Sources/CMCRManager/Updater.swift:468` | „Przypomnij później” nie anuluje zleconej instalacji – po pobraniu aplikacja sama się zamyka i instaluje | otwarte |
+| [PLI-12](#pli-12) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserModel.swift:81` | Usuwanie i pobieranie obejmuje zaznaczone elementy ukryte filtrem lub wyszukiwaniem | otwarte |
+| [PLI-22](#pli-22) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserView.swift:66` | Kliknięcie innego komputera na liście nie przełącza Przeglądarki plików | otwarte |
 | [PRZ-03](#prz-03) | Przygotowanie iMaców, uaktualnienia | `Sources/cmcrctl/SetupCommands.swift:47` | cmcrctl setup/readiness/setup-script po cichu pomijają nadmiarowe argumenty – konfiguracja może trafić na inny komputer | otwarte |
 | [PRZ-04](#prz-04) | Przygotowanie iMaców, uaktualnienia | `setup/cmcr-imac-setup.sh:546` | --ssh-key-only wyłącza logowanie hasłem, choć klucz aplikacji nie został zainstalowany (utrata dostępu) | otwarte |
-| [TXT-01](#txt-01) | Teksty | `Sources/CMCRManager/MainToolbar.swift:59` | Podpowiedź „Ściana ekranów” obiecuje tylko zaznaczone komputery, a okno domyślnie pokazuje wszystkie | otwarte |
-| [UI-01](#ui-01) | Interfejs | `Sources/CMCRManager/App.swift:68` | Okno Ustawień nieosiągalne z menu – ⌘, otwiera dział Konfiguracja | otwarte |
+| [PRZ-17](#prz-17) | Przygotowanie iMaców, uaktualnienia | `Sources/cmcrctl/SetupCommands.swift:42` | cmcrctl setup-script po cichu ignoruje --verify/--dry-run – plik „do sprawdzenia” wprowadza zmiany jako root (zgłoszone przy weryfikacji) | otwarte |
 | [UI-02](#ui-02) | Interfejs | `Sources/CMCRManager/DashboardView.swift:234` | Menu kontekstowe tabeli działu Komputery działa na jednym, przypadkowym komputerze | otwarte |
 | [UI-03](#ui-03) | Interfejs | `Sources/CMCRManager/PowerView.swift:99` | „Wyloguj” wylogowuje wszystkie zaznaczone komputery bez arkusza potwierdzenia | otwarte |
 | [UI-04](#ui-04) | Interfejs | `Sources/CMCRManager/RemoteBrowserView.swift:376` | Potwierdzenie usunięcia/zastąpienia w Przeglądarce plików wymienia zaznaczone komputery zamiast przeglądanego | otwarte |
-| [UI-05](#ui-05) | Interfejs | `Sources/CMCRManager/SetupView.swift:378` | „Wczytaj listę z pliku…” zastępuje całą listę komputerów bez potwierdzenia | otwarte |
 | [WSP-02](#wsp-02) | Współbieżność | `Sources/CMCRManager/ClassroomModel.swift:332` | „Przerwij” na partii ostrzeżenia nie przerywa „Zakończ zajęcia” | otwarte |
-| [ZAD-01](#zad-01) | Zadania, polecenia | `Sources/CMCRManager/AppModel+Jobs.swift:137` | „Powtórz na nieudanych” używa starej kopii komputera (wspólne hasło, adres, port, usunięte iMaki) | otwarte |
+| [ZAD-01](#zad-01) | Zadania, polecenia | `Sources/CMCRManager/AppModel+Jobs.swift:136` | „Powtórz na nieudanych” używa starej kopii komputera (wspólne hasło, adres, port, usunięte iMaki) | otwarte |
 | [ZAD-02](#zad-02) | Zadania, polecenia | `Sources/CMCRManager/AppModel+Jobs.swift:508` | „Przerwij zadania i zakończ” nie czeka na zatrzymanie na iMacach ani na zapis historii | otwarte |
-| [ZAD-03](#zad-03) | Zadania, polecenia | `Sources/CMCRManager/AppModel.swift:440` | Wynik zdalnego zatrzymania nie trafia do podsumowania ani historii – „Anulowano” nawet gdy polecenie nadal działa | otwarte |
-| [ZAJ-02](#zaj-02) | Zajęcia, podgląd | `Sources/CMCRCore/Classroom.swift:563` | Eksport odpowiedzi uczniów do CSV bez ochrony przed formułami | otwarte |
 | [ZAJ-03](#zaj-03) | Zajęcia, podgląd | `Sources/CMCRCore/LessonRoutine.swift:237` | Niewysłane materiały raportowane jako „pominięto”, a zajęcia jako „Gotowe” | otwarte |
 | [ZAJ-04](#zaj-04) | Zajęcia, podgląd | `Sources/CMCRCore/ScreenCapture.swift:383` | Ponowne zalogowanie na to samo konto nie wyświetla komunikatu o podglądzie | otwarte |
 | [ZAJ-05](#zaj-05) | Zajęcia, podgląd | `Sources/CMCRCore/ScreenCapture.swift:623` | Komunikat o podglądzie uznany za wyświetlony przy zablokowanym/uśpionym ekranie | otwarte |
@@ -119,11 +115,10 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 |---|---|---|---|---|
 | [APL-05](#apl-05) | Aplikacje, instalacja, aktualizacje | `README.md:170` | README: instalacja „wyłącznie przez https://”, a kod przyjmuje też file:// | otwarte |
 | [APL-06](#apl-06) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Scripts.swift:278` | Zabijanie po PID jako root bez sprawdzenia, czyj to proces | otwarte |
-| [APL-07](#apl-07) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Scripts.swift:297` | Odinstalowanie Safari zabija Safari wszystkim użytkownikom, a potem się nie udaje | otwarte |
+| [APL-07](#apl-07) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Scripts.swift:297` | Odinstalowanie zabija aplikację wszystkim użytkownikom, zanim sprawdzi, czy da się ją usunąć (Safari zawsze, inne bez Pełnego dostępu do dysku) | otwarte |
 | [APL-08](#apl-08) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Scripts.swift:415` | Po „Anuluj” w trakcie instalacji z .dmg obraz zostaje zamontowany | otwarte |
 | [APL-09](#apl-09) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Scripts.swift:564` | „Zainstaluj Homebrew” kończy się sukcesem, gdy pobranie instalatora się nie uda | otwarte |
 | [APL-10](#apl-10) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Scripts.swift:638` | Instalacja aktualizacji ukrywa błąd softwareupdate --list i zgłasza „Brak aktualizacji” | otwarte |
-| [APL-11](#apl-11) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRManager/AppModel.swift:304` | „Zezwalaj na instalatory bez podpisu Apple” zostaje włączone do końca sesji, także dla instalacji z internetu | otwarte |
 | [APL-12](#apl-12) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRManager/InstallView.swift:96` | Adres instalatora i „Otwórz” nie są przycinane – spacja na początku daje błąd „tylko https://” | otwarte |
 | [APL-13](#apl-13) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRManager/InstallView.swift:111` | Homebrew: przecinki w nazwach pakietów (jak w podpowiedzi) psują polecenie | otwarte |
 | [APL-14](#apl-14) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRManager/InstallView.swift:185` | „Pokaż zainstalowane” (Unity) wypisuje też wszystkie dostępne wydania | otwarte |
@@ -131,8 +126,8 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [APL-16](#apl-16) | Aplikacje, instalacja, aktualizacje | `Sources/cmcrctl/CLI.swift:452` | cmcrctl quit-app --force zabija aplikacje bez potwierdzenia (GUI pyta) | otwarte |
 | [APL-17](#apl-17) | Aplikacje, instalacja, aktualizacje | `Sources/cmcrctl/CLI.swift:540` | cmcrctl updates install nie pozwala na nową wersję macOS, a komunikat odsyła do przełącznika GUI | otwarte |
 | [CLI-03](#cli-03) | cmcrctl | `Sources/cmcrctl/CLI.swift:119` | --help poleceń podstawowych pokazuje całą pomoc zamiast pomocy polecenia | otwarte |
-| [CLI-04](#cli-04) | cmcrctl | `Sources/cmcrctl/CLI.swift:473` | kill PID przyjmuje wiele komputerów – zabija przypadkowe procesy jako root | otwarte |
-| [CLI-05](#cli-05) | cmcrctl | `Sources/cmcrctl/CLI.swift:575` | cmcrctl logout zawsze wylogowuje natychmiast (bootout) | otwarte |
+| [CLI-04](#cli-04) | cmcrctl | `Sources/cmcrctl/CLI.swift:474` | kill PID przyjmuje wiele komputerów – zabija przypadkowe procesy jako root | otwarte |
+| [CLI-05](#cli-05) | cmcrctl | `Sources/cmcrctl/CLI.swift:576` | cmcrctl logout zawsze wylogowuje natychmiast (bootout) | otwarte |
 | [CLI-06](#cli-06) | cmcrctl | `Sources/cmcrctl/ClassroomCommands.swift:196` | report używa ConfigStore.loadHosts() – inna lista i brak ostrzeżenia | otwarte |
 | [CLI-07](#cli-07) | cmcrctl | `Sources/cmcrctl/ClassroomCommands.swift:206` | schedule set i ask nie biorą ustawień z classroom.json | otwarte |
 | [CLI-08](#cli-08) | cmcrctl | `Sources/cmcrctl/ConfigCommands.swift:54` | Nieudany zapis hosts.json zgłaszany jako sukces (kod 0) | otwarte |
@@ -143,6 +138,9 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [CLI-13](#cli-13) | cmcrctl | `Sources/cmcrctl/TrustCommand.swift:15` | trust odrzuca -j/--prefix, a nie ma go na liście wyjątków | otwarte |
 | [CLI-14](#cli-14) | cmcrctl | `Sources/cmcrctl/TrustCommand.swift:65` | trust: zmieniony klucz zatwierdzany razem z nowymi (jedno pytanie/--yes) | otwarte |
 | [CLI-15](#cli-15) | cmcrctl | `Sources/cmcrctl/main.swift:22` | Polecenia modułów nie ostrzegają o uszkodzonym settings.json | otwarte |
+| [CLI-16](#cli-16) | cmcrctl | `Sources/CMCRCore/Scripts+Classroom.swift:257` | Komunikat power-later odsyła do nieistniejącego przycisku „Anuluj zaplanowane” (zgłoszone przy weryfikacji) | otwarte |
+| [CLI-17](#cli-17) | cmcrctl | `Sources/cmcrctl/ScriptCommands.swift:33` | install bierze istniejący lokalnie plik lub folder o nazwie KOMP (np. „all”) za instalator (zgłoszone przy weryfikacji) | otwarte |
+| [CLI-18](#cli-18) | cmcrctl | `Sources/cmcrctl/SetupCommands.swift:42` | setup-script po cichu ignoruje --verify i --dry-run, więc wygenerowany plik wprowadza zmiany (zgłoszone przy weryfikacji) | otwarte |
 | [KOM-02](#kom-02) | Komputery, zasilanie | `Sources/CMCRCore/Classroom.swift:432` | Uszkodzony classroom.json po cichu zastępowany wartościami domyślnymi | otwarte |
 | [KOM-03](#kom-03) | Komputery, zasilanie | `Sources/CMCRCore/Scripts+Classroom.swift:297` | Wyłączone przełączniki autorestart/Wake-on-LAN niczego nie wyłączają na iMacu | otwarte |
 | [KOM-04](#kom-04) | Komputery, zasilanie | `Sources/CMCRManager/App.swift:562` | Nieaktualny zalogowany uczeń przy wyłączonych komputerach (lista, panel, potwierdzenia) | otwarte |
@@ -155,6 +153,8 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [KOM-11](#kom-11) | Komputery, zasilanie | `Sources/CMCRManager/HostInspector.swift:424` | Błędna odmiana „Sprawdzanie… (N pozostało)” | otwarte |
 | [KOM-12](#kom-12) | Komputery, zasilanie | `Sources/CMCRManager/PowerView.swift:302` | Ostrzeżenie o FileVault przed restartem pomija automatyczne odblokowanie | otwarte |
 | [KOM-13](#kom-13) | Komputery, zasilanie | `Sources/cmcrctl/CLI.swift:330` | cmcrctl status zapisuje MAC trasy domyślnej, cmcrctl wake nie preferuje Ethernetu ani nie czeka | otwarte |
+| [KOM-14](#kom-14) | Komputery, zasilanie | `Sources/CMCRCore/Classroom.swift:563` | Eksport CSV nie neutralizuje formuł – dane kontrolowane przez ucznia wykonują się w arkuszu (zgłoszone przy weryfikacji) | otwarte |
+| [KOM-15](#kom-15) | Komputery, zasilanie | `Sources/CMCRManager/HostInspector.swift:282` | „Zmień nazwy komputerów” nie wykrywa kolizji z nazwami niezaznaczonych komputerów (zgłoszone przy weryfikacji) | otwarte |
 | [KON-07](#kon-07) | Konfiguracja | `Sources/CMCRCore/HostValidation.swift:27` | Poprawny adres MAC bez separatorów oznaczany jako błędny | otwarte |
 | [KON-08](#kon-08) | Konfiguracja | `Sources/CMCRCore/Store.swift:18` | Pusta zmienna CMCR_CONFIG_DIR przenosi dziennik działań w inne miejsce | otwarte |
 | [KON-09](#kon-09) | Konfiguracja | `Sources/CMCRManager/ActivityViews.swift:334` | Baner „Nie zapisano hasła administratora” przy samych hasłach „własnych” | otwarte |
@@ -166,22 +166,22 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [KON-15](#kon-15) | Konfiguracja | `Sources/CMCRManager/SetupView.swift:511` | Własne hasła zastąpionych lub usuniętych wpisów zostają w Pęku kluczy | otwarte |
 | [KON-16](#kon-16) | Konfiguracja | `Sources/CMCRManager/SetupView.swift:680` | „Utwórz (nowy) klucz” ignoruje klucz ustawiony w Ustawieniach › Połączenie | otwarte |
 | [KON-17](#kon-17) | Konfiguracja | `Sources/CMCRManager/SetupView.swift:762` | „Roześlij klucz” jest aktywne bez pliku .pub i kończy się samym sygnałem dźwiękowym | otwarte |
-| [PLI-05](#pli-05) | Pliki, przeglądarka | `Sources/CMCRCore/Operations+Browse.swift:71` | „Zbierz prace” odrzuca całe archiwum, gdy jeden plik jest nieczytelny | otwarte |
 | [PLI-06](#pli-06) | Pliki, przeglądarka | `Sources/CMCRCore/Operations+Browse.swift:91` | Nazwa komputera z „/” psuje „Zbierz prace” | otwarte |
 | [PLI-07](#pli-07) | Pliki, przeglądarka | `Sources/CMCRCore/SSH.swift:735` | Wysyłanie kończy się błędem, gdy pierwszy element ma nazwę zaczynającą się od „-” | otwarte |
 | [PLI-08](#pli-08) | Pliki, przeglądarka | `Sources/CMCRCore/Scripts.swift:805` | Nieudany chown przy wysyłaniu daje zadanie „Gotowe” | otwarte |
 | [PLI-09](#pli-09) | Pliki, przeglądarka | `Sources/CMCRCore/Scripts.swift:935` | „Pokaż listę plików” nie rozwija ~ (folder w katalogu administratora) | otwarte |
 | [PLI-10](#pli-10) | Pliki, przeglądarka | `Sources/CMCRManager/FilesView.swift:80` | Tekst o {console}: „komputery … zostaną pominięte”, a zadania kończą się błędem | otwarte |
 | [PLI-11](#pli-11) | Pliki, przeglądarka | `Sources/CMCRManager/FilesView.swift:350` | Podpisy „<nazwa komputera>” przy folderach konwencji, a folder nosi nazwę adresu | otwarte |
-| [PLI-12](#pli-12) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserModel.swift:81` | Usuwanie i pobieranie obejmuje zaznaczone elementy ukryte filtrem lub wyszukiwaniem | otwarte |
 | [PLI-13](#pli-13) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserModel.swift:103` | Przełączenie komputera po błędzie wczytywania przenosi ścieżkę poprzedniego iMaca | otwarte |
 | [PLI-14](#pli-14) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserModel.swift:196` | Przełącznik „Jako administrator” wraca sam do włączonego | otwarte |
 | [PLI-15](#pli-15) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserModel.swift:220` | Zmiany w Przeglądarce pomijane jako „niedostępny”, choć folder właśnie się wczytał | otwarte |
 | [PLI-16](#pli-16) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserModel.swift:223` | Wspólny stan activity/notice/lastDownload przy równoległych zmianach w Przeglądarce | otwarte |
 | [PLI-17](#pli-17) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserModel.swift:250` | Nazwy plików ucznia trafiają bez zmian do dziennika działań (fałszywe wpisy) | otwarte |
 | [PLI-18](#pli-18) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserView.swift:343` | „Wyślij pliki do tego folderu…” zastępuje istniejące pliki bez pytania | otwarte |
-| [PLI-19](#pli-19) | Pliki, przeglądarka | `Sources/cmcrctl/Browse.swift:137` | Inne domyślne sudo w CLI: collect bez root dla prywatnych folderów, push z właścicielem administratora | otwarte |
+| [PLI-19](#pli-19) | Pliki, przeglądarka | `Sources/cmcrctl/Browse.swift:136` | Inne domyślne sudo w CLI: collect bez root dla prywatnych folderów, push z właścicielem administratora | otwarte |
 | [PLI-20](#pli-20) | Pliki, przeglądarka | `Sources/cmcrctl/CLI.swift:431` | cmcrctl ls ŚCIEŻKA KOMP i clean nie rozwijają {student}; clean kończy się kodem 0 bez czyszczenia | otwarte |
+| [PLI-23](#pli-23) | Interfejs | `Sources/CMCRManager/RemoteBrowserView.swift:66` | Kliknięcie innego komputera na liście nie przełącza Przeglądarki plików (zgłoszone przy weryfikacji) | otwarte |
+| [PRZ-02](#prz-02) | Przygotowanie iMaców, uaktualnienia | `Sources/CMCRManager/Updater.swift:468` | „Przypomnij później” nie anuluje zleconej instalacji – po pobraniu aplikacja sama się zamyka i instaluje | otwarte |
 | [PRZ-05](#prz-05) | Przygotowanie iMaców, uaktualnienia | `README.md:34` | README podaje macOS 13, a aplikacja wymaga macOS 14 | otwarte |
 | [PRZ-06](#prz-06) | Przygotowanie iMaców, uaktualnienia | `README.md:52` | Kod wyjścia 4 skryptu konfiguracyjnego nieopisany w README | otwarte |
 | [PRZ-07](#prz-07) | Przygotowanie iMaców, uaktualnienia | `README.md:96` | README: „Skrypt sam wybiera zgodne SDK” – build-app.sh nie ma już tej logiki | otwarte |
@@ -194,6 +194,8 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [PRZ-14](#prz-14) | Przygotowanie iMaców, uaktualnienia | `Sources/CMCRManager/SetupOptionsSheet.swift:122` | Aplikacja pozwala uruchomić lub zapisać skrypt z niepoprawnym folderem ucznia (CLI to blokuje) | otwarte |
 | [PRZ-15](#prz-15) | Przygotowanie iMaców, uaktualnienia | `setup/cmcr-imac-setup.sh:475` | „Tylko sprawdź”/--dry-run twierdzi „Usunięto prawo zapisu…” i nie liczy tej zmiany | otwarte |
 | [PRZ-16](#prz-16) | Przygotowanie iMaców, uaktualnienia | `setup/cmcr-imac-setup.sh:717` | Nieudane pmset -a (WoL, uśpienie) i scutil --set są połykane – raport mówi „bez zmian”, kod 0 | otwarte |
+| [PRZ-18](#prz-18) | Przygotowanie iMaców, uaktualnienia | `Sources/CMCRManager/UpdateViews.swift:357` | „Sprawdź teraz” w oknie Ustawień (i „Sprawdź uaktualnienia…” bez widocznego głównego okna) pokazuje wynik w niewidocznym arkuszu (zgłoszone przy weryfikacji) | otwarte |
+| [TXT-01](#txt-01) | Teksty | `Sources/CMCRManager/MainToolbar.swift:59` | Podpowiedź „Ściana ekranów” obiecuje tylko zaznaczone komputery, a okno domyślnie pokazuje wszystkie | otwarte |
 | [TXT-02](#txt-02) | Teksty | `README.md:106` | README: filtr i skrót opisane jako „online”, w UI to „Włączone” | otwarte |
 | [TXT-03](#txt-03) | Teksty | `README.md:114` | README: „Pliki › Konwencja cmcr-helpers” – takiej pozycji nie ma | otwarte |
 | [TXT-04](#txt-04) | Teksty | `README.md:177` | README: „Anuluj” zatrzymuje polecenie – przycisk to „Przerwij”; stan „Przerwano” vs wynik „Anulowano” | otwarte |
@@ -203,29 +205,27 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [TXT-08](#txt-08) | Teksty | `Sources/CMCRCore/Scripts+Setup.swift:166` | Komunikaty gotowości odsyłają do przycisków, których nie ma | otwarte |
 | [TXT-09](#txt-09) | Teksty | `Sources/CMCRCore/Scripts+Setup.swift:175` | „w Konfiguracja › …” – zły przypadek; dwuznaczne „w Ustawieniach” | otwarte |
 | [TXT-10](#txt-10) | Teksty | `Sources/CMCRCore/Scripts.swift:369` | Komunikat odmowy instalacji odsyła do nieistniejącego przełącznika | otwarte |
-| [TXT-11](#txt-11) | Teksty | `Sources/CMCRCore/SelfUpdate.swift:649` | Komunikat uaktualnienia: przenieś do „folderu Aplikacje” zamiast „Programy” | otwarte |
 | [TXT-12](#txt-12) | Teksty | `Sources/CMCRManager/App.swift:668` | Ta sama akcja „sesja SSH w Terminalu” ma cztery różne nazwy | otwarte |
 | [TXT-13](#txt-13) | Teksty | `Sources/CMCRManager/HostInspector.swift:70` | Panel szczegółów: „120 GB wolne” i „Szyfrowanie dysku: włączony” | otwarte |
 | [TXT-14](#txt-14) | Teksty | `Sources/CMCRManager/ReadinessView.swift:279` | Instrukcja „Nagrywanie ekranu” pomija /usr/libexec/sshd-session | otwarte |
 | [TXT-15](#txt-15) | Teksty | `Sources/CMCRManager/RemoteBrowserComponents.swift:271` | W oknie pojawia się skrócona etykieta CLI stanu („offline”, „online”, „błąd”) | otwarte |
 | [TXT-16](#txt-16) | Teksty | `Sources/CMCRManager/RemoteBrowserComponents.swift:400` | Trzy różne nazwy opcji macOS „pełny dostęp do dysku dla użytkowników zdalnych” | otwarte |
 | [TXT-17](#txt-17) | Teksty | `Sources/CMCRManager/RemoteBrowserModel.swift:260` | Tytuły zadań przeglądarki: „Usuń/Pobierz/Wyślij 3 elementów” | otwarte |
-| [TXT-18](#txt-18) | Teksty | `Sources/CMCRManager/UpdateViews.swift:147` | Niespójny myślnik: „—” obok „–” | otwarte |
 | [TXT-19](#txt-19) | Teksty | `Sources/CMCRManager/Updater.swift:174` | Uaktualnienie aplikacji nazwane „aktualizacją” | otwarte |
 | [TXT-20](#txt-20) | Teksty | `Sources/cmcrctl/CLI.swift:69` | Pomoc cmcrctl: ustawienie „Równoległe operacje” nie istnieje, formatowanie niespójne | otwarte |
-| [TXT-21](#txt-21) | Teksty | `Sources/cmcrctl/CLI.swift:384` | cmcrctl exec/push/pull: angielskie nagłówki, w push z polską liczbą | otwarte |
 | [TXT-22](#txt-22) | Teksty | `Sources/cmcrctl/ScreenWatch.swift:52` | cmcrctl: „Zakończono: 3 cykli, 1 nowych obrazów” i „1 błędów składni” | otwarte |
 | [TXT-23](#txt-23) | Teksty | `setup/cmcr-imac-setup.sh:836` | Raport skryptu konfiguracyjnego: „Zainstalowano Rosetta 2”, „wpis(ów)”, „klucz menedżera” | otwarte |
+| [TXT-24](#txt-24) | Teksty | `Sources/CMCRManager/SetupOptionsSheet.swift:421` | Folder /Applications nazywany raz „Programy”, raz „Aplikacje”; aktualny polski macOS pokazuje „Aplikacje” (zgłoszone przy weryfikacji) | otwarte |
+| [UI-01](#ui-01) | Interfejs | `Sources/CMCRManager/App.swift:70` | ⌘, przypisany trzem pozycjom menu – skrót opisany przy „Ustawienia…” nie otwiera okna Ustawień | otwarte |
+| [UI-05](#ui-05) | Interfejs | `Sources/CMCRManager/SetupView.swift:378` | „Wczytaj listę z pliku…” zastępuje całą listę komputerów bez potwierdzenia | otwarte |
 | [UI-06](#ui-06) | Interfejs | `Sources/CMCRManager/App.swift:158` | Usunięty standardowy przycisk paska bocznego i wymuszany tryb paska narzędzi | otwarte |
 | [UI-07](#ui-07) | Interfejs | `Sources/CMCRManager/AppsView.swift:40` | Lista uruchomionych aplikacji nie wczytuje się dla komputerów zaznaczonych po wejściu w dział | otwarte |
 | [UI-08](#ui-08) | Interfejs | `Sources/CMCRManager/ClassroomView.swift:496` | Ta sama akcja lub ten sam stan oznaczane różnymi symbolami | otwarte |
-| [UI-09](#ui-09) | Interfejs | `Sources/CMCRManager/ClassroomView.swift:749` | Odpowiedzi uczniów i macierz gotowości to listy z kolumnami bez Table | otwarte |
 | [UI-10](#ui-10) | Interfejs | `Sources/CMCRManager/ClassroomView.swift:859` | Niespójna terminologia: „sekcja” zamiast „dział”, „Zaktualizowano” dla uaktualnienia aplikacji, „Pobrane rzeczy” vs „Pobrane” | otwarte |
-| [UI-11](#ui-11) | Interfejs | `Sources/CMCRManager/Components.swift:329` | Sztywne rozmiary czcionek i kolory z przezroczystością zamiast stylów semantycznych | otwarte |
 | [UI-12](#ui-12) | Interfejs | `Sources/CMCRManager/ConfigIssuesAlert.swift:48` | Przykładowy komunikat w zrzutach UI podaje nieistniejący plik „hosts.json.damaged” | otwarte |
 | [UI-13](#ui-13) | Interfejs | `Sources/CMCRManager/DashboardView.swift:65` | Tabela działu Komputery z otwartym panelem szczegółów nie mieści się w oknie 1180 pt | otwarte |
 | [UI-14](#ui-14) | Interfejs | `Sources/CMCRManager/JobsView.swift:666` | Błędy zapisu i otwierania sygnalizowane tylko dźwiękiem albo przemilczane | otwarte |
-| [UI-15](#ui-15) | Interfejs | `Sources/CMCRManager/RemoteBrowserView.swift:105` | Przyciski niszczące stoją bezpośrednio obok zwykłych akcji | otwarte |
+| [UI-15](#ui-15) | Interfejs | `Sources/CMCRCore/LessonRoutine.swift:169` | „najwyżej N komputerów naraz” – zła odmiana dla N = 1…4 (zgłoszone przy weryfikacji) | otwarte |
 | [UI-16](#ui-16) | Interfejs | `Sources/CMCRManager/ScreenControls.swift:49` | „Zmień ograniczenia…” otwiera Konfigurację na zakładce Komputery zamiast ustawień podglądu | otwarte |
 | [UI-17](#ui-17) | Interfejs | `Sources/CMCRManager/ScreenControls.swift:217` | „Szczegóły” w banerze podglądu i pasku Przeglądarki otwiera Zadania bez wskazania właściwego działania | otwarte |
 | [UI-18](#ui-18) | Interfejs | `Sources/CMCRManager/ScreenControls.swift:238` | Animacje przesunięcia i skalowania ignorują ustawienie „Ogranicz ruch” | otwarte |
@@ -233,12 +233,17 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [UI-20](#ui-20) | Interfejs | `Sources/CMCRManager/ScreenWall.swift:230` | Ikona „Pełny ekran” w Ścianie ekranów wymaga macOS 15 – na macOS 14 przycisk jest bez ikony | otwarte |
 | [UI-21](#ui-21) | Interfejs | `Sources/CMCRManager/ScreenWall.swift:414` | Menu i menu kontekstowe mieszają pozycje z ikonami i bez ikon | otwarte |
 | [UI-22](#ui-22) | Interfejs | `Sources/CMCRManager/UpdatesView.swift:54` | Symbole SF z ograniczeniami Apple użyte niezgodnie z przeznaczeniem | otwarte |
-| [WSP-03](#wsp-03) | Współbieżność | `Sources/CMCRManager/App.swift:134` | Pętla odświeżania co 2 min związana z oknem głównym (brak przy Ścianie, podwójna przy ⌘N) | otwarte |
+| [UI-23](#ui-23) | Interfejs | `Sources/CMCRManager/App.swift:49` | Pomoc › „Pomoc aplikacji CMCR Manager” (⌘?) pokazuje tylko, że pomoc jest niedostępna (zgłoszone przy weryfikacji) | otwarte |
+| [UI-24](#ui-24) | Interfejs | `Sources/CMCRManager/App.swift:437` | „Usuń grupę” bez potwierdzenia, niespójne role „Przerwij”, przyciski niszczące tuż obok zwykłych | otwarte |
+| [UI-25](#ui-25) | Interfejs | `Sources/CMCRManager/SetupView.swift:1044` | Zrzut „settings” w ciemnym motywie pokazuje zakładkę Uaktualnienia zamiast Ogólne (zgłoszone przy weryfikacji) | otwarte |
+| [WSP-03](#wsp-03) | Współbieżność | `Sources/CMCRManager/App.swift:134` | Odświeżanie co 2 min działa tylko przy otwartym oknie głównym – sama Ściana ekranów nie dostaje aktualnego stanu | otwarte |
 | [WSP-04](#wsp-04) | Współbieżność | `Sources/CMCRManager/AppModel+Jobs.swift:322` | „Przerwij” nie działa w trakcie pakowania plików (tar) | otwarte |
 | [WSP-05](#wsp-05) | Współbieżność | `Sources/CMCRManager/AppModel+Jobs.swift:400` | Kliknięcie powiadomienia „Zakończono…” bez okna głównego niczego nie pokazuje | otwarte |
 | [WSP-06](#wsp-06) | Współbieżność | `Sources/CMCRManager/AppModel.swift:823` | Lista zainstalowanych aplikacji ignoruje błędy i nie pokazuje postępu | otwarte |
 | [WSP-07](#wsp-07) | Współbieżność | `Sources/CMCRManager/RemoteBrowserComponents.swift:460` | Nowy folder / Zmień nazwę z „/” w nazwie – tylko dźwięk, nazwa przepada | otwarte |
+| [WSP-08](#wsp-08) | Współbieżność | `Sources/cmcrctl/ConfigCommands.swift:54` | cmcrctl hosts add/set/remove/generate pisze „Dodano…” i kończy z kodem 0, choć hosts.json nie został zapisany (zgłoszone przy weryfikacji) | otwarte |
 | [WŁ-01](#wł-01) | Własne | `Sources/CMCRManager/App.swift:46` | Menu Pomoc › „Pomoc aplikacji CMCR Manager” (⌘?) nie prowadzi do żadnej pomocy | otwarte |
+| [ZAD-03](#zad-03) | Zadania, polecenia | `Sources/CMCRManager/AppModel.swift:440` | Wynik zdalnego zatrzymania nie trafia do podsumowania ani historii – „Anulowano” nawet gdy polecenie nadal działa | otwarte |
 | [ZAD-04](#zad-04) | Zadania, polecenia | `Sources/CMCRCore/JobHistory.swift:183` | Zapis historii może nadpisać cały plik miesiąca jednym wpisem | otwarte |
 | [ZAD-05](#zad-05) | Zadania, polecenia | `Sources/CMCRCore/JobHistory.swift:246` | Historia: wpisy starsze niż 90 dni widoczne z usuniętym wyjściem, limit 3000 tnie partie | otwarte |
 | [ZAD-06](#zad-06) | Zadania, polecenia | `Sources/CMCRCore/SSH.swift:424` | Przerwanie tuż po starcie pomija zatrzymanie na iMacu, choć polecenie już ruszyło | otwarte |
@@ -247,20 +252,23 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [ZAD-09](#zad-09) | Zadania, polecenia | `Sources/CMCRManager/AppModel.swift:442` | Niespójna terminologia anulowania i nagłówków wyników | otwarte |
 | [ZAD-10](#zad-10) | Zadania, polecenia | `Sources/CMCRManager/AppModel.swift:450` | Przy błędzie cały stderr jest dopisywany drugi raz do wyniku i historii | otwarte |
 | [ZAD-11](#zad-11) | Zadania, polecenia | `Sources/CMCRManager/AppModel.swift:491` | „Wyczyść zakończone” gubi oglądaną partię z historii | otwarte |
-| [ZAD-12](#zad-12) | Zadania, polecenia | `Sources/CMCRManager/JobsView.swift:349` | Bieżące zadania nie pokazują kodu wyjścia | otwarte |
 | [ZAD-13](#zad-13) | Zadania, polecenia | `Sources/cmcrctl/CLI.swift:240` | cmcrctl uruchamia skrypty bez rejestracji zadania: Ctrl-C nie zatrzymuje polecenia na iMacu | otwarte |
 | [ZAD-14](#zad-14) | Zadania, polecenia | `Sources/cmcrctl/CLI.swift:354` | cmcrctl nie zapisuje działań w dzienniku actions.log | otwarte |
 | [ZAD-15](#zad-15) | Zadania, polecenia | `Sources/cmcrctl/CLI.swift:359` | cmcrctl exec --root nie pyta o ryzykowne polecenia, aplikacja pyta | otwarte |
+| [ZAD-16](#zad-16) | Zadania, polecenia | `Sources/CMCRManager/AppModel.swift:439` | Przerwane zadania i zadania po limicie czasu mają w historii i eksporcie „kod” lokalnego ssh lub -1 (zgłoszone przy weryfikacji) | otwarte |
+| [ZAJ-02](#zaj-02) | Zajęcia, podgląd | `Sources/CMCRCore/Classroom.swift:563` | Eksport odpowiedzi uczniów do CSV bez ochrony przed formułami | otwarte |
 | [ZAJ-06](#zaj-06) | Zajęcia, podgląd | `Sources/CMCRCore/LessonRoutine.swift:91` | Puste ostrzeżenie końca zajęć pokazuje uczniom pusty komunikat | otwarte |
 | [ZAJ-07](#zaj-07) | Zajęcia, podgląd | `Sources/CMCRCore/LessonRoutine.swift:169` | Ręcznie sklejane liczebniki: „najwyżej 2 komputerów”, „3 cykli, 3 nowych obrazów” | otwarte |
 | [ZAJ-08](#zaj-08) | Zajęcia, podgląd | `Sources/CMCRCore/ScreenCapture.swift:436` | Jakość JPEG z ustawień stosowana tylko przy zmniejszaniu obrazu | otwarte |
 | [ZAJ-09](#zaj-09) | Zajęcia, podgląd | `Sources/CMCRCore/Scripts+Classroom.swift:386` | „Zamknij aplikacje › Wszystkie” zabija aplikacje SIGTERM bez szansy zapisu | otwarte |
 | [ZAJ-10](#zaj-10) | Zajęcia, podgląd | `Sources/CMCRManager/ClassroomModel.swift:395` | Nieudane ponowne zablokowanie odblokowuje ekran, a aplikacja pokazuje go jako zablokowany | otwarte |
 | [ZAJ-11](#zaj-11) | Zajęcia, podgląd | `Sources/CMCRManager/ClassroomModel.swift:427` | Pytanie: pominięte komputery wiszą jako „czeka na odpowiedź” na zawsze | otwarte |
-| [ZAJ-12](#zaj-12) | Zajęcia, podgląd | `Sources/CMCRManager/ClassroomModel.swift:428` | Nowe pytanie nie zamyka poprzedniego – stare okna zostają u uczniów | otwarte |
+| [ZAJ-12](#zaj-12) | Zajęcia, podgląd | `Sources/CMCRManager/ClassroomModel.swift:428` | Nowe pytanie nie zamyka poprzedniego – stare okna zostają u uczniów, a odpowiedzi znikają z tabeli | otwarte |
 | [ZAJ-13](#zaj-13) | Zajęcia, podgląd | `Sources/CMCRManager/ClassroomView.swift:466` | „Gotowe na wszystkich komputerach.” po przerwaniu lub pominięciu komputerów | otwarte |
 | [ZAJ-14](#zaj-14) | Zajęcia, podgląd | `Sources/cmcrctl/ClassroomCommands.swift:357` | cmcrctl lesson start budzi i obsługuje komputery po kolei | otwarte |
 | [ZAJ-15](#zaj-15) | Zajęcia, podgląd | `Sources/cmcrctl/ScreenWatch.swift:99` | screen-watch wypisuje ścieżkę klatki, nawet gdy zapis się nie udał | otwarte |
+| [ZAJ-17](#zaj-17) | Zajęcia, podgląd | `Sources/CMCRManager/ScreenCenter.swift:510` | Wybór konkretnego monitora ukrywa przełącznik monitorów (zgłoszone przy weryfikacji) | otwarte |
+| [ZAJ-18](#zaj-18) | Zajęcia, podgląd | `Sources/cmcrctl/ScreenWatch.swift:34` | cmcrctl screen-watch i screenshot nie zapisują sesji podglądu w dzienniku działań (zgłoszone przy weryfikacji) | otwarte |
 
 ## Szczegóły
 
@@ -270,7 +278,7 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 
 cmcr_verify_signature uznaje, że Gatekeeper jest wyłączony, gdy w CAŁYM wyjściu `spctl -vv` występuje „override=”. Pierwszy wiersz tego wyjścia to ścieżka sprawdzanego elementu, więc wystarczy odpowiednia nazwa pliku lub folderu w archiwum .zip/.dmg (np. folder „override=/X.app” albo „Setup override=1.pkg”) lub ostatni człon adresu w install-url, by przy WŁĄCZONYM Gatekeeperze przejść na słabszą ścieżkę: `pkgutil --check-signature` / `codesign -R` (sam Developer ID, bez notaryzacji i bez jej cofnięcia przez Apple). Pakiet lub aplikacja podpisane Developer ID, ale nienotaryzowane (albo z unieważnioną notaryzacją), instalują się jako root bez „Zezwalaj na instalatory bez podpisu Apple”.
 
-**Status:** otwarte
+**Status:** naprawione (2f96309)
 
 ### CLI-01
 
@@ -286,7 +294,7 @@ Gdy w classroom.json jest sendMaterials=true i materialsFolder="" (GUI pozwala w
 
 HostTrust.scan przekazuje host.destination (konto@adres) do /usr/bin/ssh bez walidacji i bez „--”, a po nim stały argument „true”. Konto „-oProxyCommand=…” ssh czyta więc jako opcję, „true” staje się nazwą hosta, a ProxyCommand uruchamia się lokalnie jeszcze przed sprawdzeniem klucza. HostValidation tylko rysuje trójkąt w tabeli (komunikat twierdzi, że „połączenie nie zadziała”); import (SetupView.importHosts), hosts.json ani SSH.* nie blokują takich wpisów. Wyzwalacze: Przygotowanie iMaców › Szybkie naprawy › Sprawdź klucz komputera… (AppModel.reviewHostKeys → HostTrust.scan) oraz `cmcrctl trust all` z README (krok 2). Zwykłe SSH.run jest przypadkiem chronione, bo po celu idzie polecenie ze spacjami („hostname contains invalid characters”).
 
-**Status:** otwarte
+**Status:** naprawione (26edf17)
 
 ### KON-02
 
@@ -294,11 +302,11 @@ HostTrust.scan przekazuje host.destination (konto@adres) do /usr/bin/ssh bez wal
 
 ConfigStore.importHosts (i loadHosts) dekodują listę bez sprawdzenia unikalności Machine.id z pliku. Naturalny sposób dopisania komputera w edytorze – skopiowanie wpisu z wyeksportowanego cmcr-komputery.json i zmiana nazwy/adresu – daje dwa wpisy o tym samym id. Po wczytaniu (SetupView.swift:378) i zaznaczeniu obu LessonRun.init (ClassroomModel.swift:26) oraz zmiana nazw komputerów (ClassroomModel.swift:537) budują Dictionary(uniqueKeysWithValues:) po id → pułapka i zamknięcie aplikacji. Wcześniej: edycja drugiego wiersza w tabeli zmienia pierwszy (field() szuka firstIndex po id), oba mają wspólny status i własne hasło.
 
-**Status:** otwarte
+**Status:** naprawione (332b819)
 
 ### PLI-01
 
-**Zmiana nazwy jako root może przenieść plik przez dowiązanie podstawione w trakcie (mv bez -h)** – P0, Pliki, przeglądarka, `Sources/CMCRCore/Scripts+Browse.swift:279`
+**Zmiana nazwy jako root: mv bez -h podąża za dowiązaniem podstawionym po sprawdzeniu** – P0, Pliki, przeglądarka, `Sources/CMCRCore/Scripts+Browse.swift:279`
 
 renameItem sprawdza `[ -e "$DST" ] || [ -L "$DST" ]`, a dopiero potem wykonuje `mv -n "$SRC" "$DST"` (w gałęzi zmiany wielkości liter `mv "$SRC" "$DST"`, l. 274). Gdy uczeń w tym oknie utworzy w swoim folderze DST jako dowiązanie do katalogu (innego konta albo systemowego, np. /private/etc), BSD mv bez -h traktuje cel jako katalog i root przenosi plik ucznia DO celu dowiązania, a skrypt wypisuje „✔ Zmieniono nazwę”. Nowa nazwa jest widoczna dla ucznia w `ps` (tekst skryptu jest w argumentach powłoki administratora). To łamie zapewnienie README, że zmiana nazw w Przeglądarce nie przechodzi przez dowiązania użytkowników (push używa właśnie `mv -h` z tego powodu). Ten sam wzorzec: przywracanie w pushFinalize `/bin/mv "$STAGE/old/$n" "$t"` (Scripts.swift:827) bez -h.
 
@@ -306,7 +314,7 @@ renameItem sprawdza `[ -e "$DST" ] || [ -L "$DST" ]`, a dopiero potem wykonuje `
 
 ### PRZ-01
 
-**Szybka naprawa „Włącz Udostępnianie ekranu” otwiera VNC dla wszystkich kont, także konta ucznia** – P0, Przygotowanie iMaców, uaktualnienia, `Sources/CMCRCore/Scripts.swift:1109`
+**Szybka naprawa „Włącz Udostępnianie ekranu” włącza VNC bez listy dostępu (dla wszystkich kont, także ucznia)** – P0, Przygotowanie iMaców, uaktualnienia, `Sources/CMCRCore/Scripts.swift:1109`
 
 Przycisk naprawy w komórce „Udostępnianie ekranu” (ReadinessView.swift:808), pozycja menu Szybkie naprawy (l. 439) i applyReadinessFix(.vnc) (l. 133) uruchamiają Scripts.enableScreenSharing(), które wykonuje tylko launchctl enable/bootstrap. Grupy com.apple.access_screensharing z zagnieżdżoną grupą admin nie tworzy ani nie przywraca. Robi to wyłącznie skrypt konfiguracyjny (ensure_access_group screensharing, setup/cmcr-imac-setup.sh:679), który też traktuje brak grupy jako „Wszyscy użytkownicy”. Scenariusz: na iMacu, na którym VNC nigdy nie było konfigurowane, nauczyciel klika naprawę. Do Udostępniania ekranu może się wtedy zalogować każde konto lokalne, w tym wspólne konto „student”, którego hasło uczniowie znają. Uczeń przy innym iMacu podgląda ekran kolegi (lub nim steruje). Późniejsze „Skonfiguruj zaznaczone” bez --enable-vnc tego nie poprawia, bo step_vnc zgłasza tylko „bez zmian”. README opisuje tę funkcję jako „Udostępnianie ekranu dla administratorów (--enable-vnc)”. Ten sam skrypt wywołuje ukryte polecenie cmcrctl „screen-sharing”.
 
@@ -318,13 +326,23 @@ Przycisk naprawy w komórce „Udostępnianie ekranu” (ReadinessView.swift:808
 
 ConfigStore.log dopisuje do actions.log przez stare seekToEndOfFile()/write(_:) NSFileHandle, które przy błędzie zapisu (ENOSPC, EFBIG, I/O) rzucają NSFileHandleOperationException – Swift jej nie łapie, aplikacja i cmcrctl kończą się awarią. log() jest wołany przy każdym runBatch, w HostTrust.trust, przy podglądzie ekranu i w JobHistory.record po nieudanym zapisie historii, więc np. gdy „Zbierz prace” (duże projekty uczniów) zapełni dysk, pierwsze zakończone zadanie zamyka aplikację (tracąc stan pozostałych). Zweryfikowane skryptem w scratchpadzie: przy RLIMIT_FSIZE writeData: kończy proces („File too large”), a try write(contentsOf:) zwraca błąd.
 
-**Status:** otwarte
+**Status:** naprawione (a085a2a)
 
 ### ZAJ-01
 
-**Czyszczenie folderu cmcr na koniec zajęć usuwa pliki zapisane po zebraniu prac** – P0, Zajęcia, podgląd, `Sources/CMCRCore/LessonRoutine.swift:287`
+**Koniec zajęć: „Wyczyść folder cmcr” kasuje też pliki zapisane po migawce zbierania prac** – P0, Zajęcia, podgląd, `Sources/CMCRCore/LessonRoutine.swift:287`
 
 Krok „Wyczyść folder cmcr ucznia” wywołuje Scripts.cleanFolder, które usuwa CAŁĄ zawartość folderu (find . -mindepth 1 -maxdepth 1 -exec rm -rf), a nie tylko pliki zebrane chwilę wcześniej. Między migawką tar w kroku „Zbierz prace” a czyszczeniem mija czas transferu, rozpakowania i nowej sesji SSH z sudo (sekundy–minuty), a uczeń jest wciąż zalogowany (wylogowanie jest później, zamykanie aplikacji domyślnie wyłączone; ostrzeżenie każe właśnie „zapisać pracę w folderze cmcr”). Plik zapisany/zmieniony w tym oknie nie trafia do kopii, a potem zostaje skasowany – nieodwracalna utrata pracy ucznia. Dział Pliki ma do tego bezpieczną ścieżkę (Operations.collect + Scripts.removeCollected: usuwa tylko zebrane i niezmienione pliki), której scenariusz nie używa. Dodatkowo krok collect rozpakowuje tar wprost do <folder>/<m.name> bez uniqueURL, więc dwa komputery o tej samej nazwie albo „Powtórz na nieudanych” nadpisują wcześniej zebrane pliki (przy włączonym czyszczeniu – ich jedyną kopię).
+
+**Status:** otwarte
+
+### ZAJ-16
+
+**Awaria po upływie odliczania końca zajęć: zakres Date()...end z odwróconymi granicami** – P0, Zajęcia, podgląd, `Sources/CMCRManager/ClassroomView.swift:470`
+
+Podczas odliczania przed końcem zajęć sekcja postępu buduje `Text(timerInterval: Date()...end, countsDown: true)`, dopóki `run.countdownEnd` nie jest nil. Pętla w ClassroomModel.endLesson sprawdza czas co 0,5 s i dopiero potem zeruje countdownEnd (ClassroomModel.swift:337-340), więc przez ułamek sekundy po `end` wartość nadal istnieje. Każde przeliczenie body w tym oknie tworzy zakres z lowerBound > upperBound, a Swift przerywa program („Range requires lowerBound <= upperBound”, sprawdzane także w buildzie -O). LessonProgressSection ma @EnvironmentObject AppModel, więc przeliczenie wywoła np. wynik okresowego odświeżania stanu co 2 min, zmiana zaznaczenia, start zadania w innym dziale albo przełączenie zakładki. Sekcja jest widoczna domyślnie, bo po starcie zakończenia zajęć widok przełącza się na „Koniec lekcji” i przewija do postępu. Aplikacja pada tuż przed zbieraniem prac i kolejne kroki zakończenia zajęć się nie wykonują. Okno czasowe jest krótkie, ale powtarza się przy każdym zakończeniu zajęć.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
 
 **Status:** otwarte
 
@@ -349,6 +367,16 @@ Biblioteka skryptów ustawia `export LC_ALL=C` (SSH.swift:43), a macOS `ps` w lo
 **Nieudane sprawdzenie aktualizacji pokazywane jako „System jest aktualny”** – P1, Aplikacje, instalacja, aktualizacje, `Sources/CMCRManager/AppModel.swift:889`
 
 checkUpdates zapisuje wynik, gdy `r.succeeded || !r.stdout.isEmpty`, a listUpdates łączy stderr ze stdout (`softwareupdate --list 2>&1`). Każdy błąd z tekstem (brak połączenia z serwerem Apple, katalog zablokowany w sieci szkolnej, limit 600 s z samym nagłówkiem „Software Update Tool / Finding available software”) daje pustą listę tytułów → zielone „System jest aktualny” i brak plakietki w pasku bocznym. UpdateInfo.raw nie jest nigdzie pokazywane. cmcrctl updates list rozróżnia „No new software available” i wypisuje odpowiedź (CLI.swift:530-534).
+
+**Status:** otwarte
+
+### APL-18
+
+**„Historia instalacji” pokazuje najstarsze wpisy, a najnowsze aktualizacje są ucinane** – P1, Aplikacje, instalacja, aktualizacje, `Sources/CMCRCore/Scripts.swift:696`
+
+updateHistory wykonuje `softwareupdate --history 2>&1 | head -n 40`, a softwareupdate wypisuje historię rosnąco według daty, czyli najstarsze wpisy najpierw (w kolejności z /Library/Receipts/InstallHistory.plist). Na iMacu z ponad 38 wpisami (ok. 2–3 lata aktualizacji macOS i Command Line Tools) przycisk „Historia instalacji” (UpdatesView.swift:43) oraz `cmcrctl updates history` (CLI.swift:550-553) pokazują tylko najstarsze instalacje. Ostatnie aktualizacje, które nauczyciel chce sprawdzić, są ucięte, a lista kończy się np. wpisem sprzed dwóch lat.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
 
 **Status:** otwarte
 
@@ -416,19 +444,19 @@ Pole „Folder ucznia na iMacach” wprost dopuszcza {student} (podpis „{stude
 
 **Status:** otwarte
 
-### PLI-04
+### PLI-12
+
+**Usuwanie i pobieranie obejmuje zaznaczone elementy ukryte filtrem lub wyszukiwaniem** – P1, Pliki, przeglądarka, `Sources/CMCRManager/RemoteBrowserModel.swift:81`
+
+refilter() zmienia tylko visibleEntries, a selectedEntries bierze elementy z całej listy. Scenariusz: „Ukryte pliki” włączone, ⌘A, „Ukryte pliki” wyłączone, „Usuń…” – usuwane są też niewidoczne pliki z kropką (np. .git ucznia); podobnie przy aktywnym wyszukiwaniu i ⌘-kliku. Arkusz wymienia tylko 5 pierwszych nazw.
+
+**Status:** otwarte
+
+### PLI-22
 
 **Kliknięcie innego komputera na liście nie przełącza Przeglądarki plików** – P1, Pliki, przeglądarka, `Sources/CMCRManager/RemoteBrowserView.swift:66`
 
 README: „kliknięcie innego komputera na liście pokazuje ten sam folder na nim”. Klik wiersza tylko podświetla (MachineListView: prywatny @ViewState highlighted, App.swift:252), a przeglądarka reaguje wyłącznie na zmianę pól wyboru i tylko, gdy zaznaczony jest dokładnie jeden komputer. Przy typowych 15 zaznaczonych (zaznaczenie jest zapamiętywane) klik ani dwuklik niczego w przeglądarce nie zmienia; działa tylko „Zaznacz tylko ten” albo wybór w polu „Komputer”.
-
-**Status:** otwarte
-
-### PRZ-02
-
-**„Przypomnij później” nie anuluje zleconej instalacji – po pobraniu aplikacja sama się zamyka i instaluje** – P1, Przygotowanie iMaców, uaktualnienia, `Sources/CMCRManager/Updater.swift:468`
-
-Gdy uaktualnienie nie jest jeszcze pobrane, przycisk „Zainstaluj i uruchom ponownie” (albo „Spróbuj ponownie” w fazie .failed) ustawia installWhenReady = true i zaczyna pobieranie (l. 355). Tak jest w fazie .available/.failed: pobieranie w tle wyłączone, wcześniej anulowane albo nieudane. Jeśli potem użytkownik wybierze „Przypomnij później” (także Esc, bo to .cancelAction), remindLater() tylko ustawia drzemkę i zamyka okno. installWhenReady zostaje, więc po pobraniu download() wywołuje installAndRelaunch() (l. 330–332). Gdy nie trwają zadania, aplikacja nagle się zamyka i instaluje nową wersję (w /Applications wyskakuje prośba o hasło administratora). To przeczy „Przypomnij później (24 h)” i zasadzie „Bez Twojej zgody nic nie jest instalowane”. Nawet bez zadań przepadają niezapisane rzeczy w oknie, np. rozpisana wiadomość.
 
 **Status:** otwarte
 
@@ -448,19 +476,13 @@ Zabezpieczenie w step_sshd_tuning sprawdza tylko, czy KEY_FPS jest niepuste. KEY
 
 **Status:** otwarte
 
-### TXT-01
+### PRZ-17
 
-**Podpowiedź „Ściana ekranów” obiecuje tylko zaznaczone komputery, a okno domyślnie pokazuje wszystkie** – P1, Teksty, `Sources/CMCRManager/MainToolbar.swift:59`
+**cmcrctl setup-script po cichu ignoruje --verify/--dry-run – plik „do sprawdzenia” wprowadza zmiany jako root** – P1, Przygotowanie iMaców, uaktualnienia, `Sources/cmcrctl/SetupCommands.swift:42`
 
-Podpowiedź przycisku na pasku narzędzi brzmi „Pokaż ekrany wszystkich zaznaczonych komputerów w osobnym oknie…”. Ściana ma jednak domyślne źródło `.all`, niezależne od zaznaczenia (ScreenWall.swift:103, ScreenWallSource). Nauczyciel zaznacza 3 komputery i klika przycisk zgodnie z podpowiedzią. Otwiera się podgląd wszystkich komputerów z listy, a każdy zalogowany uczeń dostaje komunikat „Administrator rozpoczął podgląd Twojego ekranu”. Tekst wprowadza w błąd co do skutku. ScreensView.swift:31 opisuje to poprawnie: „pokazuje wszystkie komputery naraz”.
+SetupCommandLine przyjmuje --verify i --dry-run w każdym poleceniu (SetupScript.swift:460-461), a gałąź setup-script (SetupCommands.swift:37-44) ignoruje cl.mode. SetupScript.standalone() podmienia tylko blok CMCR-DEFAULTS, a MODE=apply leży poza nim. Scenariusz: `cmcrctl setup-script --verify [--sudo-nopasswd …] > plik.sh` kończy się kodem 0, a `sudo bash plik.sh` przy iMacu od razu wprowadza wszystkie zmiany jako root, także te, które użytkownik chciał tylko podejrzeć. `cmcrctl setup-script --help` wypisuje przy tym „--verify  tylko sprawdź (nic nie zmienia)”, a według README opcja, której polecenie nie używa, daje kod 2 i nic nie jest wykonywane. Podobnie `readiness` po cichu przyjmuje opcje konfiguracji (np. --ssh-key-only).
 
-**Status:** otwarte
-
-### UI-01
-
-**Okno Ustawień nieosiągalne z menu – ⌘, otwiera dział Konfiguracja** – P1, Interfejs, `Sources/CMCRManager/App.swift:68`; także: `README.md:182`
-
-CommandGroup(replacing: .appSettings) usuwa standardową pozycję „Ustawienia…” sceny Settings i wstawia „Konfiguracja…” (⌘,), która tylko przełącza dział w głównym oknie. Okno Ustawień (AppSettingsWindow) da się otworzyć wyłącznie linkiem na dole Konfiguracja › Ustawienia (SetupView.swift:786). README i teksty w aplikacji (SetupView.swift:789 „(⌘,)”, 792 „z menu CMCR Manager › Ustawienia… (⌘,)”) opisują nieistniejącą pozycję. Skutek uboczny: SnapshotRenderer.captureSettings (SnapshotRenderer.swift:155-165) wybiera pozycję z ⌘, – okno Ustawień się nie otwiera, wpis „settings” kończy się komunikatem „Brak okna Ustawień” i nie powstaje zrzut okna Ustawień wymagany w Etapie 3. Dodatkowo ⌘, jest przypisany dwóm pozycjom (App.swift:70 i Przejdź › Konfiguracja, App.swift:81). To regresja z równoległych commitów 776e90c (okno Ustawień ⌘,) i ba73c33 (Konfiguracja… ⌘,).
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
 
 **Status:** otwarte
 
@@ -488,14 +510,6 @@ ConfirmRequest w confirmDelete (376) i startUpload (354) nie podaje targets, wi�
 
 **Status:** otwarte
 
-### UI-05
-
-**„Wczytaj listę z pliku…” zastępuje całą listę komputerów bez potwierdzenia** – P1, Interfejs, `Sources/CMCRManager/SetupView.swift:378`
-
-importHosts() od razu wykonuje model.machines = hosts (didSet natychmiast zapisuje hosts.json) – bez potwierdzenia i bez oznaczenia akcji jako niszczącej (pozycja menu ze zwykłą ikoną square.and.arrow.down, SetupView.swift:299-303). Wybranie złego pliku nieodwracalnie kasuje grupy, notatki, adresy MAC, porty i ustawienia haseł bieżącej listy; własne hasła usuniętych wpisów zostają w Pęku kluczy (askDelete, 364, je czyści). Generator (askReplace, 506-516) i CLI (README: zastępowanie listy pyta o potwierdzenie) wymagają potwierdzenia.
-
-**Status:** otwarte
-
 ### WSP-02
 
 **„Przerwij” na partii ostrzeżenia nie przerywa „Zakończ zajęcia”** – P1, Współbieżność, `Sources/CMCRManager/ClassroomModel.swift:332`
@@ -506,7 +520,7 @@ Batch.cancel() – przycisk „Przerwij” w „Wynik ostatniego działania” w
 
 ### ZAD-01
 
-**„Powtórz na nieudanych” używa starej kopii komputera (wspólne hasło, adres, port, usunięte iMaki)** – P1, Zadania, polecenia, `Sources/CMCRManager/AppModel+Jobs.swift:137`
+**„Powtórz na nieudanych” używa starej kopii komputera (wspólne hasło, adres, port, usunięte iMaki)** – P1, Zadania, polecenia, `Sources/CMCRManager/AppModel+Jobs.swift:136`
 
 retry()/rerun przekazują Machine zapisane w zadaniach w chwili startu partii (retryableMachines = jobs.map(\.machine)), a operacje (runScript → ssh → password(for: m)) używają tej migawki. Scenariusz z README: imac07 ma inne hasło → zadanie kończy się „Błędne hasło administratora (sudo)” → nauczyciel ustawia „własne” hasło (SetupView zmienia machines[i].usesSharedPassword = false) → „Powtórz na nieudanych” znów wysyła hasło wspólne (migawka ma usesSharedPassword == true) i znów się nie udaje. To samo po poprawieniu adresu/konta/portu; powtórzenie trafia też do komputerów usuniętych z listy, a selectProblems zaznacza ich nieistniejące id. Wake-on-LAN obchodzi to ręcznie (ClassroomModel.swift:239: „A retry passes the batch's copy of the Mac”), pozostałe operacje nie.
 
@@ -517,22 +531,6 @@ retry()/rerun przekazują Machine zapisane w zadaniach w chwili startu partii (r
 **„Przerwij zadania i zakończ” nie czeka na zatrzymanie na iMacach ani na zapis historii** – P1, Zadania, polecenia, `Sources/CMCRManager/AppModel+Jobs.swift:508`; także: `Sources/CMCRManager/App.swift:15`
 
 Po potwierdzeniu (i przy restarcie dla uaktualnienia, linia 497) applicationShouldTerminate woła stopAllWork() i od razu zwraca .terminateNow. ProcessHandle.cancel() uruchamia zdalne zatrzymanie (SSH.cancelRemote) w Task.detached, które ginie razem z procesem – zwykle nie zdąży nawet uruchomić ssh, więc polecenia na iMacach działają dalej (przekaźniki FIFO), choć użytkownik wybrał „Przerwij”; wynik jest losowy per komputer. Kontynuacje execute (MainActor) też się nie wykonują, więc przerwane zadania nigdy nie są archiwizowane: w historii brak ich wpisu i wyjścia (albo partia pokazuje tylko pominięte komputery), a oczekujące zapisy kolejki JobHistory mogą przepaść.
-
-**Status:** otwarte
-
-### ZAD-03
-
-**Wynik zdalnego zatrzymania nie trafia do podsumowania ani historii – „Anulowano” nawet gdy polecenie nadal działa** – P1, Zadania, polecenia, `Sources/CMCRManager/AppModel.swift:440`
-
-Po Przerwij lokalne ssh dostaje SIGTERM i SSH.run wraca natychmiast; execute ustawia stan cancelled, summary „Anulowano” i archiwizuje zadanie. Zdalne zatrzymanie (cancelRemote, do ~30 s) kończy się później, a jego komunikat (np. „Nie udało się połączyć, aby zatrzymać polecenie – może ono nadal działać na komputerze” albo „Nie udało się zatrzymać wszystkich procesów…”) jest dopisywany tylko do logu w pamięci. Historia, „Kopiuj wynik” i eksport (fullOutput czyta plik z dysku) go nie zawierają, a kolumna Wynik nadal pokazuje „Anulowano”. Scenariusz: nauczyciel przerywa „softwareupdate --install --restart” na zawieszonym iMacu, zatrzymanie się nie udaje, a aplikacja raportuje przerwanie – iMac restartuje się później. Test e2e __run-job czeka na cancellationFinished(), aplikacja nie.
-
-**Status:** otwarte
-
-### ZAJ-02
-
-**Eksport odpowiedzi uczniów do CSV bez ochrony przed formułami** – P1, Zajęcia, podgląd, `Sources/CMCRCore/Classroom.swift:563`
-
-Odpowiedzi wpisuje uczeń (dowolny tekst), a CSV.escape tylko cytuje separator/cudzysłowy. Odpowiedź zaczynająca się od =, +, -, @ (np. =HYPERLINK("https://…";"Kliknij") albo =1+1) po otwarciu „odpowiedzi.csv” w Excelu/Numbers jest wykonywana jako formuła (CSV/formula injection). To samo dotyczy „Kopiuj” (TSV wklejany do arkusza). Raport ma się otwierać w Excelu (README), więc to realna ścieżka.
 
 **Status:** otwarte
 
@@ -578,7 +576,7 @@ killProcess wysyła `asroot kill -KILL PID` bez sprawdzenia użytkownika i progr
 
 ### APL-07
 
-**Odinstalowanie Safari zabija Safari wszystkim użytkownikom, a potem się nie udaje** – P2, Aplikacje, instalacja, aktualizacje, `Sources/CMCRCore/Scripts.swift:297`
+**Odinstalowanie zabija aplikację wszystkim użytkownikom, zanim sprawdzi, czy da się ją usunąć (Safari zawsze, inne bez Pełnego dostępu do dysku)** – P2, Aplikacje, instalacja, aktualizacje, `Sources/CMCRCore/Scripts.swift:297`
 
 Lista zainstalowanych zawiera /Applications/Safari.app (chronione SIP dowiązanie do cryptexu), a canUninstall (AppsView.swift:399) przepuszcza każdą ścieżkę z /Applications/. uninstallApp najpierw wysyła SIGKILL do wszystkich procesów „/Safari.app/Contents/MacOS/” (wszyscy użytkownicy), potem `rm -rf` kończy się „Operation not permitted” z mylącą radą o Pełnym dostępie do dysku. Podpowiedź przycisku obiecuje, że aplikacji systemowych nie da się tu odinstalować.
 
@@ -605,14 +603,6 @@ Przy błędzie curl (brak sieci, zablokowany GitHub) podstawienie `$(curl …)` 
 **Instalacja aktualizacji ukrywa błąd softwareupdate --list i zgłasza „Brak aktualizacji”** – P2, Aplikacje, instalacja, aktualizacje, `Sources/CMCRCore/Scripts.swift:638`
 
 installUpdates zapisuje wynik `softwareupdate --list` do pliku, ignoruje kod wyjścia i nigdy go nie wypisuje. Gdy lista się nie uda (brak sieci, serwer Apple niedostępny), LABELS jest puste → „✔ Brak aktualizacji do zainstalowania.” i kod 0; „Zainstaluj aktualizacje”, „Tylko pobierz” i cmcrctl updates install kończą się sukcesem bez instalacji.
-
-**Status:** otwarte
-
-### APL-11
-
-**„Zezwalaj na instalatory bez podpisu Apple” zostaje włączone do końca sesji, także dla instalacji z internetu** – P2, Aplikacje, instalacja, aktualizacje, `Sources/CMCRManager/AppModel.swift:304`
-
-Flaga ma służyć jednemu zaufanemu instalatorowi (komentarz w AppModel), ale nigdy nie jest wyłączana: po instalacji szkolnego pakietu każda kolejna instalacja – także „Pobierz i zainstaluj” z adresu internetowego – nie odrzuca niepodpisanych/nienotaryzowanych plików. Przełącznik jest na dole formularza, pod sekcjami z przyciskami instalacji, więc jego stanu nie widać przy klikaniu.
 
 **Status:** otwarte
 
@@ -674,7 +664,7 @@ Dla exec, status, hosts, power, trust itd. `POLECENIE --help` wypisuje pełny te
 
 ### CLI-04
 
-**kill PID przyjmuje wiele komputerów – zabija przypadkowe procesy jako root** – P2, cmcrctl, `Sources/cmcrctl/CLI.swift:473`
+**kill PID przyjmuje wiele komputerów – zabija przypadkowe procesy jako root** – P2, cmcrctl, `Sources/cmcrctl/CLI.swift:474`
 
 PID ma sens tylko na jednym Macu, a `cmcrctl kill PID all` wysyła sudo kill -TERM/-KILL do tego samego numeru na każdym komputerze (na innych to np. loginwindow lub aplikacja ucznia z niezapisaną pracą). GUI zabija proces wyłącznie na komputerze, z którego listy pochodzi PID.
 
@@ -682,7 +672,7 @@ PID ma sens tylko na jednym Macu, a `cmcrctl kill PID all` wysyła sudo kill -TE
 
 ### CLI-05
 
-**cmcrctl logout zawsze wylogowuje natychmiast (bootout)** – P2, cmcrctl, `Sources/cmcrctl/CLI.swift:575`
+**cmcrctl logout zawsze wylogowuje natychmiast (bootout)** – P2, cmcrctl, `Sources/cmcrctl/CLI.swift:576`
 
 Scripts.logoutUser() ma force=true, więc `cmcrctl logout` to odpowiednik „Wyloguj natychmiast…” – sesja ucznia kończy się bez szansy na zapis. Odpowiednika zwykłego „Wyloguj” z GUI (Apple Event, aplikacje pytają o zapis) w CLI nie ma, a pomoc opisuje polecenie tylko jako „wyloguj zalogowanego użytkownika”.
 
@@ -765,6 +755,36 @@ cmcrctl trust dodaje komputery ze zmienionym kluczem do tej samej listy kandydat
 **Polecenia modułów nie ostrzegają o uszkodzonym settings.json** – P2, cmcrctl, `Sources/cmcrctl/main.swift:22`
 
 Ostrzeżenia ConfigStore.loadIssues są wypisywane dopiero w linii 25, po ExtraCommands.run, który dla lesson, collect, rm, setup, readiness, rename, lock, install… kończy proces wcześniej. Przy uszkodzonym settings.json te polecenia cicho używają wartości domyślnych (np. domyślny sharedFolder przy lesson end/collect --clean).
+
+**Status:** otwarte
+
+### CLI-16
+
+**Komunikat power-later odsyła do nieistniejącego przycisku „Anuluj zaplanowane”** – P2, cmcrctl, `Sources/CMCRCore/Scripts+Classroom.swift:257`
+
+Po zaplanowaniu restartu, wyłączenia lub uśpienia skrypt wypisuje: Można to anulować przyciskiem „Anuluj zaplanowane”. W GUI przycisk nazywa się „Odwołaj” (wiersz „Zaplanowane na później”, PowerView.swift:167). W `cmcrctl power-later` ten sam tekst trafia do terminala, gdzie właściwym poleceniem jest `cmcrctl power-cancel KOMP`. Nauczyciel nie znajdzie wskazanego przycisku ani polecenia.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
+### CLI-17
+
+**install bierze istniejący lokalnie plik lub folder o nazwie KOMP (np. „all”) za instalator** – P2, cmcrctl, `Sources/cmcrctl/ScriptCommands.swift:33`
+
+Ostatni argument uznaje się za KOMP tylko wtedy, gdy taki plik nie istnieje lokalnie. W katalogu ~/Public/cmcr (konwencja cmcr-helpers; Operations.prepareLocalFolders tworzy tam foldery all i <adres>) polecenie `cmcrctl install Firefox.pkg all` traktuje folder all jako instalator. Cały folder jest wysyłany na każdy iMac, a cmcr_install_dir instaluje jako root każdy znaleziony w nim .app/.pkg/.dmg (z tym samym sprawdzeniem podpisu). KOMP przepada: w terminalu cel to „wszystkie” (tylko z komunikatem na stderr), w skrypcie pojawia się błąd „Podaj komputery” mimo podanego all. Przy KOMP w postaci adresu (imac03.local, taki folder też jest w ~/Public/cmcr) polecenie trafia na wszystkie komputery zamiast na jeden, wbrew README:123.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
+### CLI-18
+
+**setup-script po cichu ignoruje --verify i --dry-run, więc wygenerowany plik wprowadza zmiany** – P2, cmcrctl, `Sources/cmcrctl/SetupCommands.swift:42`
+
+`cmcrctl setup-script --help` pokazuje te same opcje co setup, w tym „--verify tylko sprawdź (nic nie zmienia)”. Parser przyjmuje --verify i --dry-run (cl.mode), ale SetupScript.standalone dostaje tylko cl.options. Dlatego `cmcrctl setup-script --verify > sprawdz.sh` daje zwykły skrypt konfigurujący, a `sudo bash sprawdz.sh` przy iMacu zmienia konfigurację: ogranicza SSH do administratorów, instaluje klucz, ustawia Wake-on-LAN i folder ucznia, zamiast tylko sprawdzić. Wbrew README:129 nieużywana opcja nie daje kodu 2.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
 
 **Status:** otwarte
 
@@ -864,6 +884,26 @@ rememberMACs (komentarz „Like the app”) bierze klucz mac (interfejs trasy do
 
 **Status:** otwarte
 
+### KOM-14
+
+**Eksport CSV nie neutralizuje formuł – dane kontrolowane przez ucznia wykonują się w arkuszu** – P2, Komputery, zasilanie, `Sources/CMCRCore/Classroom.swift:563`
+
+CSV.escape cytuje tylko separator, cudzysłowy i znaki nowej linii; pole zaczynające się od =, +, -, @ trafia do pliku dosłownie. W „Porównaj wersje aplikacji” wersja i kompilacja (HostInspector.swift:445-456) pochodzą z Info.plist pakietów wyszukiwanych także w /Users/$CONSOLE_USER/Applications (Scripts+Classroom.swift:352-366), który kontroluje uczeń. Gdy aplikacji nie ma w /Applications, uczeń może podsunąć np. CFBundleShortVersionString „=HYPERLINK("https://…/?"&A2;"6.0")”. README każe otwierać raporty w Excelu, a ten po otwarciu pliku potraktuje pole jako formułę. Ta sama funkcja eksportuje odpowiedzi uczniów (ClassroomView.swift:742), czyli tekst wpisany przez ucznia wprost. Wpływ ograniczony (na Macu brak DDE, link wymaga kliknięcia), stąd P2.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
+### KOM-15
+
+**„Zmień nazwy komputerów” nie wykrywa kolizji z nazwami niezaznaczonych komputerów** – P2, Komputery, zasilanie, `Sources/CMCRManager/HostInspector.swift:282`
+
+Właściwość duplicates sprawdza powtórzenia tylko wśród entries, czyli zaznaczonych komputerów. Scenariusz: zaznaczony imac03, nowa nazwa „imac04” (literówka), imac04 jest na liście, ale niezaznaczony. Arkusz nie ostrzega, „Zmień nazwy (1)” jest aktywny, a macOS rozwiązuje konflikt Bonjour, nadając przemianowanemu Macowi imac04-2. Przy włączonej aktualizacji listy wpis dawnego imac03 dostaje nazwę imac04 i adres imac04.local (ClassroomModel.swift:548-551). Klucz pod imac04.local jest zaufany, więc wszystkie następne działania wysłane do tego wpisu trafiają do prawdziwego imac04. HostValidation pokazuje duplikat tylko w Konfiguracji › Komputery i nie blokuje działań.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
 ### KON-07
 
 **Poprawny adres MAC bez separatorów oznaczany jako błędny** – P2, Konfiguracja, `Sources/CMCRCore/HostValidation.swift:27`
@@ -952,14 +992,6 @@ Przycisk jest wyłączany tylko, gdy brak klucza prywatnego (currentKey == nil).
 
 **Status:** otwarte
 
-### PLI-05
-
-**„Zbierz prace” odrzuca całe archiwum, gdy jeden plik jest nieczytelny** – P2, Pliki, przeglądarka, `Sources/CMCRCore/Operations+Browse.swift:71`
-
-tar kończy się kodem 1 przy pojedynczym nieczytelnym pliku, ale wysyła resztę. download (l. 51) traktuje to jako częściowy sukces, a collect robi `guard r.succeeded else { return (r, nil) }` – z tego iMaca nic nie zostaje zapisane. Scenariusz: domyślnie dla folderu cmcr collectAsRoot = false; uczeń przeniósł tam plik 0600 (przeniesienie nie dziedziczy ACL) – nauczyciel nie dostaje żadnej pracy z tego komputera.
-
-**Status:** otwarte
-
 ### PLI-06
 
 **Nazwa komputera z „/” psuje „Zbierz prace”** – P2, Pliki, przeglądarka, `Sources/CMCRCore/Operations+Browse.swift:91`
@@ -1005,14 +1037,6 @@ Przy celu z {console} komputery bez zalogowanego użytkownika nie są pomijane: 
 **Podpisy „<nazwa komputera>” przy folderach konwencji, a folder nosi nazwę adresu** – P2, Pliki, przeglądarka, `Sources/CMCRManager/FilesView.swift:350`
 
 pushConvention, pullFiles i „Przygotuj foldery” używają Machine.folderKey = adres (imac04.local), a podpisy mówią „\(local)/<nazwa komputera>” (l. 350 i 374). Nauczyciel, który utworzy ręcznie ~/Public/cmcr/imac04, dostaje „Brak plików … – nic do wysłania”.
-
-**Status:** otwarte
-
-### PLI-12
-
-**Usuwanie i pobieranie obejmuje zaznaczone elementy ukryte filtrem lub wyszukiwaniem** – P2, Pliki, przeglądarka, `Sources/CMCRManager/RemoteBrowserModel.swift:81`
-
-refilter() zmienia tylko visibleEntries, a selectedEntries bierze elementy z całej listy. Scenariusz: „Ukryte pliki” włączone, ⌘A, „Ukryte pliki” wyłączone, „Usuń…” – usuwane są też niewidoczne pliki z kropką (np. .git ucznia); podobnie przy aktywnym wyszukiwaniu i ⌘-kliku. Arkusz wymienia tylko 5 pierwszych nazw.
 
 **Status:** otwarte
 
@@ -1066,7 +1090,7 @@ Dla bieżącego folderu startUpload pyta „Zastąpić istniejące elementy?”,
 
 ### PLI-19
 
-**Inne domyślne sudo w CLI: collect bez root dla prywatnych folderów, push z właścicielem administratora** – P2, Pliki, przeglądarka, `Sources/cmcrctl/Browse.swift:137`
+**Inne domyślne sudo w CLI: collect bez root dla prywatnych folderów, push z właścicielem administratora** – P2, Pliki, przeglądarka, `Sources/cmcrctl/Browse.swift:136`
 
 GUI (FilesState.useCollectSource) automatycznie zbiera z Biurka/Dokumentów z sudo; `cmcrctl collect all --from "/Users/{student}/Desktop"` (forma z README, bez --root) działa jako administrator i kończy się „Brak dostępu do folderu”. GUI pushConvention wysyła jako root z właścicielem ucznia, a `cmcrctl push` bez --root zostawia pliki z właścicielem administratora (CLI.swift:393).
 
@@ -1074,9 +1098,27 @@ GUI (FilesState.useCollectSource) automatycznie zbiera z Biurka/Dokumentów z su
 
 ### PLI-20
 
-**cmcrctl ls ŚCIEŻKA KOMP i clean nie rozwijają {student}; clean kończy się kodem 0 bez czyszczenia** – P2, Pliki, przeglądarka, `Sources/cmcrctl/CLI.swift:431`; także: `Sources/cmcrctl/CLI.swift:423`
+**cmcrctl ls ŚCIEŻKA KOMP i clean nie rozwijają {student}; clean kończy się kodem 0 bez czyszczenia** – P2, Pliki, przeglądarka, `Sources/cmcrctl/CLI.swift:431`; także: `Sources/cmcrctl/CLI.swift:424`
 
 collect --from, exists, mkdir, rm, get i rename przepuszczają ścieżkę przez settings.resolve, a CLI.listFolder (l. 423) i clean przekazują ją dosłownie. `cmcrctl clean "/Users/{student}/Desktop" all --yes` trafia w cleanFolder na `[ -d "$DIR" ] || { echo "Brak folderu: $DIR"; exit 0; }` – wypisuje „Brak folderu: /Users/{student}/Desktop”, zwraca 0 i nic nie czyści; GUI dla tej samej ścieżki czyści.
+
+**Status:** otwarte
+
+### PLI-23
+
+**Kliknięcie innego komputera na liście nie przełącza Przeglądarki plików** – P2, Interfejs, `Sources/CMCRManager/RemoteBrowserView.swift:66`
+
+README:12 obiecuje: „kliknięcie innego komputera na liście pokazuje ten sam folder na nim”. Kliknięcie wiersza tylko go jednak podświetla (prywatny stan highlighted, App.swift:252/285; README:106), a Przeglądarka reaguje wyłącznie na zmianę zaznaczenia i tylko wtedy, gdy zaznaczony jest dokładnie jeden komputer (66-70). Przy zapamiętanym zaznaczeniu kilku komputerów ani kliknięcie, ani zaznaczenie kolejnego nie zmienia przeglądanego komputera; działa tylko pole „Komputer” na pasku lokalizacji. Komentarz w linii 67 jest nieaktualny.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
+### PRZ-02
+
+**„Przypomnij później” nie anuluje zleconej instalacji – po pobraniu aplikacja sama się zamyka i instaluje** – P2, Przygotowanie iMaców, uaktualnienia, `Sources/CMCRManager/Updater.swift:468`
+
+Gdy uaktualnienie nie jest jeszcze pobrane, przycisk „Zainstaluj i uruchom ponownie” (albo „Spróbuj ponownie” w fazie .failed) ustawia installWhenReady = true i zaczyna pobieranie (l. 355). Tak jest w fazie .available/.failed: pobieranie w tle wyłączone, wcześniej anulowane albo nieudane. Jeśli potem użytkownik wybierze „Przypomnij później” (także Esc, bo to .cancelAction), remindLater() tylko ustawia drzemkę i zamyka okno. installWhenReady zostaje, więc po pobraniu download() wywołuje installAndRelaunch() (l. 330–332). Gdy nie trwają zadania, aplikacja nagle się zamyka i instaluje nową wersję (w /Applications wyskakuje prośba o hasło administratora). To przeczy „Przypomnij później (24 h)” i zasadzie „Bez Twojej zgody nic nie jest instalowane”. Nawet bez zadań przepadają niezapisane rzeczy w oknie, np. rozpisana wiadomość.
 
 **Status:** otwarte
 
@@ -1176,6 +1218,24 @@ W pm_set wynik `run pmset -a …` decyduje tylko o dopisaniu do PM_DID. Gdy pmse
 
 **Status:** otwarte
 
+### PRZ-18
+
+**„Sprawdź teraz” w oknie Ustawień (i „Sprawdź uaktualnienia…” bez widocznego głównego okna) pokazuje wynik w niewidocznym arkuszu** – P2, Przygotowanie iMaców, uaktualnienia, `Sources/CMCRManager/UpdateViews.swift:357`
+
+checkNow() (Updater.swift:230-234) tylko ustawia isSheetPresented = true, a arkusz uaktualnień jest podpięty wyłącznie do głównego okna (App.swift:129 .updaterUI). Przycisk „Sprawdź teraz” w osobnym oknie Ustawienia › Uaktualnienia (SetupView.swift:1038) nie wysuwa głównego okna, w odróżnieniu od „Pokaż szczegóły…” w tej samej sekcji (UpdateViews.swift:331-332, MainWindow.bringToFront). Scenariusz: nauczyciel klika „Sprawdź teraz” w oknie Ustawień. Arkusz z wynikiem („Masz najnowszą wersję”, błąd sieci albo instalacja) pojawia się na głównym oknie, za oknem Ustawień, więc kliknięcie wygląda na bezskuteczne, a błąd sprawdzania nie jest nigdzie widoczny. Gdy główne okno jest zamknięte, a aplikacja działa dalej (trwają zadania, App.swift:20-22, albo otwarta jest Ściana ekranów), menu „Sprawdź uaktualnienia…” (UpdateViews.swift:11) nic nie pokazuje. isSheetPresented=true ukrywa przy tym baner na pasku bocznym (showsBanner, Updater.swift:144).
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
+### TXT-01
+
+**Podpowiedź „Ściana ekranów” obiecuje tylko zaznaczone komputery, a okno domyślnie pokazuje wszystkie** – P2, Teksty, `Sources/CMCRManager/MainToolbar.swift:59`
+
+Podpowiedź przycisku na pasku narzędzi brzmi „Pokaż ekrany wszystkich zaznaczonych komputerów w osobnym oknie…”. Ściana ma jednak domyślne źródło `.all`, niezależne od zaznaczenia (ScreenWall.swift:103, ScreenWallSource). Nauczyciel zaznacza 3 komputery i klika przycisk zgodnie z podpowiedzią. Otwiera się podgląd wszystkich komputerów z listy, a każdy zalogowany uczeń dostaje komunikat „Administrator rozpoczął podgląd Twojego ekranu”. Tekst wprowadza w błąd co do skutku. ScreensView.swift:31 opisuje to poprawnie: „pokazuje wszystkie komputery naraz”.
+
+**Status:** otwarte
+
 ### TXT-02
 
 **README: filtr i skrót opisane jako „online”, w UI to „Włączone”** – P2, Teksty, `README.md:106`
@@ -1248,14 +1308,6 @@ Po odrzuceniu niepodpisanego instalatora wynik zadania mówi: „zaznacz „Zezw
 
 **Status:** otwarte
 
-### TXT-11
-
-**Komunikat uaktualnienia: przenieś do „folderu Aplikacje” zamiast „Programy”** – P2, Teksty, `Sources/CMCRCore/SelfUpdate.swift:649`
-
-Gdy aplikacja działa z App Translocation albo z DMG (linia 652), okno uaktualnienia i ustawienia pokazują „Przenieś „CMCR Manager” do folderu Aplikacje”. W polskim Finderze /Applications nazywa się „Programy” i tak pisze cała aplikacja: InstallView.swift:55, AppsView.swift:287/316, ulubione RemoteBrowse.swift:266, „Programy › Narzędzia” w SetupOptionsSheet.swift:421. README:190 powtarza „folderu Aplikacje”.
-
-**Status:** otwarte
-
 ### TXT-12
 
 **Ta sama akcja „sesja SSH w Terminalu” ma cztery różne nazwy** – P2, Teksty, `Sources/CMCRManager/App.swift:668`
@@ -1304,14 +1356,6 @@ Tę samą opcję z Ustawień systemowych, którą nauczyciel musi znaleźć przy
 
 **Status:** otwarte
 
-### TXT-18
-
-**Niespójny myślnik: „—” obok „–”** – P2, Teksty, `Sources/CMCRManager/UpdateViews.swift:147`
-
-Interfejs prawie wszędzie używa półpauzy „ – ”. Wyjątki z pauzą „ — ” to UpdateViews.swift:147 („Wersja X — zainstalowana: Y”) i RemoteBrowserView.swift:53 (podtytuł „imac04 — /ścieżka”). README miesza oba znaki (64× „—”, 32× „–”, np. linia 3 i 11).
-
-**Status:** otwarte
-
 ### TXT-19
 
 **Uaktualnienie aplikacji nazwane „aktualizacją”** – P2, Teksty, `Sources/CMCRManager/Updater.swift:174`
@@ -1325,14 +1369,6 @@ README i UI rozróżniają „uaktualnienia” CMCR Manager („Sprawdź uaktual
 **Pomoc cmcrctl: ustawienie „Równoległe operacje” nie istnieje, formatowanie niespójne** – P2, Teksty, `Sources/cmcrctl/CLI.swift:69`
 
 Pomoc -j odsyła do „„Równoległe operacje” z ustawień”, a w aplikacji to ustawienie nazywa się „Komputery obsługiwane naraz” (SetupView.swift:882). Do tego w `cmcrctl --help` brakuje pustego wiersza przed nagłówkiem „Instalacja i inne” (Legacy.swift:161), nagłówek „Zajęcia, zasilanie i raporty:” jako jedyny ma dwukropek (ClassroomCommands.swift:7), a wiersz `selftest` jest przesunięty o kolumnę (CLI.swift:65).
-
-**Status:** otwarte
-
-### TXT-21
-
-**cmcrctl exec/push/pull: angielskie nagłówki, w push z polską liczbą** – P2, Teksty, `Sources/cmcrctl/CLI.swift:384`
-
-Polski CLI wypisuje „Running command on X ...” (359), „Pulling from X ...” (409) i hybrydę „Pushing to imac04@imac04.local ... (3 elementy)” (384). Wszystkie inne komunikaty są po polsku, z wielokropkiem „…” zamiast „...”. Nagłówek exec przypina test e2e (Tests/e2e/suites/cli.sh:102, 113).
 
 **Status:** otwarte
 
@@ -1352,6 +1388,32 @@ Podsumowanie screen-watch skleja liczebniki ręcznie. Domyślne --frames 3 daje 
 
 **Status:** otwarte
 
+### TXT-24
+
+**Folder /Applications nazywany raz „Programy”, raz „Aplikacje”; aktualny polski macOS pokazuje „Aplikacje”** – P2, Teksty, `Sources/CMCRManager/SetupOptionsSheet.swift:421`
+
+Ten sam folder /Applications ma w aplikacji dwie nazwy. „Programy”: InstallView.swift:55 („Aplikacje trafią do folderu Programy”), AppsView.swift:287/316/317, ulubione Przeglądarki i wyboru folderu RemoteBrowse.swift:266, instrukcja SetupOptionsSheet.swift:421 („otwórz Terminal (Programy › Narzędzia)”), README:11. „Aplikacje”: SelfUpdate.swift:649/652 i README:190. Aktualny polski macOS pokazuje w Finderze „Aplikacje” (sprawdzone na 27.0.1: SystemFolderLocalizations pl, Applications => „Aplikacje”, Utilities => „Narzędzia”). Nauczyciel przy iMacu z aktualnym macOS, który idzie za instrukcją zapisu skryptu, szuka folderu „Programy › Narzędzia”, którego w Finderze nie ma. W Przeglądarce plików widzi ulubiony folder pod inną nazwą niż w Finderze.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
+### UI-01
+
+**⌘, przypisany trzem pozycjom menu – skrót opisany przy „Ustawienia…” nie otwiera okna Ustawień** – P2, Interfejs, `Sources/CMCRManager/App.swift:70`; także: `README.md:182`, `Sources/CMCRManager/App.swift:68`
+
+CommandGroup(replacing: .appSettings) usuwa standardową pozycję „Ustawienia…” sceny Settings i wstawia „Konfiguracja…” (⌘,), która tylko przełącza dział w głównym oknie. Okno Ustawień (AppSettingsWindow) da się otworzyć wyłącznie linkiem na dole Konfiguracja › Ustawienia (SetupView.swift:786). README i teksty w aplikacji (SetupView.swift:789 „(⌘,)”, 792 „z menu CMCR Manager › Ustawienia… (⌘,)”) opisują nieistniejącą pozycję. Skutek uboczny: SnapshotRenderer.captureSettings (SnapshotRenderer.swift:155-165) wybiera pozycję z ⌘, – okno Ustawień się nie otwiera, wpis „settings” kończy się komunikatem „Brak okna Ustawień” i nie powstaje zrzut okna Ustawień wymagany w Etapie 3. Dodatkowo ⌘, jest przypisany dwóm pozycjom (App.swift:70 i Przejdź › Konfiguracja, App.swift:81). To regresja z równoległych commitów 776e90c (okno Ustawień ⌘,) i ba73c33 (Konfiguracja… ⌘,).
+
+**Status:** otwarte
+
+### UI-05
+
+**„Wczytaj listę z pliku…” zastępuje całą listę komputerów bez potwierdzenia** – P2, Interfejs, `Sources/CMCRManager/SetupView.swift:378`
+
+importHosts() od razu wykonuje model.machines = hosts (didSet natychmiast zapisuje hosts.json) – bez potwierdzenia i bez oznaczenia akcji jako niszczącej (pozycja menu ze zwykłą ikoną square.and.arrow.down, SetupView.swift:299-303). Wybranie złego pliku nieodwracalnie kasuje grupy, notatki, adresy MAC, porty i ustawienia haseł bieżącej listy; własne hasła usuniętych wpisów zostają w Pęku kluczy (askDelete, 364, je czyści). Generator (askReplace, 506-516) i CLI (README: zastępowanie listy pyta o potwierdzenie) wymagają potwierdzenia.
+
+**Status:** otwarte
+
 ### UI-06
 
 **Usunięty standardowy przycisk paska bocznego i wymuszany tryb paska narzędzi** – P2, Interfejs, `Sources/CMCRManager/App.swift:158`
@@ -1362,7 +1424,7 @@ Podsumowanie screen-watch skleja liczebniki ręcznie. Domyślne --frames 3 daje 
 
 ### UI-07
 
-**Lista uruchomionych aplikacji nie wczytuje się dla komputerów zaznaczonych po wejściu w dział** – P2, Interfejs, `Sources/CMCRManager/AppsView.swift:40`; także: `Sources/CMCRManager/AppsView.swift:192`
+**Lista uruchomionych aplikacji nie wczytuje się dla komputerów zaznaczonych po wejściu w dział** – P2, Interfejs, `Sources/CMCRManager/AppsView.swift:40`
 
 refreshRunningApps jest wywoływane tylko w onAppear (AppsView.swift:39-41) i przyciskiem „Odśwież listę”. Komputery zaznaczone później trafiają do grupy „Wczytywanie listy…” z klepsydrą (AppsView.swift:191-192), choć nic się nie wczytuje. Błędy listy zainstalowanych są pomijane (AppModel.swift:823 – komputer po prostu nie jest liczony do „Sprawdzono N komputerów”).
 
@@ -1376,27 +1438,11 @@ refreshRunningApps jest wywoływane tylko w onAppear (AppsView.swift:39-41) i pr
 
 **Status:** otwarte
 
-### UI-09
-
-**Odpowiedzi uczniów i macierz gotowości to listy z kolumnami bez Table** – P2, Interfejs, `Sources/CMCRManager/ClassroomView.swift:749`
-
-README: „odpowiedzi zbierają się w tabeli i można je wyeksportować do CSV”, a AnswersView to wiersze LabeledContent w Form (ClassroomView.swift:749-755): bez nagłówków, sortowania, zaznaczania i kolumny „Godzina” (jest tylko w CSV, 777-781). ReadinessMatrix to Grid w GroupBox (ReadinessView.swift:626), a wyniki ostatniej operacji w działach to LazyVStack (Components.swift:583), podczas gdy te same dane w Zadaniach są w Table (JobsView.swift:343).
-
-**Status:** otwarte
-
 ### UI-10
 
 **Niespójna terminologia: „sekcja” zamiast „dział”, „Zaktualizowano” dla uaktualnienia aplikacji, „Pobrane rzeczy” vs „Pobrane”** – P2, Interfejs, `Sources/CMCRManager/ClassroomView.swift:859`
 
 README i reszta UI mówią „dział” („w dziale Zadania”), a ClassroomView.swift:859 „(sekcja Aplikacje)” i ScreenControls.swift:221 „Pokaż wyniki w sekcji Zadania”. README i menu rozróżniają Aktualizacje (iMaki) i Uaktualnienia (CMCR Manager), a toast po instalacji brzmi „Zaktualizowano do wersji X” (Updater.swift:174). Folder Downloads: „Pobrane rzeczy” (SetupOptionsSheet.swift:420) i „Pobrane” (ClassroomView.swift:361, 405; Sources/CMCRCore/RemoteBrowse.swift:261).
-
-**Status:** otwarte
-
-### UI-11
-
-**Sztywne rozmiary czcionek i kolory z przezroczystością zamiast stylów semantycznych** – P2, Interfejs, `Sources/CMCRManager/Components.swift:329`
-
-.font(.system(size:)): 34 pt w arkuszach potwierdzeń (Components.swift:329, PowerView.swift:286, HostTrustSheet.swift:32), 12 pt w kafelkach i ikonach ustawień (DashboardView.swift:374, SettingsComponents.swift:10), 44/40/7 pt w podglądzie (ScreenTiles.swift:219, 245, 276) – nie skalują się z rozmiarem tekstu systemu. Kolory: Color.secondary.opacity(…) jako tła i obramowania (App.swift:454, ReadinessView.swift:218-219, Components.swift:593, 897), Color.orange.opacity(0.12) (ActivityViews.swift:293); ten sam CodeEditor ma obramowanie Color.secondary.opacity(0.3) w Poleceniach (CommandsView.swift:50) i .separatorColor w Ustawieniach (SetupView.swift:893). Brak Color(red:)/hex.
 
 **Status:** otwarte
 
@@ -1426,9 +1472,11 @@ Bez komunikatu dla użytkownika: zapis eksportu wyników zadań (JobsView.swift:
 
 ### UI-15
 
-**Przyciski niszczące stoją bezpośrednio obok zwykłych akcji** – P2, Interfejs, `Sources/CMCRManager/RemoteBrowserView.swift:105`
+**„najwyżej N komputerów naraz” – zła odmiana dla N = 1…4** – P2, Interfejs, `Sources/CMCRCore/LessonRoutine.swift:169`
 
-„Usuń…” w pasku Przeglądarki stoi między „Pobierz…” a „Wyślij tutaj…” (RemoteBrowserView.swift:97-122); „Odinstaluj…” tuż obok „Uruchom” (AppsView.swift:308-324); „Usuń harmonogram…” obok „Zastosuj harmonogram” (EnergyScheduleView.swift:96-99); „Usuń z listy…” obok wyróżnionego „Dodaj komputer” (SetupView.swift:262-276); „Wymuś zamknięcie…” obok „Zamknij” w każdym wierszu (AppsView.swift:438-452). „Przerwij” scenariusza zajęć ma role: .cancel (ClassroomView.swift:493), a „Przerwij” zadań role: .destructive (Components.swift:535). „Usuń grupę” (App.swift:437) zdejmuje grupę ze wszystkich komputerów bez potwierdzenia.
+Limit pochodzi z settings.maxParallel (zakres 1…32, SetupView.swift:879; ClassroomModel.swift:288). Przy limicie 2–4 wynik scenariusza zajęć mówi „Czekam na swoją kolej (najwyżej 3 komputerów naraz)…”, a przy limicie 1 – „najwyżej 1 komputerów”.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
 
 **Status:** otwarte
 
@@ -1488,9 +1536,37 @@ Według symbol_restrictions.strings (CoreGlyphs): apple.logo – tylko dla „Si
 
 **Status:** otwarte
 
+### UI-23
+
+**Pomoc › „Pomoc aplikacji CMCR Manager” (⌘?) pokazuje tylko, że pomoc jest niedostępna** – P2, Interfejs, `Sources/CMCRManager/App.swift:49`
+
+Aplikacja nie zastępuje grupy poleceń .help, a pakiet nie ma Księgi pomocy (w Info.plist z scripts/build-app.sh:70-89 brak CFBundleHelpBookName). Menu w zrzucie docs/ui-review/before/setup-light.txt zawiera „Pomoc aplikacji CMCR Manager [⌘?]”. Jej wybór kończy się tylko systemowym komunikatem „Pomoc aplikacji CMCR Manager nie jest dostępna.” (AppKit HelpManager.loctable), mimo że instrukcja istnieje w README – to martwa pozycja menu.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
+### UI-24
+
+**„Usuń grupę” bez potwierdzenia, niespójne role „Przerwij”, przyciski niszczące tuż obok zwykłych** – P2, Interfejs, `Sources/CMCRManager/App.swift:437`
+
+„Usuń…” w pasku Przeglądarki stoi między „Pobierz…” a „Wyślij tutaj…” (RemoteBrowserView.swift:97-122); „Odinstaluj…” tuż obok „Uruchom” (AppsView.swift:308-324); „Usuń harmonogram…” obok „Zastosuj harmonogram” (EnergyScheduleView.swift:96-99); „Usuń z listy…” obok wyróżnionego „Dodaj komputer” (SetupView.swift:262-276); „Wymuś zamknięcie…” obok „Zamknij” w każdym wierszu (AppsView.swift:438-452). „Przerwij” scenariusza zajęć ma role: .cancel (ClassroomView.swift:493), a „Przerwij” zadań role: .destructive (Components.swift:535). „Usuń grupę” (App.swift:437) zdejmuje grupę ze wszystkich komputerów bez potwierdzenia.
+
+**Status:** otwarte
+
+### UI-25
+
+**Zrzut „settings” w ciemnym motywie pokazuje zakładkę Uaktualnienia zamiast Ogólne** – P2, Interfejs, `Sources/CMCRManager/SetupView.swift:1044`
+
+AppSettingsWindow.onSnapshotSubpage zmienia zakładkę tylko dla znanej nazwy. Pusta podstrona (wpis „settings” bez „:zakładka”) nie przywraca zakładki Ogólne, a okno Ustawień jest używane ponownie w kolejnym przebiegu. W ciemnym przebiegu wpis „settings” następuje po jasnym „settings:updates”, więc docs/ui-review/before/settings-dark.png jest identyczny z settings-updates-dark.png i brakuje zrzutu zakładki Ogólne w ciemnym motywie wymaganego w Etapie 3. SnapshotRenderer.swift:12-13 zapowiada, że pusta podstrona oznacza powrót do domyślnej.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
 ### WSP-03
 
-**Pętla odświeżania co 2 min związana z oknem głównym (brak przy Ścianie, podwójna przy ⌘N)** – P2, Współbieżność, `Sources/CMCRManager/App.swift:134`; także: `Sources/CMCRManager/App.swift:135`
+**Odświeżanie co 2 min działa tylko przy otwartym oknie głównym – sama Ściana ekranów nie dostaje aktualnego stanu** – P2, Współbieżność, `Sources/CMCRManager/App.swift:134`; także: `Sources/CMCRManager/App.swift:135`
 
 Pętla i attach siedzą w .task okna głównego (WindowGroup). Gdy nauczyciel zamknie okno główne i zostawi Ścianę ekranów (np. na projektorze), stan nie jest odświeżany (tylko przy aktywacji aplikacji) – źródło „Tylko włączone”/„Z zalogowanym uczniem” nie pokaże iMaców włączonych później. Odwrotnie: każde nowe okno główne (⌘N) startuje własną pętlę i pełne refreshStatus() – odświeżanie co ~60 s zamiast 120 s, a globalne arkusze (uaktualnienie, potwierdzenie powtórzenia, klucze komputerów, błędy konfiguracji) pokazują się w każdym oknie.
 
@@ -1528,11 +1604,29 @@ W alercie namePrompt nieprawidłowa nazwa (np. „Prace 2024/25”, „.”, „
 
 **Status:** otwarte
 
+### WSP-08
+
+**cmcrctl hosts add/set/remove/generate pisze „Dodano…” i kończy z kodem 0, choć hosts.json nie został zapisany** – P2, Współbieżność, `Sources/cmcrctl/ConfigCommands.swift:54`
+
+ConfigStore.saveHosts (Store.swift:185-198) połyka błąd zapisu (tylko NSLog i nieczytany lastSaveError). Polecenia CLI zmieniające listę komputerów zawsze wypisują komunikat sukcesu i zwracają 0: ConfigCommands.swift:54, 71, 97, 122, 127, 178, rename --update-list w ClassroomCommands.swift:306 i zapis MAC w CLI.swift:350. Przy katalogu konfiguracji bez prawa zapisu (np. utworzonym przez sudo) albo przy pełnym dysku skrypt administratora uzna zmianę za wykonaną, a lista się nie zmieni.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
 ### WŁ-01
 
 **Menu Pomoc › „Pomoc aplikacji CMCR Manager” (⌘?) nie prowadzi do żadnej pomocy** – P2, Własne, `Sources/CMCRManager/App.swift:46`
 
 Aplikacja nie zastępuje standardowej grupy poleceń .help, a pakiet nie ma książki pomocy (Help Book). Pozycja „Pomoc aplikacji CMCR Manager” (⌘?) w menu Pomoc, widoczna w opisie menu ze zrzutów (docs/ui-review/before/*.txt), pokazuje więc tylko systemowy komunikat, że pomoc nie jest dostępna. Specyfikacją aplikacji jest README na GitHubie – menu Pomoc powinno do niego prowadzić.
+
+**Status:** otwarte
+
+### ZAD-03
+
+**Wynik zdalnego zatrzymania nie trafia do podsumowania ani historii – „Anulowano” nawet gdy polecenie nadal działa** – P2, Zadania, polecenia, `Sources/CMCRManager/AppModel.swift:440`
+
+Po Przerwij lokalne ssh dostaje SIGTERM i SSH.run wraca natychmiast; execute ustawia stan cancelled, summary „Anulowano” i archiwizuje zadanie. Zdalne zatrzymanie (cancelRemote, do ~30 s) kończy się później, a jego komunikat (np. „Nie udało się połączyć, aby zatrzymać polecenie – może ono nadal działać na komputerze” albo „Nie udało się zatrzymać wszystkich procesów…”) jest dopisywany tylko do logu w pamięci. Historia, „Kopiuj wynik” i eksport (fullOutput czyta plik z dysku) go nie zawierają, a kolumna Wynik nadal pokazuje „Anulowano”. Scenariusz: nauczyciel przerywa „softwareupdate --install --restart” na zawieszonym iMacu, zatrzymanie się nie udaje, a aplikacja raportuje przerwanie – iMac restartuje się później. Test e2e __run-job czeka na cancellationFinished(), aplikacja nie.
 
 **Status:** otwarte
 
@@ -1600,14 +1694,6 @@ clearFinishedBatches zeruje focusedBatchID, gdy id nie ma w model.batches – a 
 
 **Status:** otwarte
 
-### ZAD-12
-
-**Bieżące zadania nie pokazują kodu wyjścia** – P2, Zadania, polecenia, `Sources/CMCRManager/JobsView.swift:349`
-
-README obiecuje wynik „z kodem wyjścia”, a komentarz w HistoryDetailView twierdzi, że kolumny są „the same … as for a live batch”, lecz kolumna Stan w BatchDetailView (JobCell .state) i JobRow w ramkach wyników pokazują tylko nazwę stanu. Kod widać tylko w historii i eksporcie; dla błędów bez „Polecenie zakończone” (np. błędne hasło sudo) nie ma go nigdzie w bieżącym widoku.
-
-**Status:** otwarte
-
 ### ZAD-13
 
 **cmcrctl uruchamia skrypty bez rejestracji zadania: Ctrl-C nie zatrzymuje polecenia na iMacu** – P2, Zadania, polecenia, `Sources/cmcrctl/CLI.swift:240`
@@ -1629,6 +1715,24 @@ Aplikacja loguje każde działanie (AppModel.runBatch → ConfigStore.log), a cm
 **cmcrctl exec --root nie pyta o ryzykowne polecenia, aplikacja pyta** – P2, Zadania, polecenia, `Sources/cmcrctl/CLI.swift:359`
 
 W aplikacji CommandsView.run sprawdza CommandRisk (rm -r, shutdown/reboot, diskutil, dscl -delete, pmset…) dla poleceń root i wymaga potwierdzenia z listą komputerów. cmcrctl exec wykonuje to samo bez pytania, również w terminalu, podczas gdy `power restart` pyta – `cmcrctl exec "shutdown -r now" all --root` restartuje pracownię bez potwierdzenia.
+
+**Status:** otwarte
+
+### ZAD-16
+
+**Przerwane zadania i zadania po limicie czasu mają w historii i eksporcie „kod” lokalnego ssh lub -1** – P2, Zadania, polecenia, `Sources/CMCRManager/AppModel.swift:439`
+
+execute zapisuje job.exitCode = r.exitCode dla każdego wyniku, zanim rozróżni stan. Dla zadania przerwanego w trakcie jest to status lokalnego klienta ssh zabitego SIGTERM-em (ProcessRunner zwraca terminationStatus, Process.swift:361-368, np. 255). Dla zadania przerwanego w kolejce sesji albo podczas ponawiania jest to -1 z CommandResult.cancelledResult (Process.swift:40), a dla limitu czasu znów status ssh. Historia pokazuje to w kolumnie Stan jako „Przerwano (kod 255)” z podpowiedzią „Polecenie zakończyło się kodem 255 …” (JobsView.swift:525-531). Eksport pisze „=== imac04 – Przerwano, kod -1 ===” (JobsView.swift:637, 648). Ten kod nie pochodzi z polecenia na iMacu, a README obiecuje w historii kod wyjścia polecenia.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
+### ZAJ-02
+
+**Eksport odpowiedzi uczniów do CSV bez ochrony przed formułami** – P2, Zajęcia, podgląd, `Sources/CMCRCore/Classroom.swift:563`
+
+Odpowiedzi wpisuje uczeń (dowolny tekst), a CSV.escape tylko cytuje separator/cudzysłowy. Odpowiedź zaczynająca się od =, +, -, @ (np. =HYPERLINK("https://…";"Kliknij") albo =1+1) po otwarciu „odpowiedzi.csv” w Excelu/Numbers jest wykonywana jako formuła (CSV/formula injection). To samo dotyczy „Kopiuj” (TSV wklejany do arkusza). Raport ma się otwierać w Excelu (README), więc to realna ścieżka.
 
 **Status:** otwarte
 
@@ -1682,7 +1786,7 @@ QuestionRound powstaje dla wszystkich zaznaczonych komputerów, ale runBatch prz
 
 ### ZAJ-12
 
-**Nowe pytanie nie zamyka poprzedniego – stare okna zostają u uczniów** – P2, Zajęcia, podgląd, `Sources/CMCRManager/ClassroomModel.swift:428`
+**Nowe pytanie nie zamyka poprzedniego – stare okna zostają u uczniów, a odpowiedzi znikają z tabeli** – P2, Zajęcia, podgląd, `Sources/CMCRManager/ClassroomModel.swift:428`
 
 ask() zastępuje classroom.question nową rundą, ale nie anuluje batcha poprzedniej (round.batch jest zapisywany i nigdzie nieużywany), a dział nie ma przycisku zakończenia pytania. Gdy nauczyciel poprawi literówkę i zada pytanie ponownie, uczniowie mają dwa okna jedno na drugim (do 10 min), a odpowiedzi na pierwsze trafiają do niewidocznej już rundy – znikają z tabeli i eksportu CSV.
 
@@ -1711,3 +1815,38 @@ W aplikacji pakiety Wake-on-LAN idą do wszystkich komputerów naraz, a czekanie
 Zapis klatki jest w try?, a niezależnie od wyniku wypisywane jest „Klatka N: nowy obraz … → <ścieżka>” i liczone frames += 1; polecenie kończy się kodem 0, choć w folderze nie ma żadnego pliku (np. folder tylko do odczytu, pełny dysk).
 
 **Status:** otwarte
+
+### ZAJ-17
+
+**Wybór konkretnego monitora ukrywa przełącznik monitorów** – P2, Zajęcia, podgląd, `Sources/CMCRManager/ScreenCenter.swift:510`
+
+displayCount jest brany z liczby ekranów w ostatniej klatce (`feed.set(\.displayCount, max(1, count))`). Po wybraniu „Ekran 2” skrypt przechwytuje tylko ten ekran, więc count = 1 i displayCount spada do 1. W oknie pojedynczego komputera znika wtedy z paska narzędzi menu monitora (ScreenWall.swift:336 `if feed.displayCount > 1`). W menu „Więcej › Monitor” znikają pozycje „Ekran 1…N” (ScreenTiles.swift:430-434), a wybrana wartość traci tag i Picker nie ma zaznaczenia. Żeby przejść na inny monitor, trzeba najpierw wybrać „Wszystkie ekrany”.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
+### ZAJ-18
+
+**cmcrctl screen-watch i screenshot nie zapisują sesji podglądu w dzienniku działań** – P2, Zajęcia, podgląd, `Sources/cmcrctl/ScreenWatch.swift:34`
+
+README (Podgląd ekranu – ograniczenia) zapewnia, że każda sesja podglądu jest zapisywana w dzienniku działań. W aplikacji robi to ScreenCenter: ConfigStore.log przy pierwszej klatce użytkownika, przy powiadomieniu i przy nieudanym powiadomieniu (ScreenCenter.swift:518, 548, 561). cmcrctl screen-watch i cmcrctl screenshot używają tego samego skryptu przechwytywania, ale nie robią żadnego wpisu – w Sources/cmcrctl nie ma ani jednego wywołania ConfigStore.log. Podgląd ekranu ucznia z terminala nie zostawia więc śladu w actions.log.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
+## Odrzucone przy weryfikacji
+
+Zgłoszenia, które niezależny recenzent sprawdził w kodzie i uznał za niepoprawne (zachowanie zamierzone, obsłużone gdzie indziej albo scenariusz niemożliwy). Nie wliczają się do podsumowania.
+
+| Plik:linia | Zgłoszenie | Dlaczego odrzucone |
+|---|---|---|
+| `Sources/CMCRCore/Operations+Browse.swift:71` | „Zbierz prace” odrzuca całe archiwum, gdy jeden plik jest nieczytelny | Przesłanka „tar wysyła resztę” jest fałszywa dla `tar -cf - .` (pullArchive): sprawdziłem lokalnie bsdtar 3.5.3, który po „Can't open” przerywa przechodzenie katalogu, więc pozostałe pliki (w kolejności readdir) w ogóle nie trafiają do archiwum. Odrzucenie arbitralnie uciętego archiwum i zgłoszenie błędu z komunikatem tar to bezpieczniejsze zachowanie; proponowana poprawka zapisywałaby losowy podzbiór prac. |
+| `Sources/CMCRCore/SelfUpdate.swift:649` | Komunikat uaktualnienia: przenieś do „folderu Aplikacje” zamiast „Programy” | Aktualny polski macOS nazywa /Applications „Aplikacje” (sprawdzone na macOS 27.0.1: /System/Library/CoreServices/SystemFolderLocalizations/pl.lproj, „Applications” => „Aplikacje”). SelfUpdate.swift:649/652 i README:190 są więc poprawne, a proponowana zmiana na „Programy” wprowadziłaby błąd. Niespójność istnieje w odwrotną stronę – miejsca z „Programy” zgłaszam w missed. |
+| `Sources/CMCRManager/AppModel.swift:304` | „Zezwalaj na instalatory bez podpisu Apple” zostaje włączone do końca sesji, także dla instalacji z internetu | To zachowanie zamierzone. Komentarz w AppModel.swift:302-303 mówi tylko, że flaga jest domyślnie wyłączona i nie zapisuje się między uruchomieniami, i tak właśnie działa; README (l. 170) opisuje zwykły przełącznik włączany przez nauczyciela. Każdy instalator przyjęty dzięki fladze dostaje w wyniku ostrzeżenie „instaluję mimo to” (Scripts.swift:365-366), więc automatyczne wyłączanie to propozycja zmiany projektu, a nie usterka. |
+| `Sources/CMCRManager/ClassroomView.swift:749` | Odpowiedzi uczniów i macierz gotowości to listy z kolumnami bez Table | Odpowiedzi są pokazywane jako dwukolumnowa lista (komputer · uczeń → odpowiedź) z kopiowaniem i eksportem CSV (ClassroomView.swift:723-781), co spełnia README:147. Brak sortowania i zaznaczania oraz Grid zamiast Table w macierzy gotowości (README:57 też nazywa ją tabelą) to preferencja projektowa bez scenariusza błędu. |
+| `Sources/CMCRManager/Components.swift:329` | Sztywne rozmiary czcionek i kolory z przezroczystością zamiast stylów semantycznych | Sztywne .font(.system(size:)) dotyczą wyłącznie obrazków SF Symbols w ramkach o stałym rozmiarze (Components.swift:328-329, PowerView.swift:285-286, SettingsComponents.swift:9-13 – kafelek 22×22, DashboardView.swift:373-377 – kółko 24×24, ScreenTiles.swift:218-219/245/276); cały tekst używa stylów semantycznych. Kolory to semantyczne .secondary i accent z przezroczystością, bez RGB ani hex. Różne obramowanie CodeEditor (CommandsView.swift:50 i SetupView.swift:893) to drobna preferencja – nie ma naruszenia HIG ani scenariusza błędu. |
+| `Sources/CMCRManager/JobsView.swift:349` | Bieżące zadania nie pokazują kodu wyjścia | W bieżącym widoku kod wyjścia widać w kolumnie Wynik dla błędów polecenia: „… (kod N)” albo „Polecenie zakończone kodem N.” (AppModel.swift:451-453), a eksport zawiera kod (JobsView.swift:637). Kodu brak tylko przy rozpoznanych błędach (hasło sudo, SSH, limit czasu), gdzie zastępuje go opis, więc README („z wynikiem, kodem wyjścia”) jest spełnione. Komentarz w HistoryDetailView mówi o tych samych kolumnach, nie o identycznej treści. |
+| `Sources/CMCRManager/UpdateViews.swift:147` | Niespójny myślnik: „—” obok „–” | Pauza i półpauza są w polszczyźnie równoprawnymi myślnikami. Dwa wystąpienia „—” w UI (UpdateViews.swift:147, RemoteBrowserView.swift:53) i mieszanie ich w README to kwestia stylu typograficznego bez błędnego ani mylącego tekstu, więc według reguły „bez preferencji stylu” nie jest to usterka. |
+| `Sources/cmcrctl/CLI.swift:384` | cmcrctl exec/push/pull: angielskie nagłówki, w push z polską liczbą | Nagłówki „Running command on / Pushing to / Pulling from … ...” są w cmcrctl od wersji 1.0 (6c43abc, „Command line counterpart of cmcr-helpers.sh”) jako odpowiednik wyjścia cmcr-helpers. Przypina je e2e (Tests/e2e/suites/cli.sh:39, 80, 84, 102, 113), a polską odmianę w push dodano świadomie w 40c5f5c („push item plural”). To zamierzona zgodność, więc dwujęzyczność jest kwestią stylu, nie usterką. |
