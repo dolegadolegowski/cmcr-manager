@@ -1111,8 +1111,29 @@ public enum Scripts {
 
     /// Turning the service on from the command line usually gives observe-only VNC; full control has to be
     /// enabled once at the Mac (or by MDM), so the message says so instead of promising remote control.
+    /// Before the service starts, access is limited to administrators (the access list with the nested admin
+    /// group, as `--enable-vnc` of the setup script does): without the list every local account – also the
+    /// students' shared one – could log in to Screen Sharing.
     public static func enableScreenSharing() -> RemoteScript {
         RemoteScript(#"""
+        G=com.apple.access_screensharing
+        if dscl . -read "/Groups/$G" RecordName >/dev/null 2>&1; then :
+        elif dscl . -read "/Groups/$G-disabled" RecordName >/dev/null 2>&1; then
+          dscl . -change "/Groups/$G-disabled" RecordName "$G-disabled" "$G" \
+            || { echo "✘ Nie udało się przywrócić listy dostępu Udostępniania ekranu – usługi nie włączono." >&2; exit 1; }
+        elif [ -z "$(dscl . -search /Groups PrimaryGroupID 398 2>/dev/null)" ]; then
+          dseditgroup -o create -r "Screen Sharing ACL" -i 398 "$G" \
+            || { echo "✘ Nie udało się utworzyć listy dostępu Udostępniania ekranu – usługi nie włączono." >&2; exit 1; }
+        else
+          dseditgroup -o create -r "Screen Sharing ACL" "$G" \
+            || { echo "✘ Nie udało się utworzyć listy dostępu Udostępniania ekranu – usługi nie włączono." >&2; exit 1; }
+        fi
+        ADMIN_GUID="$(dsmemberutil getuuid -G admin 2>/dev/null)"
+        if ! dscl . -read "/Groups/$G" NestedGroups 2>/dev/null | grep -q "${ADMIN_GUID:-ABCDEFAB-CDEF-ABCD-EFAB-CDEF00000050}"; then
+          dseditgroup -o edit -a admin -t group "$G" \
+            || { echo "✘ Nie udało się dodać grupy Administratorzy do listy dostępu – usługi nie włączono." >&2; exit 1; }
+        fi
+        echo "Dostęp do Udostępniania ekranu: tylko administratorzy."
         launchctl enable system/com.apple.screensharing 2>/dev/null
         launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null
         if launchctl print system/com.apple.screensharing >/dev/null 2>&1; then

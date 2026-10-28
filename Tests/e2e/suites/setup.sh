@@ -291,4 +291,28 @@ victim_intact "Public jako dowiązanie: folder cmcr innego konta nietknięty" "$
 expect_not "Public jako dowiązanie: bez chown w folderze innego konta" "$(fakelog)" "setup-victim"
 rm -f "$SHOME/Public" && mv "$SHOME/Public.real" "$SHOME/Public"
 
+section "Szybka naprawa: Udostępnianie ekranu tylko dla administratorów (AUDIT PRZ-01)"
+mkdir -p "$SS/groups"
+rm -f "$SS/groups/com.apple.access_screensharing"*
+: > "$SS/off-com.apple.screensharing"
+clear_fakelog
+out="$(sctl _builder screen-sharing 1)"; code=$?
+expect_code "szybka naprawa VNC: kod 0" "$code" 0 "$out"
+expect "szybka naprawa VNC: lista dostępu z grupą Administratorzy" "$(fakelog)" \
+  "dseditgroup -o create" "com.apple.access_screensharing" "dseditgroup -o edit -a admin -t group com.apple.access_screensharing"
+if grep -q '^nested ' "$SS/groups/com.apple.access_screensharing" 2>/dev/null; then
+  pass "szybka naprawa VNC: dostęp tylko dla administratorów"
+else
+  fail "szybka naprawa VNC: usługa włączona bez listy dostępu (każde konto, także ucznia)" "$out"
+fi
+expect "szybka naprawa VNC: komunikat" "$out" "tylko administratorzy"
+# A list switched off in System Settings (…-disabled) is restored, not created next to it.
+rm -f "$SS/groups/com.apple.access_screensharing"
+echo "nested x" > "$SS/groups/com.apple.access_screensharing-disabled"
+clear_fakelog
+out="$(sctl _builder screen-sharing 1)"
+expect "szybka naprawa VNC: wyłączona lista przywrócona" "$(fakelog)" \
+  "dscl . -change /Groups/com.apple.access_screensharing-disabled RecordName com.apple.access_screensharing-disabled com.apple.access_screensharing"
+rm -rf "$SS/groups"
+
 rm -rf "$SS"
