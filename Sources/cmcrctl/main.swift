@@ -19,8 +19,12 @@ if let first = argv.first, first.hasPrefix("__") {
                                   settings: cli.sshSettings()))
 }
 
+// Problems with the configuration (e.g. a damaged settings.json, whose bad values fall back to the defaults) are
+// reported before any command runs – the module commands below end the process themselves.
+_ = legacyCLI.settings
+for issue in ConfigStore.loadIssues { Console.err("⚠ \(issue)") }
+
 if let code = await ExtraCommands.run(argv) { exit(code) }
 
 let cli = CLI(args: Arguments(argv))
-for issue in ConfigStore.loadIssues { FileHandle.standardError.write(Data("⚠ \(issue)\n".utf8)) }
 exit(await cli.run())

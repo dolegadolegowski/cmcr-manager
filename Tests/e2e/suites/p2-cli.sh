@@ -281,3 +281,19 @@ expect "trust all --yes: zmieniony pominięty" "$out" "pominięto zmieniony kluc
 expect_code "trust all --yes: nowy i zmieniony – kod 1" "$code" 1 "$out"
 contains "" "$(known localhost)" "$P2_OTHER_B64" && pass "trust all --yes: zmieniony klucz bez zmian" \
   || fail "trust all --yes: zaufano zmienionemu kluczowi" "$(cat "$WORK/p2-known_hosts")"
+
+section "P2 cmcrctl – ostrzeżenie o uszkodzonym settings.json także w poleceniach modułów (AUDIT CLI-15)"
+BADS="$WORK/cfg-p2-badsettings"
+mkdir -p "$BADS"
+cp "$P2/hosts.json" "$BADS/"
+python3 - "$P2/settings.json" "$BADS/settings.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1])); s["sharedFolder"] = 5
+json.dump(s, open(sys.argv[2], "w"))
+PY
+for cmd in "rename 1 --dry-run" "lesson --help" "list"; do
+  out="$(CMCR_CONFIG_DIR="$BADS" "$CTL" $cmd 2>&1 </dev/null)"
+  expect "uszkodzony settings.json: ostrzeżenie ($cmd)" "$out" "⚠ Niektóre ustawienia były nieprawidłowe" "sharedFolder"
+  [ "$(printf '%s\n' "$out" | grep -c 'Niektóre ustawienia')" = 1 ] && pass "uszkodzony settings.json: jedno ostrzeżenie ($cmd)" \
+    || fail "uszkodzony settings.json: liczba ostrzeżeń ($cmd)" "$out"
+done
