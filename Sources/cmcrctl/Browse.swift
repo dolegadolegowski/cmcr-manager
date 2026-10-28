@@ -123,7 +123,7 @@ enum BrowseCLI {
             }
             let list = legacyCLI.targets(a[0])
             let prefs = FilesPreferences.load()
-            let source = path(a.value("--from") ?? s.sharedFolder)
+            let source = path(a.value("--from") ?? s.studentFolder)
             let folder = Operations.collectionFolder(base: a.value("--to") ?? prefs.collectBase(s),
                                                      timestamped: !a.has("--no-date") && prefs.collectTimestamped)
             let clean = a.has("--clean")

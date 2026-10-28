@@ -402,7 +402,7 @@ struct CLI: Sendable {
                 return ExitCode.failure
             case .success(let payload):
                 defer { try? FileManager.default.removeItem(at: payload) }
-                let r = await Operations.push(payload: payload, to: h, destination: s.sharedFolder,
+                let r = await Operations.push(payload: payload, to: h, destination: s.studentFolder,
                                               owner: asRoot ? s.studentUser : "", mode: "777", asRoot: asRoot,
                                               password: Keychain.password(for: h), settings: ssh, onOutput: io.stream)
                 return io.report(r)
@@ -421,7 +421,7 @@ struct CLI: Sendable {
             let h = io.host
             io.out("Pulling from \(h.destination) ...")
             let dest = URL(fileURLWithPath: expandTilde(s.localFolder)).appendingPathComponent(h.folderKey)
-            let r = await Operations.pull(source: s.sharedFolder, from: h, into: dest, asRoot: asRoot,
+            let r = await Operations.pull(source: s.studentFolder, from: h, into: dest, asRoot: asRoot,
                                           password: Keychain.password(for: h), settings: ssh, onOutput: io.stream)
             return io.report(r)
         }

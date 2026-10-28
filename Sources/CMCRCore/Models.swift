@@ -225,6 +225,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public func resolve(_ path: String) -> String {
         path.replacingOccurrences(of: "{student}", with: studentUser)
     }
+
+    /// The student folder on the iMacs with `{student}` replaced (AUDIT PLI-03): what cmcr-push sends to, cmcr-pull
+    /// and „Zbierz prace” read and the end of the lesson cleans.
+    public var studentFolder: String { resolve(sharedFolder) }
 }
 
 public enum Reachability: String, Codable, Sendable {

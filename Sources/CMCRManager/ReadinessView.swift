@@ -17,7 +17,7 @@ final class ReadinessStore: ObservableObject {
         let settings = model.settings
         let ss = model.sshSettings
         let student = settings.studentUser
-        let folder = settings.resolve(settings.sharedFolder)
+        let folder = settings.studentFolder
         let script = Scripts.readiness(student: student, sharedFolder: folder, publicKey: model.managerPublicKey)
         let timeout = TimeInterval(settings.connectTimeout + 45)
         let jobs = machines.filter { !checking.contains($0.id) }.map { ($0, model.password(for: $0)) }
@@ -124,7 +124,7 @@ extension AppModel {
             runScript("Instalacja klucza SSH", on: targets, section: .setup,
                       script: { _ in Scripts.distributeKey(pub) }, onResult: recheck)
         case .folder:
-            let path = settings.resolve(settings.sharedFolder), owner = settings.studentUser
+            let path = settings.studentFolder, owner = settings.studentUser
             runScript("Folder ucznia \(path)", on: targets, section: .setup,
                       script: { _ in Scripts.createStudentFolder(path, owner: owner) }, onResult: recheck)
         case .wol:

@@ -192,6 +192,16 @@ import Testing
 
 // MARK: - Lesson routines and configuration
 
+/// AUDIT PLI-03: the student folder may contain {student} (as its caption in Konfiguracja says); every user of
+/// the folder gets the account filled in.
+@Test func theStudentFolderHasTheAccountFilledIn() {
+    var settings = AppSettings()
+    settings.studentUser = "uczen"
+    settings.sharedFolder = "/Users/{student}/Public/cmcr"
+    #expect(settings.studentFolder == "/Users/uczen/Public/cmcr")
+    #expect(LessonPlan.start(LessonStartConfig(), settings: settings).materialsDestination == "/Users/uczen/Public/cmcr")
+}
+
 @Test func lessonPlansFollowTheConfiguration() {
     var start = LessonStartConfig()
     start.sendMaterials = true

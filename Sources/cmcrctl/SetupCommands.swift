@@ -89,7 +89,7 @@ enum SetupCommands {
 
         default:
             let student = settings.studentUser
-            let folder = settings.resolve(settings.sharedFolder)
+            let folder = settings.studentFolder
             var status: Int32 = 0
             for h in select(cl.positional.first) {
                 let r = await SSH.run(Scripts.readiness(student: student, sharedFolder: folder, publicKey: key),

@@ -243,3 +243,24 @@ after="$(ls /tmp/cmcr-up-*.tar 2>/dev/null | sort)"
 [ "$before" = "$after" ] && pass "install bez hasła: archiwum usunięte z /tmp" \
   || fail "install bez hasła: archiwum zostało w /tmp" "$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))"
 rm -f "$WORK/pli02.pkg"
+
+section "Folder ucznia z {student} w ustawieniach (AUDIT PLI-03)"
+cp "$WORK/config/settings.json" "$WORK/settings.json.pli03"
+python3 - "$WORK/config/settings.json" "$WORK/remote/{student}/cmcr-pli03" <<'PY'
+import json, sys
+p = sys.argv[1]; s = json.load(open(p)); s["sharedFolder"] = sys.argv[2]; json.dump(s, open(p, "w"))
+PY
+mkdir -p "$WORK/remote/$ME" "$WORK/local/all"
+echo "materiał" > "$WORK/local/all/pli03.txt"
+out="$(ctlpw push 1 --root)"; code=$?
+expect_code "push z {student}: kod 0" "$code" 0 "$out"
+[ -f "$WORK/remote/$ME/cmcr-pli03/pli03.txt" ] && pass "push z {student}: plik w folderze konta ucznia" \
+  || fail "push z {student}: brak pliku w folderze ucznia" "$out $(ls -laR "$WORK/remote" 2>&1 | head -30)"
+[ ! -e "$WORK/remote/{student}" ] && pass "push z {student}: bez folderu o nazwie {student}" || fail "push: utworzono folder {student}"
+echo "praca" > "$WORK/remote/$ME/cmcr-pli03/praca-pli03.txt"
+rm -rf "$WORK/local/127.0.0.1"
+out="$(ctl pull 1)"; code=$?
+expect_code "pull z {student}: kod 0" "$code" 0 "$out"
+[ -f "$WORK/local/127.0.0.1/praca-pli03.txt" ] && pass "pull z {student}: praca pobrana" || fail "pull z {student}: brak pracy" "$out"
+cp "$WORK/settings.json.pli03" "$WORK/config/settings.json"
+rm -rf "$WORK/remote/{student}" "$WORK/remote/$ME/cmcr-pli03" "$WORK/local/all/pli03.txt" "$WORK/local/127.0.0.1"

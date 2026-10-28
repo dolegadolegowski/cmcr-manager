@@ -123,7 +123,7 @@ public struct LessonPlan: Sendable {
     /// Remote folder that receives the lesson materials.
     public var materialsDestination: String {
         switch start.destination {
-        case .sharedFolder: return settings.sharedFolder
+        case .sharedFolder: return settings.studentFolder
         case .studentDesktop: return settings.resolve("/Users/{student}/Desktop")
         }
     }
@@ -273,7 +273,7 @@ public enum LessonRunner {
             guard let base = plan.collectFolder else { return .skipped("brak folderu docelowego") }
             // As „Zbierz prace” in Pliki: a new folder per Mac (never merged into an earlier copy), and the list of
             // collected files for the cleanup below.
-            let (r, folder) = await Operations.collect(source: plan.settings.sharedFolder, from: m, into: base,
+            let (r, folder) = await Operations.collect(source: plan.settings.studentFolder, from: m, into: base,
                                                        name: m.name, asRoot: true, cleanAfter: false, password: pw,
                                                        settings: ssh, handle: handle, onOutput: onOutput)
             guard r.succeeded else { return .failed(SSH.diagnose(r).1) }
@@ -297,7 +297,7 @@ public enum LessonRunner {
         case .cleanShared:
             // Only the collected files that are unchanged since: work saved after the folder was packed (a quit app's
             // "Save", the student still at the Mac) is not deleted without a copy.
-            let path = plan.settings.sharedFolder
+            let path = plan.settings.studentFolder
             guard let folder = context.collected else { return .done("nic do usunięcia – folder ucznia był pusty") }
             let r = await Operations.removeCollected(from: path, collectedIn: folder, on: m, password: pw, settings: ssh,
                                                      handle: handle, onOutput: onOutput)

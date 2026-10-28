@@ -156,7 +156,7 @@ public enum SetupScript {
 
     /// The shared folder must live in a home folder or /Users/Shared (the script refuses anything else).
     public static func sharedFolderProblem(_ settings: AppSettings) -> String? {
-        let path = settings.resolve(settings.sharedFolder)
+        let path = settings.studentFolder
         if path.contains("..") || path.contains("/./") || path.contains("{") {
             return "Folder współdzielony „\(path)” zawiera niedozwolone elementy (.., ./ lub {…})."
         }
@@ -201,7 +201,7 @@ public enum SetupScript {
     public static func arguments(_ o: SetupOptions, host: Machine, settings: AppSettings,
                                  publicKey: String?, mode: Mode) -> [String] {
         var a = ["--admin", host.user, "--student", settings.studentUser,
-                 "--shared-folder", settings.resolve(settings.sharedFolder), "--no-guide"]
+                 "--shared-folder", settings.studentFolder, "--no-guide"]
         if o.installKey, let key = publicKey?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
             a += ["--pubkey", key]
         }
@@ -269,7 +269,7 @@ public enum SetupScript {
         OPT_PUBKEYS=\(q(key))
         OPT_ADMIN=''
         OPT_STUDENT=\(q(settings.studentUser))
-        OPT_SHARED=\(q(settings.resolve(settings.sharedFolder)))
+        OPT_SHARED=\(q(settings.studentFolder))
         OPT_SHARED_MODE='777'
         OPT_SHARED_ACL=\(b(o.sharedACL))
         OPT_SSH_ACL=\(b(o.restrictSSH))

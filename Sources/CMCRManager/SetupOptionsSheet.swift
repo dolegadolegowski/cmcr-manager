@@ -189,7 +189,7 @@ struct SetupOptionsSheet: View {
     var folderSection: some View {
         Section("Folder ucznia") {
             LabeledContent {
-                Text(model.settings.resolve(model.settings.sharedFolder))
+                Text(model.settings.studentFolder)
                     .font(.callout.monospaced())
                     .textSelection(.enabled)
             } label: {

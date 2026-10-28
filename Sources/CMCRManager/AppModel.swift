@@ -820,7 +820,7 @@ final class AppModel: ObservableObject {
     /// cmcr-push convention: `<local>/all/*` and `<local>/<host>/*` → shared folder on each host.
     func pushConvention(on targets: [Machine], includeAll: Bool) {
         let base = settings.localFolder
-        let dest = settings.sharedFolder
+        let dest = settings.studentFolder
         let owner = settings.studentUser
         runBatch("cmcr-push → \(dest)", on: targets) { m, job in
             let items = Operations.conventionItems(base: base, host: m, includeAll: includeAll)
