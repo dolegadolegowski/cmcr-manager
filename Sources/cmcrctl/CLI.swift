@@ -364,6 +364,7 @@ struct CLI: Sendable {
     func go() -> Never {
         args.expect("go", positional: 2)
         let h = single(args[1], usage: "Podaj numer komputera.")
+        if let message = SSH.refusalMessage(for: h) { fail(message) }
         let argv = ["ssh"] + SSH.interactiveArguments(for: h, settings: sshSettings())
         let cargs = argv.map { strdup($0) } + [nil]
         execv(SSH.sshPath, cargs)

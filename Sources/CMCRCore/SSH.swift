@@ -407,6 +407,7 @@ public enum SSH {
         maxCapture: Int = ProcessRunner.defaultMaxCapture,
         onOutput: (@Sendable (OutputChannel, Data) -> Void)? = nil
     ) async -> CommandResult {
+        if let refused = refusal(for: host) { return refused }
         var script = script
         if script.jobID == nil, handle != nil { script.jobID = RemoteJobs.newID() }
         let key = HostGate.key(for: host)
@@ -437,7 +438,7 @@ public enum SSH {
         var r = await runWithRetry(on: host, settings: settings, retry: retry, handle: handle, stdoutFile: stdoutFile,
                                    started: started, onOutput: onOutput) { mux, output in
             await ProcessRunner.run(sshPath, options(settings, password: password, mux: mux)
-                                        + ["-T", "-p", String(host.port), host.destination, command],
+                                        + ["-T", "-p", String(host.port), "--", host.destination, command],
                                     environment: environment(settings, password: password), stdin: stdin,
                                     stdoutFile: stdoutFile, timeout: timeout, maxCapture: maxCapture,
                                     handle: handle, onOutput: output)
@@ -560,6 +561,7 @@ public enum SSH {
         handle: ProcessHandle? = nil,
         retry: SSHRetryPolicy = .transient
     ) async -> CommandResult {
+        if let refused = refusal(for: host) { return refused }
         let key = HostGate.key(for: host)
         guard await HostGate.shared.acquire(key, handle: handle) else { return .cancelledResult }
         defer { HostGate.shared.release(key) }
@@ -567,7 +569,7 @@ public enum SSH {
         return await runWithRetry(on: host, settings: settings, retry: retry, handle: handle, stdoutFile: nil,
                                   isCopy: true, onOutput: nil) { mux, output in
             let args = ["-r", "-p", "-P", String(host.port)] + options(settings, password: password, mux: mux)
-                + files.map(\.path) + ["\(host.destination):\(remotePath)"]
+                + ["--"] + files.map(\.path) + ["\(host.destination):\(remotePath)"]
             return await ProcessRunner.run(scpPath, args, environment: environment(settings, password: password),
                                            handle: handle, onOutput: output)
         }
@@ -581,13 +583,20 @@ public enum SSH {
         a += ["-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"]
         a += muxOptions(settings)
         if !settings.identityFile.isEmpty { a += ["-i", expandTilde(settings.identityFile)] }
-        return a + [host.destination]
+        return a + ["--", host.destination]
     }
 
     /// The `.command` file Terminal runs for cmcr-go. Host fields come from the host list (possibly an imported
     /// file), so every one of them is quoted: the banner is printed with printf '%s' (zsh's echo would also
     /// interpret backslashes) and nothing in the script is expanded by the shell.
     public static func terminalScript(for host: Machine, settings: SSHSettings) -> String {
+        if let message = refusalMessage(for: host) {
+            return """
+            #!/bin/zsh
+            printf '%s\\n' \(shQuote("✘ " + message))
+
+            """
+        }
         let args = interactiveArguments(for: host, settings: settings).map(shQuote).joined(separator: " ")
         return """
         #!/bin/zsh
@@ -614,11 +623,11 @@ public enum SSH {
     /// sessions already running on it (jobs, screen captures, Terminal windows) finish normally. The next
     /// operation opens a fresh connection.
     public static func closeMaster(_ host: Machine, settings: SSHSettings) async {
-        guard let dir = controlDirectory(),
+        guard refusal(for: host) == nil, let dir = controlDirectory(),
               let sockets = try? FileManager.default.contentsOfDirectory(atPath: dir), !sockets.isEmpty else { return }
         var s = settings
         s.reuseConnections = true
-        let args = options(s, password: nil) + ["-O", "stop", "-p", String(host.port), host.destination]
+        let args = options(s, password: nil) + ["-O", "stop", "-p", String(host.port), "--", host.destination]
         _ = await ProcessRunner.run(sshPath, args, environment: ["SSH_ASKPASS_REQUIRE": "never"], timeout: 5)
     }
 
@@ -642,17 +651,30 @@ public enum SSH {
     public static func cancelRemote(jobID: String, on host: Machine, password: String?,
                                     settings: SSHSettings) async -> RemoteCancelOutcome {
         guard RemoteJobs.isValidID(jobID) else { return .failed("nieprawidłowy identyfikator zadania") }
+        if let message = refusalMessage(for: host) { return .failed(message) }
         let stdin = Data(((password ?? "") + "\n").utf8)
         // Not gated: it must get through while the job it stops still holds a session slot.
         let command = RemoteJobs.cancelScript(jobID: jobID).remoteCommand()
         let r = await runWithRetry(on: host, settings: settings, retry: .transient, handle: nil, stdoutFile: nil,
                                    onOutput: nil) { mux, output in
             await ProcessRunner.run(sshPath, options(settings, password: password, mux: mux)
-                                        + ["-T", "-p", String(host.port), host.destination, command],
+                                        + ["-T", "-p", String(host.port), "--", host.destination, command],
                                     environment: environment(settings, password: password), stdin: stdin,
                                     timeout: OperationTimeout.cancel, onOutput: output)
         }
         return RemoteCancelOutcome(r)
+    }
+
+    static let refusalPrefix = "Niepoprawny wpis komputera"
+
+    /// Why the entry must not be passed to ssh/scp (`Machine.sshEntryProblem`), as shown to the user.
+    public static func refusalMessage(for host: Machine) -> String? {
+        host.sshEntryProblem.map { "\(refusalPrefix) „\(host.name)”: \($0). Popraw go w Konfiguracji › Komputery." }
+    }
+
+    /// The failure returned instead of starting ssh/scp for an entry ssh could misread (see `refusalMessage`).
+    static func refusal(for host: Machine) -> CommandResult? {
+        refusalMessage(for: host).map { CommandResult.failure($0, code: 255) }
     }
 
     /// Turns an ssh failure into a status and a human readable (Polish) explanation.
@@ -660,6 +682,9 @@ public enum SSH {
         let err = r.stderrText
         let lower = err.lowercased()
         if r.cancelled { return (.error, "Anulowano.") }
+        if err.hasPrefix(refusalPrefix) {
+            return (.error, err.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
         if r.timedOut {
             // Once the script ran on the Mac, the Mac answered: the command was just too slow.
             return r.started ? (.online, "Przekroczono limit czasu – polecenie działało na komputerze zbyt długo.")

@@ -99,3 +99,30 @@ done
 [ -z "$leaked" ] && pass "8 KiB: brak komunikatów mm_send_fd w wyniku" || fail "8 KiB: komunikaty ssh w wyniku dla:$leaked"
 [ -z "$retried" ] && pass "8 KiB: polecenia przeszły przez wspólne połączenie bez ponawiania" \
   || fail "8 KiB: ponowne próby dla:$retried"
+
+section "Wpisy komputerów, które ssh odczytałby jako opcję (AUDIT KON-01)"
+DASH="$WORK/cfg-dash"
+mkdir -p "$DASH"
+cp "$WORK/config/settings.json" "$DASH/settings.json"
+rm -f "$WORK"/dash-pwned*
+cat > "$DASH/hosts.json" <<JSON
+[
+ {"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","name":"imac01","address":"127.0.0.1","user":"-oProxyCommand=touch $WORK/dash-pwned","port":$PORT},
+ {"id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","name":"imac02","address":"-oProxyCommand=touch $WORK/dash-pwned","user":"$ME","port":$PORT}
+]
+JSON
+dctl() { CMCR_CONFIG_DIR="$DASH" "$CTL" "$@" 2>&1; }
+out="$(dctl trust 1 --dry-run)"
+expect "trust: wpis z „-” odrzucony z polskim komunikatem" "$out" "Niepoprawny wpis komputera"
+out="$(dctl status 1)"; code=$?
+expect "status: wpis z „-” odrzucony" "$out" "Niepoprawny wpis komputera"
+expect_code "status: kod 1 dla odrzuconego wpisu" "$code" 1 "$out"
+out="$(dctl exec 'echo nie-powinno' 2)"
+expect_not "exec: adres z „-” – polecenie nie wykonane" "$out" "nie-powinno"
+out="$(dctl go 1)"; code=$?
+expect "go: wpis z „-” odrzucony przed uruchomieniem ssh" "$out" "Niepoprawny wpis komputera"
+if ls "$WORK"/dash-pwned* >/dev/null 2>&1; then
+  fail "ProxyCommand z listy komputerów został wykonany na Macu nauczyciela" "$(ls "$WORK"/dash-pwned*)"
+else
+  pass "żadne polecenie z listy komputerów nie uruchomiło się lokalnie (ProxyCommand)"
+fi

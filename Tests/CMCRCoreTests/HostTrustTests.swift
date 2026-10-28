@@ -205,19 +205,26 @@ struct TerminalScriptTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let p1 = dir.appendingPathComponent("P1").path, p2 = dir.appendingPathComponent("P2").path
-        let p3 = dir.appendingPathComponent("P3").path
-        let host = Machine(name: "Sala 3/iMac", address: "imac$(touch \(p1)).local\";touch \(p3);\"",
-                           user: "u`touch \(p2)`")
-        let script = SSH.terminalScript(for: host, settings: SSHSettings(askpassPath: "/tmp/askpass"))
-        // Run everything up to ssh (which would only reject the address).
+        let p3 = dir.appendingPathComponent("P3").path, p4 = dir.appendingPathComponent("P4").path
+        // An entry ssh could misread is refused in the script itself; its fields only appear quoted in the message.
+        let bad = Machine(name: "Sala 3/iMac $(touch \(p4))", address: "imac$(touch \(p1)).local\";touch \(p3);\"",
+                          user: "u`touch \(p2)`")
+        let refused = SSH.terminalScript(for: bad, settings: SSHSettings(askpassPath: "/tmp/askpass"))
+        #expect(!refused.contains("exec /usr/bin/ssh"))
+        let r1 = await ProcessRunner.run("/bin/zsh", ["-c", refused])
+        #expect(r1.succeeded)
+        #expect(r1.stdoutText.contains("Niepoprawny wpis komputera „Sala 3/iMac $(touch \(p4))”"), "\(r1.stdoutText)")
+        // A valid entry: everything up to ssh runs (ssh itself is replaced), the banner is printed literally.
+        let good = Machine(name: "Sala 3/iMac", address: "imac03.local", user: "imac03")
+        let script = SSH.terminalScript(for: good, settings: SSHSettings(askpassPath: "/tmp/askpass"))
         let lines = script.split(separator: "\n", omittingEmptySubsequences: false)
-        #expect(lines.contains { $0.hasPrefix("exec /usr/bin/ssh ") })
+        #expect(lines.contains { $0.hasPrefix("exec /usr/bin/ssh ") && $0.hasSuffix(" '--' 'imac03@imac03.local'") })
         let safe = lines.map { $0.hasPrefix("exec /usr/bin/ssh ") ? "true" : String($0) }
             .filter { $0 != "clear" }.joined(separator: "\n")
-        let r = await ProcessRunner.run("/bin/zsh", ["-c", safe])
-        #expect(r.succeeded)
-        #expect(r.stdoutText == "cmcr-go → \(host.destination)\n")
-        for p in [p1, p2, p3] { #expect(!FileManager.default.fileExists(atPath: p), "wykonano kod z adresu: \(p)") }
+        let r2 = await ProcessRunner.run("/bin/zsh", ["-c", safe])
+        #expect(r2.succeeded)
+        #expect(r2.stdoutText == "cmcr-go → \(good.destination)\n")
+        for p in [p1, p2, p3, p4] { #expect(!FileManager.default.fileExists(atPath: p), "wykonano kod z wpisu: \(p)") }
     }
 
     @Test func fileNamesStayInTheTemporaryFolder() {

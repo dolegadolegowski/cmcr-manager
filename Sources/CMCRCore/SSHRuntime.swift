@@ -148,6 +148,7 @@ extension SSH {
     /// A refused connection also counts (the Mac is on, Remote Login is off). nil when it cannot tell: the
     /// connection goes through ProxyJump/ProxyCommand, or nc could not run.
     public static func portAnswers(_ host: Machine, settings: SSHSettings, timeout: Int = 3) async -> Bool? {
+        guard host.sshEntryProblem == nil else { return nil }
         let routed = settings.extraOptions.contains { option in
             let name = option.lowercased().trimmingCharacters(in: .whitespaces)
             return name.hasPrefix("proxyjump") || name.hasPrefix("proxycommand")

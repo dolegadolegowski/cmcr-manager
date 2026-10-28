@@ -750,10 +750,14 @@ public final class ScreenStream: @unchecked Sendable {
     /// Starts ssh. `onExit` is called exactly once, also when ssh cannot be started.
     public func start(password: String?, settings: SSHSettings, onEvent: @escaping EventHandler,
                       onExit: @escaping ExitHandler) {
+        if let refused = SSH.refusal(for: host) {
+            onExit(refused)
+            return
+        }
         var opts = options
         opts.frames = 0
         let args = SSH.options(settings, password: password)
-            + ["-T", "-p", String(host.port), host.destination, Scripts.screenCapture(opts).remoteCommand()]
+            + ["-T", "-p", String(host.port), "--", host.destination, Scripts.screenCapture(opts).remoteCommand()]
         process.executableURL = URL(fileURLWithPath: SSH.sshPath)
         process.arguments = args
         var env = ProcessInfo.processInfo.environment

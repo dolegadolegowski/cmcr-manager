@@ -132,6 +132,10 @@ public enum HostTrust {
     /// real sessions (ProxyJump, port, algorithms), with connection sharing off so the key is really exchanged.
     public static func scan(_ host: Machine, settings s: SSHSettings) async -> Scan {
         var result = Scan(host: host)
+        if let message = SSH.refusalMessage(for: host) {
+            result.error = message
+            return result
+        }
         result.trusted = await trustedKeys(for: host, settings: s)
         let fm = FileManager.default
         let dir = fm.temporaryDirectory.appendingPathComponent("cmcr-hostkey-\(UUID().uuidString)", isDirectory: true)
@@ -166,7 +170,7 @@ public enum HostTrust {
         let preferred = Self.algorithms(for: result.trusted.map(\.type))
         if !preferred.isEmpty { args += ["-o", "HostKeyAlgorithms=^" + preferred.joined(separator: ",")] }
         args += s.extraOptions.flatMap { ["-o", $0] }
-        args += ["-T", "-p", String(host.port), host.destination, "true"]
+        args += ["-T", "-p", String(host.port), "--", host.destination, "true"]
         let r = await ProcessRunner.run(SSH.sshPath, args, environment: ["SSH_ASKPASS_REQUIRE": "never"],
                                         stdin: Data(), timeout: TimeInterval(s.connectTimeout + 15))
         let lines = ((try? String(contentsOf: file, encoding: .utf8)) ?? "")
