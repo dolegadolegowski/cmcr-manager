@@ -127,7 +127,7 @@ struct PowerView: View {
             } label: {
                 Label {
                     Text("Kiedy uśpić, uruchomić ponownie lub wyłączyć")
-                    Text(delay == 0 ? "Od razu po potwierdzeniu." : "Do tego czasu możesz to odwołać na dole tej sekcji.")
+                    Text(delay == 0 ? "Od razu po potwierdzeniu." : "Do tego czasu możesz to odwołać na dole tego działu.")
                 } icon: {
                     FormRowIcon("clock")
                 }

@@ -218,7 +218,7 @@ private struct ScreenBatchBannerContent: View {
                     MainWindow.bringToFront(openWindow)
                 }
                 .buttonStyle(.link)
-                .help("Pokaż wyniki w sekcji Zadania")
+                .help("Pokaż wyniki w dziale Zadania")
                 Button { hidden = batch.id } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
                     .help("Ukryj")

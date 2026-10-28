@@ -285,7 +285,8 @@ enum ManualStep: String, CaseIterable, Identifiable {
             return ["Otwórz Ustawienia systemowe › Prywatność i ochrona › Nagrywanie ekranu i dźwięku systemowego (w macOS 14 i starszych: Nagrywanie ekranu).",
                     "Kliknij „+” pod listą i podaj hasło administratora.",
                     "Naciśnij ⌘⇧G, wpisz /usr/libexec/sshd-keygen-wrapper i kliknij Otwórz.",
-                    "Sprawdź, czy przełącznik przy sshd-keygen-wrapper jest włączony."]
+                    "Sprawdź, czy przełącznik przy sshd-keygen-wrapper jest włączony.",
+                    "Jeśli podgląd nadal pokazuje tylko tapetę (nowszy macOS, OpenSSH 9.8+), dodaj tak samo /usr/libexec/sshd-session."]
         case .screenSharing:
             return ["Otwórz Ustawienia systemowe › Ogólne › Udostępnianie.",
                     "Wyłącz i ponownie włącz „Udostępnianie ekranu”.",
@@ -316,7 +317,10 @@ enum ManualStep: String, CaseIterable, Identifiable {
     }
 
     /// Text worth copying while following the steps.
-    var copyText: String? { self == .screenRecording ? "/usr/libexec/sshd-keygen-wrapper" : nil }
+    /// Paths to paste in the file dialog: both ssh programs that may need Screen Recording (AUDIT TXT-14).
+    var copyTexts: [String] {
+        self == .screenRecording ? ["/usr/libexec/sshd-keygen-wrapper", "/usr/libexec/sshd-session"] : []
+    }
 
     func applies(to r: ReadinessReport) -> Bool {
         switch self {
@@ -932,7 +936,7 @@ struct ManualStepGuideContent: View {
             ForEach(Array(step.steps.enumerated()), id: \.offset) { i, text in
                 NumberedStep(n: i + 1, text: text)
             }
-            if let copy = step.copyText {
+            ForEach(step.copyTexts, id: \.self) { copy in
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(copy, forType: .string)

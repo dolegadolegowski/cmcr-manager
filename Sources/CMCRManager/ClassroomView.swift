@@ -369,7 +369,7 @@ private struct EndLessonSection: View {
                   ? "Po zebraniu prac usuwa z folderu cmcr ucznia zebrane pliki; zapisane później zostają"
                   : "Włącz „Zbierz prace” – folder ucznia jest czyszczony dopiero po zebraniu z niego prac")
             Toggle(isOn: c.cleanDownloads) {
-                StepLabel(.cleanDownloads, "Wyczyść folder Pobrane ucznia",
+                StepLabel(.cleanDownloads, "Wyczyść folder Pobrane rzeczy ucznia",
                           caption: "Usuwa pliki pobrane z internetu.")
             }
             Toggle(isOn: c.logout) {
@@ -413,7 +413,7 @@ private struct EndLessonSection: View {
         } header: {
             Label("Zakończ zajęcia", systemImage: "stop.circle")
         } footer: {
-            Text("Folder cmcr ucznia jest czyszczony tylko razem ze zbieraniem prac i tylko na komputerach, z których udało się je zebrać. Gdy zbieranie się nie uda, folder Pobrane też zostaje nietknięty. Aplikacje są zamykane przed zbieraniem prac.")
+            Text("Folder cmcr ucznia jest czyszczony tylko razem ze zbieraniem prac i tylko na komputerach, z których udało się je zebrać. Gdy zbieranie się nie uda, folder Pobrane rzeczy też zostaje nietknięty. Aplikacje są zamykane przed zbieraniem prac.")
                 .foregroundStyle(.secondary)
         }
     }
@@ -867,7 +867,7 @@ struct AppNameMenu: View {
         Menu {
             let names = knownNames
             if names.isEmpty {
-                Text("Lista pojawi się po pobraniu zainstalowanych aplikacji (sekcja Aplikacje).")
+                Text("Lista pojawi się po pobraniu zainstalowanych aplikacji (dział Aplikacje).")
             }
             ForEach(names, id: \.self) { name in Button(name) { pick(name) } }
         } label: {

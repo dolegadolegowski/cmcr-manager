@@ -284,7 +284,7 @@ struct AppsView: View {
         let shown = filter.isEmpty ? rows : rows.filter { Self.appName($0.path).localizedStandardContains(filter) }
         let selected = shown.first { $0.id == installedSelection }
         return Section {
-            FormActionRow("Aplikacje w folderach Programy",
+            FormActionRow("Aplikacje w folderach Aplikacje",
                           caption: checked == 0
                               ? "Pobierz listę, aby zobaczyć, na ilu komputerach jest każda aplikacja."
                               : "Sprawdzono \(Polish.computers(checked)). Pomarańczowa liczba – aplikacji brakuje na części z nich.") {
@@ -313,8 +313,8 @@ struct AppsView: View {
                     }
                     .disabled(selected.map(Self.canUninstall) != true || model.actionTargets.isEmpty)
                     .help(selected.map { Self.canUninstall($0)
-                        ? "Usuń \(Self.appName($0.path)) z folderu Programy na zaznaczonych komputerach (z potwierdzeniem)"
-                        : "Aplikacji systemowych i spoza folderu Programy nie można tu odinstalować." }
+                        ? "Usuń \(Self.appName($0.path)) z folderu Aplikacje na zaznaczonych komputerach (z potwierdzeniem)"
+                        : "Aplikacji systemowych i spoza folderu Aplikacje nie można tu odinstalować." }
                         ?? "Zaznacz aplikację na liście.")
                     Button {
                         if let selected { model.launchApp(selected.path, on: model.selectedMachines) }

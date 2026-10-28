@@ -422,7 +422,7 @@ struct SavedScriptSheet: View {
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
                     NumberedStep(n: 1, text: "Skopiuj plik na iMaca (pendrive lub AirDrop) do folderu Pobrane rzeczy konta administratora (imacNN).")
-                    NumberedStep(n: 2, text: "Zaloguj się na iMacu na konto administratora i otwórz Terminal (Programy › Narzędzia).")
+                    NumberedStep(n: 2, text: "Zaloguj się na iMacu na konto administratora i otwórz Terminal (Aplikacje › Narzędzia, /Applications/Utilities).")
                     NumberedStep(n: 3, text: "Wpisz poniższe polecenie, naciśnij Return i podaj hasło administratora:")
                     HStack {
                         Text(command)

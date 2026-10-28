@@ -396,7 +396,7 @@ struct RemoteBrowseErrorView: View {
                 ? message
                 : "Konto administratora nie ma uprawnień do tego folderu. Można go otworzyć z uprawnieniami administratora (sudo)."
         case .privacyDenied:
-            return "Biurko, Dokumenty i Pobrane są chronione przez macOS. Na tym komputerze włącz: Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie (ⓘ) › „Zezwalaj zdalnym użytkownikom na pełny dostęp do dysku”."
+            return "Biurko, Dokumenty i Pobrane rzeczy są chronione przez macOS. Na tym komputerze włącz: Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie (ⓘ) › „Zezwalaj zdalnym użytkownikom na pełny dostęp do dysku”."
         case .noConsoleUser:
             return "Folder zalogowanego użytkownika jest dostępny tylko wtedy, gdy ktoś jest zalogowany na tym komputerze."
         default:

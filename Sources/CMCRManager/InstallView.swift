@@ -52,7 +52,7 @@ struct InstallView: View {
             FileListEditor(items: $model.installItems,
                            placeholder: "Przeciągnij tutaj instalatory (.pkg, .dmg, .zip) lub aplikacje (.app) albo użyj „Dodaj…”.")
             HStack(spacing: 12) {
-                Text("Aplikacje trafią do folderu Programy na każdym komputerze.")
+                Text("Aplikacje trafią do folderu Aplikacje na każdym komputerze.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .help(".pkg → instalator systemowy, .dmg → zamontowanie i instalacja pakietu lub skopiowanie aplikacji, .zip → rozpakowanie, .app → skopiowanie do /Applications (z usunięciem kwarantanny). Instalacja z uprawnieniami administratora.")

@@ -173,7 +173,7 @@ final class Updater: ObservableObject {
             defaults.removeObject(forKey: Keys.pendingFrom)
             if pending == currentVersion?.description {
                 ConfigStore.log("Uaktualnienie aplikacji: \(from) → \(pending) – uruchomiono nową wersję")
-                outcome = Outcome(success: true, title: "Zaktualizowano do wersji \(pending)",
+                outcome = Outcome(success: true, title: "Uaktualniono do wersji \(pending)",
                                   message: "CMCR Manager działa w nowej wersji (poprzednia: \(from)).")
             } else {
                 let status = (try? String(contentsOf: UpdateInstaller.statusFile, encoding: .utf8))?

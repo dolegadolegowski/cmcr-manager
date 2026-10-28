@@ -143,7 +143,7 @@ private extension RemoteBrowseError {
     #expect(RemotePaths.friendlyName("/Users/{student}/Public", settings: s).title == "Katalog domowy ucznia › Public")
     #expect(RemotePaths.friendlyName("/Users/{console}/Desktop", settings: s).title == "Biurko zalogowanego użytkownika")
     #expect(RemotePaths.friendlyName("~/Downloads", settings: s).title == "Katalog domowy administratora › Downloads")
-    #expect(RemotePaths.friendlyName("/Applications", settings: s).title == "Programy")
+    #expect(RemotePaths.friendlyName("/Applications", settings: s).title == "Aplikacje")
     #expect(RemotePaths.friendlyName("/opt/lab", settings: s).title == "lab")
     #expect(RemotePaths.friendlyName("", settings: s).icon == "questionmark.folder")
     #expect(RemotePaths.favorites(s).first?.path == "/Users/{student}/Public/cmcr")
