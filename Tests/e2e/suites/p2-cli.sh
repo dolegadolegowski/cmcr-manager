@@ -204,3 +204,28 @@ expect_code "hosts generate --replace: przecinek w prefiksie – kod 2" "$code" 
 [ ! -e "$GEN/hosts.json" ] && pass "hosts generate: nic nie zapisano" || fail "hosts generate: zapisano listę" "$(cat "$GEN/hosts.json")"
 out="$(CMCR_CONFIG_DIR="$GEN" "$CTL" hosts generate lab-b --count 2 2>&1)"; code=$?
 expect "hosts generate: zwykły prefiks działa" "$out" "lab-b01@lab-b01.local"
+
+section "P2 cmcrctl – hosts generate --replace zachowuje uszkodzony hosts.json (AUDIT CLI-10)"
+BADG="$WORK/cfg-p2-badgen"
+mkdir -p "$BADG"
+cp "$P2/settings.json" "$BADG/"
+printf '%s\n' '[{"name":"sala1","address":"sala1.cmcr-e2e.invalid","macAddress":"aa:bb:cc:dd:ee:ff"},' \
+  ' {"name":"sala2","adress":"sala2.cmcr-e2e.invalid"}]' > "$BADG/hosts.json"
+cp "$BADG/hosts.json" "$WORK/p2-badgen.orig"
+out="$(CMCR_CONFIG_DIR="$BADG" "$CTL" hosts generate sala --count 2 --replace --yes 2>&1)"; code=$?
+expect_code "generate --replace na uszkodzonym pliku: kod 0" "$code" 0 "$out"
+bak="$(ls "$BADG"/hosts.json.*.bak 2>/dev/null | head -1)"
+[ -n "$bak" ] && cmp -s "$bak" "$WORK/p2-badgen.orig" && pass "generate --replace: oryginał zachowany jako .bak" \
+  || fail "generate --replace: brak kopii oryginału" "$(ls -la "$BADG")"
+expect "generate --replace: ścieżka kopii w komunikacie" "$out" "$(basename "${bak:-hosts.json.X.bak}")"
+expect "generate --replace: nowa lista" "$(CMCR_CONFIG_DIR="$BADG" "$CTL" list 2>&1)" "sala01@sala01.local"
+# A file that cannot even be read cannot be copied: then it is not replaced either.
+cp "$WORK/p2-badgen.orig" "$BADG/hosts.json"
+rm -f "$BADG"/hosts.json.*.bak
+chmod 000 "$BADG/hosts.json"
+out="$(CMCR_CONFIG_DIR="$BADG" "$CTL" hosts generate sala --count 2 --replace --yes 2>&1)"; code=$?
+chmod 644 "$BADG/hosts.json"
+expect_code "generate --replace na nieczytelnym pliku bez kopii: kod 1" "$code" 1 "$out"
+expect "generate --replace bez kopii: komunikat" "$out" "nie została zmieniona"
+cmp -s "$BADG/hosts.json" "$WORK/p2-badgen.orig" && pass "generate --replace bez kopii: plik nie został nadpisany" \
+  || fail "generate --replace: nadpisano plik bez kopii" "$(cat "$BADG/hosts.json")"

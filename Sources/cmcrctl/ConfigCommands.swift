@@ -121,6 +121,13 @@ extension CLI {
             confirm(hostsProblem == nil
                     ? "Zastąpić obecną listę (\(hosts.count)) wygenerowanymi wpisami (\(generated.count))?"
                     : "Zastąpić nieczytelny plik \(hostsPath) wygenerowanymi wpisami (\(generated.count))?")
+            // Like the app, a damaged hosts.json is never lost: its entries, MACs and groups stay in a copy.
+            if hostsProblem != nil {
+                guard let backup = ConfigStore.backupHostsFile() else {
+                    fail("✘ Nie można zachować kopii \(hostsPath) – lista komputerów nie została zmieniona.")
+                }
+                Console.out("Oryginał zachowano jako \(backup.path).")
+            }
             saveHostsOrFail(generated)
             Console.out("Lista komputerów zastąpiona.")
         } else if append {
