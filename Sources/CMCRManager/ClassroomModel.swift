@@ -388,13 +388,9 @@ final class ClassroomModel: ObservableObject {
         }
     }
 
-    /// Files and folders inside the materials folder (the folder itself is not sent).
+    /// Files and folders inside the materials folder (the folder itself is not sent); see `LessonMaterials`.
     func materialItems(_ folder: String) -> [URL] {
-        guard !folder.isEmpty else { return [] }
-        let url = URL(fileURLWithPath: expandTilde(folder), isDirectory: true)
-        return ((try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.lastPathComponent != ".DS_Store" }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        (try? LessonMaterials.items(in: folder).get()) ?? []
     }
 
     // MARK: - Attention mode

@@ -256,3 +256,26 @@ bad="$(term_unsafe "$out")"
 rm -f "$WORK/ask.answer"
 rm -rf "$TD"
 stop_delayed_power
+
+section "cmcrctl lesson start – folder materiałów nigdy nie jest katalogiem bieżącym (AUDIT CLI-01)"
+cp "$MM/classroom.json" "$WORK/classroom.cli01.json"
+cat > "$MM/classroom.json" <<'JSON'
+{"start": {"wake": false, "sendMaterials": true, "materialsFolder": "", "destination": "sharedFolder",
+           "openApps": false, "greet": false}}
+JSON
+mkdir -p "$WORK/cli01-cwd"
+echo "tajne" > "$WORK/cli01-cwd/TAJNE-nauczyciela.txt"
+rm -f "$WORK/remote/Public/cmcr/TAJNE-nauczyciela.txt"
+out="$(cd "$WORK/cli01-cwd" && mm lesson start 1)"; code=$?
+expect "lesson start: brak folderu materiałów – czytelny błąd" "$out" "Nie wybrano folderu z materiałami"
+expect_code "lesson start: kod 1 bez folderu materiałów" "$code" 1 "$out"
+[ ! -e "$WORK/remote/Public/cmcr/TAJNE-nauczyciela.txt" ] && pass "lesson start: pliki z katalogu bieżącego nie trafiły do ucznia" \
+  || fail "lesson start: wysłano uczniom pliki z katalogu bieżącego" "$(ls -la "$WORK/remote/Public/cmcr")"
+python3 - "$MM/classroom.json" "$WORK/cli01-nie-ma" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["start"]["materialsFolder"] = sys.argv[2]; json.dump(c, open(sys.argv[1], "w"))
+PY
+out="$(cd "$WORK/cli01-cwd" && mm lesson start 1)"; code=$?
+expect "lesson start: nieistniejący folder materiałów – czytelny błąd" "$out" "Folder z materiałami nie istnieje"
+expect_code "lesson start: kod 1 przy nieistniejącym folderze" "$code" 1 "$out"
+cp "$WORK/classroom.cli01.json" "$MM/classroom.json"

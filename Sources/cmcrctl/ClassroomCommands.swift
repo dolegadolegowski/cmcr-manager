@@ -329,10 +329,18 @@ enum ClassroomCLI {
         }
         var payload: URL?
         if plan.steps.contains(.materials) {
-            let dir = URL(fileURLWithPath: expandTilde(config.start.materialsFolder), isDirectory: true)
-            let items = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
-                .filter { $0.lastPathComponent != ".DS_Store" }
-            if !items.isEmpty, case .success(let url) = await Payload.make(items) { payload = url }
+            // Never the current directory (an empty setting) and never silently nothing: stop before any step runs.
+            switch LessonMaterials.items(in: config.start.materialsFolder) {
+            case .failure(let problem):
+                fail("✘ Materiały: \(problem.message) Nic nie zostało uruchomione.")
+            case .success(let items) where !items.isEmpty:
+                switch await Payload.make(items) {
+                case .success(let url): payload = url
+                case .failure(let error): fail("✘ Materiały: nie udało się ich spakować (\(error.localizedDescription)). Nic nie zostało uruchomione.")
+                }
+            case .success:
+                Console.out("Folder z materiałami jest pusty – krok „Wyślij materiały” zostanie pominięty.")
+            }
         }
         defer { if let payload { try? FileManager.default.removeItem(at: payload) } }
 

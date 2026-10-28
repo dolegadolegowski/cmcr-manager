@@ -392,3 +392,40 @@ public enum Plural {
     /// Locative: "na 1 komputerze", "na 5 komputerach".
     public static func computersLocative(_ n: Int) -> String { n == 1 ? "komputerze" : "komputerach" }
 }
+
+
+/// The lesson materials: the files and folders inside the chosen folder (the folder itself is not sent).
+public enum LessonMaterials {
+    public struct Problem: Error, Equatable, Sendable {
+        public let message: String
+    }
+
+    /// The items to send, sorted like the Finder, without `.DS_Store`. Never the current directory: an empty or
+    /// relative setting is an error, as is a missing or unreadable folder (e.g. Documents without the privacy
+    /// permission) – the teacher has to know that the students got nothing.
+    public static func items(in folder: String) -> Result<[URL], Problem> {
+        let setting = folder.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !setting.isEmpty else {
+            return .failure(Problem(message: "Nie wybrano folderu z materiałami (Zajęcia › Początek lekcji)."))
+        }
+        let path = expandTilde(setting)
+        guard path.hasPrefix("/") else {
+            return .failure(Problem(message: "Folder z materiałami musi być podany pełną ścieżką: \(setting)"))
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            return .failure(Problem(message: "Folder z materiałami nie istnieje: \(path)"))
+        }
+        guard isDirectory.boolValue else {
+            return .failure(Problem(message: "Materiały muszą być w folderze, a to jest plik: \(path)"))
+        }
+        do {
+            let items = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: path, isDirectory: true),
+                                                                     includingPropertiesForKeys: nil)
+            return .success(items.filter { $0.lastPathComponent != ".DS_Store" }
+                .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending })
+        } catch {
+            return .failure(Problem(message: "Nie można odczytać folderu z materiałami \(path): \(error.localizedDescription)"))
+        }
+    }
+}

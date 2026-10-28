@@ -440,3 +440,30 @@ private func osacompile(_ source: String, language: String) -> String? {
         #expect(osacompile(apple, language: "AppleScript") == nil, "\(buttons)")
     }
 }
+
+/// lesson-materials-cwd (AUDIT CLI-01): the materials are never the current directory.
+@Suite struct LessonMaterialsTests {
+    @Test func emptyRelativeMissingAndFileSettingsAreErrors() throws {
+        for setting in ["", "   ", "materialy", "."] {
+            guard case .failure = LessonMaterials.items(in: setting) else {
+                Issue.record("„\(setting)” nie może wskazywać katalogu bieżącego")
+                continue
+            }
+        }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cmcr-mat-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        guard case .failure(let missing) = LessonMaterials.items(in: dir.appendingPathComponent("brak").path) else {
+            Issue.record("nieistniejący folder"); return
+        }
+        #expect(missing.message.contains("nie istnieje"))
+        try Data("x".utf8).write(to: dir.appendingPathComponent("Karta 10.txt"))
+        try Data("x".utf8).write(to: dir.appendingPathComponent("Karta 2.txt"))
+        try Data("x".utf8).write(to: dir.appendingPathComponent(".DS_Store"))
+        let items = try LessonMaterials.items(in: dir.path).get()
+        #expect(items.map(\.lastPathComponent) == ["Karta 2.txt", "Karta 10.txt"])
+        guard case .failure = LessonMaterials.items(in: dir.appendingPathComponent("Karta 2.txt").path) else {
+            Issue.record("plik zamiast folderu"); return
+        }
+    }
+}
