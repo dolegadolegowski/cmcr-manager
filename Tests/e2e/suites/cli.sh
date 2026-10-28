@@ -242,6 +242,22 @@ expect_code "logout: bez --yes – kod 2" "$code" 2 "$out"
 out="$(ctlpw logout 1 --yes)"
 expect "logout: launchctl bootout sesji GUI" "$(fakelog)" "launchctl bootout gui/$(id -u)"
 expect "logout: komunikat" "$out" "Wylogowano $ME"
+# A student's session in the background after "Switch User" (AUDIT DOD-03, DOD-04).
+echo "502 uczen2" > "$WORK/ps.sessions"
+out="$(ctl exec 'cmcr_gui_sessions' 1)"
+expect "sesje GUI: także sesja w tle" "$out" "502 uczen2"
+out="$(ctl status 1 --json)"
+expect "status: sesje GUI w stanie komputera" "$out" "uczen2"
+clear_fakelog
+out="$(ctlpw logout 1 --yes)"
+expect "logout: wylogowana także sesja w tle" "$(fakelog)" "launchctl bootout gui/502"
+expect "logout: komunikat o sesji w tle" "$out" "Wylogowano uczen2 (sesja w tle)"
+: > "$WORK/fake-no-console"
+out="$(ctlpw _builder logout 1 --wait 1)"; code=$?
+rm -f "$WORK/fake-no-console"
+expect_code "logout z pytaniem: tylko sesja w tle – kod 1" "$code" 1 "$out"
+expect "logout z pytaniem: sesja w tle zgłoszona wprost" "$out" "w tle działa sesja:" "uczen2" "Wyloguj natychmiast"
+rm -f "$WORK/ps.sessions"
 
 # The power scripts detach `nohup /bin/sh -c '…'`: make sure that child also sees the fakes.
 pg="$(ctlpw exec 'nohup /bin/sh -c "type shutdown pmset" </dev/null 2>&1 | grep -c "is a function"' 1 --root 2>&1 | tail -1)"

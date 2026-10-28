@@ -31,6 +31,7 @@ public enum Scripts {
         echo "arch=$(uname -m)"
         echo "serial=$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F'"' '/IOPlatformSerialNumber/{print $4; exit}')"
         echo "console=$CONSOLE_USER"
+        echo "sessions=$(cmcr_gui_sessions | awk '{print $2}' | paste -sd, -)"
         echo "disk=$(df -k / 2>/dev/null | awk 'NR==2{print $2" "$4}')"
         echo "ip=$(ipconfig getifaddr "${IF:-en0}" 2>/dev/null)"
         echo "mac=$(ifconfig "${IF:-en0}" 2>/dev/null | awk '/ether/{print $2; exit}')"
@@ -1005,14 +1006,39 @@ public enum Scripts {
     /// the script waits up to `wait` seconds for the session to end.
     public static func logoutUser(force: Bool = true, wait: Int = 30) -> RemoteScript {
         if force {
+            // Every GUI session, also the ones in the background after "Switch User" (the next class would otherwise
+            // pick the student account at the login window and land in the previous student's session). The
+            // administrator's own background session (the account the app uses) is left alone.
             return RemoteScript(#"""
-            if [ -z "$CONSOLE_USER" ]; then echo "Nikt nie jest zalogowany."; exit 0; fi
-            launchctl bootout "gui/$CONSOLE_UID" && echo "Wylogowano $CONSOLE_USER."
+            SESS="$(cmcr_gui_sessions)"
+            [ -n "$SESS" ] || { echo "CMCR:NOUSER"; echo "Nikt nie jest zalogowany."; exit 0; }
+            RC=0; DONE=0
+            while read -r uid user; do
+              [ -n "$uid" ] || continue
+              where=""
+              if [ "$user" != "$CONSOLE_USER" ]; then
+                where=" (sesja w tle)"
+                if [ "$user" = "$CMCR_ADMIN_USER" ]; then echo "Pominięto sesję w tle konta administratora $user."; continue; fi
+              fi
+              if launchctl bootout "gui/$uid"; then echo "Wylogowano $user$where."; DONE=1
+              else echo "✘ Nie udało się wylogować $user$where." >&2; RC=1; fi
+            done <<EOF
+            $SESS
+            EOF
+            if [ $DONE = 0 ] && [ $RC = 0 ]; then echo "CMCR:NOUSER"; echo "Nikt poza administratorem nie był zalogowany."; fi
+            exit $RC
             """#, asRoot: true)
         }
         return RemoteScript(#"""
-        if [ -z "$CONSOLE_USER" ]; then echo "Nikt nie jest zalogowany."; exit 0; fi
-        WHO="$CONSOLE_USER"; WAIT=\#(max(1, wait))
+        BG="$(cmcr_gui_sessions | awk -v c="$CONSOLE_USER" 'NF && $2 != c {print $2}' | paste -sd, -)"
+        if [ -z "$CONSOLE_USER" ]; then
+          if [ -n "$BG" ]; then
+            echo "✘ Na ekranie jest okno logowania, a w tle działa sesja: $BG. Prośba o wylogowanie działa tylko dla osoby przy ekranie – użyj „Wyloguj natychmiast”." >&2
+            exit 1
+          fi
+          echo "CMCR:NOUSER"; echo "Nikt nie jest zalogowany."; exit 0
+        fi
+        WHO="$CONSOLE_USER"; WHO_UID="$CONSOLE_UID"; WAIT=\#(max(1, wait))
         # Runs in the background: if macOS showed an Automation prompt, the send would wait for it.
         as_console_user /usr/bin/osascript -e 'try' -e 'ignoring application responses' \
           -e 'tell application "loginwindow" to «event aevtrlgo»' -e 'end ignoring' \
@@ -1023,7 +1049,14 @@ public enum Scripts {
         i=0
         while [ $i -lt $((WAIT * 2)) ]; do
           sleep 0.5; i=$((i + 1))
-          if [ "$(stat -f%Su /dev/console 2>/dev/null)" != "$WHO" ]; then echo "✔ Wylogowano $WHO."; exit 0; fi
+          # Logged out once the session itself is gone (its loginwindow): "Switch User" also changes the console.
+          if ! cmcr_gui_sessions | awk -v u="$WHO_UID" '$1 == u {f=1} END {exit !f}'; then
+            echo "✔ Wylogowano $WHO."
+            if [ -n "$BG" ]; then
+              echo "⚠︎ W tle działa jeszcze sesja: $BG – użyj „Wyloguj natychmiast”." >&2; exit 1
+            fi
+            exit 0
+          fi
           AE="$(sed -n 's/^.*CMCR_AE_ERR //p' "$CMCR_TMP/logout.err" 2>/dev/null | head -1)"
           if [ -n "$AE" ]; then
             case "$AE" in

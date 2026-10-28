@@ -308,7 +308,9 @@ public enum LessonRunner {
             return outcome(await remote(Scripts.cleanFolder(path), timeout: 120), ok: "wyczyszczono \(path)")
 
         case .logout:
-            return outcome(await remote(Scripts.logoutUser(), timeout: 60), ok: "użytkownik wylogowany")
+            let r = await remote(Scripts.logoutUser(), timeout: 60)
+            if r.succeeded, r.stdoutText.contains("CMCR:NOUSER") { return .skipped("nikt nie był zalogowany") }
+            return outcome(r, ok: "użytkownik wylogowany")
 
         case .sleep:
             return outcome(await remote(Scripts.power(.sleep), timeout: 60), ok: "usypianie")

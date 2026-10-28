@@ -307,7 +307,17 @@ tar() {
   fi
   return $rc
 }
-export -f _e2e_log _e2e_fake_png _e2e_notice _e2e_is_notice sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer tar \
+# With $CMCR_E2E_WORK/ps.sessions ("uid account" per line): more GUI sessions, as after "Switch User" (AUDIT DOD-03).
+ps() {
+  command ps "$@"
+  local rc=$?
+  if [ "$*" = "-axo uid=,user=,comm=" ] && [ -s "${CMCR_E2E_WORK:-/nonexistent}/ps.sessions" ]; then
+    awk '{printf "%5d %-16s /System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow\n", $1, $2}' \
+      "$CMCR_E2E_WORK/ps.sessions"
+  fi
+  return $rc
+}
+export -f _e2e_log _e2e_fake_png _e2e_notice _e2e_is_notice sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer tar ps \
   chown systemsetup scutil dseditgroup visudo spctl defaults brew mas osascript fdesetup stat diskutil dscl \
   createhomedir networksetup 2>/dev/null
 

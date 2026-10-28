@@ -224,6 +224,21 @@ public struct HostStatus: Sendable {
 
     public var osVersion: String? { info["os"].flatMap { $0.isEmpty ? nil : $0 } }
     public var consoleUser: String? { info["console"].flatMap { $0.isEmpty ? nil : $0 } }
+    /// Accounts with a GUI session, also the ones left running in the background after "Przełącz użytkownika"
+    /// (empty for a status from an older version, which knew only the console).
+    public var sessionUsers: [String] {
+        (info["sessions"] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+    /// Sessions running in the background, not at the screen.
+    public var backgroundUsers: [String] { sessionUsers.filter { $0 != consoleUser } }
+    /// Everyone whose unsaved work is at stake on this Mac: the account at the screen first, then the background ones.
+    public var loggedInUsers: [String] { (consoleUser.map { [$0] } ?? []) + backgroundUsers }
+    /// "uczen", "uczen2 (w tle)", "uczen, uczen2 (w tle)".
+    public var loggedInText: String? {
+        let background = backgroundUsers.isEmpty ? [] : [backgroundUsers.joined(separator: ", ") + " (w tle)"]
+        let parts = (consoleUser.map { [$0] } ?? []) + background
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
     public var model: String? { info["model"] }
     public var ip: String? { info["ip"].flatMap { $0.isEmpty ? nil : $0 } }
     /// MAC for Wake-on-LAN: the wired (Ethernet) port when there is one, otherwise the interface of the

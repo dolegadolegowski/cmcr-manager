@@ -439,7 +439,7 @@ private struct EndLessonSection: View {
         }
         let reached = model.actionTargets
         let n = reached.count
-        let users = reached.compactMap { model.status($0).consoleUser }.count
+        let users = reached.filter { !model.status($0).loggedInUsers.isEmpty }.count
         var lines = plan.steps.map { "• \($0.title)" }
         if users > 0 { lines.append("\nZalogowani uczniowie: \(users). Niezapisane prace w otwartych aplikacjach przepadną.") }
         confirm = ConfirmRequest(

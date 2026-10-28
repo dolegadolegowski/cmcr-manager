@@ -316,9 +316,10 @@ struct ConfirmSheet: View {
     /// From this many Macs on, a destructive action needs an explicit "Rozumiem".
     static let acknowledgeFrom = 5
 
-    var withUser: [Machine] { targets.filter { model.status($0).consoleUser != nil } }
+    /// Macs with a student's session – at the screen or in the background ("Przełącz użytkownika").
+    var withUser: [Machine] { targets.filter { !model.status($0).loggedInUsers.isEmpty } }
     var effective: [Machine] {
-        skipLoggedIn ? targets.filter { model.status($0).consoleUser == nil } : targets
+        skipLoggedIn ? targets.filter { model.status($0).loggedInUsers.isEmpty } : targets
     }
     var needsAcknowledgement: Bool { request.destructive && effective.count >= Self.acknowledgeFrom }
 
@@ -387,7 +388,7 @@ struct ConfirmSheet: View {
 
     func row(_ m: Machine) -> some View {
         let reachability = model.status(m).reachability
-        let user = model.status(m).consoleUser
+        let user = model.status(m).loggedInText
         let skipped = skipLoggedIn && user != nil
         return HStack(spacing: 8) {
             StatusDot(reachability: reachability)

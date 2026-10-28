@@ -46,6 +46,12 @@ public struct RemoteScript: Sendable {
     case "$CONSOLE_USER" in root|_mbsetupuser|loginwindow) CONSOLE_USER="" ;; esac
     CONSOLE_UID=""
     if [ -n "$CONSOLE_USER" ]; then CONSOLE_UID="$(id -u "$CONSOLE_USER" 2>/dev/null)"; fi
+    # Every GUI session – the one at the screen and the ones left running in the background after "Switch User"
+    # (the screen then shows the login window): "uid account" per line. Each logged-in account runs its own
+    # loginwindow; at the login window only root's is left.
+    cmcr_gui_sessions() {
+      ps -axo uid=,user=,comm= 2>/dev/null | awk '$1 >= 501 && $3 ~ /\/loginwindow$/ {print $1, $2}' | sort -u
+    }
     asroot() {
       if [ "$(id -u)" -eq 0 ]; then "$@"; return; fi
       if [ -z "$CMCR_PW" ]; then

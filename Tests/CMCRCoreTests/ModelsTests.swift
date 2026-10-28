@@ -133,6 +133,26 @@ import Testing
 }
 
 @Suite struct HostStatusTests {
+    /// background-sessions (AUDIT DOD-04): a student's session left running after "Switch User" counts as logged in.
+    @Test func backgroundSessionsCountAsLoggedIn() {
+        var st = HostStatus()
+        st.info = Parsers.keyValues("console=\nsessions=uczen2\n")
+        #expect(st.consoleUser == nil)
+        #expect(st.loggedInUsers == ["uczen2"])
+        #expect(st.loggedInText == "uczen2 (w tle)")
+        st.info = Parsers.keyValues("console=uczen\nsessions=uczen,uczen2\n")
+        #expect(st.loggedInUsers == ["uczen", "uczen2"])
+        #expect(st.loggedInText == "uczen, uczen2 (w tle)")
+        st.info = Parsers.keyValues("console=uczen\n")          // a status from an older version
+        #expect(st.loggedInUsers == ["uczen"])
+        st.info = Parsers.keyValues("console=\nsessions=\n")
+        #expect(st.loggedInUsers.isEmpty && st.loggedInText == nil)
+        var online = st
+        online.reachability = .online
+        online.info = Parsers.keyValues("console=\nsessions=uczen2\n")
+        #expect(HostStatusFilter.withUser.accepts(online))
+    }
+
     @Test func derivedFields() {
         var st = HostStatus()
         st.info = Parsers.keyValues("os=15.1\nconsole=\nmac=aa:bb:cc:dd:ee:ff\ndisk=1048576000 524288000\nadmin=yes\nboot=0\n")

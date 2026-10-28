@@ -276,7 +276,7 @@ struct PowerRequest: Identifiable {
     /// become skipped jobs, and the batch remembers the confirmation, so „Powtórz na nieudanych” asks again.
     @MainActor
     func start(model: AppModel, classroom: ClassroomModel, skipLoggedIn: Bool) {
-        let skip = skipLoggedIn ? Set(machines.filter { model.status($0).consoleUser != nil }.map(\.id)) : []
+        let skip = skipLoggedIn ? Set(machines.filter { !model.status($0).loggedInUsers.isEmpty }.map(\.id)) : []
         let confirmation = BatchConfirmation(button: verb, destructive: isDestructive)
         model.perform(skipping: skip, reason: .loggedInUser, confirmation: confirmation) {
             switch kind {
@@ -375,7 +375,7 @@ struct PowerConfirmSheet: View {
 
     private func row(_ m: Machine) -> some View {
         let reachability = model.status(m).reachability
-        let user = model.status(m).consoleUser
+        let user = model.status(m).loggedInText
         let unreachable = model.willSkip(m)
         let skipped = unreachable || (skipLoggedIn && user != nil)
         return HStack(spacing: 8) {
@@ -430,16 +430,16 @@ struct PowerConfirmSheet: View {
     /// Macs the action really reaches: unreachable ones are skipped as in the header ("Pomiń niedostępne").
     var reached: [Machine] { request.machines.filter { !model.willSkip($0) } }
 
-    var loggedIn: Int { reached.filter { model.status($0).consoleUser != nil }.count }
+    var loggedIn: Int { reached.filter { !model.status($0).loggedInUsers.isEmpty }.count }
 
     var fileVaultCount: Int { reached.filter { classroom.fileVault[$0.id] == true }.count }
 
     var needsAcknowledgement: Bool {
-        request.isDestructive && request.delay == 0 && effective.filter { model.status($0).consoleUser != nil }.count >= 5
+        request.isDestructive && request.delay == 0 && effective.filter { !model.status($0).loggedInUsers.isEmpty }.count >= 5
     }
 
     var effective: [Machine] {
-        skipLoggedIn ? reached.filter { model.status($0).consoleUser == nil } : reached
+        skipLoggedIn ? reached.filter { model.status($0).loggedInUsers.isEmpty } : reached
     }
 
     func perform() {
