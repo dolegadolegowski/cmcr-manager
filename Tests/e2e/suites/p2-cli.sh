@@ -163,3 +163,31 @@ expect "report: ostrzeżenie o nieczytelnym hosts.json" "$out" "Uwaga: nie możn
 expect_code "report: kod 1 (komputery niedostępne)" "$code" 1 "$out"
 [ -z "$(ls "$RPT"/*.bak 2>/dev/null)" ] && pass "report: bez kopii .bak (lista tylko czytana)" || fail "report: utworzono kopię" "$(ls "$RPT")"
 cmp -s "$RPT/hosts.json" "$WORK/p2-report-hosts.orig" && pass "report: hosts.json bez zmian" || fail "report: hosts.json zmieniony"
+
+section "P2 cmcrctl – schedule set i ask biorą ustawienia z aplikacji (AUDIT CLI-07)"
+cat > "$P2/classroom.json" <<'JSON'
+{"schedule": {"powerOnEnabled": true, "onType": "wake", "onDays": ["M", "W", "F"], "onTime": {"hour": 6, "minute": 30},
+              "powerOffEnabled": true, "offType": "shutdown", "offDays": ["M", "W", "F"], "offTime": {"hour": 15, "minute": 5}},
+ "autoRestartAfterPowerLoss": false, "wakeOnLAN": true, "questionTimeoutMinutes": 1}
+JSON
+clear_fakelog
+out="$(p2pw schedule set 1)"; code=$?
+expect_code "schedule set bez --on/--off: kod 0" "$code" 0 "$out"
+expect "schedule set bez --on/--off: harmonogram zapisany w aplikacji" "$(fakelog)" \
+  "pmset repeat wake MWF 06:30:00 shutdown MWF 15:05:00" "pmset -a womp 1"
+expect_not "schedule set: autorestart wyłączony w aplikacji – nie włączany" "$(fakelog)" "autorestart"
+clear_fakelog
+out="$(p2pw schedule set 1 --on-type wakeorpoweron --no-womp)"
+expect "schedule set: opcja nadpisuje pole harmonogramu z aplikacji" "$(fakelog)" "pmset repeat wakeorpoweron MWF 06:30:00 shutdown MWF 15:05:00"
+expect_not "schedule set --no-womp" "$(fakelog)" "womp"
+clear_fakelog
+out="$(p2pw schedule set 1 --on MTWRF@07:45)"
+expect "schedule set --on: tylko podane zdarzenie" "$(fakelog)" "pmset repeat wake MTWRF 07:45:00"
+expect_not "schedule set --on: bez wyłączania z aplikacji" "$(fakelog)" "shutdown MWF"
+out="$(p2pw schedule clear 1)"
+: > "$WORK/ask.timeout"
+out="$(p2pw ask "Jest tam ktoś?" 1)"
+expect "ask: czas na odpowiedź z aplikacji (1 min)" "$out" "Czas na odpowiedź: 1 min"
+out="$(p2pw ask "Jest tam ktoś?" 1 --timeout 30)"
+expect "ask --timeout: podany czas" "$out" "Czas na odpowiedź: 30 s"
+rm -f "$WORK/ask.timeout" "$P2/classroom.json"

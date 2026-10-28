@@ -9,9 +9,12 @@ enum ClassroomCLI {
       cmcrctl lock KOMP [--message "…"] [--mode automatic|lockScreen|overlay] [--minutes N]
       cmcrctl unlock KOMP                             zdejmij blokadę ekranu
       cmcrctl ask "pytanie" KOMP [--buttons "Tak,Nie"] [--timeout sekundy]
+                                                      bez --timeout: czas na odpowiedź zapisany w aplikacji
       cmcrctl schedule show [KOMP]                    harmonogram zasilania (bez KOMP: wszystkie)
       cmcrctl schedule set|clear KOMP [--on MTWRF@07:45] [--off MTWRF@16:30]
                        [--on-type wakeorpoweron|wake] [--off-type sleep|shutdown] [--no-autorestart] [--no-womp]
+                                                      bez --on/--off: harmonogram i zasady zapisane w aplikacji
+                                                      (classroom.json); --on/--off: tylko podane zdarzenia
       cmcrctl rename KOMP [--name "Nazwa"] [--dry-run] [--update-list] [--yes]
                                                       nazwy z listy; --name tylko dla jednego komputera
       cmcrctl rename-computer KOMP [--name "Nazwa"] [--dry-run] [--update-list] [--yes]
@@ -83,8 +86,11 @@ enum ClassroomCLI {
             guard buttons.count <= ClassroomConfig.maxQuestionButtons else {
                 use("Okno pytania mieści najwyżej \(ClassroomConfig.maxQuestionButtons) przyciski.")
             }
-            let seconds = a.int("--timeout", in: 5...3600) ?? 120
+            // As in the app: „Czekaj na odpowiedź” from classroom.json unless --timeout says otherwise.
+            let seconds = a.int("--timeout", in: 5...3600)
+                ?? min(3600, max(1, ClassroomStore.loadConfig().questionTimeoutMinutes) * 60)
             let list = ModuleHosts.changing(a[1], command)
+            Console.err("Czas na odpowiedź: " + (seconds % 60 == 0 ? "\(seconds / 60) min" : "\(seconds) s"))
             return await ask(question, buttons: buttons, seconds: seconds, hosts: list, ssh: ssh)
 
         case "schedule":
@@ -96,9 +102,12 @@ enum ClassroomCLI {
             }
             switch action {
             case "set":
-                let schedule = parseSchedule(a)
+                // The schedule and the power policy saved in the app (classroom.json); the options change them.
+                let config = ClassroomStore.loadConfig()
+                let schedule = parseSchedule(a, saved: config.schedule)
                 let list = ModuleHosts.changing(a[1], "schedule set")
-                let autoRestart = !a.has("--no-autorestart"), wake = !a.has("--no-womp")
+                let autoRestart = config.autoRestartAfterPowerLoss && !a.has("--no-autorestart")
+                let wake = config.wakeOnLAN && !a.has("--no-womp")
                 return await runEach(list, a, ssh: ssh, timeout: 60) { _ in
                     Scripts.applyEnergySchedule(schedule, autoRestart: autoRestart, wakeOnLAN: wake)
                 }
@@ -202,21 +211,24 @@ enum ClassroomCLI {
         }
     }
 
-    /// `schedule set` options → schedule; a usage error (exit 2) for anything invalid.
-    static func parseSchedule(_ a: ModuleArguments) -> EnergySchedule {
+    /// `schedule set` options → schedule; a usage error (exit 2) for anything invalid. Without --on/--off it is
+    /// the schedule saved in the app (`saved`); with them, only the events given. --on-type/--off-type change the
+    /// saved types.
+    static func parseSchedule(_ a: ModuleArguments, saved: EnergySchedule) -> EnergySchedule {
         func use(_ text: String) -> Never { moduleUsageError(a.command, text) }
-        var s = EnergySchedule()
-        if let on = a.value("--on") {
+        var s = saved
+        let on = a.value("--on"), off = a.value("--off")
+        if on != nil || off != nil {
+            s.powerOnEnabled = on != nil
+            s.powerOffEnabled = off != nil
+        }
+        if let on {
             guard let parsed = parseEvent(on) else { use("Niepoprawne --on (np. MTWRF@07:45).") }
             (s.onDays, s.onTime) = parsed
-        } else if a.value("--off") != nil {
-            s.powerOnEnabled = false
         }
-        if let off = a.value("--off") {
+        if let off {
             guard let parsed = parseEvent(off) else { use("Niepoprawne --off (np. MTWRF@16:30).") }
             (s.offDays, s.offTime) = parsed
-        } else if a.value("--on") != nil {
-            s.powerOffEnabled = false
         }
         if let t = a.value("--on-type") {
             guard let v = EnergySchedule.OnType(rawValue: t) else { use("--on-type: wakeorpoweron lub wake") }
@@ -226,7 +238,9 @@ enum ClassroomCLI {
             guard let v = EnergySchedule.OffType(rawValue: t) else { use("--off-type: sleep lub shutdown") }
             s.offType = v
         }
-        if let e = s.validationError { use(e) }
+        if let e = s.validationError {
+            use(on == nil && off == nil ? "Harmonogram zapisany w aplikacji: \(e) Podaj --on lub --off." : e)
+        }
         return s
     }
 
