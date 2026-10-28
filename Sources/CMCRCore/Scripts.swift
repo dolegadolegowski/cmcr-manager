@@ -297,7 +297,7 @@ public enum Scripts {
         OWNER="$(printf '%s\n' "$LINE" | awk '{print $1}')"
         EXE="$(printf '%s\n' "$LINE" | sed 's/^ *[^ ]* *//')"
         if [ "$OWNER" != "$CONSOLE_USER" ]; then
-          echo "✘ Odmowa: proces $PID ($EXE) należy do konta „$OWNER”, nie do zalogowanego użytkownika $CONSOLE_USER – lista mogła być nieaktualna. Nic nie zamknięto." >&2
+          echo "✘ Odmowa: proces $PID ($EXE) należy do konta „${OWNER}”, nie do zalogowanego użytkownika $CONSOLE_USER – lista mogła być nieaktualna. Nic nie zamknięto." >&2
           exit 1
         fi
         if [ -n "$WANT" ]; then
