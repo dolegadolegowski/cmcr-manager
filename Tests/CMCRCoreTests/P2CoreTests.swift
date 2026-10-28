@@ -186,3 +186,79 @@ struct P2ConfigLocationTests {
         #expect(ConfigStore.directory(environment: ["CMCR_CONFIG_DIR": "/tmp/cmcr-x"]).path == "/tmp/cmcr-x")
     }
 }
+
+// MARK: - KOM-02: a damaged classroom.json is kept and reported, like hosts.json and settings.json
+
+private func p2Backups(in dir: URL, of name: String) -> [URL] {
+    ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
+        .filter { $0.lastPathComponent.hasPrefix(name + ".") && $0.pathExtension == "bak" }
+}
+
+struct P2ClassroomConfigRecoveryTests {
+    /// AUDIT KOM-02: one value of a wrong type (hand edit, another app version) replaced the whole classroom
+    /// configuration – lesson routines, power schedule, attention message, table layout – with the defaults, with no
+    /// copy and no warning, and the first change overwrote the file.
+    @Test func oneBadValueKeepsTheRestTheOriginalAndAWarning() throws {
+        let dir = try p2TemporaryDirectory("classroom")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("classroom.json")
+        let original = Data(#"{"lockMessage": 5, "autoUnlockMinutes": 10, "wakeOnLAN": false, "lastQuestion": "Ile?"}"#.utf8)
+        try original.write(to: url)
+        let r = ClassroomStore.loadConfig(from: url)
+        #expect(r.value.autoUnlockMinutes == 10)
+        #expect(!r.value.wakeOnLAN)
+        #expect(r.value.lastQuestion == "Ile?")
+        #expect(r.value.lockMessage == ClassroomConfig().lockMessage)
+        #expect(r.issue?.contains("lockMessage") == true, "\(r.issue ?? "-")")
+        #expect(r.issue?.contains("classroom.json") == true)
+        #expect(!r.protect)
+        let saved = p2Backups(in: dir, of: "classroom.json")
+        #expect(saved.count == 1)
+        #expect(try Data(contentsOf: #require(saved.first)) == original)
+    }
+
+    @Test func aFileThatIsNotJSONGivesDefaultsWithABackup() throws {
+        let dir = try p2TemporaryDirectory("classroom")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("classroom.json")
+        try Data("{ uszkodzony".utf8).write(to: url)
+        let r = ClassroomStore.loadConfig(from: url)
+        #expect(r.value == ClassroomConfig())
+        #expect(r.issue?.contains("uszkodzony") == true)
+        #expect(p2Backups(in: dir, of: "classroom.json").count == 1)
+    }
+
+    @Test func aMissingOrValidFileLoadsSilently() throws {
+        let dir = try p2TemporaryDirectory("classroom")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("classroom.json")
+        #expect(ClassroomStore.loadConfig(from: url).issue == nil)
+        var c = ClassroomConfig()
+        c.autoUnlockMinutes = 12
+        ClassroomStore.saveConfig(c, to: url)
+        let r = ClassroomStore.loadConfig(from: url)
+        #expect(r.value == c)
+        #expect(r.issue == nil)
+        #expect(p2Backups(in: dir, of: "classroom.json").isEmpty)
+    }
+
+    /// Without a copy of the damaged original the file must not be overwritten by the next change.
+    @Test func withoutABackupTheDamagedFileIsNotOverwritten() throws {
+        let dir = try p2TemporaryDirectory("classroom")
+        defer {
+            chmod(dir.path, 0o700)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        let url = dir.appendingPathComponent("classroom.json")
+        let original = Data(#"{"autoUnlockMinutes": "dziesięć"}"#.utf8)
+        try original.write(to: url)
+        chmod(dir.path, 0o500)
+        let r = ClassroomStore.loadConfig(from: url)
+        #expect(r.protect)
+        #expect(r.issue?.contains("nie będą zapisywane") == true, "\(r.issue ?? "-")")
+        let config = ConfigStore.record(r, for: url)
+        chmod(dir.path, 0o700)
+        ClassroomStore.saveConfig(config, to: url)
+        #expect(try Data(contentsOf: url) == original)
+    }
+}

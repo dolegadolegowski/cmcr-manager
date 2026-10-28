@@ -160,6 +160,8 @@ final class ClassroomModel: ObservableObject {
     func attach(_ model: AppModel) {
         guard self.model == nil else { return }
         self.model = model
+        // A damaged classroom.json is reported with the other configuration problems (AUDIT KOM-02).
+        if let issue = ClassroomStore.loadIssue, !model.configIssues.contains(issue) { model.configIssues.append(issue) }
         let snapshots = ClassroomStore.loadSnapshots()
         for m in model.machines {
             guard model.statuses[m.id] == nil, let snap = snapshots[m.id] else { continue }

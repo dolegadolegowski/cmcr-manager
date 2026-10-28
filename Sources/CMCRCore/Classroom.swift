@@ -427,13 +427,48 @@ public enum ClassroomStore {
     static var configURL: URL { ConfigStore.directory.appendingPathComponent("classroom.json") }
     static var cacheURL: URL { ConfigStore.directory.appendingPathComponent("status-cache.json") }
 
+    private static let configIssue = Locked<String?>(nil)
+
+    /// Why classroom.json could not be used as it was, from the last `loadConfig()` (nil: it loaded fine or did not
+    /// exist yet). The app shows it with the other configuration problems; `ConfigStore.loadIssues` lists it too.
+    public static var loadIssue: String? { configIssue.withValue { $0 } }
+
+    /// Loads classroom.json like hosts.json and settings.json (AUDIT KOM-02): a damaged file is kept next to it as
+    /// `classroom.json.<date>.bak`, the values that are still valid are kept, and the problem is reported
+    /// (`loadIssue`); when no copy could be made, the file is not overwritten by later changes.
     public static func loadConfig() -> ClassroomConfig {
-        guard let data = try? Data(contentsOf: configURL),
-              let c = try? JSONDecoder().decode(ClassroomConfig.self, from: data) else { return ClassroomConfig() }
-        return c
+        let r = loadConfig(from: configURL)
+        configIssue.withValue { $0 = r.issue }
+        return ConfigStore.record(r, for: configURL)
     }
 
-    public static func saveConfig(_ c: ClassroomConfig) { write(c, to: configURL) }
+    static func loadConfig(from url: URL) -> ConfigStore.Loaded<ClassroomConfig> {
+        let data: Data
+        do {
+            guard let d = try ConfigStore.readIfPresent(url) else { return .init(value: ClassroomConfig()) }
+            data = d
+        } catch {
+            return .init(value: ClassroomConfig(),
+                         issue: "Nie można odczytać ustawień zajęć (\(url.path)): \(error.localizedDescription). Zmiany tych ustawień nie będą zapisywane.",
+                         protect: true)
+        }
+        if let c = try? JSONDecoder().decode(ClassroomConfig.self, from: data) { return .init(value: c) }
+        let backup = ConfigStore.backupCopy(of: url, data: data)
+        let note = ConfigStore.backupNote(backup)
+        if let (c, bad) = ConfigStore.salvage(ClassroomConfig.self, from: data) {
+            return .init(value: c,
+                         issue: "Niektóre ustawienia zajęć (\(url.lastPathComponent)) były nieprawidłowe i przywrócono im wartości domyślne (\(bad.joined(separator: ", "))). \(note)",
+                         protect: backup == nil)
+        }
+        return .init(value: ClassroomConfig(),
+                     issue: "Plik ustawień zajęć (\(url.lastPathComponent)) jest uszkodzony – przywrócono ustawienia domyślne (scenariusze zajęć, harmonogram zasilania, tryb uwagi). \(note)",
+                     protect: backup == nil)
+    }
+
+    /// Does nothing while the file is protected (see `loadConfig`).
+    public static func saveConfig(_ c: ClassroomConfig) { saveConfig(c, to: configURL) }
+
+    static func saveConfig(_ c: ClassroomConfig, to url: URL) { ConfigStore.save(c, to: url) }
 
     public static func loadSnapshots() -> [UUID: HostSnapshot] {
         let dec = JSONDecoder()
