@@ -561,6 +561,24 @@ struct AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // stale-console-user (AUDIT KOM-04): a Mac that stops answering no longer shows the student logged in before,
+    // in any view (they all read the status); what else was known (MAC for Wake-on-LAN) stays.
+    @Test func aMacThatStopsAnsweringHasNoLoggedInStudent() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        var st = HostStatus()
+        st.reachability = .online
+        st.info = ["console": "jan", "sessions": "jan,ola", "mac": "aa:bb:cc:dd:ee:ff"]
+        model.statuses[a.id] = st
+        model.refreshStatus([a])
+        #expect(await AppTestEnvironment.wait(15) { ![.online, .checking].contains(model.status(a).reachability) })
+        #expect(model.status(a).consoleUser == nil)
+        #expect(model.status(a).loggedInUsers.isEmpty)
+        #expect(model.status(a).mac == "aa:bb:cc:dd:ee:ff")
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false

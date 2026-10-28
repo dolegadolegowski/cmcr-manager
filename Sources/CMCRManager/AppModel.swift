@@ -668,6 +668,10 @@ final class AppModel: ObservableObject {
             st.reachability = reach == .online ? .error : reach
             st.message = message
             st.info = statuses[m.id]?.info ?? [:]
+            // Who is logged in is known only from a check that worked: a Mac that is off or answers with an error
+            // must not show (in the list, the details, searches and confirmations) the student from before (KOM-04).
+            st.info["console"] = nil
+            st.info["sessions"] = nil
             if reach == .offline {
                 // Full background checks after 2, 4, 8 and then every 10 min (minus slack for the 2 min timer).
                 let n = (offlineStreak[m.id] ?? 0) + 1
