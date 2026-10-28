@@ -144,9 +144,9 @@ public enum ScreenIssue: Equatable, Sendable {
         case .sudoPasswordWrong:
             return "Błędne hasło administratora (sudo) – popraw je w Konfiguracji › Dostęp i hasła."
         case .sudoNotPermitted:
-            return "Konto, którym łączy się aplikacja, nie może używać sudo (nie jest administratorem tego Maca)."
+            return "Konto, którym łączy się aplikacja, nie może używać sudo (nie jest administratorem tego iMaca)."
         case .captureFailed(let detail):
-            let base = "Zrzut ekranu nieudany. Na tym Macu nadaj sesjom SSH uprawnienie „Nagrywanie ekranu i dźwięku systemowego”: Ustawienia systemowe › Prywatność i ochrona › „+” › /usr/libexec/sshd-keygen-wrapper (w nowszych macOS może być potrzebne także /usr/libexec/sshd-session). Konfiguracja › Przygotowanie iMaców pokazuje, czy działa."
+            let base = "Zrzut ekranu nieudany. Na tym iMacu nadaj sesjom SSH uprawnienie „Nagrywanie ekranu i dźwięku systemowego”: Ustawienia systemowe › Prywatność i ochrona › „+” › /usr/libexec/sshd-keygen-wrapper (w nowszych macOS może być potrzebne także /usr/libexec/sshd-session). Konfiguracja › Przygotowanie iMaców pokazuje, czy działa."
             return detail.isEmpty ? base : "\(base) (\(detail))"
         case .notifyFailed(let user, let detail):
             let base = "Na ekranie użytkownika \(user) nie udało się wyświetlić informacji o podglądzie, więc obraz nie jest pobierany. Kolejna próba przy następnym odświeżeniu."

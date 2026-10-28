@@ -327,3 +327,16 @@ struct P2DiagnoseTests {
         #expect(slow == (.offline, "Komputer nie odpowiada (wyłączony lub poza siecią)."))
     }
 }
+
+// MARK: - TXT-06: messages about a student's iMac do not say „ten Mac” (the teacher's Mac in the app)
+
+struct P2ScreenIssueTextTests {
+    @Test func screenCaptureProblemsNameTheIMac() {
+        let capture = ScreenIssue.captureFailed("").message
+        #expect(capture.hasPrefix("Zrzut ekranu nieudany. Na tym iMacu nadaj sesjom SSH uprawnienie"), "\(capture)")
+        #expect(ScreenIssue.sudoNotPermitted.message.contains("nie jest administratorem tego iMaca"))
+        for issue in [ScreenIssue.captureFailed("x"), .sudoNotPermitted] {
+            #expect(!issue.message.contains("tym Macu") && !issue.message.contains("tego Maca"))
+        }
+    }
+}
