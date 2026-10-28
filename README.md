@@ -176,6 +176,7 @@ cmcrctl message "Przerwa" "Za 5 minut koniec zajęć" all
 - Stan komputerów odświeża się w tle co 2 min, gdy okno aplikacji jest widoczne. Wyłączony iMac jest w pełni sprawdzany coraz rzadziej (najrzadziej co 10 min), a pomiędzy tym sprawdzane jest tylko, czy odpowiada jego port SSH — włączony komputer pojawia się więc w kolejnym odświeżeniu.
 - Zadania są odporne na utratę połączenia (uśpienie Maca nauczyciela, zamknięcie aplikacji, zerwane Wi‑Fi): polecenie na iMacu kończy pracę i sprząta po sobie. **Anuluj** zatrzymuje polecenie także na iMacu (rejestr zadań w `/tmp/cmcr-jobs`, procesy roota przez sudo).
 - Uszkodzony `hosts.json` lub `settings.json` nie jest po cichu zastępowany wartościami domyślnymi: oryginał zostaje obok jako `*.bak`, a aplikacja wyświetla ostrzeżenie.
+- Aplikacja i `cmcrctl` mogą działać jednocześnie: zmiany listy komputerów zrobione w `cmcrctl` (np. `hosts add`, `rename-computer --update-list`) aplikacja przejmuje, gdy wraca na pierwszy plan, a przy własnym zapisie łączy je ze swoimi zamiast je cofać; hasła ustawione przez `cmcrctl password` są odczytywane ponownie z Pęku kluczy. Gdy pliku nie da się zapisać (folder tylko do odczytu, pełny dysk), aplikacja to zgłasza, a `cmcrctl` kończy się błędem.
 
 ## Uaktualnienia aplikacji
 

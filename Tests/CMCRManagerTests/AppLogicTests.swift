@@ -497,4 +497,23 @@ struct AppLogicTests {
         #expect(model.notice == nil)
         #expect(ConfigStore.lastSaveError == nil)
     }
+
+    // config-overwrite (AUDIT KON-04): what cmcrctl wrote to hosts.json while the app was open is taken over
+    // on activation and not undone by the app's next save.
+    @Test func hostListChangesFromCmcrctlAreKept() async throws {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        let file = ConfigStore.directory.appendingPathComponent("hosts.json")
+        let added = AppTestEnvironment.closedHost("imac16")
+        try JSONEncoder().encode([a, b, added]).write(to: file)        // cmcrctl hosts add imac16
+        model.syncWithOtherPrograms()
+        #expect(model.machines.map(\.name) == ["imac01", "imac02", "imac16"])
+
+        try JSONEncoder().encode([b, added]).write(to: file)           // cmcrctl hosts remove 1
+        model.machines[1].port = 2                                     // edited in the app before it noticed
+        #expect(model.machines.map(\.name) == ["imac02", "imac16"])
+        #expect(model.machines.first?.port == 2)
+        let saved = try JSONDecoder().decode([Machine].self, from: Data(contentsOf: file))
+        #expect(saved == model.machines)
+    }
 }

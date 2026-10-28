@@ -129,6 +129,36 @@ struct ConfigRecoveryTests {
         #expect(try JSONDecoder().decode([Machine].self, from: Data(contentsOf: url)).isEmpty)
     }
 
+    /// AUDIT KON-04: a save does not undo what cmcrctl wrote since the list was read; the change is also noticed
+    /// without a save (the app checks when it becomes active).
+    @Test func savingMergesChangesWrittenByAnotherProgram() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("hosts.json")
+        let start = Array(Machine.generate().prefix(3))
+        #expect(ConfigStore.syncHosts(start, at: url).problem == nil)
+        #expect(ConfigStore.hostsChangedOutside(keeping: start, at: url) == nil)
+
+        // cmcrctl hosts add, while the app keeps the list in memory.
+        let added = Machine(name: "imac16", address: "imac16.local", user: "imac16")
+        let enc = JSONEncoder()
+        try enc.encode(start + [added]).write(to: url)
+        #expect(ConfigStore.hostsChangedOutside(keeping: start, at: url)?.map(\.name) == start.map(\.name) + ["imac16"])
+
+        // Second change by cmcrctl, then the app saves its own edit: both survive, in memory and in the file.
+        var cli = start + [added]
+        cli.removeFirst()
+        try enc.encode(cli).write(to: url)
+        var mine = start + [added]
+        mine[1].port = 2222
+        let saved = ConfigStore.syncHosts(mine, at: url)
+        #expect(saved.problem == nil)
+        #expect(saved.hosts.map(\.name) == ["imac02", "imac03", "imac16"])
+        #expect(saved.hosts.first?.port == 2222)
+        #expect(try JSONDecoder().decode([Machine].self, from: Data(contentsOf: url)) == saved.hosts)
+        #expect(ConfigStore.hostsChangedOutside(keeping: saved.hosts, at: url) == nil)
+    }
+
     @Test func connectionSharingDefaultsToOn() throws {
         let s = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"connectTimeout": 4}"#.utf8))
         #expect(s.reuseConnections)

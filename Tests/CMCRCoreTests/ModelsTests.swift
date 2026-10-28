@@ -62,6 +62,46 @@ import Testing
     }
 }
 
+/// AUDIT KON-04: the app's list and the one cmcrctl wrote meanwhile are merged by entry, nothing is undone.
+@Suite struct HostListMergeTests {
+    let a = Machine(name: "imac01", address: "imac01.local", user: "admin")
+    let b = Machine(name: "imac02", address: "imac02.local", user: "admin")
+    let c = Machine(name: "imac03", address: "imac03.local", user: "admin")
+
+    @Test func changesOnDifferentEntriesAreBothKept() {
+        var mine = [a, b, c]
+        mine[0].macAddress = "aa:bb:cc:dd:ee:ff"            // the app filled in a MAC
+        var theirs = [a, b, c]
+        theirs[1].address = "pracownia02.local"             // cmcrctl rename-computer --update-list
+        let added = Machine(name: "imac16", address: "imac16.local", user: "admin")
+        theirs.append(added)                                // cmcrctl hosts add
+        let merged = Machine.merge(base: [a, b, c], mine: mine, theirs: theirs)
+        #expect(merged.map(\.name) == ["imac01", "imac02", "imac03", "imac16"])
+        #expect(merged[0].macAddress == "aa:bb:cc:dd:ee:ff")
+        #expect(merged[1].address == "pracownia02.local")
+    }
+
+    @Test func removalsOnOneSideAreKeptUnlessTheOtherSideChangedTheEntry() {
+        var changed = b
+        changed.port = 2222
+        // Removed by cmcrctl, untouched in the app: removed.
+        #expect(Machine.merge(base: [a, b, c], mine: [a, b, c], theirs: [a, c]).map(\.name) == ["imac01", "imac03"])
+        // Removed in the app, untouched by cmcrctl: removed.
+        #expect(Machine.merge(base: [a, b, c], mine: [a, c], theirs: [a, b, c]).map(\.name) == ["imac01", "imac03"])
+        // Removed on one side, changed on the other: kept (nothing is lost).
+        #expect(Machine.merge(base: [a, b, c], mine: [a, changed, c], theirs: [a, c]).map(\.port) == [22, 2222, 22])
+        #expect(Machine.merge(base: [a, b, c], mine: [a, c], theirs: [a, changed, c]).map(\.name) == ["imac01", "imac02", "imac03"])
+    }
+
+    @Test func anEntryChangedOnBothSidesKeepsTheAppsVersion() {
+        var mine = b, theirs = b
+        mine.port = 2201
+        theirs.port = 2202
+        #expect(Machine.merge(base: [b], mine: [mine], theirs: [theirs]) == [mine])
+        #expect(Machine.merge(base: [b], mine: [b], theirs: [theirs]) == [theirs])
+    }
+}
+
 @Suite struct AppSettingsTests {
     @Test func emptyJSONGivesDefaults() throws {
         let s = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))

@@ -34,6 +34,8 @@ public enum ConfigStore {
         if loaded.renumbered, !loaded.protect, let data = try? Data(contentsOf: hostsURL),
            backupCopy(of: hostsURL, data: data) != nil {
             saveHosts(hosts)
+        } else if loaded.issue == nil, let data = try? Data(contentsOf: hostsURL) {
+            remember(hosts, data: data, at: hostsURL)
         }
         return hosts
     }
@@ -41,7 +43,74 @@ public enum ConfigStore {
     /// Returns why the list could not be saved (nil when it was, or when the file is protected – see `loadIssues`).
     @discardableResult
     public static func saveHosts(_ hosts: [Machine]) -> String? {
-        save(hosts, to: hostsURL)
+        syncHosts(hosts).problem
+    }
+
+    /// Saves the host list without undoing what another program (cmcrctl) wrote since this one last read or saved
+    /// it (AUDIT KON-04): such changes are merged in (`Machine.merge`). Returns the list as saved.
+    public static func syncHosts(_ hosts: [Machine]) -> (hosts: [Machine], problem: String?) {
+        syncHosts(hosts, at: hostsURL)
+    }
+
+    /// The list as written by another program since it was last read or saved here, merged with `current`;
+    /// nil when the file did not change (or cannot be read – a damaged file is never taken over).
+    public static func hostsChangedOutside(keeping current: [Machine]) -> [Machine]? {
+        hostsChangedOutside(keeping: current, at: hostsURL)
+    }
+
+    // MARK: Changes made by another program
+
+    /// The host list as this process last read or wrote it, with the file's bytes at that moment.
+    struct SyncedHosts {
+        var hosts: [Machine]
+        var data: Data
+    }
+
+    private static let syncedHosts = Locked([String: SyncedHosts]())
+
+    private static func remember(_ hosts: [Machine], data: Data, at url: URL) {
+        syncedHosts.withValue { $0[url.path] = SyncedHosts(hosts: hosts, data: data) }
+    }
+
+    private enum OutsideChange {
+        case none
+        /// Changed, but not readable as a host list.
+        case unreadable(Data)
+        /// The other program's list, the list it was based on and the file's bytes.
+        case changed(base: [Machine], theirs: [Machine], data: Data)
+    }
+
+    private static func outsideChange(at url: URL) -> OutsideChange {
+        guard let last = syncedHosts.withValue({ $0[url.path] }),
+              let disk = try? Data(contentsOf: url), disk != last.data else { return .none }
+        guard let theirs = try? JSONDecoder().decode([Machine].self, from: disk) else { return .unreadable(disk) }
+        return .changed(base: last.hosts, theirs: Machine.withUniqueIDs(theirs).hosts, data: disk)
+    }
+
+    static func syncHosts(_ mine: [Machine], at url: URL) -> (hosts: [Machine], problem: String?) {
+        if loadState.withValue({ $0.protected.contains(url.path) }) { return (mine, nil) }
+        var hosts = mine
+        switch outsideChange(at: url) {
+        case .changed(let base, let theirs, _):
+            hosts = Machine.merge(base: base, mine: mine, theirs: theirs)
+        case .unreadable(let disk):
+            // Changed outside and not readable as a list: keep that version next to the list before replacing it.
+            _ = backupCopy(of: url, data: disk)
+        case .none:
+            break
+        }
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? enc.encode(hosts) else { return (hosts, "Nie można zapisać \(url.path)") }
+        if let problem = write(data, to: url) { return (hosts, problem) }
+        remember(hosts, data: data, at: url)
+        return (hosts, nil)
+    }
+
+    static func hostsChangedOutside(keeping current: [Machine], at url: URL) -> [Machine]? {
+        guard case .changed(let base, let theirs, let data) = outsideChange(at: url) else { return nil }
+        remember(theirs, data: data, at: url)
+        return Machine.merge(base: base, mine: current, theirs: theirs)
     }
 
     public static func loadSettings() -> AppSettings {
@@ -213,19 +282,31 @@ public enum ConfigStore {
     @discardableResult
     static func save<T: Encodable>(_ value: T, to url: URL) -> String? {
         if loadState.withValue({ $0.protected.contains(url.path) }) { return nil }
-        ensureDirectory(url.deletingLastPathComponent())
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         do {
-            try enc.encode(value).write(to: url, options: .atomic)
+            return write(try enc.encode(value), to: url)
+        } catch {
+            return failedSave(url, error)
+        }
+    }
+
+    private static func write(_ data: Data, to url: URL) -> String? {
+        ensureDirectory(url.deletingLastPathComponent())
+        do {
+            try data.write(to: url, options: .atomic)
             loadState.withValue { $0.lastSaveError = nil }
             return nil
         } catch {
-            let message = "Nie można zapisać \(url.path): \(error.localizedDescription)"
-            loadState.withValue { $0.lastSaveError = message }
-            NSLog("CMCR: %@", message)
-            return message
+            return failedSave(url, error)
         }
+    }
+
+    private static func failedSave(_ url: URL, _ error: Error) -> String {
+        let message = "Nie można zapisać \(url.path): \(error.localizedDescription)"
+        loadState.withValue { $0.lastSaveError = message }
+        NSLog("CMCR: %@", message)
+        return message
     }
 
     /// Writes the SSH_ASKPASS helper used to answer ssh password prompts from the Keychain-backed password.

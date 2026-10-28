@@ -250,11 +250,17 @@ enum OwnerChoice: String, CaseIterable, Identifiable {
 final class AppModel: ObservableObject {
     @Published var machines: [Machine] {
         didSet {
-            reportSaveProblem(ConfigStore.saveHosts(machines))
+            if !applyingSavedHosts {
+                // cmcrctl may have changed hosts.json meanwhile: its changes are merged in, not overwritten.
+                let saved = ConfigStore.syncHosts(machines)
+                reportSaveProblem(saved.problem)
+                if saved.hosts != machines { applySavedHosts(saved.hosts) }
+            }
             pruneSelection()
             closeStaleConnections(oldMachines: oldValue)
         }
     }
+    private var applyingSavedHosts = false
     @Published var settings: AppSettings {
         didSet {
             if settings != oldValue {
@@ -362,6 +368,24 @@ final class AppModel: ObservableObject {
 
     /// The current host list entry of `m` (address, port, account, password choice), or `m` itself once removed.
     func current(_ m: Machine) -> Machine { machine(m.id) ?? m }
+
+    /// Shows the host list as it was saved (merged with changes made by cmcrctl) without saving it again.
+    private func applySavedHosts(_ hosts: [Machine]) {
+        applyingSavedHosts = true
+        defer { applyingSavedHosts = false }
+        machines = hosts
+    }
+
+    /// Takes over what other programs changed while the app was in the background (AUDIT KON-04): the host list
+    /// written by cmcrctl and passwords set or removed with `cmcrctl password` (the Keychain cache would keep
+    /// serving the old ones until the next start).
+    func syncWithOtherPrograms() {
+        Keychain.invalidateCache()
+        hasSharedPassword = Keychain.exists(Keychain.sharedAccount)
+        if let hosts = ConfigStore.hostsChangedOutside(keeping: machines), hosts != machines {
+            machines = hosts
+        }
+    }
 
     /// The save error last shown, so a folder that stays read-only does not raise an alert on every keystroke.
     private var shownSaveProblem: String?
@@ -657,6 +681,7 @@ final class AppModel: ObservableObject {
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
+                self?.syncWithOtherPrograms()
                 guard let self, Date().timeIntervalSince(self.lastQuietRefresh) > 120 else { return }
                 self.nextQuietProbe = [:]
                 self.refreshStatus(quietly: true)

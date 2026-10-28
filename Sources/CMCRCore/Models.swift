@@ -78,6 +78,34 @@ public struct Machine: Identifiable, Codable, Hashable, Sendable {
         return (fixed, renamed)
     }
 
+    /// Three-way merge of host lists by id (AUDIT KON-04). `base` is the list both sides started from: the app's
+    /// `mine` and `theirs` written meanwhile by cmcrctl (`hosts add/remove/set`, `rename-computer --update-list`).
+    /// An entry changed or removed on one side only takes that side's version; one changed on both sides keeps
+    /// `mine`; one removed on one side and changed on the other is kept (nothing is lost). Entries keep the order
+    /// of `mine`; those added in `theirs` follow the entry they follow there.
+    public static func merge(base: [Machine], mine: [Machine], theirs: [Machine]) -> [Machine] {
+        func index(_ list: [Machine]) -> [UUID: Machine] {
+            Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        }
+        let b = index(base), t = index(theirs), m = index(mine)
+        var result: [Machine] = []
+        for mineEntry in mine {
+            guard let old = b[mineEntry.id] else { result.append(mineEntry); continue }   // added here
+            if let theirEntry = t[mineEntry.id] {
+                result.append(mineEntry == old ? theirEntry : mineEntry)
+            } else if mineEntry != old {
+                result.append(mineEntry)                     // removed there, but changed here: keep
+            }
+        }
+        for (i, theirEntry) in theirs.enumerated() where m[theirEntry.id] == nil {
+            if let old = b[theirEntry.id], old == theirEntry { continue }   // removed here, unchanged there
+            let after = theirs[..<i].reversed().first { entry in result.contains { $0.id == entry.id } }
+            let at = after.flatMap { a in result.firstIndex { $0.id == a.id } }.map { $0 + 1 } ?? 0
+            result.insert(theirEntry, at: at)
+        }
+        return result
+    }
+
     /// Number embedded in the host name (`imac04` → 4); used by the CLI like `cmcr-exec cmd 4`.
     public var number: Int? {
         let digits = name.reversed().prefix { $0.isNumber }
