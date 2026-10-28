@@ -467,7 +467,7 @@ final class ClassroomModel: ObservableObject {
     }
 
     func cancelDelayedPower(_ model: AppModel, _ targets: [Machine]) {
-        model.runScript("Anuluj zaplanowane wyłączenie/restart", on: targets, section: .power) { _ in
+        model.runScript("Odwołaj zaplanowane uśpienie/restart/wyłączenie", on: targets, section: .power) { _ in
             Scripts.cancelDelayedPower()
         }
     }

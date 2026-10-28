@@ -258,7 +258,7 @@ public extension Scripts {
         \#(arm)
         \#(warn)
         ( trap '' HUP; exec /bin/bash --noprofile --norc -c 'sleep "$1"; case "$2" in restart) shutdown -r now ;; shutdown) shutdown -h now ;; sleep) pmset sleepnow ;; esac' "$TAG" \#(secs) \#(verb) ) </dev/null >/dev/null 2>&1 &
-        echo "✔ \#(action.label): za \#(max(0, minutes)) min (ok. $(date -v+\#(secs)S +%H:%M)). Można to anulować przyciskiem „Anuluj zaplanowane”."
+        echo "✔ \#(action.label): za \#(max(0, minutes)) min (ok. $(date -v+\#(secs)S +%H:%M)). Można to odwołać: Sesja i zasilanie › Zaplanowane na później › „Odwołaj” (w terminalu: cmcrctl power-cancel)."
         """#, asRoot: true)
     }
 

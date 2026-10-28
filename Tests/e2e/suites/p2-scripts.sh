@@ -171,3 +171,13 @@ if p2_bg_ok; then
 else
   fail "atrapy NIE są aktywne w procesach w tle – pominięto test opóźnionego wyłączenia"
 fi
+
+section "P2: opóźnione zasilanie – jak odwołać (AUDIT TXT-07, CLI-16)"
+if p2_bg_ok; then
+  out="$(ctlpw power-later sleep 30 1 --yes)"
+  ctlpw power-cancel 1 >/dev/null
+  expect "power-later: wskazówka, jak odwołać" "$out" "Zaplanowane na później" "„Odwołaj”" "cmcrctl power-cancel"
+  expect_not "power-later: bez nieistniejącego przycisku" "$out" "Anuluj zaplanowane"
+else
+  fail "atrapy NIE są aktywne w procesach w tle – pominięto test opóźnionego uśpienia"
+fi
