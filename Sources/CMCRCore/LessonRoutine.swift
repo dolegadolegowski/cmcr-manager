@@ -155,6 +155,7 @@ public enum LessonRunner {
                            range: Range<Int>? = nil, limiter: ConcurrencyLimiter? = nil, handle: ProcessHandle? = nil,
                            onOutput: Operations.Output? = nil, onStep: StepUpdate? = nil) async -> CommandResult {
         let indices = range ?? 0..<plan.steps.count
+        let context = StepContext()
         var failures: [String] = []
         var collected = false
         var collectFailed = false
@@ -192,7 +193,7 @@ public enum LessonRunner {
             }
             onStep?(i, .running)
             say("▸ [\(i + 1)/\(plan.steps.count)] \(step.title)")
-            let state = await perform(step, plan: plan, host: host, ssh: ssh, materials: materials,
+            let state = await perform(step, plan: plan, host: host, ssh: ssh, materials: materials, context: context,
                                       handle: handle, onOutput: onOutput)
             onStep?(i, state)
             switch state {
@@ -216,7 +217,14 @@ public enum LessonRunner {
         return CommandResult(exitCode: 1, stderr: Data((failures.joined(separator: "\n") + "\n").utf8))
     }
 
+    /// What one Mac's steps hand on to the later ones.
+    final class StepContext: @unchecked Sendable {
+        /// The local copy made by "Zbierz prace" (nil: nothing was collected).
+        var collected: URL?
+    }
+
     static func perform(_ step: LessonStepKind, plan: LessonPlan, host: Host, ssh: SSHSettings, materials: URL?,
+                        context: StepContext = StepContext(),
                         handle: ProcessHandle?, onOutput: Operations.Output?) async -> StepState {
         let m = host.machine
         let pw = host.password
@@ -263,12 +271,16 @@ public enum LessonRunner {
 
         case .collect:
             guard let base = plan.collectFolder else { return .skipped("brak folderu docelowego") }
-            let dest = base.appendingPathComponent(m.name, isDirectory: true)
-            let r = await Operations.pull(source: plan.settings.sharedFolder, from: m, into: dest, asRoot: true,
-                                          password: pw, settings: ssh, handle: handle, onOutput: onOutput)
+            // As „Zbierz prace” in Pliki: a new folder per Mac (never merged into an earlier copy), and the list of
+            // collected files for the cleanup below.
+            let (r, folder) = await Operations.collect(source: plan.settings.sharedFolder, from: m, into: base,
+                                                       name: m.name, asRoot: true, cleanAfter: false, password: pw,
+                                                       settings: ssh, handle: handle, onOutput: onOutput)
             guard r.succeeded else { return .failed(SSH.diagnose(r).1) }
-            let count = fileCount(dest)
-            return .done(count == 0 ? "folder ucznia był pusty" : "zebrano \(count) \(Plural.files(count))")
+            context.collected = folder
+            guard let folder else { return .done("folder ucznia był pusty") }
+            let count = fileCount(folder)
+            return .done("zebrano \(count) \(Plural.files(count))")
 
         case .quitApps:
             if plan.end.quitAllApps {
@@ -283,8 +295,13 @@ public enum LessonRunner {
                 : .failed("nie zamknięto: \(failed.joined(separator: ", "))")
 
         case .cleanShared:
+            // Only the collected files that are unchanged since: work saved after the folder was packed (a quit app's
+            // "Save", the student still at the Mac) is not deleted without a copy.
             let path = plan.settings.sharedFolder
-            return outcome(await remote(Scripts.cleanFolder(path), timeout: 120), ok: "wyczyszczono \(path)")
+            guard let folder = context.collected else { return .done("nic do usunięcia – folder ucznia był pusty") }
+            let r = await Operations.removeCollected(from: path, collectedIn: folder, on: m, password: pw, settings: ssh,
+                                                     handle: handle, onOutput: onOutput)
+            return r.succeeded ? .done("usunięto zebrane pliki z \(path)") : .failed(SSH.diagnose(r).1)
 
         case .cleanDownloads:
             let path = plan.settings.resolve("/Users/{student}/Downloads")

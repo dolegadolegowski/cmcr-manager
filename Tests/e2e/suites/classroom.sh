@@ -234,7 +234,7 @@ clear_fakelog
 out="$(ctlpw lesson end 1 --no-wait --yes)"; code=$?
 expect_code "lesson end: kod 0" "$code" 0 "$out"
 expect "lesson end: wszystkie kroki" "$out" "ostrzeżenie wyświetlone" "zebrano" "zamknięto: CMCRDummy" \
-  "wyczyszczono $WORK/remote/Public/cmcr" "użytkownik wylogowany"
+  "usunięto zebrane pliki z $WORK/remote/Public/cmcr" "użytkownik wylogowany"
 collected="$(find "$WORK/local/zebrane" -path "*3A/imac01/praca.txt" 2>/dev/null | head -1)"
 [ -n "$collected" ] && pass "lesson end: prace w folderze z datą i klasą" || fail "lesson end: brak zebranych prac" "$(find "$WORK/local" 2>&1)"
 [ -z "$(ls -A "$WORK/remote/Public/cmcr" 2>/dev/null)" ] && pass "lesson end: folder ucznia wyczyszczony" \
@@ -266,6 +266,32 @@ expect "lesson end bez zbierania: pozostałe kroki wykonane" "$out" "użytkownik
   || fail "lesson end bez zbierania: usunięto prace ucznia" "$out"
 expect_not "lesson end bez zbierania: brak kroku czyszczenia" "$out" "Wyczyść folder ucznia"
 rm -f "$WORK/remote/Public/cmcr/praca2.txt"
+
+# Cleaning removes only what was collected and has not changed since (AUDIT ZAJ-01): a file saved after the
+# folder was packed stays on the iMac, and a second collection in the same minute does not overwrite the first.
+python3 - "$WORK/config/classroom.json" <<'PY2'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+cfg["end"].update({"warn": False, "collect": True, "collectLabel": "zaj01", "quitApps": False, "cleanShared": True,
+                   "cleanDownloads": False, "logout": False, "power": "none"})
+json.dump(cfg, open(sys.argv[1], "w"), ensure_ascii=False)
+PY2
+echo "praca do zebrania" > "$WORK/remote/Public/cmcr/praca-zaj01.txt"
+rm -f "$WORK/remote/Public/cmcr/nowy-po-zebraniu.txt"
+touch "$WORK/tar.addfile"
+out="$(ctlpw lesson end 1 --no-wait --yes)"; code=$?
+rm -f "$WORK/tar.addfile"
+expect_code "lesson end (zbieranie + czyszczenie): kod 0" "$code" 0 "$out"
+[ ! -e "$WORK/remote/Public/cmcr/praca-zaj01.txt" ] && pass "lesson end: zebrany plik usunięty z folderu ucznia" \
+  || fail "lesson end: zebrany plik został w folderze ucznia" "$out"
+[ -f "$WORK/remote/Public/cmcr/nowy-po-zebraniu.txt" ] && pass "lesson end: plik zapisany po zebraniu prac zostaje u ucznia" \
+  || fail "lesson end: usunięto plik zapisany po zebraniu prac (utrata pracy ucznia)" "$out"
+echo "druga praca" > "$WORK/remote/Public/cmcr/praca-zaj01.txt"
+out="$(ctlpw lesson end 1 --no-wait --yes)"
+n="$(find "$WORK/local/zebrane" -path "*zaj01/imac01*" -name "praca-zaj01.txt" 2>/dev/null | wc -l | tr -d ' ')"
+[ "$n" = 2 ] && pass "lesson end: drugie zebranie w tej samej minucie nie nadpisuje pierwszego" \
+  || fail "lesson end: drugie zebranie nadpisało pierwsze ($n kopii)" "$(find "$WORK/local/zebrane" -path '*zaj01*' 2>&1)"
+rm -f "$WORK/remote/Public/cmcr/nowy-po-zebraniu.txt" "$WORK/remote/Public/cmcr/praca-zaj01.txt"
 rm -f "$WORK/config/classroom.json"
 
 section "Raport CSV"

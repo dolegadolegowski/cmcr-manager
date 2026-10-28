@@ -296,7 +296,18 @@ networksetup() {
     *) _e2e_log "networksetup $*"; return 0 ;;
   esac
 }
-export -f _e2e_log _e2e_fake_png _e2e_notice _e2e_is_notice sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer \
+# With $CMCR_E2E_WORK/tar.addfile: right after a folder was packed (tar -cf - .), a file appears in it – a student
+# saving work between collecting and cleaning at the end of a lesson (AUDIT ZAJ-01). One time only.
+tar() {
+  command tar "$@"
+  local rc=$?
+  if [ "${1:-}" = -cf ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/tar.addfile" ]; then
+    rm -f "$CMCR_E2E_WORK/tar.addfile"
+    echo "zapisane po zebraniu" > ./nowy-po-zebraniu.txt
+  fi
+  return $rc
+}
+export -f _e2e_log _e2e_fake_png _e2e_notice _e2e_is_notice sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer tar \
   chown systemsetup scutil dseditgroup visudo spctl defaults brew mas osascript fdesetup stat diskutil dscl \
   createhomedir networksetup 2>/dev/null
 

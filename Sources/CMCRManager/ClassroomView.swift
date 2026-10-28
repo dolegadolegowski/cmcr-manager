@@ -351,11 +351,11 @@ private struct EndLessonSection: View {
             Toggle(isOn: Binding(get: { c.wrappedValue.collect && c.wrappedValue.cleanShared },
                                  set: { c.wrappedValue.cleanShared = $0 })) {
                 StepLabel(.cleanShared, "Wyczyść folder cmcr ucznia",
-                          caption: "Tylko po udanym zebraniu prac z tego komputera.")
+                          caption: "Usuwa tylko zebrane pliki, których od zebrania nikt nie zmienił.")
             }
             .disabled(!c.wrappedValue.collect)
             .help(c.wrappedValue.collect
-                  ? "Po zebraniu prac usuwa zawartość folderu cmcr ucznia"
+                  ? "Po zebraniu prac usuwa z folderu cmcr ucznia zebrane pliki; zapisane później zostają"
                   : "Włącz „Zbierz prace” – folder ucznia jest czyszczony dopiero po zebraniu z niego prac")
             Toggle(isOn: c.cleanDownloads) {
                 StepLabel(.cleanDownloads, "Wyczyść folder Pobrane ucznia",

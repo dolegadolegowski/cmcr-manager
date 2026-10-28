@@ -101,6 +101,15 @@ public extension Operations {
         onOutput?(.stdout, Data("✔ Zebrano \(files) \(plural(files, "plik", "pliki", "plików")) (\(bytes.formatted(.byteCount(style: .file)))) → \(dest.path)\n".utf8))
 
         guard cleanAfter else { return (CommandResult(exitCode: 0), dest) }
+        return (await removeCollected(from: source, collectedIn: dest, on: host, password: password, settings: settings,
+                                      handle: handle, onOutput: onOutput), dest)
+    }
+
+    /// Deletes on the Mac the files that were collected into `dest` and have not changed there since
+    /// (`Scripts.removeCollected`): work saved after the folder was packed stays with the student.
+    static func removeCollected(from source: String, collectedIn dest: URL, on host: Machine, password: String?,
+                                settings: SSHSettings, handle: ProcessHandle? = nil,
+                                onOutput: Output? = nil) async -> CommandResult {
         onOutput?(.stdout, Data("→ Czyszczenie: usuwanie zebranych plików z \(source)…\n".utf8))
         let (collected, folders) = collectedContents(dest)
         // The script travels on the ssh command line, so very large collections are cleaned in parts.
@@ -112,9 +121,9 @@ public extension Operations {
             let c = await SSH.run(Scripts.removeCollected(in: source, files: chunk, folders: last ? folders : [],
                                                           asRoot: true),
                                   on: host, password: password, settings: settings, handle: handle, onOutput: onOutput)
-            if !c.succeeded { return (c, dest) }
+            if !c.succeeded { return c }
         }
-        return (CommandResult(exitCode: 0), dest)
+        return CommandResult(exitCode: 0)
     }
 
     /// Files (with the size and time they were collected with) and folders below `root`, folders deepest first.
