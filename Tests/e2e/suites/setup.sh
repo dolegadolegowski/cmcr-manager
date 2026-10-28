@@ -140,6 +140,18 @@ expect "setup: sshd -t odrzuca – komunikat" "$out" "sshd -t odrzucił konfigur
 cmp -s "$WORK/sshd-before.conf" "$SR/etc/ssh/sshd_config.d/050-cmcr-manager.conf" \
   && pass "setup: poprzedni drop-in sshd przywrócony" || fail "setup: drop-in sshd zmieniony mimo błędu"
 
+# --ssh-key-only after a key that could not be written: password logins stay on (AUDIT PRZ-04).
+ssh-keygen -q -t ed25519 -N "" -f "$WORK/prz04" -C prz04
+chmod 500 "$SHOME/.ssh"
+out="$(sctl setup 1 --no-ssh-acl --ssh-key-only --pubkey "$(cat "$WORK/prz04.pub")")"; code=$?
+chmod 700 "$SHOME/.ssh"
+expect_code "--ssh-key-only bez zapisanego klucza: kod 1" "$code" 1 "$out"
+expect "--ssh-key-only bez zapisanego klucza: komunikat" "$out" "klucza aplikacji nie udało się zainstalować"
+expect_not "--ssh-key-only bez zapisanego klucza: logowanie hasłem nie wyłączone" \
+  "$(cat "$SR/etc/ssh/sshd_config.d/050-cmcr-manager.conf" 2>/dev/null)" "PasswordAuthentication no"
+expect_not "--ssh-key-only bez zapisanego klucza: odcisk nie trafia do setup.json" \
+  "$(cat "$SR/Library/Application Support/CMCR/setup.json" 2>/dev/null)" "$(ssh-keygen -l -E sha256 -f "$WORK/prz04.pub" | awk '{print $2}')"
+
 out="$(sctl setup 1 --no-ssh-acl --no-sudo-nopasswd --verify)"
 expect "setup --verify: planowane usunięcie sudo bez hasła" "$out" "Wymaga zmiany: usunąć sudo bez hasła."
 out="$(sctl setup 1 --no-ssh-acl --no-sudo-nopasswd)"; code=$?

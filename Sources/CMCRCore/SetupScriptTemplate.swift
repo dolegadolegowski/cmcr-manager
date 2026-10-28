@@ -241,7 +241,7 @@ esac
 # --- Raport --------------------------------------------------------------------------
 STEP_N=0; N_OK=0; N_CHANGED=0; N_PENDING=0; N_WARN=0; N_TODO=0; N_FAIL=0; N_SKIP=0
 TODO_TEXT=""
-KEY_FPS=""; ETH_MACS=""; FDA_REMOTE="unknown"; SC_REMOTE="unknown"; FILEVAULT="unknown"
+KEY_FPS=""; KEY_OK=0; ETH_MACS=""; FDA_REMOTE="unknown"; SC_REMOTE="unknown"; FILEVAULT="unknown"
 
 section() { printf '\n── %s\n' "$1"; }
 detail()  { printf '   %s\n' "$*"; }
@@ -461,7 +461,7 @@ step_ssh_acl() {
 
 step_ssh_key() {
   section "Klucz SSH aplikacji CMCR Manager"
-  local home sshdir ak grp line type blob comment desired n_keys=0 n_added=0 n_present=0 fp
+  local home sshdir ak grp line type blob comment desired n_keys=0 n_added=0 n_present=0 fp fps=""
   home="$(home_of "$ADMIN")"
   if [ -z "$home" ] || [ ! -d "$home" ]; then record ssh_key fail "Brak katalogu domowego konta $ADMIN."; return; fi
   sshdir="$home/.ssh"; ak="$sshdir/authorized_keys"; grp="$(id -gn "$ADMIN" 2>/dev/null || echo staff)"
@@ -495,7 +495,7 @@ EOF
     if ! fp="$(ssh-keygen -l -E sha256 -f "$WORK/one.pub" 2>/dev/null | awk '{print $2}')" || [ -z "$fp" ]; then
       record ssh_key fail "Klucz publiczny jest uszkodzony (ssh-keygen go odrzucił)."; return
     fi
-    KEY_FPS="${KEY_FPS}${KEY_FPS:+ }$fp"; n_keys=$((n_keys + 1))
+    fps="${fps}${fps:+ }$fp"; n_keys=$((n_keys + 1))
     desired="$type $blob ${comment:-cmcr-manager}"
     [ -n "$OPT_KEY_FROM" ] && desired="from=\"$OPT_KEY_FROM\" $desired"
     if grep -qxF "$desired" "$new"; then n_present=$((n_present + 1)); continue; fi
@@ -521,6 +521,9 @@ EOF
   if [ $CHANGE -eq 1 ]; then
     chown "$ADMIN:$grp" "$sshdir" "$ak" 2>/dev/null; chmod 700 "$sshdir"; chmod 600 "$ak"
   fi
+  # Tylko klucz, który naprawdę jest w authorized_keys, pozwala wyłączyć logowanie hasłem (--ssh-key-only)
+  # i trafia do setup.json.
+  KEY_FPS="$fps"; KEY_OK=1
   if [ $n_added -gt 0 ]; then
     changed_or_planned ssh_key "Klucz SSH menedżera zainstalowany dla $ADMIN ($KEY_FPS)." \
       "zainstalować klucz SSH menedżera dla $ADMIN ($KEY_FPS)."
@@ -547,8 +550,12 @@ step_sshd_tuning() {
       echo "KbdInteractiveAuthentication no"
     fi
   } > "$want"
-  if [ "$OPT_SSH_KEY_ONLY" = 1 ] && [ -z "$KEY_FPS" ]; then
-    record sshd_conf fail "--ssh-key-only wymaga podania klucza (--pubkey) – inaczej utracisz dostęp. Pominięto."
+  if [ "$OPT_SSH_KEY_ONLY" = 1 ] && [ "$KEY_OK" != 1 ]; then
+    if [ -z "$OPT_PUBKEYS" ]; then
+      record sshd_conf fail "--ssh-key-only wymaga podania klucza (--pubkey) – inaczej utracisz dostęp. Pominięto."
+    else
+      record sshd_conf fail "--ssh-key-only: klucza aplikacji nie udało się zainstalować, więc logowanie hasłem zostaje włączone (inaczej utracisz dostęp). Pominięto."
+    fi
     return
   fi
   if [ -f "$SSHD_DROPIN" ] && cmp -s "$want" "$SSHD_DROPIN"; then
