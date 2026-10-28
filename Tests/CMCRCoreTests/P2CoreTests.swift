@@ -493,3 +493,63 @@ struct P2SetupKeyOnlyTests {
         #expect(SetupCommandLine.optionsHelp.contains("--no-ssh-key-only"))
     }
 }
+
+// MARK: - PRZ-09: the installer running as root never opens the log in the user's folder
+
+struct P2PrivilegedUpdateLogTests {
+    static let request = UpdateInstaller.Request(archive: URL(fileURLWithPath: "/tmp/u.zip"), sha256: String(repeating: "a", count: 64),
+                                                 target: URL(fileURLWithPath: "/Applications/CMCR Manager.app"),
+                                                 version: "1.2.0", bundleIdentifier: "pl.cmcr.manager", relaunch: true)
+
+    /// The shell command inside `do shell script "…"` (AppleScript string escapes undone).
+    static func shellCommand(_ source: String) throws -> String {
+        let start = try #require(source.range(of: "do shell script \"")).upperBound
+        var out = ""
+        var escaped = false
+        for ch in source[start...] {
+            if escaped { out.append(ch); escaped = false } else if ch == "\\" { escaped = true } else if ch == "\"" { break } else { out.append(ch) }
+        }
+        return out
+    }
+
+    /// AUDIT PRZ-09: `… >> '~/Library/Logs/CMCRManager/update.log' 2>&1 &` was opened by root's shell, which follows
+    /// a link the user put there while the password dialog was open (e.g. to a file in /etc/sudoers.d).
+    @Test func rootOnlyWritesIntoAPipeToAProcessWithTheUsersRights() async throws {
+        let command = try Self.shellCommand(UpdateInstaller.privilegedAppleScript(Self.request, prompt: "Hasło"))
+        let log = shQuote(UpdateInstaller.logURL.path)
+        #expect(!command.contains(">> \(log)") && !command.contains(">>\(log)"), "\(command)")
+        #expect(command.components(separatedBy: log).count == 2, "ścieżka dziennika występuje raz")
+        let uid = Self.request.uid
+        let sink = try #require(command.range(of: "| /bin/launchctl asuser \(uid) /usr/bin/sudo -u '#\(uid)' -- /bin/sh -c "))
+        #expect(sink.upperBound <= command.range(of: log)!.lowerBound, "dziennik otwiera proces z prawami użytkownika")
+        #expect(command.hasPrefix("{ trap '' PIPE; ") && command.hasSuffix("} >/dev/null 2>&1 &"))
+        let syntax = await ProcessRunner.run("/bin/sh", ["-n", "-c", command])
+        #expect(syntax.succeeded, "\(syntax.stderrText)")
+    }
+
+    /// The user-side process appends to the log, or drops the output when it cannot open the file (a link to a file
+    /// the user cannot write), so the installer is never stopped by a broken pipe.
+    @Test func theLogWriterAppendsOrDropsWhatItCannotWrite() async throws {
+        let dir = try p2TemporaryDirectory("updlog")
+        let target = dir.appendingPathComponent("systemowy")
+        defer {
+            chmod(target.path, 0o644)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        let log = dir.appendingPathComponent("update.log")
+        try Data("stary\n".utf8).write(to: log)
+        let ok = await ProcessRunner.run("/bin/sh", ["-c", UpdateInstaller.logSinkScript, "cmcr-log", log.path],
+                                         stdin: Data("nowy\n".utf8))
+        #expect(ok.succeeded)
+        #expect(try String(contentsOf: log, encoding: .utf8) == "stary\nnowy\n")
+
+        try Data("nie zmieniać\n".utf8).write(to: target)
+        chmod(target.path, 0o444)
+        let link = dir.appendingPathComponent("podmieniony.log")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        let dropped = await ProcessRunner.run("/bin/sh", ["-c", UpdateInstaller.logSinkScript, "cmcr-log", link.path],
+                                              stdin: Data(String(repeating: "wiersz dziennika\n", count: 5000).utf8))
+        #expect(dropped.succeeded, "\(dropped.stderrText)")
+        #expect(try String(contentsOf: target, encoding: .utf8) == "nie zmieniać\n")
+    }
+}
