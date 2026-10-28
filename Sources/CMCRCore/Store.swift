@@ -3,10 +3,17 @@ import Security
 
 /// Persists hosts and settings as JSON in Application Support (override with `CMCR_CONFIG_DIR`).
 public enum ConfigStore {
-    public static var directory: URL {
-        if let custom = ProcessInfo.processInfo.environment["CMCR_CONFIG_DIR"], !custom.isEmpty {
-            return URL(fileURLWithPath: expandTilde(custom), isDirectory: true)
-        }
+    public static var directory: URL { directory(environment: ProcessInfo.processInfo.environment) }
+
+    /// The folder from `CMCR_CONFIG_DIR`; nil when the variable is not set or empty (e.g. an unset variable in a
+    /// script), which means the default locations – for the configuration and the log alike (AUDIT KON-08).
+    static func customDirectory(_ environment: [String: String]) -> URL? {
+        guard let custom = environment["CMCR_CONFIG_DIR"], !custom.isEmpty else { return nil }
+        return URL(fileURLWithPath: expandTilde(custom), isDirectory: true)
+    }
+
+    static func directory(environment: [String: String]) -> URL {
+        if let custom = customDirectory(environment) { return custom }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("CMCRManager", isDirectory: true)
     }
@@ -14,10 +21,10 @@ public enum ConfigStore {
     static var hostsURL: URL { directory.appendingPathComponent("hosts.json") }
     static var settingsURL: URL { directory.appendingPathComponent("settings.json") }
 
-    public static var logURL: URL {
-        if ProcessInfo.processInfo.environment["CMCR_CONFIG_DIR"] != nil {
-            return directory.appendingPathComponent("actions.log")
-        }
+    public static var logURL: URL { logURL(environment: ProcessInfo.processInfo.environment) }
+
+    static func logURL(environment: [String: String]) -> URL {
+        if let custom = customDirectory(environment) { return custom.appendingPathComponent("actions.log") }
         let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
         return lib.appendingPathComponent("Logs/CMCRManager/actions.log")
     }

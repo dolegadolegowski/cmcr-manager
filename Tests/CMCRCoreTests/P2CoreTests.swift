@@ -168,3 +168,21 @@ struct P2MACValidationTests {
         #expect(HostValidation.issues(in: [m])[m.id] == nil)
     }
 }
+
+// MARK: - KON-08: an empty CMCR_CONFIG_DIR changes neither the configuration nor the log
+
+struct P2ConfigLocationTests {
+    /// AUDIT KON-08: `CMCR_CONFIG_DIR=` (e.g. an unset variable in a script) kept the default configuration, but the
+    /// log of actions went to ~/Library/Application Support/CMCRManager/actions.log instead of the one the app shows.
+    @Test func anEmptyConfigDirVariableKeepsTheDefaultLog() {
+        let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        let defaultLog = lib.appendingPathComponent("Logs/CMCRManager/actions.log")
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let defaultDir = support.appendingPathComponent("CMCRManager", isDirectory: true)
+        #expect(ConfigStore.logURL(environment: ["CMCR_CONFIG_DIR": ""]) == defaultLog)
+        #expect(ConfigStore.logURL(environment: [:]) == defaultLog)
+        #expect(ConfigStore.directory(environment: ["CMCR_CONFIG_DIR": ""]) == defaultDir)
+        #expect(ConfigStore.logURL(environment: ["CMCR_CONFIG_DIR": "/tmp/cmcr-x"]).path == "/tmp/cmcr-x/actions.log")
+        #expect(ConfigStore.directory(environment: ["CMCR_CONFIG_DIR": "/tmp/cmcr-x"]).path == "/tmp/cmcr-x")
+    }
+}
