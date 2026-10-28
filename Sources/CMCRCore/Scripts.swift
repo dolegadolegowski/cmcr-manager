@@ -996,6 +996,8 @@ public enum Scripts {
         DIR="${DIR//\{console\}/$CONSOLE_USER}"
         while [ "${DIR%/}" != "$DIR" ]; do DIR="${DIR%/}"; done
         case "$DIR/" in */../*|*/./*|*//*) echo "Odmowa: ścieżka nie może zawierać . , .. ani //" >&2; exit 2 ;; esac
+        # „~/…” is how the folder picker writes the administrator's home: protected, whatever follows.
+        case "$DIR" in "~"|"~/"*) echo "Odmowa: ~ to folder domowy administratora ($HOME) – jest chroniony (podano: $DIR)." >&2; exit 2 ;; esac
         case "$DIR" in /?*) ;; *) echo "Odmowa: podaj pełną ścieżkę (podano: $DIR)" >&2; exit 2 ;; esac
         # Early check on the given path; the resolved path is checked again below.
         shopt -s nocasematch
@@ -1052,11 +1054,13 @@ public enum Scripts {
         """#, asRoot: true)
     }
 
+    /// `ls -la` of a folder; `{console}` is the logged-in user and a leading `~` the administrator's home (the
+    /// folder picker writes folders there as „~/…”), as in `pullArchive`.
     public static func listFolder(_ path: String, asRoot: Bool) -> RemoteScript {
         RemoteScript(#"""
         DIR=\#(shQuote(path))
         cmcr_require_console "$DIR"
-        DIR="${DIR//\{console\}/$CONSOLE_USER}"
+        DIR="${DIR//\{console\}/$CONSOLE_USER}"; DIR="${DIR/#\~/$HOME}"
         ls -la "$DIR"
         """#, asRoot: asRoot)
     }

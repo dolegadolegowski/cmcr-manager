@@ -212,3 +212,12 @@ expect "push: chown odmówił – komunikat" "$out" "Nie udało się ustawić w�
 out="$(ctlpw _builder push 1 "$WORK/remote/p2push" "$ME" "" "$P2/send/p2-plik.txt" --root)"; code=$?
 expect_code "push: poprawny właściciel – kod 0" "$code" 0 "$out"
 [ -f "$WORK/remote/p2push/p2-plik.txt" ] && pass "push: poprawny właściciel – plik zapisany" || fail "push: brak pliku" "$out"
+
+section "P2: ~ w ścieżce folderu (AUDIT PLI-09)"
+out="$(ctl ls '~' 1)"; code=$?
+expect_code "ls ~: kod 0" "$code" 0 "$out"
+expect_not "ls ~: ~ rozwinięte" "$out" "No such file"
+expect "ls ~: zawartość katalogu domowego" "$out" "Library"
+out="$(ctlpw clean "~/cmcr-p2-nie-istnieje-$$" 1 --yes)"; code=$?
+expect "clean ~: odmowa z właściwym powodem" "$out" "folder domowy administratora"
+expect_not "clean ~: bez mylącej rady o pełnej ścieżce" "$out" "podaj pełną ścieżkę"
