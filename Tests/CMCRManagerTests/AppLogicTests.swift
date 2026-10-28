@@ -423,4 +423,19 @@ struct AppLogicTests {
         #expect(batch.confirmation?.destructive == false)
         #expect(await AppTestEnvironment.wait { batch.finished })
     }
+
+    // browser-confirm-targets (AUDIT UI-04): deleting or replacing in the file browser asks about the browsed Mac
+    // only – a plain alert, not the sheet with the checked Macs (whose „skip logged in” could drop the action).
+    @Test func browserConfirmationsAreAboutTheBrowsedMacOnly() throws {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        model.selection = [a.id, b.id]
+        let browser = model.files.browser
+        let entries = (1...7).map { RemoteEntry(name: "plik\($0).txt", kind: .file) }
+        let delete = try #require(browser.deleteConfirmation(entries))
+        #expect(delete.targets == [])
+        #expect(delete.message.contains("„plik5.txt” i 2 inne"), "\(delete.message)")
+        #expect(browser.deleteConfirmation([]) == nil)
+        #expect(RemoteBrowserModel.names(["a", "b", "c", "d", "e", "f"]) == "„a”, „b”, „c”, „d”, „e” i 1 inny")
+    }
 }

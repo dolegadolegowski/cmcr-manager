@@ -231,16 +231,20 @@ struct DashboardView: View {
             detailColumns
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
-            if let id = ids.first, let m = model.machine(id) {
-                Button("Pokaż szczegóły") {
+            // Right-clicking a selected row hands over every selected Mac: the menu acts on all of them.
+            if ids.count == 1, let id = ids.first {
+                Button {
                     model.selection = [id]
                     showInspector = true
+                } label: {
+                    Label("Pokaż szczegóły", systemImage: "info.circle")
                 }
                 Divider()
-                MachineContextMenu(machine: m)
             }
+            if !ids.isEmpty { MachineContextMenu(ids: ids) }
         } primaryAction: { ids in
-            if let id = ids.first {
+            // Double-click or Return on one row shows its details; with several rows the targets stay as they are.
+            if ids.count == 1, let id = ids.first {
                 model.selection = [id]
                 showInspector = true
             }

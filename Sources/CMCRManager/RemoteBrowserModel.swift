@@ -256,7 +256,7 @@ final class RemoteBrowserModel: ObservableObject {
         guard let m = host, let l = listing, !entries.isEmpty else { return }
         let paths = entries.map { RemotePaths.join(l.path, $0.name) }
         let root = needsRoot(l, entries: entries)
-        let what = entries.count == 1 ? "„\(entries[0].name)”" : "\(entries.count) elementów"
+        let what = entries.count == 1 ? "„\(entries[0].name)”" : Polish.count(entries.count, "element", "elementy", "elementów")
         runChange("Usuń \(what) z \(l.path)", on: m, activity: "Usuwanie \(what)…") { job in
             await self.app.ssh(Scripts.deleteItems(paths, asRoot: root), on: m, job: job)
         }
@@ -267,7 +267,7 @@ final class RemoteBrowserModel: ObservableObject {
         guard let m = host, let l = listing, !entries.isEmpty else { return }
         let names = entries.map(\.name)
         let root = asRoot || l.asRoot
-        let what = entries.count == 1 ? "„\(entries[0].name)”" : "\(entries.count) elementów"
+        let what = entries.count == 1 ? "„\(entries[0].name)”" : Polish.count(entries.count, "element", "elementy", "elementów")
         lastDownload = []
         runChange("Pobierz \(what) z \(m.name)", on: m, activity: "Pobieranie \(what)…", operation: { job in
             let (r, saved) = await Operations.download(names, in: l.path, from: m, into: directory, asRoot: root,
@@ -289,7 +289,7 @@ final class RemoteBrowserModel: ObservableObject {
         let groupName = subfolder?.group ?? l.group
         let owner = ownerName == l.adminUser || ownerName.isEmpty ? "" : "\(ownerName):\(groupName)"
         let root = asRoot || !owner.isEmpty || !l.writable
-        let what = urls.count == 1 ? "„\(urls[0].lastPathComponent)”" : "\(urls.count) elementów"
+        let what = urls.count == 1 ? "„\(urls[0].lastPathComponent)”" : Polish.count(urls.count, "element", "elementy", "elementów")
         runChange("Wyślij \(what) → \(m.name):\(destination)", on: m, activity: "Wysyłanie \(what)…") { job in
             switch await Payload.make(urls) {
             case .failure(let e):

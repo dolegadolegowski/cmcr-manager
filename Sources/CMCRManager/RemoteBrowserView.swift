@@ -344,42 +344,55 @@ private struct RemoteBrowserPage: View {
     }
 
     func startUpload(_ urls: [URL]) {
-        let conflicts = browser.conflicts(for: urls)
-        guard !conflicts.isEmpty else {
+        guard let request = browser.replaceConfirmation(urls) else {
             browser.upload(urls)
             return
         }
-        let names = conflicts.prefix(5).map { "„\($0)”" }.joined(separator: ", ") + (conflicts.count > 5 ? "…" : "")
-        let host = browser.host.map { " na komputerze \($0.name)" } ?? ""
-        confirm = ConfirmRequest(
-            title: "Zastąpić istniejące elementy?",
-            message: "W tym folderze\(host) są już: \(names). Pliki o tych samych nazwach zostaną zastąpione, a do folderów zostanie dodana nowa zawartość.",
-            button: "Zastąp") {
-            browser.upload(urls)
-        }
+        confirm = request
     }
 
     func confirmDelete(_ entries: [RemoteEntry]) {
-        guard !entries.isEmpty else { return }
-        let title = entries.count == 1
-            ? "Usunąć „\(entries[0].displayName)”?"
-            : "Usunąć \(Polish.count(entries.count, "element", "elementy", "elementów"))?"
-        let place = "z komputera \(browser.host?.name ?? "") (\(browser.path))"
-        let message: String
-        if entries.count == 1 {
-            message = "Element zostanie trwale usunięty \(place). Nie trafi do Kosza – tej operacji nie można cofnąć."
-        } else {
-            let names = entries.prefix(5).map { "„\($0.displayName)”" }.joined(separator: ", ")
-                + (entries.count > 5 ? " i \(entries.count - 5) innych" : "")
-            message = "Zostaną trwale usunięte \(place): \(names). Nie trafią do Kosza – tej operacji nie można cofnąć."
-        }
-        confirm = ConfirmRequest(title: title, message: message, button: "Usuń") {
-            browser.delete(entries)
-        }
+        confirm = browser.deleteConfirmation(entries)
     }
 }
 
 extension RemoteBrowserModel {
+    /// "„a”, „b” i 3 inne" – at most five names, then how many more.
+    static func names(_ names: [String]) -> String {
+        let shown = names.prefix(5).map { "„\($0)”" }.joined(separator: ", ")
+        let more = names.count - 5
+        return more > 0 ? shown + " i " + Polish.count(more, "inny", "inne", "innych") : shown
+    }
+
+    /// Asks before replacing items of the same name; nil when nothing would be replaced. The question is about the
+    /// one Mac being browsed (a plain alert): the checked Macs of the list have nothing to do with it.
+    func replaceConfirmation(_ urls: [URL]) -> ConfirmRequest? {
+        let conflicts = conflicts(for: urls)
+        guard !conflicts.isEmpty else { return nil }
+        let place = host.map { " na komputerze \($0.name)" } ?? ""
+        return ConfirmRequest(
+            title: "Zastąpić istniejące elementy?",
+            message: "W tym folderze\(place) są już: \(Self.names(conflicts)). Pliki o tych samych nazwach zostaną zastąpione, a do folderów zostanie dodana nowa zawartość.",
+            button: "Zastąp", targets: []) { [weak self] in
+            self?.upload(urls)
+        }
+    }
+
+    /// Asks before deleting on the browsed Mac (a plain alert, see `replaceConfirmation`).
+    func deleteConfirmation(_ entries: [RemoteEntry]) -> ConfirmRequest? {
+        guard !entries.isEmpty else { return nil }
+        let title = entries.count == 1
+            ? "Usunąć „\(entries[0].displayName)”?"
+            : "Usunąć \(Polish.count(entries.count, "element", "elementy", "elementów"))?"
+        let place = "z komputera \(host?.name ?? "") (\(path))"
+        let message = entries.count == 1
+            ? "Element zostanie trwale usunięty \(place). Nie trafi do Kosza – tej operacji nie można cofnąć."
+            : "Zostaną trwale usunięte \(place): \(Self.names(entries.map(\.displayName))). Nie trafią do Kosza – tej operacji nie można cofnąć."
+        return ConfirmRequest(title: title, message: message, button: "Usuń", targets: []) { [weak self] in
+            self?.delete(entries)
+        }
+    }
+
     /// A subfolder of the current folder written with placeholders.
     func portablePathFor(_ entry: RemoteEntry) -> String {
         RemotePaths.tokenize(RemotePaths.join(path, entry.name), studentUser: app.settings.studentUser,
