@@ -387,3 +387,34 @@ struct P2CollectFolderNameTests {
         }
     }
 }
+
+// MARK: - UI-15, ZAJ-07: the lesson routine's queue message uses the Polish plural
+
+struct P2LessonQueueMessageTests {
+    /// AUDIT UI-15, ZAJ-07: with „Jednoczesne operacje” set to 1–4 the routine said „najwyżej 1 komputerów naraz”,
+    /// „najwyżej 3 komputerów naraz”.
+    @Test(arguments: [(1, "najwyżej 1 komputer naraz"), (3, "najwyżej 3 komputery naraz"),
+                      (5, "najwyżej 5 komputerów naraz"), (22, "najwyżej 22 komputery naraz")])
+    func waitingForASlotSaysHowManyComputers(limit: Int, expected: String) async {
+        let limiter = ConcurrencyLimiter(limit: limit)
+        for _ in 0..<limit { _ = await limiter.tryAcquire() }
+        let handle = ProcessHandle()
+        let text = Locked("")
+        let plan = LessonPlan(kind: .start, steps: [.greet], start: LessonStartConfig(), end: LessonEndConfig(),
+                              settings: AppSettings(), collectFolder: nil)
+        let host = LessonRunner.Host(machine: Machine(name: "imac01", address: "imac01.cmcr-test.invalid", user: "imac01"),
+                                     password: nil, macs: [])
+        // Nothing reaches ssh: once the message is out, the run is cancelled and a slot is freed.
+        _ = await LessonRunner.run(plan, on: host, ssh: SSHSettings(askpassPath: "/tmp/askpass"), materials: nil,
+                                   limiter: limiter, handle: handle, onOutput: { _, data in
+            let line = String(decoding: data, as: UTF8.self)
+            text.withValue { $0 += line }
+            if line.hasPrefix("Czekam") {
+                handle.cancel()
+                Task { await limiter.release() }
+            }
+        })
+        let output = text.withValue { $0 }
+        #expect(output.contains("Czekam na swoją kolej (\(expected))…"), "\(output)")
+    }
+}
