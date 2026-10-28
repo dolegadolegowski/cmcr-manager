@@ -699,8 +699,18 @@ public enum Scripts {
         """#, asRoot: true)
     }
 
-    public static func updateHistory() -> RemoteScript {
-        RemoteScript("softwareupdate --history 2>&1 | head -n 40")
+    /// softwareupdate lists the history oldest first; the column header stays and the 40 newest follow, newest first.
+    public static func updateHistory(limit: Int = 40) -> RemoteScript {
+        RemoteScript(#"""
+        softwareupdate --history 2>&1 | awk -v max=\#(max(1, limit)) '
+          NR <= 2 && /^(Display Name|-)/ { print; next }
+          { a[++n] = $0 }
+          END {
+            stop = n > max ? n - max : 0
+            for (i = n; i > stop; i--) print a[i]
+            if (stop > 0) printf "… pominięto starsze wpisy: %d (pokazano %d najnowszych)\n", stop, max
+          }'
+        """#)
     }
 
     /// mas ≥ 4 runs sudo itself; `with_askpass` supplies the askpass and DISPLAY sudo needs without a tty.

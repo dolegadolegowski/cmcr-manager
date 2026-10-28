@@ -162,7 +162,12 @@ EOF
       local pw; IFS= read -r pw
       if [ "$pw" = "${CMCR_E2E_PASSWORD:-}" ]; then _e2e_log "softwareupdate stdinpass ok"; echo "Installing (fake)…"; echo "Done."
       else echo "Authentication failed" >&2; return 1; fi ;;
-    *" --history "*) echo "Display Name   Version   Date"; echo "macOS Testowy  99.0      01.01.2026" ;;
+    *" --history "*)
+      # Oldest first, as the real softwareupdate. Control file in $CMCR_E2E_WORK: history.count (number of entries).
+      local n i; n="$(cat "${CMCR_E2E_WORK:-/nonexistent}/history.count" 2>/dev/null || echo 1)"
+      echo "Display Name   Version   Date"; echo "------------   -------   ----"
+      for ((i = 1; i < n; i++)); do echo "Stara aktualizacja $i  1.$i      01.01.2020"; done
+      echo "macOS Testowy  99.0      01.01.2026" ;;
     *) echo "Done (fake)." ;;
   esac
 }

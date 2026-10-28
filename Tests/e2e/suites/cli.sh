@@ -156,7 +156,15 @@ out="$(ctlpw updates install 1 --download --recommended)"
 expect "updates install --download --recommended" "$(fakelog)" "softwareupdate --download "
 expect_not "updates install --download: bez instalacji" "$(fakelog)" "--install"
 out="$(ctlpw updates history 1)"
-expect "updates history" "$out" "macOS Testowy  99.0"
+expect "updates history" "$out" "macOS Testowy  99.0" "Display Name"
+echo 45 > "$WORK/history.count"
+out="$(ctlpw updates history 1)"
+expect "updates history: najnowsze wpisy, nie najstarsze (APL-18)" "$out" "macOS Testowy  99.0" "Stara aktualizacja 44" \
+  "pominięto starsze wpisy: 5 (pokazano 40 najnowszych)"
+expect_not "updates history: najstarszy wpis ucięty" "$out" "Stara aktualizacja 1 "
+case "$out" in *"macOS Testowy  99.0"*"Stara aktualizacja 44"*) pass "updates history: najnowsze na górze" ;;
+  *) fail "updates history: najnowsze na górze" "$out" ;; esac
+rm -f "$WORK/history.count"
 out="$(ctl updates usun 1)"; code=$?
 expect_code "updates: nieznane podpolecenie – kod 2" "$code" 2 "$out"
 
