@@ -275,9 +275,31 @@ public enum Scripts {
         """#)
     }
 
-    public static func killProcess(_ pid: Int, force: Bool) -> RemoteScript {
-        RemoteScript(#"""
-        asroot kill -\#(force ? "KILL" : "TERM") \#(pid) && echo "Wysłano SIG\#(force ? "KILL" : "TERM") do PID \#(pid)."
+    /// Ends one process of the logged-in user („Wymuś zamknięcie” in the list of running apps, `cmcrctl kill`).
+    /// The PID comes from a list that may be stale (the app quit, the student logged out) and is signalled as root,
+    /// so the process is checked first: it must belong to the console user and, with `bundlePath` (the app from
+    /// the list), still run that application. Otherwise nothing is signalled.
+    public static func killProcess(_ pid: Int, force: Bool, bundlePath: String? = nil) -> RemoteScript {
+        let want = (bundlePath ?? "").precomposedStringWithCanonicalMapping   // cmcr_ps lists precomposed names (NFC)
+        return RemoteScript(#"""
+        PID=\#(pid); SIG=\#(force ? "KILL" : "TERM"); WANT=\#(shQuote(want))
+        if [ -z "$CONSOLE_USER" ]; then echo "Brak zalogowanego użytkownika – nie zamykam procesu $PID." >&2; exit \#(ScriptCode.noConsoleUser); fi
+        LINE="$(cmcr_ps -o user=,comm= -p "$PID" 2>/dev/null | head -n 1)"
+        if [ -z "$LINE" ]; then echo "Proces $PID już nie działa."; exit 0; fi
+        OWNER="$(printf '%s\n' "$LINE" | awk '{print $1}')"
+        EXE="$(printf '%s\n' "$LINE" | sed 's/^ *[^ ]* *//')"
+        if [ "$OWNER" != "$CONSOLE_USER" ]; then
+          echo "✘ Odmowa: proces $PID ($EXE) należy do konta „$OWNER”, nie do zalogowanego użytkownika $CONSOLE_USER – lista mogła być nieaktualna. Nic nie zamknięto." >&2
+          exit 1
+        fi
+        if [ -n "$WANT" ]; then
+          case "$EXE" in
+            "$WANT"/Contents/MacOS/*) ;;
+            *) echo "✘ Odmowa: proces $PID to już nie $(basename "$WANT") ($EXE) – lista była nieaktualna. Nic nie zamknięto, odśwież listę." >&2
+               exit 1 ;;
+          esac
+        fi
+        asroot kill -$SIG "$PID" && echo "Wysłano SIG$SIG do PID $PID ($EXE)."
         """#)
     }
 
