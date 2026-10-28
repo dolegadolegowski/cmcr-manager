@@ -301,4 +301,12 @@ struct P2DiagnoseTests {
         #expect(message.contains("„Zdalne logowanie”") && message.contains("na tym iMacu"), "\(message)")
         #expect(!message.contains("Logowanie zdalne") && !message.contains("tym Macu"))
     }
+
+    /// AUDIT DOD-06: with the teacher's Mac off the network every iMac showed ssh's raw English error.
+    @Test func noNetworkOnThisMacIsSaidInPolish() {
+        let r = p2Result(255, "ssh: connect to host 10.0.5.23 port 22: Network is unreachable\n")
+        let (reach, message) = SSH.diagnose(r)
+        #expect(reach == .error, "nie .offline: iMac nie jest wyłączony, to ten Mac nie ma sieci")
+        #expect(message == "Ten Mac nie jest połączony z siecią – sprawdź Wi‑Fi lub kabel.")
+    }
 }

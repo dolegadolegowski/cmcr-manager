@@ -735,6 +735,11 @@ public enum SSH {
                 return (.error, "Połączenie odrzucone – na tym iMacu włącz „Zdalne logowanie” (Ustawienia systemowe › Ogólne › "
                         + "Udostępnianie) albo uruchom przy nim skrypt konfiguracyjny.")
             }
+            if lower.contains("network is unreachable") {
+                // ENETUNREACH: this Mac has no network at all (Wi‑Fi off, cable out) – not a fault of the iMac
+                // (AUDIT DOD-06).
+                return (.error, "Ten Mac nie jest połączony z siecią – sprawdź Wi‑Fi lub kabel.")
+            }
             if lower.contains("timed out") || lower.contains("no route to host") || lower.contains("host is down") {
                 return (.offline, "Komputer nie odpowiada (wyłączony lub poza siecią).")
             }
