@@ -146,4 +146,77 @@ import Testing
         #expect(lines.contains { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path == real }, "\(lines.filter { $0.contains("Safari") })")
         #expect(Set(lines).count == lines.count, "powtórzone wpisy")
     }
+
+    // MARK: - APL-09: installing Homebrew
+
+    /// `brew` is "missing" until the fake installer creates $P2_DIR/brew.installed; curl fails with curl.fail and
+    /// otherwise serves an installer that does what install.brew.fail / install.nobrew say.
+    static let brewFakes = #"""
+    command() {
+      if [ "${1:-}" = -v ] && [ "${2:-}" = brew ]; then
+        [ -e "$P2_DIR/brew.installed" ] && { echo /opt/homebrew/bin/brew; return 0; }
+        return 1
+      fi
+      builtin command "$@"
+    }
+    brew() { echo "Homebrew 9.9.9 (atrapa)"; }
+    curl() {
+      local out="" prev=""
+      for a in "$@"; do [ "$prev" = -o ] && out="$a"; prev="$a"; done
+      _p2_log "curl $*"
+      if [ -e "$P2_DIR/curl.fail" ]; then echo "curl: (6) Could not resolve host: raw.githubusercontent.com" >&2; return 6; fi
+      local script='echo "instalator: NONINTERACTIVE=$NONINTERACTIVE"
+    [ -e "$P2_DIR/install.fail" ] && exit 1
+    [ -e "$P2_DIR/install.nobrew" ] || : > "$P2_DIR/brew.installed"
+    exit 0'
+      if [ -n "$out" ]; then printf '%s\n' "$script" > "$out"; else printf '%s\n' "$script"; fi
+    }
+    """#
+
+    @Test func installHomebrewFailsWhenTheDownloadFails() async throws {
+        let box = try Box(extraFakes: Self.brewFakes, exports: ["command", "brew", "curl"])
+        defer { box.remove() }
+        try #require(await box.guardFakes())
+        box.touch("curl.fail")
+        let r = await box.run(Scripts.installHomebrew())
+        #expect(r.exitCode != 0, "pobieranie się nie udało, a zadanie zakończyło się sukcesem")
+        #expect(r.stderrText.contains("Nie udało się pobrać instalatora Homebrew"), "\(r.stderrText)")
+    }
+
+    @Test func installHomebrewChecksThatBrewIsThere() async throws {
+        let box = try Box(extraFakes: Self.brewFakes, exports: ["command", "brew", "curl"])
+        defer { box.remove() }
+        try #require(await box.guardFakes())
+        box.touch("install.nobrew")
+        let r = await box.run(Scripts.installHomebrew())
+        #expect(r.exitCode != 0)
+        #expect(r.stderrText.contains("nie znaleziono polecenia brew"), "\(r.stderrText)")
+    }
+
+    @Test func installHomebrewRunsTheDownloadedInstaller() async throws {
+        let box = try Box(extraFakes: Self.brewFakes, exports: ["command", "brew", "curl"])
+        defer { box.remove() }
+        try #require(await box.guardFakes())
+        let r = await box.run(Scripts.installHomebrew())
+        #expect(r.exitCode == 0, "\(r.stderrText)")
+        #expect(r.stdoutText.contains("instalator: NONINTERACTIVE=1"))
+        #expect(r.stdoutText.contains("Homebrew 9.9.9"))
+    }
+
+    /// The ready-made command „Instalacja Homebrew” (Polecenia) fails the same way when the download fails.
+    @Test func homebrewSnippetFailsWhenTheDownloadFails() async throws {
+        let box = try Box(extraFakes: Self.brewFakes, exports: ["command", "brew", "curl"])
+        defer { box.remove() }
+        try #require(await box.guardFakes())
+        box.touch("curl.fail")
+        let snippet = try #require(Snippet.builtIn.first { $0.name == "Instalacja Homebrew" })
+        let r = await box.run(RemoteScript(snippet.command, asRoot: snippet.asRoot))
+        #expect(r.exitCode != 0, "pobieranie się nie udało, a polecenie zakończyło się sukcesem")
+        box.remove()
+        let ok = try Box(extraFakes: Self.brewFakes, exports: ["command", "brew", "curl"])
+        defer { ok.remove() }
+        let r2 = await ok.run(RemoteScript(snippet.command, asRoot: snippet.asRoot))
+        #expect(r2.exitCode == 0, "\(r2.stderrText)")
+        #expect(r2.stdoutText.contains("instalator: NONINTERACTIVE=1"))
+    }
 }

@@ -152,7 +152,7 @@ public extension Snippet {
         Snippet(category: "Android SDK (notes.md)", name: "sdkmanager – API 34",
                 command: "yes | /Applications/Unity/Hub/Editor/6000.3.7f1/PlaybackEngines/AndroidPlayer/SDK/cmdline-tools/16.0/bin/sdkmanager \"platform-tools\" \"platforms;android-34\""),
         Snippet(category: "Homebrew (notes.md)", name: "Instalacja Homebrew",
-                command: "with_askpass env NONINTERACTIVE=1 /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""),
+                command: "curl -fsSL -o \"$CMCR_TMP/brew-install.sh\" https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh && with_askpass env NONINTERACTIVE=1 /bin/bash \"$CMCR_TMP/brew-install.sh\" && brew --version"),
         Snippet(category: "Homebrew (notes.md)", name: "Oracle JDK", command: "with_askpass brew install oracle-jdk"),
         Snippet(category: "Homebrew (notes.md)", name: "Aktualizacja pakietów brew", command: "with_askpass brew update && with_askpass brew upgrade"),
         Snippet(category: "System (root)", name: "Historia aktualizacji", command: "softwareupdate --history", asRoot: true),

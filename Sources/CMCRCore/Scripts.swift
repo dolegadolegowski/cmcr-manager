@@ -633,10 +633,23 @@ public enum Scripts {
         """#)
     }
 
+    /// The official installer is downloaded to a file first: `bash -c "$(curl …)"` ran an empty script – and
+    /// reported success – when the download failed. Success means `brew` is there afterwards.
     public static func installHomebrew() -> RemoteScript {
         RemoteScript(#"""
         if command -v brew >/dev/null 2>&1; then echo "Homebrew już jest: $(brew --version | head -1)"; exit 0; fi
-        with_askpass env NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        F="$CMCR_TMP/brew-install.sh"
+        echo "→ Pobieranie instalatora Homebrew"
+        if ! curl -fsSL --retry 2 --connect-timeout 20 -o "$F" https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh || [ ! -s "$F" ]; then
+          echo "✘ Nie udało się pobrać instalatora Homebrew (brak internetu albo zablokowany GitHub) – nic nie zainstalowano." >&2
+          exit 1
+        fi
+        with_askpass env NONINTERACTIVE=1 /bin/bash "$F"; RC=$?
+        if [ $RC -ne 0 ]; then echo "✘ Instalator Homebrew zakończył się błędem (kod $RC)." >&2; exit $RC; fi
+        if ! command -v brew >/dev/null 2>&1; then
+          echo "✘ Instalator Homebrew zakończył pracę, ale nie znaleziono polecenia brew." >&2; exit 1
+        fi
+        echo "✔ Zainstalowano $(brew --version | head -1)"
         """#)
     }
 
