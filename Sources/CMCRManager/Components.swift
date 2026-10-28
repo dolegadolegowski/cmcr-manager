@@ -27,18 +27,6 @@ extension Reachability {
         }
     }
 
-    /// State in plain words for the window (the CLI keeps the short `label`).
-    var displayName: String {
-        switch self {
-        case .online: return "Włączony"
-        case .offline: return "Niedostępny"
-        case .authFailed: return "Błąd logowania"
-        case .error: return "Błąd połączenia"
-        case .checking: return "Sprawdzanie…"
-        case .unknown: return "Nie sprawdzono"
-        }
-    }
-
     /// One sentence explaining the state, for tooltips.
     var explanation: String {
         switch self {

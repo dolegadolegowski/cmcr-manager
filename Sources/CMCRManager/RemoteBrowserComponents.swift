@@ -267,7 +267,7 @@ struct RemoteHostPicker: View {
         Picker(title, selection: Binding(get: { browser.hostID }, set: { browser.setHost($0) })) {
             ForEach(model.machines) { m in
                 let st = model.status(m).reachability
-                Text(st == .online || st == .unknown || st == .checking ? m.name : "\(m.name) (\(st.label))")
+                Text(st == .online || st == .unknown || st == .checking ? m.name : "\(m.name) (\(st.displayName.lowercased()))")
                     .tag(Optional(m.id))
             }
         }

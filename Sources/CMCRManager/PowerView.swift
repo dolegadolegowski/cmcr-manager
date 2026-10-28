@@ -384,7 +384,7 @@ struct PowerConfirmSheet: View {
                 .strikethrough(skipped)
             Spacer()
             if unreachable {
-                Text("pominięty – \(model.knownReachability(m).label)")
+                Text("pominięty – \(model.knownReachability(m).displayName.lowercased())")
                     .foregroundStyle(.secondary)
             } else {
                 if request.kind == .restart, classroom.fileVault[m.id] == true {

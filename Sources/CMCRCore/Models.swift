@@ -234,6 +234,18 @@ public struct AppSettings: Codable, Equatable, Sendable {
 public enum Reachability: String, Codable, Sendable {
     case unknown, checking, online, offline, authFailed, error
 
+    /// State in plain words for the window and the reports a teacher opens (the CLI keeps the short `label`).
+    public var displayName: String {
+        switch self {
+        case .online: return "Włączony"
+        case .offline: return "Niedostępny"
+        case .authFailed: return "Błąd logowania"
+        case .error: return "Błąd połączenia"
+        case .checking: return "Sprawdzanie…"
+        case .unknown: return "Nie sprawdzono"
+        }
+    }
+
     public var label: String {
         switch self {
         case .unknown: return "nieznany"

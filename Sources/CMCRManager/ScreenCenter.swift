@@ -402,7 +402,7 @@ final class ScreenCenter: ObservableObject {
         if s.failures == 0, status.reachability == .offline || status.reachability == .authFailed,
            let checked = status.updatedAt, now.timeIntervalSince(checked) < 300 {
             trace(host, "pominięto – według stanu \(status.reachability.label)")
-            feed.set(\.issue, .connection(status.reachability, status.message.isEmpty ? status.reachability.label : status.message))
+            feed.set(\.issue, .connection(status.reachability, status.message.isEmpty ? status.reachability.displayName : status.message))
             feed.set(\.phase, .offline)
             s.retryAt = now.addingTimeInterval(60)
             startQueue.removeAll { $0 == host }

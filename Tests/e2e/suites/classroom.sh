@@ -298,7 +298,7 @@ section "Raport CSV"
 out="$(ctl report "$WORK/raport.csv")"
 expect "report: zapisano" "$out" "Zapisano raport"
 csv="$(cat "$WORK/raport.csv" 2>/dev/null)"
-expect "report: nagłówek i komputery" "$csv" "Nazwa;Adres;Konto SSH;Stan" "imac01;127.0.0.1;$ME;online" "imac99;"
+expect "report: nagłówek i komputery" "$csv" "Nazwa;Adres;Konto SSH;Stan" "imac01;127.0.0.1;$ME;Włączony" "imac99;"
 [ "$(head -c 3 "$WORK/raport.csv" | od -An -tx1 | tr -d ' ')" = efbbbf ] && pass "report: UTF-8 z BOM (Excel)" \
   || fail "report: brak BOM"
 rm -f "$WORK"/lockscreen.* "$WORK"/attention.* "$WORK"/pmset.* "$WORK"/overlay.*

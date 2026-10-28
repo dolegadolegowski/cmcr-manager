@@ -666,7 +666,7 @@ public enum InventoryReport {
         InventoryColumn("name", "Nazwa") { m, _, _ in m.name },
         InventoryColumn("address", "Adres") { m, _, _ in m.address },
         InventoryColumn("account", "Konto SSH") { m, _, _ in m.user },
-        InventoryColumn("state", "Stan") { _, s, _ in s.reachability.label },
+        InventoryColumn("state", "Stan") { _, s, _ in s.reachability.displayName },
         InventoryColumn("lastSeen", "Ostatnio widziany") { _, _, seen in dateText(seen) },
         InventoryColumn("computerName", "Nazwa komputera (macOS)") { _, s, _ in s.info["name"] ?? "" },
         InventoryColumn("user", "Zalogowany użytkownik") { _, s, _ in s.consoleUser ?? "" },

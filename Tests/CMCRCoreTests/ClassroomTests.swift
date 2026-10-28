@@ -139,7 +139,7 @@ import Testing
     let header = rows[0], row = rows[1]
     func value(_ title: String) -> String { row[header.firstIndex(of: title)!] }
     #expect(value("Nazwa") == "imac01")
-    #expect(value("Stan") == "online")
+    #expect(value("Stan") == "Włączony")
     #expect(value("macOS") == "26.1 25B1")
     #expect(value("MAC") == "00:11:22:33:44:55")
     #expect(value("Wolne miejsce (GB)") == "10")
