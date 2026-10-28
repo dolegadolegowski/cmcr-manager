@@ -68,17 +68,31 @@ final class RemoteBrowserModel: ObservableObject {
             visibleEntries = []
             return
         }
-        var items = l.entries.filter { showHidden || !$0.isHidden }
+        visibleEntries = Self.visible(l.entries, showHidden: showHidden, search: search, sortOrder: sortOrder)
+        let shown = Self.keptSelection(selection, visible: visibleEntries)
+        if shown != selection { selection = shown }
+    }
+
+    /// What the hidden/search filters leave of `entries`, sorted, folders first.
+    static func visible(_ entries: [RemoteEntry], showHidden: Bool, search: String,
+                        sortOrder: [KeyPathComparator<RemoteEntry>]) -> [RemoteEntry] {
+        var items = entries.filter { showHidden || !$0.isHidden }
         let q = search.trimmingCharacters(in: .whitespaces)
         if !q.isEmpty { items = items.filter { $0.name.localizedStandardContains(q) } }
         items.sort(using: sortOrder)
-        visibleEntries = items.filter(\.isFolder) + items.filter { !$0.isFolder }
+        return items.filter(\.isFolder) + items.filter { !$0.isFolder }
+    }
+
+    /// As in Finder, what a filter hides is no longer selected: „Usuń…” and „Pobierz” never act on items the
+    /// teacher cannot see, e.g. a student's hidden .git after ⌘A and switching „Ukryte pliki” off (AUDIT PLI-12).
+    static func keptSelection(_ selection: Set<RemoteEntry.ID>, visible: [RemoteEntry]) -> Set<RemoteEntry.ID> {
+        selection.intersection(visible.map(\.id))
     }
 
     var hiddenCount: Int { showHidden ? 0 : (listing?.entries.filter(\.isHidden).count ?? 0) }
 
     var selectedEntries: [RemoteEntry] {
-        listing?.entries.filter { selection.contains($0.id) } ?? []
+        visibleEntries.filter { selection.contains($0.id) }
     }
 
     /// The current folder written with placeholders, so it means the same on every Mac.
