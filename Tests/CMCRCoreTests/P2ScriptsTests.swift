@@ -127,4 +127,23 @@ import Testing
         #expect(await Self.waitForExit(p), "aplikacja nadal działa")
         #expect(box.logText().contains("sudo kill -KILL \(p.processIdentifier)"))
     }
+
+    // MARK: - APL-07: the list of installed apps
+
+    /// /Applications/Safari.app is a link into the system cryptex since macOS 13: the list shows where the app really
+    /// is, so the app does not offer to uninstall it from /Applications.
+    @Test func installedAppsShowLinkedAppsWhereTheyAre() async throws {
+        let link = "/Applications/Safari.app"
+        guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: link) else { return }
+        let box = try Box()
+        defer { box.remove() }
+        try #require(await box.guardFakes())
+        let r = await box.run(Scripts.installedApps())
+        let lines = Parsers.lines(r.stdoutText)
+        #expect(r.exitCode == 0)
+        #expect(!lines.contains(link), "dowiązanie na liście jako aplikacja z /Applications")
+        let real = URL(fileURLWithPath: target, relativeTo: URL(fileURLWithPath: "/Applications")).resolvingSymlinksInPath().path
+        #expect(lines.contains { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path == real }, "\(lines.filter { $0.contains("Safari") })")
+        #expect(Set(lines).count == lines.count, "powtórzone wpisy")
+    }
 }

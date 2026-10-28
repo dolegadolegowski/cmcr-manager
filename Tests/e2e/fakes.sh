@@ -274,6 +274,12 @@ stat() {
   if [ "$*" = "-f%Su /dev/console" ] && [ -s "${CMCR_E2E_WORK:-/nonexistent}/console_user" ]; then
     cat "$CMCR_E2E_WORK/console_user"; return 0
   fi
+  # Paths listed in $CMCR_E2E_WORK/restricted.paths carry the SIP flag "restricted" (stat -f %Sf), like the
+  # system's own applications (AUDIT APL-07).
+  if [ "${1:-} ${2:-}" = "-f %Sf" ] && [ -s "${CMCR_E2E_WORK:-/nonexistent}/restricted.paths" ] \
+     && grep -qxF -- "${3:-}" "$CMCR_E2E_WORK/restricted.paths"; then
+    echo restricted; return 0
+  fi
   command stat "$@"
 }
 # fake-no-volume-owner: the current user is listed as a crypto user that is not a volume owner.
