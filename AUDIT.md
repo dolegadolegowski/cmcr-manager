@@ -53,30 +53,32 @@ Ocena poszczególnych miejsc jest w tabelach usterek (kategoria współbieżnoś
 
 | Priorytet | Znalezione | Naprawione | Pominięte | Czeka na decyzję | Otwarte |
 |---|---:|---:|---:|---:|---:|
-| P0 | 9 | 4 | 0 | 0 | 5 |
-| P1 | 26 | 0 | 0 | 0 | 26 |
-| P2 | 156 | 0 | 0 | 0 | 156 |
-| **Razem** | **191** | **4** | **0** | **0** | **187** |
+| P0 | 11 | 9 | 0 | 0 | 2 |
+| P1 | 28 | 7 | 0 | 0 | 21 |
+| P2 | 165 | 1 | 0 | 0 | 164 |
+| **Razem** | **204** | **17** | **0** | **0** | **187** |
 
 P0 – awaria, utrata danych lub bezpieczeństwo; P1 – funkcja opisana w README nie działa; P2 – UX, drobne, teksty. Plik i linia wskazują stan sprzed poprawki (gałąź `main` @ `c7d00ec`). Szczegóły każdej pozycji są niżej, w sekcji „Szczegóły”.
 
 ## Jak powstała lista
 
-Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obszaru: działy z paska bocznego (Pracownia, Pliki i programy, Administracja), `cmcrctl`, współbieżność i cykl życia okien, polskie teksty oraz interfejs względem Apple HIG. Każdy prześledził funkcje z README ścieżką widok → model → CMCRCore → skrypt bash. Zgłoszenia każdego obszaru sprawdził potem niezależny, sceptyczny recenzent: potwierdził je w kodzie (często uruchamiając fragmenty skryptów lub `cmcrctl` w izolowanej konfiguracji), odrzucił albo zmienił priorytet. Usterki, które recenzenci zauważyli przy okazji, są oznaczone jako „zgłoszone przy weryfikacji” i sprawdzam je przy naprawie. Powtarzające się zgłoszenia różnych agentów są scalone w jedną pozycję („także: …”). Kilka pozycji dodałem sam (obszar „Własne”) po przejrzeniu zrzutów i opisu menu.
+Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obszaru: działy z paska bocznego (Pracownia, Pliki i programy, Administracja), `cmcrctl`, współbieżność i cykl życia okien, polskie teksty oraz interfejs względem Apple HIG. Każdy prześledził funkcje z README ścieżką widok → model → CMCRCore → skrypt bash. Zgłoszenia każdego obszaru sprawdził potem niezależny, sceptyczny recenzent: potwierdził je w kodzie (często uruchamiając fragmenty skryptów lub `cmcrctl` w izolowanej konfiguracji), odrzucił albo zmienił priorytet. Usterki, które recenzenci zauważyli przy okazji, są oznaczone jako „zgłoszone przy weryfikacji” i sprawdzam je przy naprawie. Powtarzające się zgłoszenia różnych agentów są scalone w jedną pozycję („także: …”). Na koniec krytyk kompletności przeczytał README i listę prześledzonych funkcji i wskazał 4 słabo pokryte tematy; ich dodatkowe przeszukanie dało pozycje z obszaru „Dodatkowe przeszukanie” (DOD). Kilka pozycji dodałem sam (obszar „Własne”) po przejrzeniu zrzutów i opisu menu.
 
 ## P0 – awarie, utrata danych, bezpieczeństwo
 
 | ID | Obszar | Plik:linia | Usterka | Status |
 |---|---|---|---|---|
 | [APL-01](#apl-01) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Scripts.swift:336` | „override=” w nazwie pliku wyłącza sprawdzanie notaryzacji instalatora | naprawione (2f96309) |
-| [CLI-01](#cli-01) | cmcrctl | `Sources/cmcrctl/ClassroomCommands.swift:332` | lesson start wysyła uczniom zawartość bieżącego katalogu, gdy folder materiałów jest pusty | otwarte |
+| [CLI-01](#cli-01) | cmcrctl | `Sources/cmcrctl/ClassroomCommands.swift:332` | lesson start wysyła uczniom zawartość bieżącego katalogu, gdy folder materiałów jest pusty | naprawione (88772b3) |
+| [DOD-01](#dod-01) | Dodatkowe przeszukanie | `Sources/CMCRCore/Operations+Browse.swift:79` | Pliki od ucznia rozpakowywane na Macu nauczyciela bez kwarantanny, więc Gatekeeper ich nie sprawdza | otwarte |
+| [DOD-02](#dod-02) | Dodatkowe przeszukanie | `Sources/CMCRManager/AppModel.swift:703` | „Steruj ekranem”/VNC łączy się z nazwą .local bez sprawdzenia stanu i zaufania klucza (HostTrust) | otwarte |
 | [KON-01](#kon-01) | Konfiguracja | `Sources/CMCRCore/HostTrust.swift:169` | Konto zaczynające się od „-” (np. z importowanej listy) wykonuje polecenie na Macu nauczyciela przy sprawdzaniu klucza | naprawione (26edf17) |
 | [KON-02](#kon-02) | Konfiguracja | `Sources/CMCRCore/Store.swift:182` | Powtórzone „id” w importowanej liście lub hosts.json powoduje awarię aplikacji przy „Rozpocznij zajęcia” | naprawione (332b819) |
-| [PLI-01](#pli-01) | Pliki, przeglądarka | `Sources/CMCRCore/Scripts+Browse.swift:279` | Zmiana nazwy jako root: mv bez -h podąża za dowiązaniem podstawionym po sprawdzeniu | otwarte |
-| [PRZ-01](#prz-01) | Przygotowanie iMaców, uaktualnienia | `Sources/CMCRCore/Scripts.swift:1109` | Szybka naprawa „Włącz Udostępnianie ekranu” włącza VNC bez listy dostępu (dla wszystkich kont, także ucznia) | otwarte |
+| [PLI-01](#pli-01) | Pliki, przeglądarka | `Sources/CMCRCore/Scripts+Browse.swift:279` | Zmiana nazwy jako root: mv bez -h podąża za dowiązaniem podstawionym po sprawdzeniu | naprawione (8c5e60c) |
+| [PRZ-01](#prz-01) | Przygotowanie iMaców, uaktualnienia | `Sources/CMCRCore/Scripts.swift:1109` | Szybka naprawa „Włącz Udostępnianie ekranu” włącza VNC bez listy dostępu (dla wszystkich kont, także ucznia) | naprawione (592ad27) |
 | [WSP-01](#wsp-01) | Współbieżność | `Sources/CMCRCore/Store.swift:225` | Dziennik działań zapisywany API rzucającym wyjątek – crash przy pełnym dysku | naprawione (a085a2a) |
-| [ZAJ-01](#zaj-01) | Zajęcia, podgląd | `Sources/CMCRCore/LessonRoutine.swift:287` | Koniec zajęć: „Wyczyść folder cmcr” kasuje też pliki zapisane po migawce zbierania prac | otwarte |
-| [ZAJ-16](#zaj-16) | Zajęcia, podgląd | `Sources/CMCRManager/ClassroomView.swift:470` | Awaria po upływie odliczania końca zajęć: zakres Date()...end z odwróconymi granicami (zgłoszone przy weryfikacji) | otwarte |
+| [ZAJ-01](#zaj-01) | Zajęcia, podgląd | `Sources/CMCRCore/LessonRoutine.swift:287` | Koniec zajęć: „Wyczyść folder cmcr” kasuje też pliki zapisane po migawce zbierania prac | naprawione (65d8483) |
+| [ZAJ-16](#zaj-16) | Zajęcia, podgląd | `Sources/CMCRManager/ClassroomView.swift:470` | Awaria po upływie odliczania końca zajęć: zakres Date()...end z odwróconymi granicami (zgłoszone przy weryfikacji) | naprawione (01a7a70) |
 
 ## P1 – funkcje, które nie działają zgodnie z README
 
@@ -87,23 +89,25 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [APL-04](#apl-04) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRManager/AppModel.swift:889` | Nieudane sprawdzenie aktualizacji pokazywane jako „System jest aktualny” | otwarte |
 | [APL-18](#apl-18) | Aplikacje, instalacja, aktualizacje | `Sources/CMCRCore/Scripts.swift:696` | „Historia instalacji” pokazuje najstarsze wpisy, a najnowsze aktualizacje są ucinane (zgłoszone przy weryfikacji) | otwarte |
 | [CLI-02](#cli-02) | cmcrctl | `Sources/cmcrctl/CLI.swift:193` | Skrypt uruchomiony z Terminala bez listy komputerów działa na całej pracowni | otwarte |
-| [KOM-01](#kom-01) | Komputery, zasilanie | `Sources/CMCRManager/PowerView.swift:413` | Powtórzenie restartu/wyłączenia/wylogowania z „Sesja i zasilanie” bez ponownego potwierdzenia | otwarte |
+| [DOD-03](#dod-03) | Dodatkowe przeszukanie | `Sources/CMCRCore/Scripts.swift:1009` | „Wyloguj natychmiast”, „Wyloguj” i krok „Wyloguj” w „Zakończ zajęcia” pomijają sesje w tle i zgłaszają sukces | otwarte |
+| [DOD-04](#dod-04) | Dodatkowe przeszukanie | `Sources/CMCRManager/PowerView.swift:433` | Sesje w tle (szybkie przełączanie użytkowników) niewidoczne – potwierdzenia restartu, wyłączenia i wylogowania ich nie pokazują ani nie pomijają | otwarte |
+| [KOM-01](#kom-01) | Komputery, zasilanie | `Sources/CMCRManager/PowerView.swift:413` | Powtórzenie restartu/wyłączenia/wylogowania z „Sesja i zasilanie” bez ponownego potwierdzenia | naprawione (a1788d6) |
 | [KON-03](#kon-03) | Konfiguracja | `Sources/CMCRCore/Store.swift:195` | Błąd zapisu hosts.json/settings.json nie jest pokazywany – zmiany giną po zamknięciu aplikacji | otwarte |
 | [KON-04](#kon-04) | Konfiguracja | `Sources/CMCRManager/AppModel.swift:232` | Aplikacja nadpisuje zmiany listy zrobione w cmcrctl i nie widzi haseł zmienionych poza nią | otwarte |
-| [KON-05](#kon-05) | Konfiguracja | `Sources/CMCRManager/SetupView.swift:571` | Po ustawieniu „własnego” hasła ponowne sprawdzenie stanu używa hasła wspólnego | otwarte |
+| [KON-05](#kon-05) | Konfiguracja | `Sources/CMCRManager/SetupView.swift:571` | Po ustawieniu „własnego” hasła ponowne sprawdzenie stanu używa hasła wspólnego | naprawione (e55f3c2) |
 | [KON-06](#kon-06) | Konfiguracja | `Sources/CMCRManager/SetupView.swift:915` | Ustawienie „Powiadamiaj o podglądzie” wyłącza komunikat dla ucznia, który README opisuje jako stały | otwarte |
 | [PLI-02](#pli-02) | Pliki, przeglądarka | `Sources/CMCRCore/Operations.swift:17` | Archiwum wysyłanych plików w /tmp jest czytelne dla wszystkich (0644) i zostaje po przerwaniu | otwarte |
 | [PLI-03](#pli-03) | Pliki, przeglądarka | `Sources/CMCRManager/AppModel.swift:740` | Konwencja cmcr-push oraz cmcrctl push/pull nie rozwijają {student} w folderze ucznia z ustawień | otwarte |
 | [PLI-12](#pli-12) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserModel.swift:81` | Usuwanie i pobieranie obejmuje zaznaczone elementy ukryte filtrem lub wyszukiwaniem | otwarte |
-| [PLI-22](#pli-22) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserView.swift:66` | Kliknięcie innego komputera na liście nie przełącza Przeglądarki plików | otwarte |
+| [PLI-23](#pli-23) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserView.swift:66` | Kliknięcie innego komputera na liście nie przełącza Przeglądarki plików | otwarte |
 | [PRZ-03](#prz-03) | Przygotowanie iMaców, uaktualnienia | `Sources/cmcrctl/SetupCommands.swift:47` | cmcrctl setup/readiness/setup-script po cichu pomijają nadmiarowe argumenty – konfiguracja może trafić na inny komputer | otwarte |
 | [PRZ-04](#prz-04) | Przygotowanie iMaców, uaktualnienia | `setup/cmcr-imac-setup.sh:546` | --ssh-key-only wyłącza logowanie hasłem, choć klucz aplikacji nie został zainstalowany (utrata dostępu) | otwarte |
 | [PRZ-17](#prz-17) | Przygotowanie iMaców, uaktualnienia | `Sources/cmcrctl/SetupCommands.swift:42` | cmcrctl setup-script po cichu ignoruje --verify/--dry-run – plik „do sprawdzenia” wprowadza zmiany jako root (zgłoszone przy weryfikacji) | otwarte |
-| [UI-02](#ui-02) | Interfejs | `Sources/CMCRManager/DashboardView.swift:234` | Menu kontekstowe tabeli działu Komputery działa na jednym, przypadkowym komputerze | otwarte |
-| [UI-03](#ui-03) | Interfejs | `Sources/CMCRManager/PowerView.swift:99` | „Wyloguj” wylogowuje wszystkie zaznaczone komputery bez arkusza potwierdzenia | otwarte |
-| [UI-04](#ui-04) | Interfejs | `Sources/CMCRManager/RemoteBrowserView.swift:376` | Potwierdzenie usunięcia/zastąpienia w Przeglądarce plików wymienia zaznaczone komputery zamiast przeglądanego | otwarte |
-| [WSP-02](#wsp-02) | Współbieżność | `Sources/CMCRManager/ClassroomModel.swift:332` | „Przerwij” na partii ostrzeżenia nie przerywa „Zakończ zajęcia” | otwarte |
-| [ZAD-01](#zad-01) | Zadania, polecenia | `Sources/CMCRManager/AppModel+Jobs.swift:136` | „Powtórz na nieudanych” używa starej kopii komputera (wspólne hasło, adres, port, usunięte iMaki) | otwarte |
+| [UI-02](#ui-02) | Interfejs | `Sources/CMCRManager/DashboardView.swift:234` | Menu kontekstowe tabeli działu Komputery działa na jednym, przypadkowym komputerze | naprawione (fe7f85a) |
+| [UI-03](#ui-03) | Interfejs | `Sources/CMCRManager/PowerView.swift:99` | „Wyloguj” wylogowuje wszystkie zaznaczone komputery bez arkusza potwierdzenia | naprawione (a1788d6) |
+| [UI-04](#ui-04) | Interfejs | `Sources/CMCRManager/RemoteBrowserView.swift:376` | Potwierdzenie usunięcia/zastąpienia w Przeglądarce plików wymienia zaznaczone komputery zamiast przeglądanego | naprawione (fe7f85a) |
+| [WSP-02](#wsp-02) | Współbieżność | `Sources/CMCRManager/ClassroomModel.swift:332` | „Przerwij” na partii ostrzeżenia nie przerywa „Zakończ zajęcia” | naprawione (b4be562) |
+| [ZAD-01](#zad-01) | Zadania, polecenia | `Sources/CMCRManager/AppModel+Jobs.swift:136` | „Powtórz na nieudanych” używa starej kopii komputera (wspólne hasło, adres, port, usunięte iMaki) | naprawione (e55f3c2) |
 | [ZAD-02](#zad-02) | Zadania, polecenia | `Sources/CMCRManager/AppModel+Jobs.swift:508` | „Przerwij zadania i zakończ” nie czeka na zatrzymanie na iMacach ani na zapis historii | otwarte |
 | [ZAJ-03](#zaj-03) | Zajęcia, podgląd | `Sources/CMCRCore/LessonRoutine.swift:237` | Niewysłane materiały raportowane jako „pominięto”, a zajęcia jako „Gotowe” | otwarte |
 | [ZAJ-04](#zaj-04) | Zajęcia, podgląd | `Sources/CMCRCore/ScreenCapture.swift:383` | Ponowne zalogowanie na to samo konto nie wyświetla komunikatu o podglądzie | otwarte |
@@ -141,6 +145,15 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [CLI-16](#cli-16) | cmcrctl | `Sources/CMCRCore/Scripts+Classroom.swift:257` | Komunikat power-later odsyła do nieistniejącego przycisku „Anuluj zaplanowane” (zgłoszone przy weryfikacji) | otwarte |
 | [CLI-17](#cli-17) | cmcrctl | `Sources/cmcrctl/ScriptCommands.swift:33` | install bierze istniejący lokalnie plik lub folder o nazwie KOMP (np. „all”) za instalator (zgłoszone przy weryfikacji) | otwarte |
 | [CLI-18](#cli-18) | cmcrctl | `Sources/cmcrctl/SetupCommands.swift:42` | setup-script po cichu ignoruje --verify i --dry-run, więc wygenerowany plik wprowadza zmiany (zgłoszone przy weryfikacji) | otwarte |
+| [DOD-05](#dod-05) | Dodatkowe przeszukanie | `Sources/CMCRCore/SSH.swift:716` | Brak zgody macOS na sieć lokalną diagnozowany jako „wyłączony” dla całej pracowni | otwarte |
+| [DOD-06](#dod-06) | Dodatkowe przeszukanie | `Sources/CMCRCore/SSH.swift:734` | „Network is unreachable” (Mac nauczyciela bez sieci) pokazywany jako surowy angielski błąd ssh | otwarte |
+| [DOD-07](#dod-07) | Dodatkowe przeszukanie | `Sources/CMCRCore/Scripts+Classroom.swift:256` | Opóźnione wyłączenie/restart: ostrzeżenie i pominięcie zalogowanych tylko według stanu z chwili planowania | otwarte |
+| [DOD-08](#dod-08) | Dodatkowe przeszukanie | `Sources/CMCRCore/Scripts+Classroom.swift:380` | „Zakończ zajęcia”: „Zamknij aplikacje” zgłasza „aplikacje zamknięte”, gdy nikt nie jest na konsoli | otwarte |
+| [DOD-09](#dod-09) | Dodatkowe przeszukanie | `Sources/CMCRCore/Scripts.swift:1026` | Uprzejme „Wyloguj” uznaje sukces, gdy tylko zmieni się właściciel konsoli | otwarte |
+| [DOD-10](#dod-10) | Dodatkowe przeszukanie | `Sources/CMCRManager/AppModel.swift:543` | Przy ProxyJump/ProxyCommand wynik nil sondy portu blokuje pełne sprawdzenie włączonego iMaca | otwarte |
+| [DOD-11](#dod-11) | Dodatkowe przeszukanie | `Sources/CMCRManager/AppModel.swift:704` | Adres VNC sklejany bez kodowania – „#”, „/”, „?” w koncie kierują Udostępnianie ekranu do innego hosta niż ssh | otwarte |
+| [DOD-12](#dod-12) | Dodatkowe przeszukanie | `Sources/CMCRManager/AppModel.swift:704` | „Steruj ekranem” po cichu nic nie robi dla adresu IPv6 (lub z „%”) – brak komunikatu (zgłoszone przy weryfikacji) | otwarte |
+| [DOD-13](#dod-13) | Dodatkowe przeszukanie | `Sources/CMCRManager/RemoteBrowserComponents.swift:8` | Znaki bidi (U+202A–202E, U+2066–2069) w nazwach plików z iMaców nie są neutralizowane w GUI | otwarte |
 | [KOM-02](#kom-02) | Komputery, zasilanie | `Sources/CMCRCore/Classroom.swift:432` | Uszkodzony classroom.json po cichu zastępowany wartościami domyślnymi | otwarte |
 | [KOM-03](#kom-03) | Komputery, zasilanie | `Sources/CMCRCore/Scripts+Classroom.swift:297` | Wyłączone przełączniki autorestart/Wake-on-LAN niczego nie wyłączają na iMacu | otwarte |
 | [KOM-04](#kom-04) | Komputery, zasilanie | `Sources/CMCRManager/App.swift:562` | Nieaktualny zalogowany uczeń przy wyłączonych komputerach (lista, panel, potwierdzenia) | otwarte |
@@ -180,7 +193,7 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [PLI-18](#pli-18) | Pliki, przeglądarka | `Sources/CMCRManager/RemoteBrowserView.swift:343` | „Wyślij pliki do tego folderu…” zastępuje istniejące pliki bez pytania | otwarte |
 | [PLI-19](#pli-19) | Pliki, przeglądarka | `Sources/cmcrctl/Browse.swift:136` | Inne domyślne sudo w CLI: collect bez root dla prywatnych folderów, push z właścicielem administratora | otwarte |
 | [PLI-20](#pli-20) | Pliki, przeglądarka | `Sources/cmcrctl/CLI.swift:431` | cmcrctl ls ŚCIEŻKA KOMP i clean nie rozwijają {student}; clean kończy się kodem 0 bez czyszczenia | otwarte |
-| [PLI-23](#pli-23) | Interfejs | `Sources/CMCRManager/RemoteBrowserView.swift:66` | Kliknięcie innego komputera na liście nie przełącza Przeglądarki plików (zgłoszone przy weryfikacji) | otwarte |
+| [PLI-24](#pli-24) | Interfejs | `Sources/CMCRManager/RemoteBrowserView.swift:66` | Kliknięcie innego komputera na liście nie przełącza Przeglądarki plików (zgłoszone przy weryfikacji) | otwarte |
 | [PRZ-02](#prz-02) | Przygotowanie iMaców, uaktualnienia | `Sources/CMCRManager/Updater.swift:468` | „Przypomnij później” nie anuluje zleconej instalacji – po pobraniu aplikacja sama się zamyka i instaluje | otwarte |
 | [PRZ-05](#prz-05) | Przygotowanie iMaców, uaktualnienia | `README.md:34` | README podaje macOS 13, a aplikacja wymaga macOS 14 | otwarte |
 | [PRZ-06](#prz-06) | Przygotowanie iMaców, uaktualnienia | `README.md:52` | Kod wyjścia 4 skryptu konfiguracyjnego nieopisany w README | otwarte |
@@ -210,7 +223,7 @@ Etap 1 przeprowadziło równolegle 11 agentów analizy, każdy dla jednego obsza
 | [TXT-14](#txt-14) | Teksty | `Sources/CMCRManager/ReadinessView.swift:279` | Instrukcja „Nagrywanie ekranu” pomija /usr/libexec/sshd-session | otwarte |
 | [TXT-15](#txt-15) | Teksty | `Sources/CMCRManager/RemoteBrowserComponents.swift:271` | W oknie pojawia się skrócona etykieta CLI stanu („offline”, „online”, „błąd”) | otwarte |
 | [TXT-16](#txt-16) | Teksty | `Sources/CMCRManager/RemoteBrowserComponents.swift:400` | Trzy różne nazwy opcji macOS „pełny dostęp do dysku dla użytkowników zdalnych” | otwarte |
-| [TXT-17](#txt-17) | Teksty | `Sources/CMCRManager/RemoteBrowserModel.swift:260` | Tytuły zadań przeglądarki: „Usuń/Pobierz/Wyślij 3 elementów” | otwarte |
+| [TXT-17](#txt-17) | Teksty | `Sources/CMCRManager/RemoteBrowserModel.swift:260` | Tytuły zadań przeglądarki: „Usuń/Pobierz/Wyślij 3 elementów” | naprawione (fe7f85a) |
 | [TXT-19](#txt-19) | Teksty | `Sources/CMCRManager/Updater.swift:174` | Uaktualnienie aplikacji nazwane „aktualizacją” | otwarte |
 | [TXT-20](#txt-20) | Teksty | `Sources/cmcrctl/CLI.swift:69` | Pomoc cmcrctl: ustawienie „Równoległe operacje” nie istnieje, formatowanie niespójne | otwarte |
 | [TXT-22](#txt-22) | Teksty | `Sources/cmcrctl/ScreenWatch.swift:52` | cmcrctl: „Zakończono: 3 cykli, 1 nowych obrazów” i „1 błędów składni” | otwarte |
@@ -286,6 +299,22 @@ cmcr_verify_signature uznaje, że Gatekeeper jest wyłączony, gdy w CAŁYM wyj�
 
 Gdy w classroom.json jest sendMaterials=true i materialsFolder="" (GUI pozwala włączyć krok bez wyboru folderu i tylko go pomija), cmcrctl buduje URL(fileURLWithPath: ""), czyli bieżący katalog roboczy, pakuje całą jego zawartość i jako root wysyła do folderu ucznia (tryb 666/777) na wszystkie wskazane iMaki. Gdy cmcrctl uruchomiono np. w ~/Public/cmcr (zebrane prace innych klas) albo ~/.ssh (klucz administratora), te pliki trafiają do uczniów. Do tego błąd Payload.make jest połykany (krok „brak materiałów”, kod 0).
 
+**Status:** naprawione (88772b3)
+
+### DOD-01
+
+**Pliki od ucznia rozpakowywane na Macu nauczyciela bez kwarantanny, więc Gatekeeper ich nie sprawdza** – P0, Dodatkowe przeszukanie, `Sources/CMCRCore/Operations+Browse.swift:79`
+
+Zdalny tar działa z COPYFILE_DISABLE=1 (Scripts+Browse.swift:319, Scripts.swift:861), więc nie przenosi xattr. Lokalne /usr/bin/tar -xf uruchamiane z aplikacji bez sandboksa i bez LSFileQuarantineEnabled też nie nadaje com.apple.quarantine. Dotyczy to wszystkich trzech miejsc rozpakowania: Operations+Browse.swift:79 (Zbierz prace, cmcrctl collect), :176 (Operations.extract: Pobierz w Przeglądarce, cmcrctl get) i Operations.swift:51 (Zakończ zajęcia › zbieranie, cmcr-pull, cmcrctl pull). Bity +x są zachowane. Scenariusz: uczeń zostawia w folderze cmcr „Praca.pdf.app” (Finder ukrywa .app, ikona PDF) albo „projekt.command”. Nauczyciel klika „Otwórz zebrane prace” (ClassroomView.swift:486) lub „Pokaż zebrane prace” i otwiera plik dwuklikiem. Kod ucznia uruchamia się wtedy na koncie nauczyciela bez ostrzeżenia Gatekeepera. Na tym koncie są klucz SSH do wszystkich iMaców i hasła administratora w Pęku kluczy. To samo dotyczy programów, które uczeń pobrał z internetu: na iMacu miały kwarantannę, ale transport ją usuwa (np. nauczyciel pobiera w Przeglądarce podejrzany plik z Pobranych ucznia, żeby go sprawdzić). grep 'quarantine' w Sources znajduje wyłącznie jej usuwanie (Scripts.swift:390, 812; SelfUpdate.swift:869).
+
+**Status:** otwarte
+
+### DOD-02
+
+**„Steruj ekranem”/VNC łączy się z nazwą .local bez sprawdzenia stanu i zaufania klucza (HostTrust)** – P0, Dodatkowe przeszukanie, `Sources/CMCRManager/AppModel.swift:703`
+
+openScreenSharing otwiera wprost vnc://<konto administratora>@<adres>.local, nie sprawdzając ani stanu komputera (offline/błąd), ani zaufania klucza SSH (nieznany lub ZMIENIONY). Wszystkie wejścia (DashboardView.swift:102, App.swift:660, HostInspector.swift:125, ScreenTiles.swift:304/368/498, ScreenWall.swift:356) są aktywne niezależnie od stanu. Udostępnianie ekranu nie wiąże tożsamości serwera z kluczem zaufanym w aplikacji, a nazwy Bonjour .local nie są uwierzytelniane (README l.174). Scenariusz: imac05 jest wyłączony (albo aplikacja właśnie oznaczyła go „Klucz SSH komputera się zmienił – połączenie przerwano przed logowaniem”), inne urządzenie w sieci odpowiada na imac05.local i wystawia serwer VNC z uwierzytelnianiem ARD (DH bez uwierzytelnienia serwera). Nauczyciel klika „Steruj ekranem” → Udostępnianie ekranu wysyła nazwę konta administratora z URL i hasło (wpisane ręcznie lub automatycznie z Pęku kluczy, jeśli zapamiętane) do podstawionego urządzenia. To dokładnie przypadek, przed którym README obiecuje ochronę („hasło administratora … nie są wysyłane” do niepotwierdzonego urządzenia). Dodatkowo stan .changed nie trafia do untrustedHosts (AppModel.swift:579 – usuwany), więc aplikacja nie ma nawet flagi, którą mogłaby zablokować VNC.
+
 **Status:** otwarte
 
 ### KON-01
@@ -310,7 +339,7 @@ ConfigStore.importHosts (i loadHosts) dekodują listę bez sprawdzenia unikalno�
 
 renameItem sprawdza `[ -e "$DST" ] || [ -L "$DST" ]`, a dopiero potem wykonuje `mv -n "$SRC" "$DST"` (w gałęzi zmiany wielkości liter `mv "$SRC" "$DST"`, l. 274). Gdy uczeń w tym oknie utworzy w swoim folderze DST jako dowiązanie do katalogu (innego konta albo systemowego, np. /private/etc), BSD mv bez -h traktuje cel jako katalog i root przenosi plik ucznia DO celu dowiązania, a skrypt wypisuje „✔ Zmieniono nazwę”. Nowa nazwa jest widoczna dla ucznia w `ps` (tekst skryptu jest w argumentach powłoki administratora). To łamie zapewnienie README, że zmiana nazw w Przeglądarce nie przechodzi przez dowiązania użytkowników (push używa właśnie `mv -h` z tego powodu). Ten sam wzorzec: przywracanie w pushFinalize `/bin/mv "$STAGE/old/$n" "$t"` (Scripts.swift:827) bez -h.
 
-**Status:** otwarte
+**Status:** naprawione (8c5e60c)
 
 ### PRZ-01
 
@@ -318,7 +347,7 @@ renameItem sprawdza `[ -e "$DST" ] || [ -L "$DST" ]`, a dopiero potem wykonuje `
 
 Przycisk naprawy w komórce „Udostępnianie ekranu” (ReadinessView.swift:808), pozycja menu Szybkie naprawy (l. 439) i applyReadinessFix(.vnc) (l. 133) uruchamiają Scripts.enableScreenSharing(), które wykonuje tylko launchctl enable/bootstrap. Grupy com.apple.access_screensharing z zagnieżdżoną grupą admin nie tworzy ani nie przywraca. Robi to wyłącznie skrypt konfiguracyjny (ensure_access_group screensharing, setup/cmcr-imac-setup.sh:679), który też traktuje brak grupy jako „Wszyscy użytkownicy”. Scenariusz: na iMacu, na którym VNC nigdy nie było konfigurowane, nauczyciel klika naprawę. Do Udostępniania ekranu może się wtedy zalogować każde konto lokalne, w tym wspólne konto „student”, którego hasło uczniowie znają. Uczeń przy innym iMacu podgląda ekran kolegi (lub nim steruje). Późniejsze „Skonfiguruj zaznaczone” bez --enable-vnc tego nie poprawia, bo step_vnc zgłasza tylko „bez zmian”. README opisuje tę funkcję jako „Udostępnianie ekranu dla administratorów (--enable-vnc)”. Ten sam skrypt wywołuje ukryte polecenie cmcrctl „screen-sharing”.
 
-**Status:** otwarte
+**Status:** naprawione (592ad27)
 
 ### WSP-01
 
@@ -334,7 +363,7 @@ ConfigStore.log dopisuje do actions.log przez stare seekToEndOfFile()/write(_:) 
 
 Krok „Wyczyść folder cmcr ucznia” wywołuje Scripts.cleanFolder, które usuwa CAŁĄ zawartość folderu (find . -mindepth 1 -maxdepth 1 -exec rm -rf), a nie tylko pliki zebrane chwilę wcześniej. Między migawką tar w kroku „Zbierz prace” a czyszczeniem mija czas transferu, rozpakowania i nowej sesji SSH z sudo (sekundy–minuty), a uczeń jest wciąż zalogowany (wylogowanie jest później, zamykanie aplikacji domyślnie wyłączone; ostrzeżenie każe właśnie „zapisać pracę w folderze cmcr”). Plik zapisany/zmieniony w tym oknie nie trafia do kopii, a potem zostaje skasowany – nieodwracalna utrata pracy ucznia. Dział Pliki ma do tego bezpieczną ścieżkę (Operations.collect + Scripts.removeCollected: usuwa tylko zebrane i niezmienione pliki), której scenariusz nie używa. Dodatkowo krok collect rozpakowuje tar wprost do <folder>/<m.name> bez uniqueURL, więc dwa komputery o tej samej nazwie albo „Powtórz na nieudanych” nadpisują wcześniej zebrane pliki (przy włączonym czyszczeniu – ich jedyną kopię).
 
-**Status:** otwarte
+**Status:** naprawione (65d8483)
 
 ### ZAJ-16
 
@@ -344,7 +373,7 @@ Podczas odliczania przed końcem zajęć sekcja postępu buduje `Text(timerInter
 
 *Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
 
-**Status:** otwarte
+**Status:** naprawione (01a7a70)
 
 ### APL-02
 
@@ -388,13 +417,29 @@ Ochrona z README („niezacytowane #3 w skrypcie kończy się błędem, a nie po
 
 **Status:** otwarte
 
+### DOD-03
+
+**„Wyloguj natychmiast”, „Wyloguj” i krok „Wyloguj” w „Zakończ zajęcia” pomijają sesje w tle i zgłaszają sukces** – P1, Dodatkowe przeszukanie, `Sources/CMCRCore/Scripts.swift:1009`
+
+logoutUser(force:) robi bootout tylko dla gui/$CONSOLE_UID. Gdy iMac stoi na oknie logowania, a sesja ucznia działa w tle po „Przełącz użytkownika”, skrypt wypisuje „Nikt nie jest zalogowany.” i kończy z kodem 0. Zadanie jest zielone, a w tabeli zajęć krok pokazuje „✔ użytkownik wylogowany” (LessonRoutine.swift:294, bo outcome() traktuje exit 0 jako done). Tak samo wygląda przypadek, gdy nikt nie był zalogowany. Sesja zostaje: następna klasa wybiera konto student na oknie logowania i wraca do sesji poprzedniego ucznia z otwartymi aplikacjami i zalogowanymi kontami w przeglądarce. Jeśli na konsoli jest administrator, a uczeń w tle, wylogowany zostaje administrator. Ten sam błąd ma cmcrctl logout (CLI.swift:576) i wariant z pytaniem o zapis (l.1014). Niezgodne z README l.145 („wylogowuje”) i l.166.
+
+**Status:** otwarte
+
+### DOD-04
+
+**Sesje w tle (szybkie przełączanie użytkowników) niewidoczne – potwierdzenia restartu, wyłączenia i wylogowania ich nie pokazują ani nie pomijają** – P1, Dodatkowe przeszukanie, `Sources/CMCRManager/PowerView.swift:433`
+
+Stan zbiera wyłącznie właściciela /dev/console (SSH.swift:45-46, Scripts.swift:33). Gdy uczeń zablokuje ekran, a ktoś kliknie na ekranie blokady „Przełącz użytkownika”, iMac stoi na oknie logowania (console=root → ""), a sesja ucznia z otwartymi aplikacjami działa w tle. PowerConfirmSheet (l.344, 396-410) pokazuje wtedy „nikt nie jest zalogowany”. Nie liczy takiego komputera w loggedIn, a przełącznik „Pomiń komputery z zalogowanym uczniem” go nie pomija. needsAcknowledgement też go nie liczy. To samo w ConfirmSheet (Components.swift:319-321, np. instalacja aktualizacji z restartem) i w liczbie zalogowanych w potwierdzeniu „Zakończ zajęcia” (ClassroomView.swift:442). `shutdown -r/-h now` (Scripts.swift:1090/1098, Scripts+Classroom.swift:256) kończy sesję w tle bez pytania o zapis, wbrew README l.106. Ten sam brak dotyczy też kolumny „Zalogowany”, filtra „z zalogowanym użytkownikiem”, panelu szczegółów i kafelka podglądu („Nikt nie jest zalogowany (okno logowania)”), co jest niezgodne z README l.9.
+
+**Status:** otwarte
+
 ### KOM-01
 
 **Powtórzenie restartu/wyłączenia/wylogowania z „Sesja i zasilanie” bez ponownego potwierdzenia** – P1, Komputery, zasilanie, `Sources/CMCRManager/PowerView.swift:413`
 
 PowerConfirmSheet.perform uruchamia zadania przez model.runScript / classroom.delayedPower bez model.perform(skipping:confirmation:), więc Batch.confirmation == nil. AppModel.retry dla takiej partii od razu wywołuje rerun: „Powtórz na nieudanych” i „Powtórz na imacXX” w Zadaniach (także dla zadań zakończonych sukcesem) ponownie restartują, wyłączają, usypiają lub natychmiast wylogowują komputery bez arkusza z listą zalogowanych uczniów, a przycisk nie ma nawet wielokropka. Dodatkowo komputery pominięte przełącznikiem „Pomiń komputery z zalogowanym uczniem” są usuwane z listy zamiast trafić do wyników jako pominięte (.loggedInUser), więc nie widać ich w Zadaniach ani w „Zaznacz nieudane”.
 
-**Status:** otwarte
+**Status:** naprawione (a1788d6)
 
 ### KON-03
 
@@ -418,7 +463,7 @@ Lista jest wczytywana tylko w AppModel.init, a każda zmiana model.machines – 
 
 HostPasswordSheet.save najpierw zmienia model.machines[i].usesSharedPassword na false, ale do model.setPassword przekazuje zapamiętaną kopię `machine` (usesSharedPassword == true). setPassword → recheckAfterCredentialChange([m]) → refreshStatus(stara kopia) → Keychain.password(for:) zwraca hasło WSPÓLNE. Komputer z innym hasłem (np. Gotowość pokazuje „Odmowa dostępu” → „Hasło tego komputera…”) zaraz po zapisaniu poprawnego hasła znów dostaje „Odmowa dostępu – … błędne hasło administratora”, aż do odświeżenia w tle (do 2 min). Nauczyciel może uznać, że wpisał złe hasło.
 
-**Status:** otwarte
+**Status:** naprawione (e55f3c2)
 
 ### KON-06
 
@@ -452,7 +497,7 @@ refilter() zmienia tylko visibleEntries, a selectedEntries bierze elementy z ca�
 
 **Status:** otwarte
 
-### PLI-22
+### PLI-23
 
 **Kliknięcie innego komputera na liście nie przełącza Przeglądarki plików** – P1, Pliki, przeglądarka, `Sources/CMCRManager/RemoteBrowserView.swift:66`
 
@@ -492,7 +537,7 @@ SetupCommandLine przyjmuje --verify i --dry-run w każdym poleceniu (SetupScript
 
 Tabela jest powiązana z model.selection, więc contextMenu(forSelectionType:) przy prawym kliknięciu w zaznaczony wiersz dostaje cały zbiór zaznaczonych. Kod bierze ids.first (kolejność Set nieokreślona) i buduje MachineContextMenu(machine: m). Scenariusz: kafelek „Włączone” zaznacza 12 komputerów, prawy klik na imac05 → nagłówek menu pokazuje np. imac11; „Odśwież stan”, „Obudź komputer”, „Kopiuj adres”, „Grupy” działają tylko na imac11, a „Pokaż szczegóły” i „Zaznacz tylko ten” zawężają 12-elementowe zaznaczenie (zapamiętywane) do imac11. Na liście komputerów to samo menu dostaje poprawnie MachineContextMenu(ids:) (App.swift:291).
 
-**Status:** otwarte
+**Status:** naprawione (fe7f85a). Test: brak automatycznego – menu kontekstowe widoku SwiftUI; sprawdzone w kodzie.
 
 ### UI-03
 
@@ -500,7 +545,7 @@ Tabela jest powiązana z model.selection, więc contextMenu(forSelectionType:) p
 
 TargetButton „Wyloguj” (bez role: .destructive) od razu uruchamia Scripts.logoutUser(force: false) na model.selectedMachines – bez ConfirmSheet z listą zalogowanych uczniów i opcją ich pominięcia. README zalicza wylogowanie do niebezpiecznych operacji, które pokazują listę komputerów z zalogowanymi użytkownikami; cmcrctl logout zawsze pyta (CLI.swift:574). Jedno przypadkowe kliknięcie przy 15 zaznaczonych komputerach wylogowuje całą pracownię (aplikacje uczniów dostają polecenie zakończenia).
 
-**Status:** otwarte
+**Status:** naprawione (a1788d6)
 
 ### UI-04
 
@@ -508,7 +553,7 @@ TargetButton „Wyloguj” (bez role: .destructive) od razu uruchamia Scripts.lo
 
 ConfirmRequest w confirmDelete (376) i startUpload (354) nie podaje targets, więc ConfirmationModifier użyje model.actionTargets. Przy kilku zaznaczonych komputerach zamiast zwykłego alertu pojawia się ConfirmSheet „Działanie obejmie 12 komputerów: imac01…imac12”, a od 5 komputerów wymagane jest „Rozumiem – działanie obejmie 12 komputerów i nie da się go cofnąć”, choć plik jest usuwany tylko na browser.host (który może nawet nie być zaznaczony). Gdy nauczyciel zaznaczy „Pomiń komputery, przy których ktoś jest zalogowany”, perform(skipping:) ustawia pendingSkip, a runChange → runBatch pomija przeglądany komputer z zalogowanym uczniem: usunięcie się nie wykonuje, a toast mówi „zaznaczone komputery są niedostępne”.
 
-**Status:** otwarte
+**Status:** naprawione (fe7f85a)
 
 ### WSP-02
 
@@ -516,7 +561,7 @@ ConfirmRequest w confirmDelete (376) i startUpload (354) nie podaje targets, wi�
 
 Batch.cancel() – przycisk „Przerwij” w „Wynik ostatniego działania” w dziale Zajęcia, w Zadaniach i w popoverze Aktywności – anuluje tylko zadania partii „Zakończenie zajęć – ostrzeżenie”, nie LessonRun. Completion tej partii sprawdza wyłącznie run.cancelled (false), więc startuje odliczanie, a po nim rest() wykonuje zamknięcie aplikacji, zbieranie, czyszczenie, wylogowanie i uśpienie/wyłączenie wszystkich komputerów. Nauczyciel, który przerwał ostrzeżenie, po N minutach traci niezapisane prace uczniów. Przerwanie partii „Rozpoczęcie zajęć” daje w tabeli „nie wykonano” zamiast „anulowano”.
 
-**Status:** otwarte
+**Status:** naprawione (b4be562)
 
 ### ZAD-01
 
@@ -524,7 +569,7 @@ Batch.cancel() – przycisk „Przerwij” w „Wynik ostatniego działania” w
 
 retry()/rerun przekazują Machine zapisane w zadaniach w chwili startu partii (retryableMachines = jobs.map(\.machine)), a operacje (runScript → ssh → password(for: m)) używają tej migawki. Scenariusz z README: imac07 ma inne hasło → zadanie kończy się „Błędne hasło administratora (sudo)” → nauczyciel ustawia „własne” hasło (SetupView zmienia machines[i].usesSharedPassword = false) → „Powtórz na nieudanych” znów wysyła hasło wspólne (migawka ma usesSharedPassword == true) i znów się nie udaje. To samo po poprawieniu adresu/konta/portu; powtórzenie trafia też do komputerów usuniętych z listy, a selectProblems zaznacza ich nieistniejące id. Wake-on-LAN obchodzi to ręcznie (ClassroomModel.swift:239: „A retry passes the batch's copy of the Mac”), pozostałe operacje nie.
 
-**Status:** otwarte
+**Status:** naprawione (e55f3c2)
 
 ### ZAD-02
 
@@ -785,6 +830,80 @@ Ostatni argument uznaje się za KOMP tylko wtedy, gdy taki plik nie istnieje lok
 `cmcrctl setup-script --help` pokazuje te same opcje co setup, w tym „--verify tylko sprawdź (nic nie zmienia)”. Parser przyjmuje --verify i --dry-run (cl.mode), ale SetupScript.standalone dostaje tylko cl.options. Dlatego `cmcrctl setup-script --verify > sprawdz.sh` daje zwykły skrypt konfigurujący, a `sudo bash sprawdz.sh` przy iMacu zmienia konfigurację: ogranicza SSH do administratorów, instaluje klucz, ustawia Wake-on-LAN i folder ucznia, zamiast tylko sprawdzić. Wbrew README:129 nieużywana opcja nie daje kodu 2.
 
 *Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
+### DOD-05
+
+**Brak zgody macOS na sieć lokalną diagnozowany jako „wyłączony” dla całej pracowni** – P2, Dodatkowe przeszukanie, `Sources/CMCRCore/SSH.swift:716`
+
+Na macOS 15+ ssh i nc uruchamiane przez aplikację podlegają zgodzie na sieć lokalną przyznanej CMCR Manager. Jeśli użytkownik kliknie „Nie zezwalaj” albo okno zgody jeszcze czeka (pierwsza runda przy starcie), connect() kończy się EHOSTUNREACH: ssh wypisuje „No route to host” (kod 255), a nc kończy się kodem 1. SSH.diagnose klasyfikuje to jako .offline z komunikatem „Komputer nie odpowiada (wyłączony lub poza siecią).”, a nazwy .local jako „Nie można odnaleźć nazwy hosta…”. applyStatus zwiększa offlineStreak i wydłuża odstęp sprawdzania, a portAnswers=false blokuje pełne sprawdzenie. „Pomiń niedostępne” (domyślnie włączone) pomija wszystkie komputery, przyciski działań są nieaktywne z podpowiedzią „Kliknij Odśwież albo wyłącz Pomiń niedostępne”. „Test połączenia”, gotowość i „Sprawdź klucz komputera” też zgłaszają „nie odpowiada”. Krok „Na tym Macu: dostęp do sieci lokalnej” w Gotowości ma na sztywno status „Dotyczy tego Maca (nie iMaców).” i attention=false (ReadinessView.swift:859, :319). Tę przyczynę rozpoznaje tylko Wake-on-LAN (Parsers.swift:82). Nauczyciel widzi 15 wyłączonych iMaców i nic nie wskazuje, że problem leży na jego Macu.
+
+**Status:** otwarte
+
+### DOD-06
+
+**„Network is unreachable” (Mac nauczyciela bez sieci) pokazywany jako surowy angielski błąd ssh** – P2, Dodatkowe przeszukanie, `Sources/CMCRCore/SSH.swift:734`
+
+Gdy Mac nauczyciela nie ma połączenia z siecią (Wi‑Fi wyłączone, odłączony kabel), ssh do iMaców o adresach IP kończy się „ssh: connect to host 10.0.5.23 port 22: Network is unreachable” (ENETUNREACH). SSH.diagnose nie ma dla tego gałęzi, więc zwraca (.error, surowy angielski stderr). Każdy komputer ma wtedy stan „Błąd połączenia” z angielskim tekstem, bez wskazówki, że chodzi o sieć tego Maca. Przy domyślnych nazwach .local ten sam stan daje „Nie można odnaleźć nazwy hosta w sieci (Bonjour/.local)” → .offline, czyli cała pracownia jako wyłączona.
+
+**Status:** otwarte
+
+### DOD-07
+
+**Opóźnione wyłączenie/restart: ostrzeżenie i pominięcie zalogowanych tylko według stanu z chwili planowania** – P2, Dodatkowe przeszukanie, `Sources/CMCRCore/Scripts+Classroom.swift:256`
+
+delayedPower pokazuje ostrzeżenie tylko użytkownikowi, który jest na konsoli w chwili planowania (l.236-239). Odłożony proces po N min wykonuje `shutdown -r/-h now` bez żadnego sprawdzenia (l.256). Komputery do pominięcia wybiera aplikacja z zapamiętanego stanu: PowerView.swift:405-410, a przy „Zakończ zajęcia” pendingSkip sprzed odliczania (ClassroomModel.swift:317, 332). Stan odświeża się co 2 min. Scenariusz: o 13:50 nauczyciel planuje „Wyłącz za 15 min” z „Uprzedź zalogowanych uczniów” i „Pomiń komputery z zalogowanym uczniem”, a imac05 stoi wtedy na oknie logowania. O 13:55 uczeń loguje się (albo wraca do sesji w tle) i pracuje. Nie dostaje żadnego komunikatu, a o 14:05 komputer wyłącza się razem z jego niezapisaną pracą. Przy natychmiastowym restarcie jest podobnie: uczeń zalogowany po ostatnim odświeżeniu widnieje jako „nikt nie jest zalogowany” i nie zostaje pominięty. Gdy przy planowaniu nikt nie był zalogowany, wynik nie mówi też, że ostrzeżenia nie pokazano.
+
+**Status:** otwarte
+
+### DOD-08
+
+**„Zakończ zajęcia”: „Zamknij aplikacje” zgłasza „aplikacje zamknięte”, gdy nikt nie jest na konsoli** – P2, Dodatkowe przeszukanie, `Sources/CMCRCore/Scripts+Classroom.swift:380`
+
+Przy pustym CONSOLE_USER quitAllApps kończy z kodem 0 (l.380), a quitApp wypisuje „Brak zalogowanego użytkownika.” i też kończy z kodem 0 (Scripts.swift:218). LessonRunner (LessonRoutine.swift:275, 279-282) uznaje to za sukces, więc tabela zajęć pokazuje „✔ aplikacje zamknięte” albo „✔ zamknięto: Pages, Keynote”. Gdy sesja ucznia działa w tle, jej aplikacje zostają otwarte bez autozapisu. Zbierane są pliki bez ostatnich zmian, a późniejszy krok „Wyłącz” te zmiany odrzuca, choć raport twierdzi, że aplikacje zamknięto. outcome() ma już ścieżkę .skipped dla kodu 3, ale te skrypty z niej nie korzystają.
+
+**Status:** otwarte
+
+### DOD-09
+
+**Uprzejme „Wyloguj” uznaje sukces, gdy tylko zmieni się właściciel konsoli** – P2, Dodatkowe przeszukanie, `Sources/CMCRCore/Scripts.swift:1026`
+
+Pętla oczekiwania po prośbie do loginwindow uznaje wylogowanie, gdy `stat -f%Su /dev/console` przestaje być równe $WHO. Scenariusz: aplikacja ucznia czeka z pytaniem o zapis (np. za blokadą ekranu) i w tym czasie ktoś klika „Przełącz użytkownika” na ekranie blokady. Konsola przechodzi na okno logowania (root), skrypt wypisuje „✔ Wylogowano student.” i kończy z kodem 0, a sesja dalej działa w tle z otwartym pytaniem. Nauczyciel nie dostaje komunikatu „nadal zalogowany – użyj „Wyloguj natychmiast””.
+
+**Status:** otwarte
+
+### DOD-10
+
+**Przy ProxyJump/ProxyCommand wynik nil sondy portu blokuje pełne sprawdzenie włączonego iMaca** – P2, Dodatkowe przeszukanie, `Sources/CMCRManager/AppModel.swift:543`
+
+SSH.portAnswers zwraca nil, gdy nie da się tego stwierdzić: połączenie idzie przez ProxyJump/ProxyCommand z „Dodatkowe opcje połączenia” (UI podpowiada „np. ProxyJump=brama”) albo nc zakończył się kodem innym niż 1. AppModel porównuje wynik z `== true`, więc nil traktuje jak „port nie odpowiada”, a finishPortProbe(answered:false) pomija pełne sprawdzenie. Iloma komputer wyłączony przez kilka rund (offlineStreak 3–4, nextQuietProbe +450/+570 s) jest sprawdzany tylko przy wygaśnięciu odstępu. Po włączeniu (np. harmonogram 7:30) wraca na listę dopiero po ok. 8–10 min, a nie „w kolejnym odświeżeniu”, jak obiecuje README.
+
+**Status:** otwarte
+
+### DOD-11
+
+**Adres VNC sklejany bez kodowania – „#”, „/”, „?” w koncie kierują Udostępnianie ekranu do innego hosta niż ssh** – P2, Dodatkowe przeszukanie, `Sources/CMCRManager/AppModel.swift:704`
+
+URL budowany interpolacją "vnc://\(m.user)@\(m.address)" bez kodowania części userinfo i bez sprawdzenia SSH.refusalMessage(for:) (Terminal je sprawdza). Walidacja wpisów (HostEntry.problem .sshPart, HostValidation .invalidCharacters) przepuszcza „#”, „/”, „?”, więc wpis z importowanej listy z kontem „evil.example.com#” i adresem „imac01.local” nie dostaje ostrzeżenia, ssh łączy się z imac01.local (klucz sprawdzany), a Udostępnianie ekranu – z evil.example.com (fragment „#@imac01.local” jest odcinany). Lista komputerów pokazuje imac01.local, a hasło administratora trafia gdzie indziej. Sprawdzone: URL(string: "vnc://evil.example.com#@imac01.local").host == "evil.example.com", a dla "vnc://x/evil.example.com?@imac01.local" host == "x".
+
+**Status:** otwarte
+
+### DOD-12
+
+**„Steruj ekranem” po cichu nic nie robi dla adresu IPv6 (lub z „%”) – brak komunikatu** – P2, Dodatkowe przeszukanie, `Sources/CMCRManager/AppModel.swift:704`
+
+openScreenSharing ma tylko gałąź `if let url = URL(string: ...)` bez else, a wynik NSWorkspace.shared.open(url) jest ignorowany. Dla adresu, który ssh i walidacja wpisów akceptują (dwukropek i „%” nie są odrzucane w HostEntry.problem), np. „2001:db8::5” albo „fe80::1%en0”, URL(string:) zwraca nil. Kliknięcie „Steruj ekranem” (pasek, menu kontekstowe, inspektor, kafelki, Ściana ekranów) nie daje wtedy żadnego efektu: nie ma dźwięku, komunikatu ani wpisu w dzienniku. Terminal i wszystkie operacje SSH działają na tym samym wpisie.
+
+*Zgłoszone przez recenzenta przy weryfikacji innej pozycji; sprawdzane przy naprawie.*
+
+**Status:** otwarte
+
+### DOD-13
+
+**Znaki bidi (U+202A–202E, U+2066–2069) w nazwach plików z iMaców nie są neutralizowane w GUI** – P2, Dodatkowe przeszukanie, `Sources/CMCRManager/RemoteBrowserComponents.swift:8`
+
+RemoteEntry.displayName („Name safe for a single line”) zamienia tylko \n i \t. Komentarz w TerminalText.swift:9 twierdzi, że widoki SwiftUI nie interpretują znaków sterujących, ale Text i CoreText stosują nadpisania kierunku tekstu (U+202A–202E, U+2066–2069). Scenariusz: uczeń nazywa plik „praca\u{202E}fdp.command”. W kolumnie Nazwa Przeglądarki, w okienku „Gdzie zapisać „…”…”, w potwierdzeniu usuwania, w tytule zadania „Pobierz „…” z imac01” (RemoteBrowserModel.swift:270, surowe entry.name) i w wyjściu zadania („✔ …/praca…”) nazwa wygląda jak „pracadnammoc.pdf”. Niezamknięte RLO odwraca też resztę wiersza, np. kolejne nazwy w potwierdzeniu usuwania kilku elementów albo „ z imac01” w tytule zadania. Razem z brakiem kwarantanny ułatwia to podsunięcie nauczycielowi skryptu jako dokumentu. Kolumna Rodzaj i ikona pokazują wprawdzie prawdziwy typ, ale tytuły zadań, komunikaty i wyjście już nie.
 
 **Status:** otwarte
 
@@ -1104,7 +1223,7 @@ collect --from, exists, mkdir, rm, get i rename przepuszczają ścieżkę przez 
 
 **Status:** otwarte
 
-### PLI-23
+### PLI-24
 
 **Kliknięcie innego komputera na liście nie przełącza Przeglądarki plików** – P2, Interfejs, `Sources/CMCRManager/RemoteBrowserView.swift:66`
 
@@ -1354,7 +1473,7 @@ Tę samą opcję z Ustawień systemowych, którą nauczyciel musi znaleźć przy
 
 `what` jest ręcznie sklejane jako "\(n) elementów" (linie 259, 270, 292) i trafia do tytułów zadań „Usuń \(what) z …” (260), „Pobierz \(what) z …” (272) i „Wyślij \(what) → …” (293). Dla n = 2–4 i 22–24 wymagany jest biernik „elementy”. Błędny tytuł widać w Zadaniach, w historii, w actions.log i w toście „Uruchomiono „Usuń 3 elementów z /Users/student/Desktop” na 1 komputerze”. Aktywność „Usuwanie 3 elementów…” (dopełniacz) jest poprawna.
 
-**Status:** otwarte
+**Status:** naprawione (fe7f85a)
 
 ### TXT-19
 
