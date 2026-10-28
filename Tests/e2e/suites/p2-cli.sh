@@ -412,3 +412,27 @@ expect_code "screen-watch do folderu tylko do odczytu: kod 1" "$code" 1 "$out"
 expect "screen-watch: czytelny błąd zapisu" "$out" "✘ Nie można zapisać" "p2-watch-ro/klatka-001"
 expect_not "screen-watch: niezapisana klatka nie jest podawana jako zapisana" "$out" "→ $WORK/p2-watch-ro"
 [ -z "$(ls -A "$WORK/p2-watch-ro")" ] && pass "screen-watch: folder pusty" || fail "screen-watch: pliki w folderze" "$(ls -la "$WORK/p2-watch-ro")"
+
+section "P2 cmcrctl – sesje podglądu ekranu w dzienniku działań (AUDIT ZAJ-18)"
+P2LOG="$P2/actions.log"
+rm -f "$P2LOG"
+out="$(p2pw screenshot 1 "$WORK/p2-shot.jpg")"; code=$?
+expect_code "screenshot: kod 0" "$code" 0 "$out"
+expect "screenshot: wpis w actions.log" "$(cat "$P2LOG" 2>/dev/null)" "Podgląd ekranu (cmcrctl screenshot) → imac01 (użytkownik $ME)"
+# A student's session (fake console user daemon): the student is notified, and that is logged too.
+printf daemon > "$WORK/console_user"
+rm -f "$P2LOG"
+out="$(p2pw screen-watch 1 "$WORK/p2-watch-log" --frames 2 --interval 2)"; code=$?
+expect_code "screen-watch ucznia: kod 0" "$code" 0 "$out"
+log="$(cat "$P2LOG" 2>/dev/null)"
+expect "screen-watch: wpis o podglądzie i powiadomieniu" "$log" \
+  "Podgląd ekranu (cmcrctl screen-watch) → imac01 (użytkownik daemon)" \
+  "Podgląd ekranu (cmcrctl screen-watch) → imac01: powiadomiono użytkownika daemon"
+[ "$(grep -c 'użytkownik daemon)' "$P2LOG")" = 1 ] && pass "screen-watch: jeden wpis na użytkownika w sesji" \
+  || fail "screen-watch: liczba wpisów" "$log"
+rm -f "$P2LOG"
+: > "$WORK/fake-notify-fail"
+out="$(p2pw screen-watch 1 "$WORK/p2-watch-log2" --frames 1 --interval 2)"; code=$?
+rm -f "$WORK/fake-notify-fail" "$WORK/console_user"
+expect "screen-watch: nieudane powiadomienie w dzienniku" "$(cat "$P2LOG" 2>/dev/null)" \
+  "Podgląd ekranu (cmcrctl screen-watch) → imac01: nie udało się powiadomić użytkownika daemon"

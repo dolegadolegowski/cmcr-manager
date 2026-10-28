@@ -559,7 +559,14 @@ struct CLI: Sendable {
         let shot = await Operations.screenshot(of: h, maxSize: settings.screenshotMaxSize, settings: settings,
                                                notify: settings.notifyOnObserve, password: Keychain.password(for: h),
                                                sshSettings: sshSettings())
+        // The actions log, as for the app's preview: whose screen was seen and whether the user was notified.
+        let logPrefix = "Podgląd ekranu (cmcrctl screenshot) → \(h.name)"
+        if case .notifyFailed(let user, let detail) = shot.issue {
+            ConfigStore.log("\(logPrefix): nie udało się powiadomić użytkownika \(user) (\(detail)) – obraz nie jest pobierany")
+        }
+        if let user = shot.notifiedUser { ConfigStore.log("\(logPrefix): powiadomiono użytkownika \(user)") }
         guard let data = shot.imageData else { fail(shot.message ?? "Błąd") }
+        ConfigStore.log("\(logPrefix) (użytkownik \(shot.user ?? "?"))")
         do {
             try data.write(to: URL(fileURLWithPath: expandTilde(file)))
         } catch {
