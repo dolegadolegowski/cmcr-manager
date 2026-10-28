@@ -613,6 +613,19 @@ extension AppLogicTests {
 }
 
 extension AppLogicTests {
+    // rename-collision (AUDIT KOM-15): a new name that another Mac on the list already has is a conflict.
+    @Test func aNewNameUsedByAnotherMacIsAConflict() {
+        let a = Machine(name: "imac03", address: "imac03.local", user: "imac03")
+        let b = Machine(name: "imac04", address: "imac04.local", user: "imac04")
+        let c = Machine(name: "imac05", address: "10.0.0.5", user: "imac05")
+        let taken = RenameComputersSheet.namesTaken(by: [a, b, c], renaming: [a.id], readNames: [c.id: "Pracownia05"])
+        #expect(taken["imac04"] == "imac04")
+        #expect(taken["pracownia05"] == "imac05")
+        #expect(taken["imac03"] == nil)
+    }
+}
+
+extension AppLogicTests {
     // check-errors-shown (AUDIT KOM-06): a failed FileVault or name check keeps its reason instead of staying
     // „nie sprawdzono” / „sprawdzanie…” for good.
     @Test func failedChecksOfFileVaultAndNamesKeepTheirReason() async {

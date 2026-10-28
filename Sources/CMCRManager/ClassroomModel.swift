@@ -574,10 +574,15 @@ final class ClassroomModel: ObservableObject {
             self.names[m.id] = ComputerNameInfo(computerName: e.computerName, localHostName: e.localHostName,
                                                 hostName: e.localHostName)
             guard updateList, let i = model.machines.firstIndex(where: { $0.id == m.id }) else { return }
+            let before = model.machines[i]
             if model.machines[i].name != e.computerName { model.machines[i].name = e.computerName }
             if let address = ComputerNames.addressAfterRename(model.machines[i].address, localHostName: e.localHostName),
                address != model.machines[i].address {
                 model.machines[i].address = address
+                // The Mac keeps its host keys: trust them under the new address too, so the next connection is not
+                // refused as an unknown Mac (AUDIT KOM-07).
+                let after = model.machines[i], ss = model.sshSettings
+                Task { await HostTrust.carryTrust(from: before, to: after, settings: ss) }
             }
         }
     }

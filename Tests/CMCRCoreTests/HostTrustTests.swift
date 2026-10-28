@@ -246,4 +246,30 @@ struct TerminalScriptTests {
         #expect(issues[ok.id] == nil)
         #expect(issues[bad.id] == [.invalidCharacters])
     }
+
+    /// AUDIT KOM-07: after a rename the Mac's already trusted key is trusted under its new name too – and only that key.
+    @Test func aRenamedMacKeepsItsTrustedKey() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cmcr-carry-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("known_hosts")
+        let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+        try "imac03.local \(key)\nimac04.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ\n"
+            .write(to: file, atomically: true, encoding: .utf8)
+        var s = SSHSettings(askpassPath: "/tmp/askpass")
+        s.extraOptions = ["UserKnownHostsFile=\(file.path)"]
+        let old = Machine(name: "imac03", address: "imac03.local", user: "imac03")
+        var renamed = old
+        renamed.address = "pracownia03.local"
+        #expect(await HostTrust.carryTrust(from: old, to: renamed, settings: s))
+        let text = try String(contentsOf: file, encoding: .utf8)
+        #expect(text.contains("pracownia03.local \(key)"))
+        #expect(await HostTrust.trustedKeys(for: renamed, settings: s) == HostTrust.trustedKeys(for: old, settings: s))
+        // Already trusted: nothing more; a Mac without a trusted key gets none.
+        #expect(!(await HostTrust.carryTrust(from: old, to: renamed, settings: s)))
+        let unknown = Machine(name: "imac09", address: "imac09.local", user: "imac09")
+        var unknownRenamed = unknown
+        unknownRenamed.address = "pracownia09.local"
+        #expect(!(await HostTrust.carryTrust(from: unknown, to: unknownRenamed, settings: s)))
+    }
 }

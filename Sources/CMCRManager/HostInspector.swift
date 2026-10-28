@@ -236,6 +236,10 @@ struct RenameComputersSheet: View {
                 TableColumn("Nowy adres") { $e in
                     if !ComputerNames.isValidLocalHostName(e.localHostName) {
                         Label("niepoprawna nazwa", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                    } else if let owner = takenBy[e.localHostName.lowercased()] {
+                        Label("\(e.localHostName).local ma już \(owner)", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                            .help("Ten adres ma już inny komputer z listy – dwa komputery nie mogą mieć tego samego adresu w sieci")
                     } else if duplicates.contains(e.localHostName.lowercased()) {
                         Label("\(e.localHostName).local powtarza się", systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red)
@@ -283,14 +287,32 @@ struct RenameComputersSheet: View {
 
     var changes: [Entry] { entries.filter { !isUnchanged($0) } }
 
-    /// `.local` names (lowercased) given to more than one of the Macs; Bonjour would rename the extra ones.
+    /// `.local` names (lowercased) given to more than one of the Macs, or already used by another Mac on the list;
+    /// Bonjour would rename the extra ones (imac04-2) and the updated list would point at the other Mac.
     var duplicates: Set<String> {
         var seen: Set<String> = [], twice: Set<String> = []
         for e in entries {
             let name = e.localHostName.lowercased()
             if !seen.insert(name).inserted { twice.insert(name) }
         }
-        return twice
+        return twice.union(Set(entries.map { $0.localHostName.lowercased() }).intersection(takenBy.keys))
+    }
+
+    /// `.local` names of the Macs that are not renamed here (from their addresses and the names read from them),
+    /// with the Mac that has the name (AUDIT KOM-15).
+    var takenBy: [String: String] {
+        Self.namesTaken(by: model.machines, renaming: Set(entries.map(\.id)),
+                        readNames: classroom.names.mapValues(\.localHostName))
+    }
+
+    static func namesTaken(by machines: [Machine], renaming: Set<UUID>, readNames: [UUID: String]) -> [String: String] {
+        var taken: [String: String] = [:]
+        for m in machines where !renaming.contains(m.id) {
+            let address = m.address.lowercased()
+            if address.hasSuffix(".local") { taken[String(address.dropLast(".local".count))] = m.name }
+            if let lhn = readNames[m.id]?.lowercased(), !lhn.isEmpty { taken[lhn] = m.name }
+        }
+        return taken
     }
 
     func isUnchanged(_ e: Entry) -> Bool {
