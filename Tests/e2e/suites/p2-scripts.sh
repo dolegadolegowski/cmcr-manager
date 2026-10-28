@@ -313,3 +313,26 @@ if p2_setup_begin; then
   fi
 fi
 p2_setup_end
+
+section "P2: podgląd ekranu – jakość JPEG także bez zmniejszania (AUDIT ZAJ-08)"
+cp "$WORK/config/settings.json" "$P2/settings.json.bak"
+p2_quality() { # p2_quality Q FILE – a screenshot at full size with JPEG quality Q
+  python3 - "$WORK/config/settings.json" "$1" <<'PY'
+import json, sys
+p = sys.argv[1]; s = json.load(open(p))
+s.update({"screenshotMaxSize": 5120, "screenshotQuality": int(sys.argv[2]), "observeOnlyStandardAccounts": False,
+          "observeAllowedUsers": ""})
+json.dump(s, open(p, "w"))
+PY
+  ctlpw screenshot 1 "$2" >/dev/null
+}
+p2_quality 10 "$P2/q10.jpg"
+p2_quality 100 "$P2/q100.jpg"
+cp "$P2/settings.json.bak" "$WORK/config/settings.json"
+s10="$(stat -f %z "$P2/q10.jpg" 2>/dev/null || echo 0)"
+s100="$(stat -f %z "$P2/q100.jpg" 2>/dev/null || echo 0)"
+if [ "$s10" -gt 0 ] && [ "$s100" -gt 0 ] && [ "$s10" -lt "$s100" ]; then
+  pass "podgląd: jakość z ustawień działa bez zmniejszania (q10: $s10 B < q100: $s100 B)"
+else
+  fail "podgląd: jakość z ustawień pominięta, gdy obraz nie jest zmniejszany (q10: $s10 B, q100: $s100 B)"
+fi
