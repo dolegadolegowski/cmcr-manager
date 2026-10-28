@@ -297,3 +297,21 @@ for cmd in "rename 1 --dry-run" "lesson --help" "list"; do
   [ "$(printf '%s\n' "$out" | grep -c 'Niektóre ustawienia')" = 1 ] && pass "uszkodzony settings.json: jedno ostrzeżenie ($cmd)" \
     || fail "uszkodzony settings.json: liczba ostrzeżeń ($cmd)" "$out"
 done
+
+section "P2 cmcrctl – install: KOMP rozpoznawany niezależnie od plików lokalnych (AUDIT CLI-17)"
+# As in ~/Public/cmcr (cmcr-helpers convention): local folders named like a host selection.
+INS="$WORK/p2-install-cwd"
+mkdir -p "$INS/all" "$INS/imac02"
+printf 'nie-instalator' > "$INS/all/nie-wysylac.txt"
+printf 'atrapa' > "$INS/P2Test.pkg"
+clear_fakelog
+out="$(cd "$INS" && CMCR_CONFIG_DIR="$P2" CMCR_PASSWORD="$PASSWORD" "$CTL" install P2Test.pkg imac02 </dev/null 2>&1)"; code=$?
+expect "install plik nr: KOMP mimo folderu o tej nazwie" "$out" "imac02:" "lokalny plik lub folder o tej nazwie podaj jako ./imac02"
+expect_not "install plik nr: bez błędu „Podaj komputery”" "$out" "Podaj komputery"
+expect_not "install plik nr: tylko wskazany komputer" "$out" "imac01:"
+out="$(cd "$INS" && CMCR_CONFIG_DIR="$P2" CMCR_PASSWORD="$PASSWORD" "$CTL" install P2Test.pkg all </dev/null 2>&1)"; code=$?
+expect "install plik all: oba komputery mimo folderu all" "$out" "imac01:" "imac02:"
+expect_not "install plik all: folder all nie jest instalatorem" "$out" "nie-wysylac"
+out="$(cd "$INS" && CMCR_CONFIG_DIR="$P2" CMCR_PASSWORD="$PASSWORD" "$CTL" install P2Test.pkg ./all </dev/null 2>&1)"; code=$?
+expect_code "install plik ./all: ./all to plik, bez KOMP w skrypcie – kod 2" "$code" 2 "$out"
+expect "install plik ./all: prośba o komputery" "$out" "Podaj komputery dla polecenia install"

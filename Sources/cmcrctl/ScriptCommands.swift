@@ -26,13 +26,27 @@ enum ScriptCommands {
         return command == "install" ? await install(a) : await installURL(a)
     }
 
+    nonisolated static let installerExtensions: Set<String> = ["pkg", "mpkg", "dmg", "zip", "app"]
+
     static func install(_ a: ModuleArguments) async -> Int32 {
         var files = a.positional
         var spec: String?
-        // The host list comes last; a last argument that is not a local file is taken as the host list.
-        if files.count >= 2, let last = files.last, !FileManager.default.fileExists(atPath: expandTilde(last)) {
-            spec = last
-            files.removeLast()
+        // The host list comes last. It is recognised by what it is – a selection of computers (all, 4, 1-5, @2, a name
+        // or address from the list) that is not a path or an installer – and never only because no local file has
+        // that name: ~/Public/cmcr holds the folders `all` and `<address>` (cmcr-helpers), and `install X.pkg all`
+        // there must not send the folder `all` to every Mac. Any other last argument that is not a local file is
+        // taken as the host list too (and reported if it selects nothing).
+        if files.count >= 2, let last = files.last {
+            let exists = FileManager.default.fileExists(atPath: expandTilde(last))
+            let selects = !last.contains("/") && !installerExtensions.contains((last as NSString).pathExtension.lowercased())
+                && (try? HostSpec.select(last, from: legacyCLI.hosts)) != nil
+            if selects || !exists {
+                spec = last
+                files.removeLast()
+            }
+            if selects && exists {
+                Console.err("Uwaga: „\(last)” to wybór komputerów – lokalny plik lub folder o tej nazwie podaj jako ./\(last).")
+            }
         }
         guard !files.isEmpty else { moduleUsageError(a.command, "Użycie: cmcrctl install plik… KOMP [--allow-unsigned]") }
         let urls = files.map { URL(fileURLWithPath: expandTilde($0)).standardizedFileURL }
