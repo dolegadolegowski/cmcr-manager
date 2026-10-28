@@ -537,4 +537,33 @@ struct AppLogicTests {
         #expect(model.highlightedMachines.isEmpty)
         model.section = .dashboard
     }
+
+    // quit-waits-for-stop (AUDIT ZAD-02): „Przerwij zadania i zakończ” waits until the iMacs were told to stop
+    // and the stopped jobs are in the history, instead of quitting while the remote stop is still starting.
+    @Test func quittingWaitsForTheRemoteStopAndTheHistory() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        let remoteStop = StopRecorder()
+        let batch = try #require(model.runBatch("Długie zadanie", on: [a]) { _, job in
+            _ = job.handle.addCancelAction {
+                try? await Task.sleep(nanoseconds: 600_000_000)       // ssh to the iMac to stop the command
+                remoteStop.mark()
+            }
+            while !job.handle.isCancelled { try? await Task.sleep(nanoseconds: 20_000_000) }
+            return CommandResult(exitCode: 130, cancelled: true)
+        })
+        #expect(await AppTestEnvironment.wait(5) { batch.jobs.first?.state == .running })
+        await model.stopAllWorkBeforeQuitting(limit: 10)
+        #expect(remoteStop.done, "zakończenie nie poczekało na zatrzymanie polecenia na iMacu")
+        #expect(batch.finished)
+        let saved = JobHistory.load().filter { $0.batchID == batch.id }
+        #expect(saved.map(\.state) == ["cancelled"], "przerwane zadanie nie trafiło do historii")
+    }
+}
+
+private final class StopRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    func mark() { lock.withLock { flag = true } }
+    var done: Bool { lock.withLock { flag } }
 }

@@ -467,8 +467,8 @@ extension AppModel {
         }
         return QuitQuestion(
             title: "\(Polish.plural(n, "Trwa", "Trwają", "Trwa")) \(Polish.jobs(n)) na iMacach",
-            message: "Zakończenie aplikacji przerwie połączenia – wysyłanie plików i instalacje mogą pozostać "
-                + "niedokończone. Zamknięcie samego okna nie przerywa zadań.",
+            message: "Zakończenie aplikacji przerwie zadania i zatrzyma polecenia na iMacach – wysyłanie plików "
+                + "i instalacje pozostaną niedokończone. Zamknięcie samego okna nie przerywa zadań.",
             quitButton: "Przerwij zadania i zakończ")
     }
 
@@ -495,6 +495,41 @@ extension AppModel {
         ClassroomModel.shared.run?.cancel()
         batches.forEach { $0.cancel() }
     }
+
+    /// How long quitting waits for the iMacs to stop their commands and for the history to be saved.
+    nonisolated static let quitWaitLimit: TimeInterval = 15
+
+    /// Stops all work and waits, at most `limit`, until the iMacs were told to stop their commands (the remote
+    /// stop runs in the background and would die with the app), the stopped jobs are archived and the history
+    /// is on disk (AUDIT ZAD-02).
+    func stopAllWorkBeforeQuitting(limit: TimeInterval = AppModel.quitWaitLimit) async {
+        let open = batches.filter { !$0.finished }
+        stopAllWork()
+        let handles = open.flatMap { $0.jobs.map(\.handle) }
+        let stopping = Task.detached {
+            await withTaskGroup(of: Void.self) { group in
+                for h in handles { group.addTask { await h.cancellationFinished() } }
+            }
+        }
+        let deadline = Date().addingTimeInterval(limit)
+        let stopped = QuitProgress()
+        Task.detached {
+            await stopping.value
+            stopped.markDone()
+        }
+        while Date() < deadline, !(stopped.isDone && open.allSatisfy(\.finished)) {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        await JobHistory.waitForPendingWrites()
+    }
+}
+
+/// Set once the remote stops started by quitting are done.
+private final class QuitProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func markDone() { lock.withLock { done = true } }
+    var isDone: Bool { lock.withLock { done } }
 }
 
 extension AppDelegate {
@@ -503,8 +538,8 @@ extension AppDelegate {
         guard let model = AppModel.shared else { return .terminateNow }
         let updating = Updater.shared.isQuittingForUpdate
         guard let question = model.quitQuestion(quittingForUpdate: updating) else {
-            if updating { model.stopAllWork() }
-            return .terminateNow
+            guard updating, model.hasRunningWork else { return .terminateNow }
+            return Self.quitAfterStopping(model)
         }
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -514,7 +549,16 @@ extension AppDelegate {
         let quit = alert.addButton(withTitle: question.quitButton)
         quit.hasDestructiveAction = true
         guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
-        model.stopAllWork()
-        return .terminateNow
+        return Self.quitAfterStopping(model)
+    }
+
+    /// Quits once the iMacs were told to stop and the history is saved (at most `AppModel.quitWaitLimit`).
+    @MainActor
+    private static func quitAfterStopping(_ model: AppModel) -> NSApplication.TerminateReply {
+        Task { @MainActor in
+            await model.stopAllWorkBeforeQuitting()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }

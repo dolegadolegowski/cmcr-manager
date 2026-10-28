@@ -184,6 +184,13 @@ public enum JobHistory {
         }
     }
 
+    /// Waits until every record queued so far is on disk (before the app quits).
+    public static func waitForPendingWrites() async {
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            queue.async { done.resume() }
+        }
+    }
+
     /// Queues `write` on a background serial queue (keeps disk I/O off the main thread, preserves order).
     public static func record(_ record: JobRecord, output: String?, in dir: URL = directory,
                               completion: (@Sendable (URL?) -> Void)? = nil) {
