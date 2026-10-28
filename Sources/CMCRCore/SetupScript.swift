@@ -399,7 +399,8 @@ public struct SetupCommandLine: Sendable {
       --key-from WZORCE         ogranicz klucz do adresów, np. 192.168.1.0/24
       --no-ssh-acl              nie ograniczaj SSH do administratorów
       --no-ssh-tuning           bez ustawień sshd (keepalive)
-      --ssh-key-only            SSH wyłącznie kluczem (wyłącza logowanie hasłem)
+      --ssh-key-only            SSH wyłącznie kluczem (wyłącza logowanie hasłem); bez tej opcji jak
+                                w aplikacji, --no-ssh-key-only włącza logowanie hasłem z powrotem
       --no-shared-acl           folder ucznia bez dziedziczonych uprawnień ACL
       --enable-vnc              włącz Udostępnianie ekranu dla administratorów
       --sudo-nopasswd           sudo bez hasła (niezalecane); --no-sudo-nopasswd usuwa
@@ -419,7 +420,13 @@ public struct SetupCommandLine: Sendable {
 
     public init() {}
 
-    public init(parsing arguments: [String]) throws {
+    /// `saved`: the options last chosen in the app (setup-options.json). Only „SSH wyłącznie kluczem” is taken from
+    /// them: it has no „bez zmian” state, so without it the script rewrites the sshd settings without
+    /// „PasswordAuthentication no” and logging in with a password silently comes back (AUDIT PRZ-11).
+    /// `--ssh-key-only`/`--no-ssh-key-only` choose explicitly; every other option keeps its command-line default.
+    public init(parsing arguments: [String], saved: SetupOptions = SetupOptions.load()) throws {
+        options.sshKeyOnly = saved.sshKeyOnly
+        var keyOnlyGiven = false
         var i = 0
         func value(_ flag: String) throws -> String {
             guard i + 1 < arguments.count else { throw ParseError(message: "Opcja \(flag) wymaga wartości.") }
@@ -443,7 +450,12 @@ public struct SetupCommandLine: Sendable {
             case "--key-from": options.keyFrom = try value(a)
             case "--no-ssh-acl": options.restrictSSH = false
             case "--no-ssh-tuning": options.sshKeepAlive = false
-            case "--ssh-key-only": options.sshKeyOnly = true
+            case "--ssh-key-only":
+                options.sshKeyOnly = true
+                keyOnlyGiven = true
+            case "--no-ssh-key-only":
+                options.sshKeyOnly = false
+                keyOnlyGiven = true
             case "--no-shared-acl": options.sharedACL = false
             case "--enable-vnc": options.enableVNC = true
             case "--sudo-nopasswd": options.sudo = .passwordless
@@ -472,6 +484,11 @@ public struct SetupCommandLine: Sendable {
                 positional.append(a)
             }
             i += 1
+        }
+        if options.sshKeyOnly && !keyOnlyGiven && !options.installKey {
+            throw ParseError(message: "W aplikacji (Przygotowanie iMaców) wybrano SSH wyłącznie z kluczem, a to wymaga "
+                             + "instalacji klucza – usuń --no-key albo dodaj --no-ssh-key-only (logowanie hasłem "
+                             + "zostanie wtedy włączone ponownie).")
         }
         if let problem = options.validationError() { throw ParseError(message: problem) }
     }

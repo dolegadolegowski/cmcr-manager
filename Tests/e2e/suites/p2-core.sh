@@ -46,3 +46,19 @@ out="$(ctl setup 1 --power-schedule "mtwrf 07:30")"; code=$?
 expect_code "setup: złe litery dni – kod 2" "$code" 2 "$out"
 expect "setup: złe litery dni – objaśnienie liter" "$out" "M T W R F S U" "np. MTWRF"
 expect_not "setup: złe litery dni – nie „wybierz co najmniej jeden dzień”" "$out" "co najmniej jeden dzień"
+
+section "P2 core: cmcrctl setup zachowuje „SSH wyłącznie z kluczem” z aplikacji (AUDIT PRZ-11)"
+# Without --ssh-key-only the script rewrote the sshd settings without „PasswordAuthentication no”.
+P2K="$WORK/config-p2-keyonly"
+mkdir -p "$P2K"
+cp "$WORK/config/settings.json" "$WORK/config/hosts.json" "$P2K/"
+echo '{"sshKeyOnly": true, "installKey": true}' > "$P2K/setup-options.json"
+out="$(CMCR_CONFIG_DIR="$P2K" "$CTL" setup-script 2>/dev/null)"
+expect "setup-script: SSH wyłącznie z kluczem z opcji aplikacji" "$out" "OPT_SSH_KEY_ONLY=1"
+out="$(CMCR_CONFIG_DIR="$P2K" "$CTL" setup-script --no-ssh-key-only 2>/dev/null)"
+expect "setup-script --no-ssh-key-only: logowanie hasłem zostaje" "$out" "OPT_SSH_KEY_ONLY=0"
+out="$(CMCR_CONFIG_DIR="$P2K" "$CTL" setup 1 --no-key 2>&1)"; code=$?
+expect_code "setup --no-key przy kluczu z aplikacji: kod 2" "$code" 2 "$out"
+expect "setup --no-key przy kluczu z aplikacji: wskazówka" "$out" "--no-ssh-key-only"
+out="$("$CTL" setup-script 2>/dev/null)"
+expect "setup-script bez zapisanych opcji: domyślnie bez SSH wyłącznie z kluczem" "$out" "OPT_SSH_KEY_ONLY=0"

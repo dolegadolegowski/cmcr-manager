@@ -445,3 +445,51 @@ struct P2ScheduleDaysTests {
         #expect(SetupCommandLine.optionsHelp.contains("M T W R F S U"))
     }
 }
+
+// MARK: - PRZ-11: cmcrctl setup keeps „SSH only with a key” chosen in the app
+
+struct P2SetupKeyOnlyTests {
+    static let host = Machine(name: "imac01", address: "imac01.local", user: "imac01")
+
+    static var savedKeyOnly: SetupOptions {
+        var o = SetupOptions()
+        o.sshKeyOnly = true
+        return o
+    }
+
+    static func arguments(_ cl: SetupCommandLine) -> [String] {
+        SetupScript.arguments(cl.options, host: host, settings: AppSettings(), publicKey: "ssh-ed25519 AAAA test", mode: .apply)
+    }
+
+    /// AUDIT PRZ-11: the command line always started from the defaults, so `cmcrctl setup all` after the iMacs were
+    /// set up in the app with key-only logins rewrote the sshd drop-in without „PasswordAuthentication no”.
+    @Test func keyOnlyFromTheAppIsKeptUnlessTurnedOffExplicitly() throws {
+        let kept = try SetupCommandLine(parsing: ["all"], saved: Self.savedKeyOnly)
+        #expect(kept.options.sshKeyOnly)
+        #expect(Self.arguments(kept).contains("--ssh-key-only"))
+        #expect(kept.configurationFlags.isEmpty, "readiness nie może odrzucać wywołania bez opcji")
+        let off = try SetupCommandLine(parsing: ["all", "--no-ssh-key-only"], saved: Self.savedKeyOnly)
+        #expect(!off.options.sshKeyOnly)
+        #expect(!Self.arguments(off).contains("--ssh-key-only"))
+        #expect(try !SetupCommandLine(parsing: ["all"], saved: SetupOptions()).options.sshKeyOnly)
+        #expect(try SetupCommandLine(parsing: ["all", "--ssh-key-only"], saved: SetupOptions()).options.sshKeyOnly)
+        // Only this option is taken over: the others keep the command line's defaults.
+        var other = Self.savedKeyOnly
+        other.enableVNC = true
+        other.scheduleMode = .set
+        let cl = try SetupCommandLine(parsing: ["all"], saved: other)
+        #expect(!cl.options.enableVNC && cl.options.scheduleMode == .unchanged)
+    }
+
+    @Test func noKeyWithKeyOnlyFromTheAppAsksForAnExplicitChoice() throws {
+        do {
+            _ = try SetupCommandLine(parsing: ["all", "--no-key"], saved: Self.savedKeyOnly)
+            Issue.record("--no-key przyjęte mimo „SSH wyłącznie kluczem” z aplikacji")
+        } catch {
+            #expect(error.localizedDescription.contains("--no-ssh-key-only"), "\(error.localizedDescription)")
+        }
+        let cl = try SetupCommandLine(parsing: ["all", "--no-key", "--no-ssh-key-only"], saved: Self.savedKeyOnly)
+        #expect(!cl.options.installKey && !cl.options.sshKeyOnly)
+        #expect(SetupCommandLine.optionsHelp.contains("--no-ssh-key-only"))
+    }
+}
