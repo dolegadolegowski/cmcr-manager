@@ -262,7 +262,7 @@ struct DashboardView: View {
         TableColumn("Komputer", value: \.name) { row in
             Text(row.name).fontWeight(.medium).lineLimit(1)
         }
-        .width(min: 60, ideal: 75)
+        .width(min: 60, ideal: 65)
         .customizationID("name")
         TableColumn("Stan", value: \.stateRank) { row in
             HStack(spacing: 5) {
@@ -276,23 +276,28 @@ struct DashboardView: View {
                 }
             }
         }
-        .width(min: 80, ideal: 110)
+        .width(min: 80, ideal: 105)
         .customizationID("state")
         TableColumn("Zalogowany", value: \.user) { row in
             Text(row.user.isEmpty ? "—" : row.user).lineLimit(1)
         }
-        .width(min: 60, ideal: 85)
+        .width(min: 60, ideal: 70)
         .customizationID("user")
         TableColumn("Wolne miejsce", value: \.freeGB) { row in
             DiskCell(status: row.status)
         }
-        .width(min: 55, ideal: 100)
+        .width(min: 55, ideal: 65)
         .customizationID("disk")
+        // With the details panel open (it shows the disk and macOS of the clicked Mac) these two give way, so
+        // the table fits a 1180 pt window without scrolling sideways (AUDIT UI-13); a column the user showed or
+        // hid explicitly stays as chosen.
+        .defaultVisibility(showInspector ? .hidden : .automatic)
         TableColumn("macOS", value: \.os) { row in
             Text(row.os.isEmpty ? "—" : row.os)
         }
-        .width(min: 45, ideal: 55)
+        .width(min: 45, ideal: 50)
         .customizationID("os")
+        .defaultVisibility(showInspector ? .hidden : .automatic)
     }
 
     /// Hidden at first, so the default columns (with Uwagi) fit a 1180 pt window; the inspector shows all of these,
@@ -341,7 +346,7 @@ struct DashboardView: View {
                 .foregroundStyle(row.status.message.isEmpty ? Color.secondary : Color.orange)
                 .help(row.note)
         }
-        .width(min: 60)
+        .width(min: 60, ideal: 60)
         .customizationID("notes")
     }
 
