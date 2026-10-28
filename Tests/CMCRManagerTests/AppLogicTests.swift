@@ -612,6 +612,21 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // check-errors-shown (AUDIT KOM-06): a failed FileVault or name check keeps its reason instead of staying
+    // „nie sprawdzono” / „sprawdzanie…” for good.
+    @Test func failedChecksOfFileVaultAndNamesKeepTheirReason() async {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        classroom.fileVaultErrors[a.id] = nil
+        classroom.nameErrors[a.id] = nil
+        classroom.checkFileVault(model, [a])
+        classroom.loadNames(model, [a])
+        #expect(await AppTestEnvironment.wait(30) { classroom.fileVaultErrors[a.id] != nil && classroom.nameErrors[a.id] != nil })
+        #expect(classroom.fileVault[a.id] == nil)
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false

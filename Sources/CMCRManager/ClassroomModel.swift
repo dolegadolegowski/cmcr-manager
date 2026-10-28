@@ -134,6 +134,11 @@ final class ClassroomModel: ObservableObject {
     @Published var question: QuestionRound?
     @Published var schedules: [UUID: ScheduleInfo] = [:]
     @Published var fileVault: [UUID: Bool] = [:]
+    /// The Mac supports the one-time FileVault unlock at restart (`fdesetup supportsauthrestart`).
+    @Published var fileVaultAutoUnlock: [UUID: Bool] = [:]
+    /// Why the last FileVault or name check of a Mac failed (shown instead of „nie sprawdzono”/„sprawdzanie…”).
+    @Published var fileVaultErrors: [UUID: String] = [:]
+    @Published var nameErrors: [UUID: String] = [:]
     @Published var lastSeen: [UUID: Date] = [:]
     @Published var names: [UUID: ComputerNameInfo] = [:]
     @Published var appVersions: AppVersionsResult?
@@ -479,9 +484,14 @@ final class ClassroomModel: ObservableObject {
             let pw = model.password(for: m)
             Task {
                 let r = await SSH.run(Scripts.fileVaultStatus(), on: m, password: pw, settings: ss, timeout: 25)
-                guard r.succeeded else { return }
+                guard r.succeeded else {
+                    self.fileVaultErrors[m.id] = SSH.diagnose(r).1      // AUDIT KOM-06
+                    return
+                }
+                self.fileVaultErrors[m.id] = nil
                 let kv = Parsers.keyValues(r.stdoutText)
                 self.fileVault[m.id] = kv["fv"] == "on"
+                self.fileVaultAutoUnlock[m.id] = kv["authrestart"] == "yes"
                 var st = model.statuses[m.id] ?? HostStatus()
                 st.info["fv"] = kv["fv"]
                 model.statuses[m.id] = st
@@ -534,7 +544,11 @@ final class ClassroomModel: ObservableObject {
             let pw = model.password(for: m)
             Task {
                 let r = await SSH.run(Scripts.computerNames(), on: m, password: pw, settings: ss, timeout: 25)
-                guard r.succeeded else { return }
+                guard r.succeeded else {
+                    self.nameErrors[m.id] = SSH.diagnose(r).1           // AUDIT KOM-06
+                    return
+                }
+                self.nameErrors[m.id] = nil
                 let kv = Parsers.keyValues(r.stdoutText)
                 self.names[m.id] = ComputerNameInfo(computerName: kv["cn"] ?? "", localHostName: kv["lhn"] ?? "",
                                                     hostName: kv["hn"] ?? "")

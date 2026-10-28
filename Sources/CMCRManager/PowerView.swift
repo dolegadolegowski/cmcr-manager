@@ -333,8 +333,7 @@ struct PowerConfirmSheet: View {
                     .frame(height: min(220, CGFloat(request.machines.count) * 26 + 10))
             }
             if request.kind == .restart && fileVaultCount > 0 {
-                Label("FileVault jest włączony \(Polish.onComputers(fileVaultCount)). Po ponownym uruchomieniu pojawi się ekran odblokowania dysku – dopóki ktoś nie wpisze hasła przy komputerze, nie połączysz się z nim (ani podglądem, ani budzeniem przez sieć).",
-                      systemImage: "lock.shield")
+                Label(fileVaultWarning, systemImage: "lock.shield")
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -433,6 +432,20 @@ struct PowerConfirmSheet: View {
     var loggedIn: Int { reached.filter { !model.status($0).loggedInUsers.isEmpty }.count }
 
     var fileVaultCount: Int { reached.filter { classroom.fileVault[$0.id] == true }.count }
+
+    /// The restart arms the one-time FileVault unlock where macOS supports it (`cmcr_arm_authrestart`), so the
+    /// unlock screen is only the fallback there (AUDIT KOM-12).
+    var fileVaultWarning: String {
+        let fv = reached.filter { classroom.fileVault[$0.id] == true }
+        let lead = "FileVault jest włączony \(Polish.onComputers(fv.count))."
+        if fv.allSatisfy({ classroom.fileVaultAutoUnlock[$0.id] == true }) {
+            return lead + " Aplikacja uzbroi jednorazowe odblokowanie dysku (fdesetup authrestart), więc komputery powinny "
+                + "uruchomić się bez hasła FileVault. Jeśli konto administratora nie może odblokować dysku, zatrzymają się "
+                + "na ekranie odblokowania – wtedy nie połączysz się z nimi, dopóki ktoś nie wpisze hasła przy komputerze."
+        }
+        return lead + " Po ponownym uruchomieniu pojawi się ekran odblokowania dysku – dopóki ktoś nie wpisze hasła przy "
+            + "komputerze, nie połączysz się z nim (ani podglądem, ani budzeniem przez sieć)."
+    }
 
     var needsAcknowledgement: Bool {
         request.isDestructive && request.delay == 0 && effective.filter { !model.status($0).loggedInUsers.isEmpty }.count >= 5

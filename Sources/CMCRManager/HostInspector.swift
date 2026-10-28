@@ -87,7 +87,7 @@ struct HostInspector: View {
                     switch st.fileVaultOn ?? classroom.fileVault[m.id] {
                     case .some(true): Label("włączony", systemImage: "lock.shield").foregroundStyle(.orange)
                     case .some(false): Text("wyłączony")
-                    case .none: Text("nie sprawdzono").foregroundStyle(.secondary)
+                    case .none: Text(classroom.fileVaultErrors[m.id] ?? "nie sprawdzono").foregroundStyle(.secondary)
                     }
                 }
                 LabeledContent("Harmonogram zasilania") {
@@ -136,7 +136,11 @@ struct HostInspector: View {
     }
 
     func scheduleText(_ m: Machine) -> String {
-        guard let info = classroom.schedules[m.id] else { return "nie sprawdzono" }
+        // Until „Sprawdź teraz” the regular status already tells the repeating events (AUDIT KOM-10).
+        guard let info = classroom.schedules[m.id] else {
+            guard let events = model.status(m).powerSchedule else { return "nie sprawdzono" }
+            return events.replacingOccurrences(of: "; ", with: "\n")
+        }
         if let e = info.error { return e }
         return info.events.isEmpty ? "brak" : info.events.map(\.text).joined(separator: "\n")
     }
@@ -308,6 +312,10 @@ struct RenameComputersSheet: View {
                         .help("Możliwy konflikt nazw w sieci (macOS dopisał numer)")
                 }
             }
+        } else if let error = classroom.nameErrors[e.id] {
+            Label("nie odczytano", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .help(error)
         } else {
             Text(model.status(e.machine).reachability == .online ? "sprawdzanie…" : "niedostępny")
                 .foregroundStyle(.secondary)
@@ -422,7 +430,7 @@ struct AppVersionsSheet: View {
 
     func summary(_ r: AppVersionsResult) -> String {
         let all = rows(r)
-        if !r.pending.isEmpty { return "Sprawdzanie… (\(r.pending.count) pozostało)" }
+        if !r.pending.isEmpty { return "Sprawdzanie… (pozostało: \(r.pending.count))" }
         let missing = all.filter { $0.state == .missing }.count
         let different = all.filter { $0.state == .different }.count
         var parts: [String] = []
