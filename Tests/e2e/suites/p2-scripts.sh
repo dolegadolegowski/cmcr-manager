@@ -274,3 +274,29 @@ if p2_setup_begin; then
   [ "$(stat -f %Lp "$SHOME")" = 755 ] && pass "setup: katalog domowy 755" || fail "setup: uprawnienia $(stat -f %Lp "$SHOME")"
 fi
 p2_setup_end
+
+section "P2: skrypt konfiguracyjny – nieudane pmset, defaults i scutil (AUDIT PRZ-16)"
+if p2_setup_begin; then
+  printf 'womp 0\nsleep 1\ntcpkeepalive 1\n' > "$SS/pmset"
+  echo womp > "$SS/pmset-a.fail"
+  out="$(p2s setup 1 --no-ssh-acl)"; code=$?
+  rm -f "$SS/pmset-a.fail"
+  expect_code "setup: pmset -a odmawia – kod 1" "$code" 1 "$out"
+  expect "setup: pmset -a odmawia – błąd w raporcie" "$out" "✘ " "budzenie przy dostępie do sieci"
+  expect_not "setup: pmset -a odmawia – nie udaje braku zmian" "$out" "Ustawienia zasilania bez zmian"
+  out="$(p2s setup 1 --no-ssh-acl)"; code=$?
+  expect_code "setup: po odmowie pmset – kolejne uruchomienie kod 0" "$code" 0 "$out"
+  : > "$WORK/defaults-write.fail"
+  out="$(p2s setup 1 --no-ssh-acl --updates check)"; code=$?
+  rm -f "$WORK/defaults-write.fail"
+  expect_code "setup: defaults write odmawia – kod 1" "$code" 1 "$out"
+  expect "setup: defaults write odmawia – błąd w raporcie" "$out" "✘ Nie udało się zmienić ustawień automatycznych aktualizacji"
+  p2s setup-script > "$P2/standalone.sh"
+  : > "$WORK/scutil-set.fail"
+  out="$(ctlpw exec "/bin/bash $P2/standalone.sh --no-guide --no-ssh-acl --hostname p2-test" 1 --root)"; code=$?
+  rm -f "$WORK/scutil-set.fail"
+  expect_code "setup: scutil odmawia – kod 1" "$code" 1 "$out"
+  expect "setup: scutil odmawia – błąd w raporcie" "$out" "✘ Nie udało się ustawić nazwy komputera p2-test"
+  expect_not "setup: scutil odmawia – nie twierdzi, że ustawiono" "$out" "Nazwa komputera ustawiona"
+fi
+p2_setup_end

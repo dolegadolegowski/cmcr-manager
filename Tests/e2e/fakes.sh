@@ -208,9 +208,12 @@ chown() {
   return 0
 }
 systemsetup() { _e2e_log "systemsetup $*"; echo "Remote Login: On"; }
+# scutil --set: logged only; with $CMCR_E2E_WORK/scutil-set.fail it fails (AUDIT PRZ-16).
 scutil() {
   case "${1:-}" in
-    --set) _e2e_log "scutil $*" ;;
+    --set)
+      _e2e_log "scutil $*"
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/scutil-set.fail" ]; then echo "SCPreferencesSetComputerName() failed: test" >&2; return 1; fi ;;
     *) command scutil "$@" ;;
   esac
 }
@@ -236,9 +239,13 @@ spctl() {
     *) _e2e_log "spctl $*"; return 0 ;;
   esac
 }
+# defaults write/delete: logged only; with $CMCR_E2E_WORK/defaults-write.fail they fail (AUDIT PRZ-16).
 defaults() {
   case " $* " in
-    *" write "*|*" delete "*) _e2e_log "defaults $*"; return 0 ;;
+    *" write "*|*" delete "*)
+      _e2e_log "defaults $*"
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/defaults-write.fail" ]; then echo "Could not write domain (test)" >&2; return 1; fi
+      return 0 ;;
     *) command defaults "$@" ;;
   esac
 }
@@ -624,6 +631,8 @@ pmset() {
         echo "System-wide power settings:"; echo "Currently in use:"
         sed 's/^/ /' "$st/pmset" 2>/dev/null ;;
       "-a "*)
+        # setup-sys/pmset-a.fail: pmset refuses the settings listed there, one name per line (AUDIT PRZ-16).
+        if grep -qxF -- "${2:-}" "$st/pmset-a.fail" 2>/dev/null; then echo "pmset: odmowa (test)" >&2; return 1; fi
         { grep -v "^${2:-} " "$st/pmset" 2>/dev/null; echo "${2:-} ${3:-}"; } > "$st/pmset.new"
         mv "$st/pmset.new" "$st/pmset" ;;
       "repeat cancel") rm -f "$st/sched" ;;

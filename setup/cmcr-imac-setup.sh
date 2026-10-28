@@ -734,7 +734,12 @@ pm_set() {   # pm_set KLUCZ WARTOŚĆ OPIS
   local cur; cur="$(pm_get "$1")"
   if ! pm_cap "$1"; then detail "$3: nieobsługiwane na tym komputerze."; return 0; fi
   if [ "$cur" = "$2" ]; then PM_OK="${PM_OK}${PM_OK:+, }$3"; return 0; fi
-  run pmset -a "$1" "$2" && PM_DID="${PM_DID}${PM_DID:+, }$3"
+  # Nieudane pmset (albo ustawienie, które po zmianie nadal ma starą wartość) to błąd kroku, nie „bez zmian”.
+  if run pmset -a "$1" "$2" && { [ $CHANGE -eq 0 ] || [ "$(pm_get "$1")" = "$2" ]; }; then
+    PM_DID="${PM_DID}${PM_DID:+, }$3"
+  else
+    PM_FAIL="${PM_FAIL}${PM_FAIL:+, }$3"
+  fi
 }
 
 step_power() {
@@ -743,13 +748,14 @@ step_power() {
   eth="$(networksetup -listallhardwareports 2>/dev/null | awk '/^Hardware Port:/{p=$0; sub(/^Hardware Port: /,"",p)} /^Ethernet Address:/{ if (p ~ /^Ethernet/ && p !~ /Adapter|Thunderbolt/) print $3 }')"
   ETH_MACS="$(echo $eth)"
   [ -n "$ETH_MACS" ] && detail "Adres MAC Ethernet (do Wake-on-LAN): $ETH_MACS"
-  PM_OK=""; PM_DID=""
+  PM_OK=""; PM_DID=""; PM_FAIL=""
   [ "$OPT_WOL" = 1 ] && pm_set womp 1 "budzenie przy dostępie do sieci"
   [ "$OPT_WOL" = 1 ] && pm_set tcpkeepalive 1 "podtrzymanie sieci w uśpieniu"
   [ "$OPT_NO_SLEEP" = 1 ] && pm_set sleep 0 "bez usypiania komputera"
   [ -n "$OPT_DISPLAY_SLEEP" ] && pm_set displaysleep "$OPT_DISPLAY_SLEEP" "uśpienie ekranu po $OPT_DISPLAY_SLEEP min"
   [ "$OPT_AUTORESTART" = 1 ] && pm_set autorestart 1 "start po zaniku zasilania"
-  if [ -n "$PM_DID" ]; then changed_or_planned power "Zasilanie: $PM_DID."
+  if [ -n "$PM_FAIL" ]; then record power fail "pmset nie zmienił ustawień zasilania: $PM_FAIL${PM_DID:+ (zmieniono: $PM_DID)}."
+  elif [ -n "$PM_DID" ]; then changed_or_planned power "Zasilanie: $PM_DID."
   elif [ -n "$PM_OK" ]; then record power ok "Zasilanie: $PM_OK."
   else record power skipped "Ustawienia zasilania bez zmian."; fi
 
@@ -806,8 +812,10 @@ step_hostname() {
   if [ "$(scutil --get ComputerName 2>/dev/null)" = "$name" ] && [ "$(scutil --get LocalHostName 2>/dev/null)" = "$name" ]; then
     record hostname ok "Nazwa komputera: $name ($name.local)."; return
   fi
-  run scutil --set ComputerName "$name"
-  run scutil --set LocalHostName "$name"
+  if ! run scutil --set ComputerName "$name" || ! run scutil --set LocalHostName "$name"; then
+    record hostname fail "Nie udało się ustawić nazwy komputera $name (scutil --set zakończył się błędem)."
+    return
+  fi
   changed_or_planned hostname "Nazwa komputera ustawiona na $name ($name.local)." "ustawić nazwę komputera na $name ($name.local)."
 }
 
@@ -860,12 +868,12 @@ step_rosetta() {
 su_set() {   # su_set KLUCZ true|false
   local cur; cur="$(defaults read "$SU_PLIST" "$1" 2>/dev/null)"
   case "$cur:$2" in 1:true|0:false) return 0 ;; esac
-  run defaults write "$SU_PLIST" "$1" -bool "$2" && SU_DID=1
+  if run defaults write "$SU_PLIST" "$1" -bool "$2"; then SU_DID=1; else SU_FAIL="${SU_FAIL}${SU_FAIL:+, }$1"; fi
 }
 
 step_updates() {
   [ -n "$OPT_UPDATES" ] || { record updates skipped "Ustawienia automatycznych aktualizacji bez zmian."; return; }
-  SU_DID=""
+  SU_DID=""; SU_FAIL=""
   local dl=false crit=false os=false label
   case "$OPT_UPDATES" in
     check)    label="tylko sprawdzanie" ;;
@@ -877,7 +885,8 @@ step_updates() {
   su_set ConfigDataInstall "$crit"
   su_set CriticalUpdateInstall "$crit"
   su_set AutomaticallyInstallMacOSUpdates "$os"
-  if [ -n "$SU_DID" ]; then changed_or_planned updates "Aktualizacje: $label."; else record updates ok "Aktualizacje: $label."; fi
+  if [ -n "$SU_FAIL" ]; then record updates fail "Nie udało się zmienić ustawień automatycznych aktualizacji ($SU_FAIL)."
+  elif [ -n "$SU_DID" ]; then changed_or_planned updates "Aktualizacje: $label."; else record updates ok "Aktualizacje: $label."; fi
   [ "$OS_MAJOR" -ge 15 ] && [ "$OPT_UPDATES" != auto ] && \
     detail "macOS 15.4+ potrafi sam ponownie włączyć automatyczne aktualizacje – trwałą blokadę daje tylko MDM."
 }
