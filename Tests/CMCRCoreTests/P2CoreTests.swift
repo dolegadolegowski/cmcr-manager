@@ -292,4 +292,13 @@ struct P2DiagnoseTests {
         #expect(SSH.diagnose(p2Result(255, "ssh: Could not resolve hostname imac01.local: nodename nor servname provided\n")).0 == .offline)
         #expect(SSH.diagnose(p2Result(255, "imac01@10.0.0.5: Permission denied (publickey,password).\n")).0 == .authFailed)
     }
+
+    /// AUDIT TXT-05: macOS (and the rest of the app) calls the service „Zdalne logowanie”, and „ten Mac” in the app
+    /// means the teacher's Mac – the message must send the teacher to the iMac.
+    @Test func aRefusedConnectionPointsToRemoteLoginOnTheIMac() {
+        let (reach, message) = SSH.diagnose(p2Result(255, "ssh: connect to host 10.0.5.23 port 22: Connection refused\n"))
+        #expect(reach == .error)
+        #expect(message.contains("„Zdalne logowanie”") && message.contains("na tym iMacu"), "\(message)")
+        #expect(!message.contains("Logowanie zdalne") && !message.contains("tym Macu"))
+    }
 }

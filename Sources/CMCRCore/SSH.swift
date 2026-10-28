@@ -732,7 +732,8 @@ public enum SSH {
                 return (.offline, "Nie można odnaleźć nazwy hosta w sieci (Bonjour/.local).")
             }
             if lower.contains("connection refused") {
-                return (.error, "Połączenie odrzucone – włącz „Logowanie zdalne” (Remote Login) na tym Macu.")
+                return (.error, "Połączenie odrzucone – na tym iMacu włącz „Zdalne logowanie” (Ustawienia systemowe › Ogólne › "
+                        + "Udostępnianie) albo uruchom przy nim skrypt konfiguracyjny.")
             }
             if lower.contains("timed out") || lower.contains("no route to host") || lower.contains("host is down") {
                 return (.offline, "Komputer nie odpowiada (wyłączony lub poza siecią).")
