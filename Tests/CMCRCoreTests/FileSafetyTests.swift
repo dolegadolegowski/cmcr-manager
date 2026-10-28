@@ -186,6 +186,32 @@ import Testing
         }
     }
 
+    /// gatekeeper-override-in-name (AUDIT APL-01): spctl prints the item's path, so a file named „…override=…” must
+    /// not look like a Mac with Gatekeeper switched off – that path checks only the Developer ID, not notarization.
+    @Test func aFileNamedOverrideIsStillCheckedForNotarization() throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pkg = dir.appendingPathComponent("Setup override=1.pkg")
+        try Data("x".utf8).write(to: pkg)
+        // Gatekeeper on, a Developer ID package without notarization; pkgutil alone would accept the signature.
+        let fakes = """
+        spctl() { local last; for last in "$@"; do :; done; printf '%s: rejected\\nsource=Unnotarized Developer ID\\norigin=Developer ID Installer: Ktoś (X)\\n' "$last" >&2; return 3; }
+        pkgutil() { printf '   Status: signed by a developer certificate issued by Apple for distribution\\n   1. Developer ID Installer: Ktoś (X)\\n'; }
+
+        """
+        let check = "cmcr_verify_signature \(shQuote(pkg.path)) install"
+        let (rc, out, err) = try Self.bash("CMCR_ALLOW_UNSIGNED=0\n" + Scripts.installLibrary + "\n" + fakes + check, tmp: dir)
+        #expect(rc == 1, "\(out)\(err)")
+        #expect(err.contains("bez notaryzacji"), "\(err)")
+        #expect(!out.contains("Gatekeeper wyłączony"), "\(out)")
+        // A line break in the name would make a line of its own that starts with "override=".
+        let forged = dir.appendingPathComponent("Setup\noverride=1.pkg")
+        try Data("x".utf8).write(to: forged)
+        let (rc2, out2, err2) = try Self.bash("CMCR_ALLOW_UNSIGNED=0\n" + Scripts.installLibrary + "\n" + fakes
+                                              + "cmcr_verify_signature \(shQuote(forged.path)) install", tmp: dir)
+        #expect(rc2 == 1 && !out2.contains("Gatekeeper wyłączony"), "\(out2)\(err2)")
+    }
+
     @Test func fileScriptsUsePinnedFolders() {
         let push = Scripts.pushFinalize(remoteTar: "/tmp/x.tar", destination: "/Users/student/Public/cmcr", owner: "student",
                                         mode: "777", asRoot: true).body

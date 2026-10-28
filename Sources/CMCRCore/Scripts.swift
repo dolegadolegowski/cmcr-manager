@@ -329,11 +329,16 @@ public enum Scripts {
       local item="$1" type="$2" name out rc src origin why=""
       name="$(basename "$item")"
       echo "→ Sprawdzanie podpisu: $name"
+      # A line break in the name would forge a line of spctl's or pkgutil's answer.
+      case "$item" in
+        *$'\n'*|*$'\r'*) echo "✘ $name: nazwa zawiera znak nowej linii – nie instaluję." >&2; return 1 ;;
+      esac
       out="$(spctl --assess --type "$type" -vv "$item" 2>&1)"; rc=$?
       src="$(printf '%s\n' "$out" | sed -n 's/^source=//p' | head -n 1)"
       origin="$(printf '%s\n' "$out" | sed -n 's/^origin=//p' | head -n 1)"
-      case "$out" in
-        *override=*)
+      # spctl prints the item's path first, so only a line of its own counts: a file named „…override=…” must not
+      # pass for a Mac with Gatekeeper switched off (that path checks the Developer ID, not the notarization).
+      if printf '%s\n' "$out" | grep -q '^override='; then
           rc=1; src=""
           if [ "$type" = install ]; then
             out="$(pkgutil --check-signature "$item" 2>&1)"
@@ -349,8 +354,8 @@ public enum Scripts {
             rc=0; src="Developer ID (Gatekeeper wyłączony – bez sprawdzenia notaryzacji)"
           else
             why="brak ważnego podpisu Apple lub Developer ID"
-          fi ;;
-      esac
+          fi
+      fi
       if [ $rc -eq 0 ]; then
         echo "✔ Podpis sprawdzony: $name – ${origin:-$src}${origin:+${src:+ ($src)}}"
         return 0
