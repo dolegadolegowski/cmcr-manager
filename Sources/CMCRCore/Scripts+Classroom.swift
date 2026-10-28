@@ -375,9 +375,14 @@ public extension Scripts {
 
     /// Quits (SIGTERM) every application of the logged-in user started from an Applications folder, including
     /// the apps macOS 13+ runs from the system cryptex (Safari).
+    /// With nobody at the screen it does not report success: code 3 (nobody logged in, the lesson step is
+    /// skipped), or code 1 when a student's session runs in the background – its apps stay open.
     static func quitAllApps() -> RemoteScript {
         RemoteScript(#"""
-        if [ -z "$CONSOLE_USER" ]; then echo "Nikt nie jest zalogowany – nie ma czego zamykać."; exit 0; fi
+        if [ -z "$CONSOLE_USER" ]; then
+          \#(backgroundSessionCheck(what: "jej aplikacji nie zamknięto"))
+          echo "CMCR:NOUSER"; echo "Nikt nie jest zalogowany – nie ma czego zamykać."; exit \#(ScriptCode.noConsoleUser)
+        fi
         PIDS="$(cmcr_ps -axww -o pid=,user=,comm= | awk -v u="$CONSOLE_USER" '$2 == u {
           p = $0; sub(/^ *[0-9]+ +[^ ]+ +/, "", p)
           if (p ~ /^(\/Applications\/|\/System\/Applications\/|\/System\/Volumes\/Preboot\/Cryptexes\/App\/System\/Applications\/|\/System\/Cryptexes\/App\/System\/Applications\/|\/Users\/[^\/]+\/Applications\/)/ && p ~ /\.app\/Contents\/MacOS\/[^\/]+$/ && p !~ /\.app\/.*\.app\//) print $1
@@ -385,6 +390,19 @@ public extension Scripts {
         if [ -z "$PIDS" ]; then echo "Brak otwartych aplikacji."; exit 0; fi
         asroot kill -TERM $PIDS && echo "✔ Zamknięto aplikacje użytkownika $CONSOLE_USER (PID: $(echo $PIDS))."
         """#)
+    }
+
+    /// For scripts that act in the session at the screen, when there is none: a session left in the background
+    /// after "Switch User" (other than the administrator's own) is reported with `what` and code 1, since nothing
+    /// was done there. The administrator's background session is not the students' (as in `logoutUser`).
+    internal static func backgroundSessionCheck(what: String) -> String {
+        #"""
+        BG="$(cmcr_gui_sessions | awk -v a="$CMCR_ADMIN_USER" 'NF && $2 != a {print $2}' | paste -sd, -)"
+        if [ -n "$BG" ]; then
+          echo "✘ Na ekranie jest okno logowania, a w tle działa sesja: $BG – \#(what) (zamknie je dopiero wylogowanie, np. „Wyloguj natychmiast”)." >&2
+          exit 1
+        fi
+        """#
     }
 
     /// Cheap reachability probe used while waiting for a Mac to wake up.

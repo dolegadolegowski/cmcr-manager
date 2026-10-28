@@ -129,3 +129,32 @@ out="$(ctlpw _builder install-updates 1)"; code=$?
 expect_code "updates: lista niedostępna (kod 0) – kod 1" "$code" 1 "$out"
 expect_not "updates: lista niedostępna (kod 0) – nie udaje braku aktualizacji" "$out" "Brak aktualizacji do zainstalowania"
 rm -f "$WORK/softwareupdate.list" "$WORK/softwareupdate.list.rc"
+
+section "P2: zakończenie zajęć bez ucznia przy ekranie (AUDIT DOD-08)"
+python3 - "$WORK/config/classroom.json" <<'PY'
+import json, sys
+cfg = {"end": {"warn": False, "collect": False, "quitApps": True, "quitAllApps": True, "cleanShared": False,
+               "cleanDownloads": False, "logout": False, "power": "none"}}
+json.dump(cfg, open(sys.argv[1], "w"), ensure_ascii=False)
+PY
+# Real GUI sessions of other accounts on this Mac would count as sessions in the background.
+others="$(ctl exec 'cmcr_gui_sessions | awk -v a="$CMCR_ADMIN_USER" "\$2 != a" | wc -l' 1 | tail -1 | tr -d ' ')"
+: > "$WORK/fake-no-console"
+if [ "$others" = 0 ]; then
+  out="$(ctlpw lesson end 1 --no-wait --yes)"; code=$?
+  expect "lesson end, nikt nie jest zalogowany: krok pominięty" "$out" "nikt nie jest zalogowany"
+  expect_not "lesson end, nikt nie jest zalogowany: nie twierdzi, że zamknięto aplikacje" "$out" "aplikacje zamknięte"
+  out="$(ctlpw _builder quit-app 1 P2Nic)"; code=$?
+  expect "quit-app, nikt nie jest zalogowany: znacznik dla zajęć" "$out" "CMCR:NOUSER"
+  expect_code "quit-app, nikt nie jest zalogowany: kod 0" "$code" 0 "$out"
+else
+  pass "lesson end bez sesji: pominięto (na tym Macu są sesje innych kont)"
+fi
+echo "502 uczen-p2" > "$WORK/ps.sessions"
+out="$(ctlpw lesson end 1 --no-wait --yes)"; code=$?
+expect_code "lesson end, sesja ucznia w tle: kod 1" "$code" 1 "$out"
+expect_not "lesson end, sesja ucznia w tle: nie twierdzi, że zamknięto aplikacje" "$out" "aplikacje zamknięte"
+out="$(ctlpw _builder quit-app 1 P2Nic)"; code=$?
+expect "quit-app, sesja ucznia w tle: komunikat" "$out" "w tle działa sesja: uczen-p2"
+expect_code "quit-app, sesja ucznia w tle: kod 1" "$code" 1 "$out"
+rm -f "$WORK/ps.sessions" "$WORK/fake-no-console" "$WORK/config/classroom.json"

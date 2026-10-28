@@ -222,7 +222,10 @@ public enum Scripts {
         return RemoteScript(#"""
         NEEDLE=\#(shQuote(needle)); NAME=\#(shQuote(name))
         FORCE=\#(force ? 1 : 0); FALLBACK=\#(terminateIfRunning ? 1 : 0); WAIT=\#(max(1, wait))
-        if [ -z "$CONSOLE_USER" ]; then echo "Brak zalogowanego użytkownika."; exit 0; fi
+        if [ -z "$CONSOLE_USER" ]; then
+          \#(backgroundSessionCheck(what: "aplikacji w tej sesji nie zamknięto"))
+          echo "CMCR:NOUSER"; echo "Brak zalogowanego użytkownika."; exit 0
+        fi
         app_pids() { cmcr_ps -axww -o pid=,user=,comm= | awk -v u="$CONSOLE_USER" -v n="$NEEDLE" '$2 == u && index($0, n) > 0 {print $1}'; }
         PIDS="$(app_pids)"
         if [ -z "$PIDS" ]; then echo "Aplikacja nie jest uruchomiona."; exit 0; fi
