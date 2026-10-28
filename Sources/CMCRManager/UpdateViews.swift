@@ -33,11 +33,12 @@ struct CheckForUpdatesButton: View {
 
 /// Card at the bottom of the sidebar while a newer version is available.
 struct UpdateBanner: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var updater = Updater.shared
 
     var body: some View {
         VStack(spacing: 0) { card }
-            .animation(.easeInOut(duration: 0.25), value: updater.showsBanner)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: updater.showsBanner)
     }
 
     @ViewBuilder private var card: some View {
@@ -69,7 +70,7 @@ struct UpdateBanner: View {
             .padding(.vertical, 8)
             .help("Pokaż, co nowego, i zainstaluj uaktualnienie")
             .accessibilityLabel("Dostępna nowa wersja \(c.manifest.version). \(subtitle)")
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
         }
     }
 
@@ -418,6 +419,7 @@ struct UpdateSettingsSection: View {
 
 /// Short-lived confirmation shown after a successful update; failures use an alert.
 struct UpdateToast: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var updater = Updater.shared
 
     var body: some View {
@@ -444,10 +446,10 @@ struct UpdateToast: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .shadow(radius: 8, y: 2)
             .padding(16)
-            .transition(.move(edge: .top).combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             .task(id: o.id) {
                 try? await Task.sleep(nanoseconds: 8 * 1_000_000_000)
-                withAnimation { if updater.outcome?.id == o.id { updater.outcome = nil } }
+                withAnimation(reduceMotion ? nil : .default) { if updater.outcome?.id == o.id { updater.outcome = nil } }
             }
         }
     }

@@ -38,6 +38,7 @@ enum ClassroomTab: String, CaseIterable, Identifiable {
 
 /// "Zajęcia": one-click lesson routines, attention mode and questions to students.
 struct ClassroomView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject var model: AppModel
     @ObservedObject private var classroom = ClassroomModel.shared
     @AppStorage("classroom.tab") private var tab: ClassroomTab = .start
@@ -87,7 +88,7 @@ struct ClassroomView: View {
                 .onChange(of: classroom.run?.id) { _, id in
                     guard id != nil, let kind = classroom.run?.plan.kind else { return }
                     tab = kind == .start ? .start : .end
-                    withAnimation { proxy.scrollTo("progress", anchor: .top) }
+                    withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo("progress", anchor: .top) }
                 }
             }
         }

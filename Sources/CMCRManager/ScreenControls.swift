@@ -6,6 +6,7 @@ struct ScreenRestrictionsBar: View {
     enum Style { case full, short, icons }
 
     @EnvironmentObject var model: AppModel
+    @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
     var style = Style.full
 
@@ -45,13 +46,14 @@ struct ScreenRestrictionsBar: View {
                      "Największa szerokość miniatury; powiększony ekran może mieć do \(max(1600, s.screenshotMaxSize)) px.")
             }
             Spacer(minLength: 8)
+            // Straight to the preview settings: Konfiguracja opened on its first tab, far from them (AUDIT UI-16).
             Button(short ? "Zmień…" : "Zmień ograniczenia…") {
-                model.section = .setup
-                MainWindow.bringToFront(openWindow)
+                UserDefaults.standard.set(SettingsTab.screens.rawValue, forKey: SettingsTab.storageKey)
+                openSettings()
             }
             .buttonStyle(.link)
             .fixedSize()
-            .help("Ograniczenia podglądu ustawisz w Konfiguracji")
+            .help("Otwórz Ustawienia › Podgląd ekranów")
         }
     }
 
@@ -195,6 +197,7 @@ struct ScreenBatchBanner: View {
 }
 
 private struct ScreenBatchBannerContent: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var batch: Batch
@@ -214,7 +217,7 @@ private struct ScreenBatchBannerContent: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Szczegóły") {
-                    model.section = .jobs
+                    model.showJobs(batch.id)                // this action, not the one viewed last (AUDIT UI-17)
                     MainWindow.bringToFront(openWindow)
                 }
                 .buttonStyle(.link)
@@ -235,11 +238,11 @@ private struct ScreenBatchBannerContent: View {
                     content.background(.regularMaterial, in: Capsule())
                 }
             }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             .task(id: batch.finished) {
                 guard batch.finished else { return }
                 try? await Task.sleep(nanoseconds: 8_000_000_000)
-                withAnimation { hidden = batch.id }
+                withAnimation(reduceMotion ? nil : .default) { hidden = batch.id }
             }
         }
     }

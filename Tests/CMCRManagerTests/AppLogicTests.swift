@@ -815,6 +815,19 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // explained-failures (AUDIT UI-14): a failure that only beeped now says what and why.
+    @Test func failuresAreExplainedInAnAlert() {
+        let model = AppTestEnvironment.makeModel([AppTestEnvironment.closedHost("imac01")])
+        model.notice = nil
+        struct Problem: LocalizedError { var errorDescription: String? { "Wolumin jest tylko do odczytu." } }
+        model.reportFailure("Nie udało się zapisać wyników", Problem(), hint: "Wybierz inny folder.")
+        #expect(model.notice?.title == "Nie udało się zapisać wyników")
+        #expect(model.notice?.message == "Wolumin jest tylko do odczytu.\n\nWybierz inny folder.")
+        model.notice = nil
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false

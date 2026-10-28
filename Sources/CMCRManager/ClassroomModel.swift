@@ -657,7 +657,7 @@ final class ClassroomModel: ObservableObject {
             ConfigStore.log("Raport CSV → \(url.path)")
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } catch {
-            NSSound.beep()
+            model.reportFailure("Nie udało się zapisać raportu", error)
         }
     }
 
@@ -667,7 +667,7 @@ final class ClassroomModel: ObservableObject {
             try CSV.render(rows).write(to: url, atomically: true, encoding: .utf8)
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } catch {
-            NSSound.beep()
+            AppModel.shared?.reportFailure("Nie udało się zapisać pliku CSV", error)
         }
     }
 }

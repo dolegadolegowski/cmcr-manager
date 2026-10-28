@@ -128,7 +128,10 @@ extension AppModel {
         }
         switch fix {
         case .key:
-            guard let pub = managerPublicKey else { NSSound.beep(); return }
+            guard let pub = managerPublicKey else {
+                reportFailure("Brak klucza publicznego", hint: "Utwórz klucz logowania w Konfiguracji › Dostęp i hasła albo dodaj plik .pub obok wybranego klucza.")
+                return
+            }
             runScript("Instalacja klucza SSH", on: targets, section: .setup,
                       script: { _ in Scripts.distributeKey(pub) }, onResult: recheck)
         case .folder:

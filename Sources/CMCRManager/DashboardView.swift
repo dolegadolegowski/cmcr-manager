@@ -429,6 +429,12 @@ struct DiskCell: View {
                 Text(String(format: "%.0f GB", free))
                     .monospacedDigit()
                     .foregroundStyle(free < DashboardRow.lowDiskGB ? .orange : .primary)
+                if free < DashboardRow.lowDiskGB {
+                    // Low disk space is marked by a shape too, not only the colour (AUDIT UI-19).
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel("Mało miejsca")
+                }
             }
             .help(String(format: "Wolne %.0f z %.0f GB", free, total))
         } else {

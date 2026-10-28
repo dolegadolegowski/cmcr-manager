@@ -27,7 +27,8 @@ enum SetupTab: String, CaseIterable, Identifiable {
 }
 
 struct SetupView: View {
-    @ViewState private var tab = SetupTab.hosts
+    /// Remembered when leaving Konfiguracja (AUDIT UI-16).
+    @AppStorage("setupTab") private var tab = SetupTab.hosts
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,7 +55,7 @@ struct SetupView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onSnapshotSubpage { sub in
-            if let t = SetupTab(rawValue: String(sub.split(separator: "+").first ?? "")) { tab = t }
+            tab = SetupTab(rawValue: String(sub.split(separator: "+").first ?? "")) ?? .hosts
         }
     }
 }
@@ -324,7 +325,11 @@ struct HostsEditor: View {
             }
             Button {
                 if let url = Pickers.save(name: "cmcr-komputery.json") {
-                    try? ConfigStore.exportHosts(model.machines, to: url)
+                    do {
+                        try ConfigStore.exportHosts(model.machines, to: url)
+                    } catch {
+                        model.reportFailure("Nie udało się zapisać listy komputerów", error)
+                    }
                 }
             } label: {
                 Label("Zapisz listę do pliku…", systemImage: "square.and.arrow.up")
@@ -1086,11 +1091,14 @@ struct ConfigurationLinkSection: View {
 
 enum SettingsTab: String, CaseIterable {
     case general, connection, screens, updates
+
+    static let storageKey = "settingsTab"
 }
 
 /// The standard Settings window; the same settings are also in Konfiguracja › Ustawienia.
 struct AppSettingsWindow: View {
-    @ViewState private var tab = SettingsTab.general
+    /// Remembered, and set by links that open a given tab (e.g. „Zmień ograniczenia…” of the screen preview).
+    @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.general
 
     var body: some View {
         TabView(selection: $tab) {
@@ -1109,7 +1117,8 @@ struct AppSettingsWindow: View {
         }
         .frame(width: 620)
         .onSnapshotSubpage { sub in
-            if let t = SettingsTab(rawValue: sub) { tab = t }
+            // An empty sub-page is the default tab (AUDIT UI-25: the dark snapshot kept the previous tab).
+            tab = SettingsTab(rawValue: sub) ?? .general
         }
     }
 

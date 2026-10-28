@@ -148,13 +148,22 @@ extension ScreenIssue {
         return false
     }
 
-    var displaySymbol: String { isOffline ? "moon.zzz" : symbol }
+    var displaySymbol: String { isOffline ? "moon.zzz.fill" : symbol }
 
     /// Plain-language explanation on the tile (the technical one stays in the tooltip).
     var displayMessage: String { isOffline ? "Może być wyłączony, uśpiony albo poza siecią." : message }
 }
 
 extension ScreenFreshness {
+    /// A shape of its own for each state, not only a colour (AUDIT UI-19).
+    var symbol: String {
+        switch self {
+        case .fresh: return "circle.fill"
+        case .stale: return "clock.badge.exclamationmark"
+        case .old: return "exclamationmark.circle.fill"
+        }
+    }
+
     var color: Color {
         switch self {
         case .fresh: return .green
@@ -265,7 +274,8 @@ struct FreshnessBadge: View {
         } else if feed.phase == .connecting && feed.image == nil {
             EmptyView()
         } else if let fresh = feed.freshness(at: now), let t = feed.confirmedAt {
-            badge("circle.fill", ageText(now.timeIntervalSince(t)), fresh.color)
+            badge(fresh.symbol, ageText(now.timeIntervalSince(t)), fresh.color)
+                .accessibilityLabel(fresh == .fresh ? "Obraz aktualny" : "Obraz nieaktualny")
                 .help(fresh == .fresh ? "Obraz aktualny (odświeżany co \(feed.interval) s)."
                       : "Obraz nieaktualny – ostatnie potwierdzenie \(t.formatted(date: .omitted, time: .standard)).")
         }
@@ -273,7 +283,7 @@ struct FreshnessBadge: View {
 
     private func badge(_ symbol: String, _ text: String, _ color: Color) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: symbol).font(.system(size: 7)).foregroundStyle(color)
+            Image(systemName: symbol).font(.system(size: symbol == "circle.fill" ? 7 : 9)).foregroundStyle(color)
             Text(text).font(.caption2.monospacedDigit())
         }
         .padding(.horizontal, 7)
@@ -316,7 +326,7 @@ struct ScreenActions {
 
     func save(_ feed: ScreenFeed, of m: Machine) {
         guard let image = feed.image, let data = ScreenImage.encode(image) else {
-            NSSound.beep()
+            model.reportFailure("Brak obrazu do zapisania", hint: "Poczekaj, aż pojawi się obraz ekranu \(m.name).")
             return
         }
         let f = DateFormatter()
@@ -326,7 +336,7 @@ struct ScreenActions {
         do {
             try data.write(to: url)
         } catch {
-            NSSound.beep()
+            model.reportFailure("Nie udało się zapisać zrzutu ekranu", error)
         }
     }
 }
@@ -480,6 +490,17 @@ struct ScreenTile: View {
                 TimelineView(.periodic(from: .now, by: 2)) { context in
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(borderColor(at: context.date), lineWidth: borderWidth)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                // Selected tiles carry a mark, not only a coloured border (AUDIT UI-19).
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, Color.accentColor)
+                        .font(.title3)
+                        .padding(6)
+                        .accessibilityHidden(true)
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))

@@ -16,6 +16,8 @@ final class RemoteBrowserModel: ObservableObject {
         let id = UUID()
         let text: String
         let isError: Bool
+        /// The job batch with the full result („Szczegóły” opens it, AUDIT UI-17).
+        var batchID: UUID?
     }
 
     unowned let app: AppModel
@@ -265,7 +267,7 @@ final class RemoteBrowserModel: ObservableObject {
             let summary = job?.summary ?? ""
             self.notice = Notice(text: ok ? (summary.isEmpty || summary == "OK" ? "Gotowe." : summary)
                                           : (summary.isEmpty ? "Operacja nie powiodła się." : summary),
-                                 isError: !ok)
+                                 isError: !ok, batchID: batch.id)
             done?(ok)
             if m.id == self.hostID { self.reload() }
         })

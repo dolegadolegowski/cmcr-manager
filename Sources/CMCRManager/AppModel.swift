@@ -459,6 +459,12 @@ final class AppModel: ObservableObject {
         if saved && !pw.isEmpty { recheckAfterCredentialChange(machines) }
     }
 
+    /// Says in an alert what could not be done and why, instead of only a beep (AUDIT UI-14).
+    func reportFailure(_ title: String, _ error: Error? = nil, hint: String = "") {
+        let reason = error.map { $0.localizedDescription } ?? ""
+        notice = AppNotice(title: title, message: [reason, hint].filter { !$0.isEmpty }.joined(separator: "\n\n"))
+    }
+
     /// An own password the Keychain does not have (a list imported from another Mac, a failed save): such a Mac
     /// quietly uses the shared password (AUDIT KON-12). Checked without reading the secret.
     func ownPasswordMissing(_ m: Machine) -> Bool {
@@ -842,7 +848,7 @@ final class AppModel: ObservableObject {
             NSWorkspace.shared.open(url)
             ConfigStore.log("Sesja SSH (Terminal) → \(m.name)")
         } catch {
-            NSSound.beep()
+            reportFailure("Nie udało się otworzyć sesji SSH w Terminalu", error)
         }
     }
 
@@ -938,7 +944,8 @@ final class AppModel: ObservableObject {
             let url = try Operations.prepareLocalFolders(base: settings.localFolder, hosts: machines)
             NSWorkspace.shared.open(url)
         } catch {
-            NSSound.beep()
+            reportFailure("Nie udało się przygotować folderów all i komputerów", error,
+                          hint: "Sprawdź folder na tym Macu w Konfiguracji › Ustawienia.")
         }
     }
 

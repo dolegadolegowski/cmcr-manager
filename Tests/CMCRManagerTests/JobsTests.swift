@@ -38,4 +38,10 @@ import Testing
         jobs[0].state = .succeeded
         #expect(JobNotifier.body(for: batch) == "Gotowe na 1 komputerze · błąd na 1 komputerze")
     }
+
+    /// preview-freshness (AUDIT UI-19): each freshness state has a shape of its own, not only a colour.
+    @Test func freshnessStatesHaveTheirOwnShapes() {
+        let symbols = [ScreenFreshness.fresh, .stale, .old].map(\.symbol)
+        #expect(Set(symbols).count == 3)
+    }
 }

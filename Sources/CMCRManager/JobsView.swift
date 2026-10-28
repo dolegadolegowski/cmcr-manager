@@ -156,7 +156,8 @@ struct JobsView: View {
                 if FileManager.default.fileExists(atPath: url.path) {
                     NSWorkspace.shared.open(url)
                 } else {
-                    NSSound.beep()
+                    model.reportFailure("Dziennik działań jest jeszcze pusty",
+                                        hint: "Plik \(url.path) powstanie przy pierwszym działaniu na komputerach.")
                 }
             } label: {
                 Label("Otwórz dziennik działań", systemImage: "doc.text")
@@ -641,6 +642,7 @@ extension Job.State {
 
 // MARK: - Export
 
+@MainActor
 enum BatchExport {
     static func text(_ batch: Batch) -> String {
         var s = "\(batch.title)\nRozpoczęto: \(batch.createdAt.formatted(date: .abbreviated, time: .standard))\n\n"
@@ -674,7 +676,7 @@ enum BatchExport {
         do {
             try text.write(to: url, atomically: true, encoding: .utf8)
         } catch {
-            NSSound.beep()
+            AppModel.shared?.reportFailure("Nie udało się zapisać wyników", error)
         }
     }
 }

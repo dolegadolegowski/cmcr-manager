@@ -53,7 +53,7 @@ struct ConfigIssuesAlert: ViewModifier {
             // Sample texts, only for the UI snapshots (see SnapshotRenderer); removed again with the sub-page.
             switch sub {
             case "configissues":
-                model.configIssues = ["Lista komputerów (hosts.json) jest uszkodzona – wczytano listę domyślną. Oryginał zachowano jako hosts.json.damaged w \(ConfigStore.directory.path)."]
+                model.configIssues = ["Lista komputerów (hosts.json) jest uszkodzona – wczytano listę domyślną. Oryginał zachowano jako hosts.json.20261028-081500.bak w \(ConfigStore.directory.path)."]
                 showsSample = true
             case "keychain":
                 model.keychainError = "Nie udało się zapisać hasła w Pęku kluczy. Sprawdź, czy pęk kluczy „login” jest odblokowany (aplikacja Dostęp do pęku kluczy), i spróbuj ponownie."

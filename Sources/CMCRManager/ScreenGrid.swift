@@ -43,6 +43,7 @@ enum ScreenGridLayout: String, CaseIterable, Identifiable {
 
 /// Grid of live screens with keyboard navigation (arrows, space/return to enlarge, Esc) and an in-place zoom.
 struct ScreenGrid: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject var center: ScreenCenter
     let machines: [Machine]
     var layout: ScreenGridLayout = .fit
@@ -87,7 +88,7 @@ struct ScreenGrid: View {
                     .frame(maxWidth: .infinity, minHeight: layout == .fit ? geo.size.height : nil)
                 }
                 .onChange(of: focused) { _, id in
-                    if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
+                    if let id { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
                 }
             }
             .onAppear { columnCount = cols }
@@ -113,10 +114,10 @@ struct ScreenGrid: View {
             if let id = zoomed, let m = machines.first(where: { $0.id == id }) {
                 ZoomedScreen(machine: m, feed: center.feed(for: m.id), position: position(of: id),
                              onClose: { zoomed = nil }, onStep: step)
-                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.97)))
             }
         }
-        .animation(.easeOut(duration: 0.18), value: zoomed)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: zoomed)
         .task {
             // Start-up hook for scripted UI checks: CMCR_ZOOM_FIRST_SCREEN=1 enlarges the first screen.
             if ProcessInfo.processInfo.environment["CMCR_ZOOM_FIRST_SCREEN"] == "1", let first = machines.first {

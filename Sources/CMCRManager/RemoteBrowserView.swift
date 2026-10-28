@@ -218,7 +218,7 @@ private struct RemoteBrowserPage: View {
                     .accessibilityHidden(true)
                 Text(notice.text)
                     .truncationMode(.middle)
-                Button("Szczegóły") { model.section = .jobs }
+                Button("Szczegóły") { model.showJobs(notice.batchID) }
                     .buttonStyle(.link)
                     .help("Pełny wynik w dziale Zadania")
             } else {
