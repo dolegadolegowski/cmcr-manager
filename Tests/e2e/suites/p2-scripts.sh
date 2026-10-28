@@ -181,3 +181,15 @@ if p2_bg_ok; then
 else
   fail "atrapy NIE są aktywne w procesach w tle – pominięto test opóźnionego uśpienia"
 fi
+
+section "P2: harmonogram zasilania wyłącza autorestart i Wake-on-LAN (AUDIT KOM-03)"
+clear_fakelog
+out="$(ctlpw schedule set 1 --on MTWRF@07:45 --no-autorestart --no-womp)"; code=$?
+expect_code "schedule set --no-autorestart --no-womp: kod 0" "$code" 0 "$out"
+expect "schedule set: wyłączone przełączniki wyłączają ustawienia" "$(fakelog)" "pmset -a autorestart 0" "pmset -a womp 0"
+expect "schedule set: wynik pokazuje wyłączone Wake-on-LAN" "$out" "womp=0" "autorestart=0"
+clear_fakelog
+out="$(ctlpw schedule set 1 --on MTWRF@07:45)"
+expect "schedule set: domyślnie włącza oba" "$(fakelog)" "pmset -a autorestart 1" "pmset -a womp 1"
+ctlpw schedule clear 1 >/dev/null
+rm -f "$WORK/pmset.womp" "$WORK/pmset.autorestart"

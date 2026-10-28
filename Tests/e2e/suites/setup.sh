@@ -93,7 +93,7 @@ marker="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("p
 expect "setup: znacznik zapamiętuje faktyczne zdarzenia pmset" "$marker" "wakeorpoweron MTWRF 07:30:00 shutdown MTWRF 17:00:00"
 
 # The schedule changed later in the app (Zajęcia › Harmonogram zasilania): setup must notice it, not trust its marker.
-out="$(ctlpw schedule set 1 --on MTWRF@08:15 --off MTWRF@15:00 --no-autorestart --no-womp)"
+out="$(ctlpw schedule set 1 --on MTWRF@08:15 --off MTWRF@15:00 --no-autorestart)"
 expect "harmonogram zmieniony w aplikacji" "$(cat "$SS/sched" 2>&1)" "wakeorpoweron MTWRF 08:15:00 sleep MTWRF 15:00:00"
 out="$(setup_run --verify)"; code=$?
 expect "setup --verify po zmianie harmonogramu w aplikacji: do zmiany" "$out" \
@@ -110,7 +110,7 @@ expect "setup --verify po przywróceniu: nic do zmiany" "$out" "✔ Harmonogram:
 
 # pmset refuses the schedule while the app's schedule is in place: the step fails and the marker keeps no
 # fingerprint, so neither --verify nor the next run takes the app's events for the script's.
-out="$(ctlpw schedule set 1 --on MTWRF@08:15 --off MTWRF@15:00 --no-autorestart --no-womp)"
+out="$(ctlpw schedule set 1 --on MTWRF@08:15 --off MTWRF@15:00 --no-autorestart)"
 : > "$WORK/pmset-repeat.fail"
 clear_fakelog
 out="$(setup_run)"; code=$?

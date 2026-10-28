@@ -91,7 +91,7 @@ expect "schedule show: odczyt i tłumaczenie" "$out" "Obudź lub włącz o 7:45 
 clear_fakelog
 out="$(ctlpw schedule set 1 --off SU@12:00 --off-type shutdown --no-autorestart)"
 expect "schedule set: tylko wyłączanie w weekend" "$(fakelog)" "pmset repeat shutdown SU 12:00:00"
-expect_not "schedule set: bez autorestart" "$(fakelog)" "autorestart"
+expect "schedule set: --no-autorestart wyłącza autorestart (AUDIT KOM-03)" "$(fakelog)" "pmset -a autorestart 0"
 out="$(ctl schedule show 1)"
 expect "schedule show: wyłączanie w weekendy" "$out" "Wyłącz o 12:00 – weekendy"
 out="$(ctlpw schedule clear 1)"

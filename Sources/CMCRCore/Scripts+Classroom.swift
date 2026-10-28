@@ -290,18 +290,26 @@ public extension Scripts {
 
     // MARK: - Energy schedule
 
-    /// `pmset repeat …` plus the optional power policy (restart after power loss, wake for network access).
+    /// `pmset repeat …` plus the power policy (restart after power loss, wake for network access). Both switches
+    /// set the iMac's state either way: off switches the setting off (`pmset -a … 0`), it does not leave it as it was.
     static func applyEnergySchedule(_ schedule: EnergySchedule, autoRestart: Bool, wakeOnLAN: Bool) -> RemoteScript {
         guard let args = schedule.pmsetArguments else {
             return RemoteScript("echo \(shQuote("✘ " + (schedule.validationError ?? "Niepoprawny harmonogram."))) >&2; exit 2")
         }
+        let restartDone = autoRestart ? "✔ Włączanie po zaniku zasilania: tak" : "✔ Włączanie po zaniku zasilania: nie"
+        let wakeDone = wakeOnLAN ? "✔ Budzenie przez sieć (Wake-on-LAN): tak"
+            : "✔ Budzenie przez sieć (Wake-on-LAN): wyłączone – przycisk „Obudź” nie obudzi tego iMaca."
         return RemoteScript(#"""
         pmset \#(args.map(shQuote).joined(separator: " ")) || { echo "✘ pmset nie przyjął harmonogramu." >&2; exit 1; }
         echo \#(shQuote("✔ Harmonogram: " + schedule.summary))
-        \#(autoRestart ? "pmset -a autorestart 1 && echo '✔ Włączanie po zaniku zasilania: tak'" : ":")
-        \#(wakeOnLAN ? "pmset -a womp 1 && echo '✔ Budzenie przez sieć (Wake-on-LAN): tak'" : ":")
+        RC=0
+        if pmset -a autorestart \#(autoRestart ? 1 : 0); then echo \#(shQuote(restartDone))
+        else echo "✘ pmset nie zmienił ustawienia „Włączanie po zaniku zasilania” (autorestart)." >&2; RC=1; fi
+        if pmset -a womp \#(wakeOnLAN ? 1 : 0); then echo \#(shQuote(wakeDone))
+        else echo "✘ pmset nie zmienił ustawienia „Budzenie przez sieć” (womp)." >&2; RC=1; fi
         echo "CMCR:SCHED"; pmset -g sched 2>&1
         echo "CMCR:POLICY"; pmset -g 2>/dev/null | awk '$1=="autorestart"||$1=="womp"||$1=="sleep"||$1=="displaysleep"{print $1"="$2}'
+        exit $RC
         """#, asRoot: true)
     }
 
