@@ -193,3 +193,22 @@ out="$(ctlpw schedule set 1 --on MTWRF@07:45)"
 expect "schedule set: domyślnie włącza oba" "$(fakelog)" "pmset -a autorestart 1" "pmset -a womp 1"
 ctlpw schedule clear 1 >/dev/null
 rm -f "$WORK/pmset.womp" "$WORK/pmset.autorestart"
+
+section "P2: wysyłanie – nieudana zmiana właściciela to błąd (AUDIT PLI-08)"
+mkdir -p "$P2/send" "$WORK/remote/p2push"
+echo p2 > "$P2/send/p2-plik.txt"
+out="$(ctlpw _builder push 1 "$WORK/remote/p2push" "p2-nie-ma-takiego-konta" "" "$P2/send/p2-plik.txt" --root)"; code=$?
+expect "push: nieistniejące konto – komunikat" "$out" "p2-nie-ma-takiego-konta" "nie istnieje"
+[ "$code" != 0 ] && pass "push: nieistniejące konto – błąd" || fail "push: nieistniejące konto – kod 0" "$out"
+[ ! -e "$WORK/remote/p2push/p2-plik.txt" ] && pass "push: nieistniejące konto – nic nie zapisano" \
+  || fail "push: plik zapisany z niezmienionym właścicielem" "$out"
+: > "$WORK/chown.fail"
+out="$(ctlpw _builder push 1 "$WORK/remote/p2push" "$ME" "" "$P2/send/p2-plik.txt" --root)"; code=$?
+rm -f "$WORK/chown.fail"
+expect_code "push: chown odmówił – kod 1" "$code" 1 "$out"
+expect "push: chown odmówił – komunikat" "$out" "Nie udało się ustawić właściciela"
+[ ! -e "$WORK/remote/p2push/p2-plik.txt" ] && pass "push: chown odmówił – pliku nie zapisano" \
+  || fail "push: chown odmówił – plik zapisany z właścicielem root" "$out"
+out="$(ctlpw _builder push 1 "$WORK/remote/p2push" "$ME" "" "$P2/send/p2-plik.txt" --root)"; code=$?
+expect_code "push: poprawny właściciel – kod 0" "$code" 0 "$out"
+[ -f "$WORK/remote/p2push/p2-plik.txt" ] && pass "push: poprawny właściciel – plik zapisany" || fail "push: brak pliku" "$out"

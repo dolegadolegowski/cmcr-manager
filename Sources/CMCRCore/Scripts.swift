@@ -858,6 +858,11 @@ public enum Scripts {
         cmcr_on_exit 'rm -f "$TAR"'
         cmcr_require_console "$DEST" "$OWNER"
         DEST="${DEST//\{console\}/$CONSOLE_USER}"; OWNER="${OWNER//\{console\}/$CONSOLE_USER}"
+        # Before anything is written: an account that does not exist (a typo in „Inny…”) would leave the files root's.
+        OWNER_USER="${OWNER%%:*}"
+        if [ -n "$OWNER_USER" ] && ! id -u "$OWNER_USER" >/dev/null 2>&1; then
+          echo "✘ Konto „${OWNER_USER}” nie istnieje na tym komputerze – nic nie wysłano (właściciel: ${OWNER})." >&2; exit 2
+        fi
         DEST="${DEST/#\~/$HOME}"
         while [ "${DEST%/}" != "$DEST" ]; do DEST="${DEST%/}"; done
         case "$DEST" in /?*) ;; *) echo "✘ Folder docelowy musi być pełną ścieżką (np. /Users/student/Desktop): „${DEST}”" >&2; exit 2 ;; esac
@@ -912,18 +917,28 @@ public enum Scripts {
         for item in "$STAGE/new"/* "$STAGE/new"/.[!.]* "$STAGE/new"/..?*; do
           [ -e "$item" ] || [ -L "$item" ] || continue
           n="$(basename "$item")"; t="./$n"
-          if [ -n "$OWNER" ]; then chown -R "$OWNER" "$item" || echo "⚠︎ chown $OWNER nie powiódł się dla $n" >&2; fi
-          if [ -n "$MODE" ]; then chmod -R "$MODE" "$item" || echo "⚠︎ chmod $MODE nie powiódł się dla $n" >&2; fi
+          # An item whose owner or mode cannot be set is not put in place: it would stay root's in the student's
+          # folder (with "Bez zmian" the student could not edit it).
+          if [ -n "$OWNER" ] && ! chown -R "$OWNER" "$item"; then
+            echo "✘ Nie udało się ustawić właściciela „${OWNER}” dla $n – nie zapisano go w $DEST." >&2; RC=1; continue
+          fi
+          if [ -n "$MODE" ] && ! chmod -R "$MODE" "$item"; then
+            echo "✘ Nie udało się ustawić uprawnień $MODE dla $n – nie zapisano go w $DEST." >&2; RC=1; continue
+          fi
           case "$n" in *.app) xattr -dr com.apple.quarantine "$item" 2>/dev/null ;; esac
           if [ -d "$item" ] && [ ! -L "$item" ] && [ -d "$t" ] && [ ! -L "$t" ] && [ "${n%.app}" = "$n" ]; then
             # Merged from inside the existing folder, so a folder swapped for a link meanwhile is not followed
             # (ditto never follows links in the destination and replaces files rather than writing into them).
-            if ! ( { cd -P -- "$t" 2>/dev/null && [ "$(stat -f %d:%i ..)" = "$HERE" ]; } || exit 1
-                   ditto "$item" . || exit 1
-                   if [ -n "$OWNER" ]; then chown "$OWNER" . || echo "⚠︎ chown $OWNER nie powiódł się dla $n" >&2; fi
-                   if [ -n "$MODE" ]; then chmod "$MODE" . || echo "⚠︎ chmod $MODE nie powiódł się dla $n" >&2; fi ); then
-              echo "✘ Kopiowanie $n do $DEST nie powiodło się" >&2; RC=1; continue
-            fi
+            ( { cd -P -- "$t" 2>/dev/null && [ "$(stat -f %d:%i ..)" = "$HERE" ]; } || exit 1
+              ditto "$item" . || exit 1
+              if [ -n "$OWNER" ]; then chown "$OWNER" . || exit 4; fi
+              if [ -n "$MODE" ]; then chmod "$MODE" . || exit 4; fi ); X=$?
+            case $X in
+              0) ;;
+              4) echo "✘ $DEST/$n: zawartość skopiowana, ale nie udało się ustawić właściciela ($OWNER) lub uprawnień ($MODE) folderu." >&2
+                 RC=1; continue ;;
+              *) echo "✘ Kopiowanie $n do $DEST nie powiodło się" >&2; RC=1; continue ;;
+            esac
           else
             if [ -e "$t" ] || [ -L "$t" ]; then
               if ! /bin/mv "$t" "$STAGE/old/$n" 2>/dev/null; then

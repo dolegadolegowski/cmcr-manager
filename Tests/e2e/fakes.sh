@@ -196,7 +196,12 @@ installer() {
 }
 
 # chown: logged only. The working directory is logged too: scripts change owners from inside a folder ("chown x .").
-chown() { _e2e_log "chown $* (cwd $PWD)"; return 0; }
+# With $CMCR_E2E_WORK/chown.fail it refuses, like chown for an account that does not exist (AUDIT PLI-08).
+chown() {
+  _e2e_log "chown $* (cwd $PWD)"
+  if [ -e "${CMCR_E2E_WORK:-/nonexistent}/chown.fail" ]; then echo "chown: odmowa (test)" >&2; return 1; fi
+  return 0
+}
 systemsetup() { _e2e_log "systemsetup $*"; echo "Remote Login: On"; }
 scutil() {
   case "${1:-}" in
