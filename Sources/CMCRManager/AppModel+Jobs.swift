@@ -444,13 +444,23 @@ enum JobNotifier {
             let id = UUID(uuidString: response.notification.request.identifier)
             DispatchQueue.main.async {
                 NSApp.activate(ignoringOtherApps: true)
-                MainActor.assumeIsolated { AppModel.shared?.showJobs(id) }
+                MainActor.assumeIsolated {
+                    // The main window may be closed while the app goes on with the jobs (AUDIT WSP-05).
+                    if let open = AppModel.shared?.openWindowAction { MainWindow.bringToFront(open) }
+                    AppModel.shared?.showJobs(id)
+                }
             }
             completionHandler()
         }
     }
 
     private static let router = Router()
+
+    /// Set at launch, so that clicking a notification from an earlier run is handled too.
+    static func installDelegate() {
+        guard isAvailable else { return }
+        UNUserNotificationCenter.current().delegate = router
+    }
 
     /// UNUserNotificationCenter needs an app bundle; the bare `swift run` executable has none.
     static var isAvailable: Bool {

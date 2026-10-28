@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         Updater.shared.applicationDidLaunch()
+        // Also notifications from an earlier run lead to their results (AUDIT WSP-05).
+        JobNotifier.installDelegate()
         SnapshotRenderer.runIfRequested()
     }
 
@@ -108,6 +110,7 @@ struct CMCRManagerApp: App {
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView {
@@ -124,13 +127,8 @@ struct ContentView: View {
         .background(ToolbarTitlesShown())
         .updaterUI(model: model)
         .task {
-            ClassroomModel.shared.attach(model)
-            model.refreshStatus()
-            // Keep the overview fresh in the background.
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 120 * 1_000_000_000)
-                model.refreshStatus(quietly: true)
-            }
+            model.openWindowAction = openWindow
+            model.startBackgroundRefresh()
         }
         .modifier(ConfigIssuesAlert())
         .hostTrustUI()

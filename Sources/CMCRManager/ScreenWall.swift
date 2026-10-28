@@ -159,6 +159,10 @@ struct ScreenWallView: View {
         }
         .sheet(isPresented: $composing) { MessageComposer(targets: selectedMachines) }
         .onChange(of: list.map(\.id)) { _, ids in selection.formIntersection(ids) }
+        .task {
+            if model.openWindowAction == nil { model.openWindowAction = openWindow }
+            model.startBackgroundRefresh()
+        }
         .frame(minWidth: 640, minHeight: 420)
     }
 

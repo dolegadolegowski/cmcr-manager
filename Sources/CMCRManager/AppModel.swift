@@ -420,6 +420,24 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Opens windows from code that has no SwiftUI environment (notifications); set by the first window.
+    var openWindowAction: OpenWindowAction?
+    private var backgroundRefresh: Task<Void, Never>?
+
+    /// One refresh of the overview every 2 minutes for the whole app, whichever window is open – also with only the
+    /// Screen Wall left on a projector (AUDIT WSP-03). Later calls (another window) change nothing.
+    func startBackgroundRefresh() {
+        guard backgroundRefresh == nil else { return }
+        ClassroomModel.shared.attach(self)
+        refreshStatus()
+        backgroundRefresh = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 120 * 1_000_000_000)
+                self?.refreshStatus(quietly: true)
+            }
+        }
+    }
+
     /// The save error last shown, so a folder that stays read-only does not raise an alert on every keystroke.
     private var shownSaveProblem: String?
 
