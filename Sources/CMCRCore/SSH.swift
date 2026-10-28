@@ -770,7 +770,9 @@ public enum Payload {
             args += ["-C", item.deletingLastPathComponent().path, item.lastPathComponent]
         }
         let r = await ProcessRunner.run("/usr/bin/tar", args)
-        if r.succeeded { return .success(out) }
+        // scp -p keeps this mode on the iMac: the archive waits in its /tmp, readable by the logged-in student
+        // with the default 0644 (AUDIT PLI-02).
+        if r.succeeded, chmod(out.path, 0o600) == 0 { return .success(out) }
         try? FileManager.default.removeItem(at: out)
         return .failure(PayloadError(message: "Nie udało się spakować plików: \(r.stderrText)"))
     }

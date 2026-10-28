@@ -15,10 +15,34 @@ public enum Operations {
         let remoteTar = remoteTempPath()
         onOutput?(.stdout, Data("→ Wysyłanie \(ByteCountFormatter.string(fromByteCount: Payload.size(of: payload), countStyle: .file))…\n".utf8))
         let up = await SSH.upload([payload], to: remoteTar, on: host, password: password, settings: settings, handle: handle)
-        guard up.succeeded else { return up }
-        return await SSH.run(Scripts.pushFinalize(remoteTar: remoteTar, destination: destination, owner: owner,
-                                                  mode: mode, asRoot: asRoot),
-                             on: host, password: password, settings: settings, handle: handle, onOutput: onOutput)
+        guard up.succeeded else {
+            if uploadMayHaveStarted(up) {
+                await discardUpload(remoteTar, on: host, password: password, settings: settings)
+            }
+            return up
+        }
+        let r = await SSH.run(Scripts.pushFinalize(remoteTar: remoteTar, destination: destination, owner: owner,
+                                                   mode: mode, asRoot: asRoot),
+                              on: host, password: password, settings: settings, handle: handle, onOutput: onOutput)
+        if !r.succeeded { await discardUpload(remoteTar, on: host, password: password, settings: settings) }
+        return r
+    }
+
+    /// Whether a failed upload may have left part of the archive in the Mac's /tmp: not when the Mac could not be
+    /// reached or refused the login (nothing was written there), otherwise yes (cancelled, timed out, dropped).
+    static func uploadMayHaveStarted(_ r: CommandResult) -> Bool {
+        if r.succeeded { return false }
+        switch SSH.diagnose(r).0 {
+        case .offline, .authFailed: return false
+        default: return true
+        }
+    }
+
+    /// Removes an archive left in the Mac's /tmp (AUDIT PLI-02): after an interrupted upload, or when the script
+    /// that unpacks and removes it failed or never ran (sudo refused, connection dropped). Best effort.
+    static func discardUpload(_ remoteTar: String, on host: Machine, password: String?, settings: SSHSettings) async {
+        _ = await SSH.run(RemoteScript("rm -f -- \(shQuote(remoteTar))"), on: host, password: password,
+                          settings: settings, timeout: 20)
     }
 
     /// Uploads installers (.pkg/.dmg/.zip/.app) and installs them as root. Without `allowUnsigned`, installers
@@ -29,9 +53,16 @@ public enum Operations {
         let remoteTar = remoteTempPath()
         onOutput?(.stdout, Data("→ Wysyłanie instalatorów (\(ByteCountFormatter.string(fromByteCount: Payload.size(of: payload), countStyle: .file)))…\n".utf8))
         let up = await SSH.upload([payload], to: remoteTar, on: host, password: password, settings: settings, handle: handle)
-        guard up.succeeded else { return up }
-        return await SSH.run(Scripts.installPayload(remoteTar: remoteTar, allowUnsigned: allowUnsigned), on: host, password: password,
-                             settings: settings, handle: handle, onOutput: onOutput)
+        guard up.succeeded else {
+            if uploadMayHaveStarted(up) {
+                await discardUpload(remoteTar, on: host, password: password, settings: settings)
+            }
+            return up
+        }
+        let r = await SSH.run(Scripts.installPayload(remoteTar: remoteTar, allowUnsigned: allowUnsigned), on: host,
+                              password: password, settings: settings, handle: handle, onOutput: onOutput)
+        if !r.succeeded { await discardUpload(remoteTar, on: host, password: password, settings: settings) }
+        return r
     }
 
     /// cmcr-pull: fetch the contents of a remote folder into `localDirectory`.

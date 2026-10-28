@@ -225,3 +225,21 @@ else
   fail "pull: plik ucznia bez kwarantanny" "$out"
 fi
 rm -rf "$WORK/remote/Public/cmcr/qtn"
+
+section "Wysyłane archiwum w /tmp iMaca jest prywatne i nie zostaje po błędzie (AUDIT PLI-02)"
+: > "$WORK/tar.mode"
+mkdir -p "$WORK/local/all"
+echo "materiał" > "$WORK/local/all/pli02.txt"
+out="$(ctlpw push 1 --root)"; code=$?
+expect_code "push: kod 0" "$code" 0 "$out"
+expect "push: archiwum w /tmp ma uprawnienia 600" "$(cat "$WORK/tar.mode")" "tar-mode 600 /tmp/cmcr-up-"
+expect_not "push: archiwum nie jest czytelne dla innych" "$(cat "$WORK/tar.mode")" "tar-mode 644"
+rm -f "$WORK/tar.mode" "$WORK/local/all/pli02.txt" "$WORK/remote/Public/cmcr/pli02.txt"
+before="$(ls /tmp/cmcr-up-*.tar 2>/dev/null | sort)"
+printf 'x' > "$WORK/pli02.pkg"
+out="$(ctl install "$WORK/pli02.pkg" 1 --allow-unsigned)"; code=$?
+expect "install bez hasła administratora: błąd" "$out" "Brak hasła administratora"
+after="$(ls /tmp/cmcr-up-*.tar 2>/dev/null | sort)"
+[ "$before" = "$after" ] && pass "install bez hasła: archiwum usunięte z /tmp" \
+  || fail "install bez hasła: archiwum zostało w /tmp" "$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))"
+rm -f "$WORK/pli02.pkg"

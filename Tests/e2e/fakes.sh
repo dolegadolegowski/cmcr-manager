@@ -304,6 +304,10 @@ networksetup() {
 # With $CMCR_E2E_WORK/tar.addfile: right after a folder was packed (tar -cf - .), a file appears in it – a student
 # saving work between collecting and cleaning at the end of a lesson (AUDIT ZAJ-01). One time only.
 tar() {
+  # $CMCR_E2E_WORK/tar.mode: log the mode of each unpacked archive (uploads wait in /tmp, AUDIT PLI-02).
+  if [ "${1:-}" = -xf ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/tar.mode" ]; then
+    command stat -f 'tar-mode %Lp %N' "$2" >> "$CMCR_E2E_WORK/tar.mode"
+  fi
   command tar "$@"
   local rc=$?
   if [ "${1:-}" = -cf ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/tar.addfile" ]; then
