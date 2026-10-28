@@ -79,6 +79,9 @@ final class Job: ObservableObject, Identifiable, @unchecked Sendable {
     /// Digest of the whole output taken before the in-memory log was cut to its tail (`trimAfterArchive`).
     private(set) var trimmedOutputDigest: String?
 
+    /// Error output was streamed into the log (from any thread): the result's stderr is then not added again.
+    let streamedErrors = StreamFlag()
+
     // `output` is served straight from the bounded buffer: a second published copy would make every
     // append copy the whole log (copy-on-write).
     private var log = BoundedText(limit: Job.maxOutput)
@@ -220,9 +223,18 @@ final class OutputSink: @unchecked Sendable {
         { [self] channel, data in
             let text = channel == .stdout ? out.decode(data) : err.decode(data)
             guard !text.isEmpty else { return }
+            if channel == .stderr { job?.streamedErrors.set() }
             job?.receive(TerminalText.visibleDirectionOverrides(text))      // names from the iMacs (AUDIT DOD-13)
         }
     }
+}
+
+/// A flag set from any thread.
+final class StreamFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    func set() { lock.withLock { value = true } }
+    var isSet: Bool { lock.withLock { value } }
 }
 
 /// A message for an alert: what failed and why.
@@ -533,12 +545,19 @@ final class AppModel: ObservableObject {
         job.state = .running
         job.startedAt = Date()
         let r = await operation(job.machine, job)
+        let cancelled = r.cancelled || job.handle.isCancelled
+        // The local ssh ends at once; the stop on the iMac runs after it. The job counts as running until that stop
+        // is done, and its result goes into the summary and the history (AUDIT ZAD-03).
+        if cancelled { await job.handle.cancellationFinished() }
         job.flushIncoming()
         job.finishedAt = Date()
-        job.exitCode = r.exitCode
-        if r.cancelled || job.handle.isCancelled {
+        // Only a command that ended by itself has an exit code of its own; a stopped or timed-out one would show the
+        // local ssh's status or -1 in the history (AUDIT ZAD-16).
+        job.exitCode = cancelled || r.timedOut ? nil : r.exitCode
+        if cancelled {
             job.state = .cancelled
-            job.summary = "Przerwano"
+            job.summary = RemoteCancelOutcome.mayStillRun(in: job.output)
+                ? "Przerwano – polecenie może nadal działać na komputerze" : "Przerwano"
         } else if r.succeeded {
             job.state = .succeeded
             job.summary = job.lastLine.isEmpty ? "OK" : job.lastLine
@@ -546,7 +565,8 @@ final class AppModel: ObservableObject {
             job.state = .failed
             let (reach, message) = SSH.diagnose(r)
             let stderr = r.stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !stderr.isEmpty && !job.output.contains(stderr) { job.append(stderr + "\n") }
+            // Streamed error output is in the log already; adding it again doubled it (AUDIT ZAD-10).
+            if !stderr.isEmpty && !job.streamedErrors.isSet && !job.output.contains(stderr) { job.append(stderr + "\n") }
             let detail = message.hasPrefix("Polecenie zakończone") && !job.lastLine.isEmpty
                 ? "\(job.lastLine) (kod \(r.exitCode))" : message
             job.summary = detail
@@ -587,7 +607,7 @@ final class AppModel: ObservableObject {
     func clearFinishedBatches() {
         batches.removeAll { $0.finished }
         lastBatch = lastBatch.filter { !$0.value.finished }
-        if let id = focusedBatchID, !batches.contains(where: { $0.id == id }) { focusedBatchID = nil }
+        // The shown batch stays shown: it is in the history now (AUDIT ZAD-11).
     }
 
     // MARK: - Status
@@ -845,7 +865,7 @@ final class AppModel: ObservableObject {
         let dest = settings.resolve(destination)
         let payload = SharedPayload(items)
         runBatch("Wysyłanie \(items.count) el. → \(dest)", on: targets, operation: { m, job in
-            await payload.use { url in
+            await payload.use(handle: job.handle) { url in
                 await Operations.push(payload: url, to: m, destination: dest, owner: owner, mode: mode,
                                       asRoot: asRoot, password: self.password(for: m),
                                       settings: self.sshSettings, handle: job.handle,
@@ -866,7 +886,7 @@ final class AppModel: ObservableObject {
                 return CommandResult(exitCode: 0)
             }
             job.note("Elementy: \(items.map(\.lastPathComponent).joined(separator: ", "))")
-            switch await Payload.make(items) {
+            switch await Payload.make(items, handle: job.handle) {
             case .failure(let e):
                 return .failure(e.localizedDescription)
             case .success(let payload):
@@ -993,7 +1013,7 @@ final class AppModel: ObservableObject {
         let payload = SharedPayload(items)
         let allowUnsigned = installAllowUnsigned
         runBatch("Instalacja: \(items.map(\.lastPathComponent).joined(separator: ", "))", on: targets, operation: { m, job in
-            await payload.use { url in
+            await payload.use(handle: job.handle) { url in
                 await Operations.install(payload: url, on: m, allowUnsigned: allowUnsigned, password: self.password(for: m),
                                          settings: self.sshSettings, handle: job.handle,
                                          onOutput: OutputSink(job).callback)

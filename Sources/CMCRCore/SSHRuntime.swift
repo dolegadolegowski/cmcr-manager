@@ -291,6 +291,13 @@ public enum RemoteCancelOutcome: Sendable, Equatable {
     case stopped, notRunning, stillRunning, unsupported
     case failed(String)
 
+    /// Whether a job log reports a stop on the Mac that may have left the command running (its message is written
+    /// to the job's output by `SSH.run`).
+    public static func mayStillRun(in log: String) -> Bool {
+        log.contains(RemoteCancelOutcome.stillRunning.message) || log.contains(RemoteCancelOutcome.unsupported.message)
+            || log.contains("Nie udało się połączyć, aby zatrzymać polecenie")
+    }
+
     init(_ r: CommandResult) {
         let out = r.stdoutText
         if out.contains("CMCR:CANCEL:OK") { self = .stopped }

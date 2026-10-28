@@ -632,7 +632,7 @@ struct AccessSettings: View {
             keySection
             targetSection
             if let batch = model.lastBatch[.setup] {
-                Section("Wynik ostatniej operacji") {
+                Section("Wynik ostatniego działania") {
                     BatchResultsView(batch: batch)
                         .id(batch.id)
                 }

@@ -318,19 +318,28 @@ final class SharedPayload: @unchecked Sendable {
         let items: [URL]
         var file: URL?
         var building: Task<Result<URL, PayloadFailure>, Never>?
+        /// Stops tar once every job waiting for the archive was interrupted (AUDIT WSP-04).
+        var buildHandle = ProcessHandle()
+        /// Jobs waiting for the archive being packed, with their handles (nil: cannot be interrupted).
+        var waiters: [UUID: ProcessHandle?] = [:]
         var users = 0
         var discardWhenIdle = false
 
         init(_ items: [URL]) { self.items = items }
 
-        func acquire() async -> Result<URL, PayloadFailure> {
+        func acquire(_ handle: ProcessHandle?) async -> Result<URL, PayloadFailure> {
             users += 1
             discardWhenIdle = false
             if let file, FileManager.default.fileExists(atPath: file.path) { return .success(file) }
+            let id = UUID()
+            waiters[id] = handle
+            defer { waiters[id] = nil }
             if let building { return await building.value }
             let items = self.items
+            if buildHandle.isCancelled { buildHandle = ProcessHandle() }
+            let packing = buildHandle
             let task = Task { () -> Result<URL, PayloadFailure> in
-                switch await Payload.make(items) {
+                switch await Payload.make(items, handle: packing) {
                 case .success(let url): return .success(url)
                 case .failure(let error): return .failure(PayloadFailure(message: error.localizedDescription))
                 }
@@ -340,6 +349,12 @@ final class SharedPayload: @unchecked Sendable {
             building = nil
             if case .success(let url) = result { file = url }
             return result
+        }
+
+        /// A job was interrupted: when every job still waiting for the archive is, packing stops.
+        func waiterCancelled() {
+            guard building != nil, !waiters.isEmpty, waiters.values.allSatisfy({ $0?.isCancelled == true }) else { return }
+            buildHandle.cancel()
         }
 
         func release() {
@@ -365,9 +380,24 @@ final class SharedPayload: @unchecked Sendable {
 
     init(_ items: [URL]) { store = Store(items) }
 
+    /// The archive for one job; an interrupted job does not wait for the packing to finish.
     @MainActor
-    func use(_ body: @MainActor (URL) async -> CommandResult) async -> CommandResult {
-        switch await store.acquire() {
+    private func acquire(for handle: ProcessHandle?) async -> Result<URL, PayloadFailure> {
+        let store = self.store
+        let token = handle?.addCancelAction { await store.waiterCancelled() }
+        let result = await store.acquire(handle)
+        if let token { handle?.removeCancelAction(token) }
+        return result
+    }
+
+    @MainActor
+    func use(handle: ProcessHandle? = nil, _ body: @MainActor (URL) async -> CommandResult) async -> CommandResult {
+        let acquired = await acquire(for: handle)
+        if handle?.isCancelled == true {
+            await store.release()
+            return .cancelledResult
+        }
+        switch acquired {
         case .failure(let failure):
             await store.release()
             return .failure(failure.message)
@@ -381,8 +411,14 @@ final class SharedPayload: @unchecked Sendable {
     /// Like `use`, but a packing failure does not stop the job: `body` gets nil and the reason (a lesson then
     /// skips only its materials step and still wakes the Mac, opens apps and greets).
     @MainActor
-    func useIfAvailable(_ body: @MainActor (URL?, String?) async -> CommandResult) async -> CommandResult {
-        switch await store.acquire() {
+    func useIfAvailable(handle: ProcessHandle? = nil,
+                        _ body: @MainActor (URL?, String?) async -> CommandResult) async -> CommandResult {
+        let acquired = await acquire(for: handle)
+        if handle?.isCancelled == true {
+            await store.release()
+            return .cancelledResult
+        }
+        switch acquired {
         case .failure(let failure):
             await store.release()
             return await body(nil, failure.message)
@@ -421,14 +457,21 @@ enum JobNotifier {
         Bundle.main.bundleIdentifier != nil && Bundle.main.bundleURL.pathExtension == "app"
     }
 
+    /// „Gotowe na 3 komputerach · błąd na 2 komputerach”; no „Gotowe na 0 komputerach” when nothing worked (AUDIT ZAD-08).
+    static func body(for batch: Batch) -> String {
+        var parts: [String] = []
+        if batch.succeeded > 0 { parts.append("Gotowe \(Polish.onComputers(batch.succeeded))") }
+        if batch.failed > 0 { parts.append("błąd \(Polish.onComputers(batch.failed))") }
+        if batch.skipped > 0 { parts.append("pominięto: \(Polish.computers(batch.skipped))") }
+        if batch.cancelled > 0 { parts.append("przerwano \(Polish.onComputers(batch.cancelled))") }
+        let text = parts.joined(separator: " · ")
+        return text.isEmpty ? "" : text.prefix(1).uppercased() + text.dropFirst()
+    }
+
     static func post(_ batch: Batch) {
         guard isAvailable else { return }
         let title = batch.failed > 0 ? "Zakończono z błędami: \(batch.title)" : "Zakończono: \(batch.title)"
-        var parts = ["Gotowe \(Polish.onComputers(batch.succeeded))"]
-        if batch.failed > 0 { parts.append("błędy: \(batch.failed)") }
-        if batch.skipped > 0 { parts.append("pominięto: \(batch.skipped)") }
-        if batch.cancelled > 0 { parts.append("przerwano: \(batch.cancelled)") }
-        let body = parts.joined(separator: " · ")
+        let body = body(for: batch)
         let id = batch.id.uuidString
         let center = UNUserNotificationCenter.current()
         center.delegate = router

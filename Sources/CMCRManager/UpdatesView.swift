@@ -22,7 +22,7 @@ struct UpdatesView: View {
                     Section {
                         BatchResultsView(batch: batch)
                     } header: {
-                        Label("Wynik ostatniej operacji", systemImage: "list.bullet.rectangle")
+                        Label("Wynik ostatniego działania", systemImage: "list.bullet.rectangle")
                     }
                     .id(batch.id)
                 }

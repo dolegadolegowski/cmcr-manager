@@ -382,7 +382,7 @@ final class ClassroomModel: ObservableObject {
                 }
             }
             guard let payload else { return await steps(nil, materialsProblem) }
-            return await payload.useIfAvailable { materials, failure in
+            return await payload.useIfAvailable(handle: job.handle) { materials, failure in
                 await steps(materials, failure.map { "nie udało się spakować materiałów: \($0)" })
             }
         }, completion: { _ in

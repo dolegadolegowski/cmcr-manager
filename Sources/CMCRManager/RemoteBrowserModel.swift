@@ -333,7 +333,7 @@ final class RemoteBrowserModel: ObservableObject {
         let root = asRoot || !owner.isEmpty || !l.writable
         let what = urls.count == 1 ? "„\(urls[0].lastPathComponent)”" : Polish.count(urls.count, "element", "elementy", "elementów")
         runChange("Wyślij \(what) → \(m.name):\(destination)", on: m, activity: "Wysyłanie \(what)…") { job in
-            switch await Payload.make(urls) {
+            switch await Payload.make(urls, handle: job.handle) {
             case .failure(let e):
                 return .failure(e.localizedDescription)
             case .success(let payload):

@@ -757,7 +757,8 @@ public enum SSH {
 
 /// Packs local files/folders into one tar archive (preserves app bundles, symlinks and permissions).
 public enum Payload {
-    public static func make(_ items: [URL]) async -> Result<URL, Error> {
+    /// `handle` stops the packing (a large folder can take minutes) when the job is interrupted.
+    public static func make(_ items: [URL], handle: ProcessHandle? = nil) async -> Result<URL, Error> {
         struct PayloadError: LocalizedError {
             let message: String
             var errorDescription: String? { message }
@@ -769,11 +770,12 @@ public enum Payload {
         for item in items {
             args += ["-C", item.deletingLastPathComponent().path, item.lastPathComponent]
         }
-        let r = await ProcessRunner.run("/usr/bin/tar", args)
+        let r = await ProcessRunner.run("/usr/bin/tar", args, handle: handle)
         // scp -p keeps this mode on the iMac: the archive waits in its /tmp, readable by the logged-in student
         // with the default 0644 (AUDIT PLI-02).
         if r.succeeded, chmod(out.path, 0o600) == 0 { return .success(out) }
         try? FileManager.default.removeItem(at: out)
+        if r.cancelled || handle?.isCancelled == true { return .failure(PayloadError(message: "Przerwano pakowanie plików.")) }
         return .failure(PayloadError(message: "Nie udało się spakować plików: \(r.stderrText)"))
     }
 

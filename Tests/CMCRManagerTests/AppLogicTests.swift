@@ -702,6 +702,47 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // job-result (AUDIT ZAD-03, ZAD-10, ZAD-16): an interrupted job waits for the stop on the iMac and says when it
+    // failed; it has no exit code of its own; streamed error output is not added a second time.
+    @Test func jobResultsTellTheStopOnTheMacAndKeepTheirOutputOnce() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        let stopped = try #require(model.runBatch("Przerywane", on: [a]) { _, job in
+            let sink = OutputSink(job).callback
+            _ = job.handle.addCancelAction {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                sink(.stderr, Data("▸ \(RemoteCancelOutcome.failed("brak połączenia").message)\n".utf8))
+            }
+            while !job.handle.isCancelled { try? await Task.sleep(nanoseconds: 20_000_000) }
+            return CommandResult(exitCode: 255, cancelled: true)
+        })
+        #expect(await AppTestEnvironment.wait(5) { stopped.jobs.first?.state == .running })
+        stopped.cancel()
+        #expect(await AppTestEnvironment.wait(5) { stopped.finished })
+        let job = try #require(stopped.jobs.first)
+        #expect(job.summary == "Przerwano – polecenie może nadal działać na komputerze")
+        #expect(job.exitCode == nil)
+
+        let failed = try #require(model.runBatch("Błąd", on: [a]) { _, job in
+            let sink = OutputSink(job).callback
+            sink(.stdout, Data("krok 1\n".utf8))
+            sink(.stderr, Data("błąd A\n".utf8))
+            sink(.stdout, Data("krok 2\n".utf8))
+            return CommandResult(exitCode: 1, stderr: Data("błąd A\n".utf8))
+        })
+        #expect(await AppTestEnvironment.wait(5) { failed.finished })
+        let output = try #require(failed.jobs.first?.output)
+        #expect(output.components(separatedBy: "błąd A").count == 2, "\(output)")
+        #expect(failed.jobs.first?.exitCode == 1)
+
+        // ZAD-11: clearing finished batches keeps the one being looked at (it is in the history now).
+        model.focusedBatchID = failed.id
+        model.clearFinishedBatches()
+        #expect(model.focusedBatchID == failed.id)
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false
