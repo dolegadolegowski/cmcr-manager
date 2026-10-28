@@ -149,9 +149,8 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        // With titles under every toolbar icon, the sidebar button's long title does not fit above the sidebar
-        // and would end up in the overflow menu; Widok › Ukryj pasek boczny (⌃⌘S) does the same.
-        .toolbar(removing: .sidebarToggle)
+        // The system's sidebar button stays: without it a hidden sidebar could only come back through the
+        // Widok menu (AUDIT UI-06).
     }
 
     func row(_ s: AppSection) -> some View {

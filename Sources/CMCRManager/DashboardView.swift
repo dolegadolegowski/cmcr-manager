@@ -64,7 +64,7 @@ struct DashboardView: View {
         }
         .inspector(isPresented: $showInspector) {
             HostInspector()
-                .inspectorColumnWidth(min: 260, ideal: 310, max: 420)
+                .inspectorColumnWidth(min: 240, ideal: 280, max: 420)
         }
         .toolbar {
             ToolbarItemGroup {
@@ -276,17 +276,17 @@ struct DashboardView: View {
                 }
             }
         }
-        .width(min: 95, ideal: 115)
+        .width(min: 80, ideal: 110)
         .customizationID("state")
         TableColumn("Zalogowany", value: \.user) { row in
             Text(row.user.isEmpty ? "—" : row.user).lineLimit(1)
         }
-        .width(min: 70, ideal: 85)
+        .width(min: 60, ideal: 85)
         .customizationID("user")
         TableColumn("Wolne miejsce", value: \.freeGB) { row in
             DiskCell(status: row.status)
         }
-        .width(min: 90, ideal: 100)
+        .width(min: 55, ideal: 100)
         .customizationID("disk")
         TableColumn("macOS", value: \.os) { row in
             Text(row.os.isEmpty ? "—" : row.os)
@@ -341,7 +341,7 @@ struct DashboardView: View {
                 .foregroundStyle(row.status.message.isEmpty ? Color.secondary : Color.orange)
                 .help(row.note)
         }
-        .width(min: 80)
+        .width(min: 60)
         .customizationID("notes")
     }
 
@@ -421,19 +421,27 @@ struct DiskCell: View {
 
     var body: some View {
         if let free = status.freeDiskGB, let total = status.totalDiskGB, total > 0 {
-            HStack(spacing: 6) {
-                Gauge(value: max(0, total - free), in: 0...total) { EmptyView() }
-                    .gaugeStyle(.accessoryLinearCapacity)
-                    .tint(free < DashboardRow.lowDiskGB ? .orange : .accentColor)
-                    .frame(width: 44)
-                Text(String(format: "%.0f GB", free))
-                    .monospacedDigit()
-                    .foregroundStyle(free < DashboardRow.lowDiskGB ? .orange : .primary)
-                if free < DashboardRow.lowDiskGB {
-                    // Low disk space is marked by a shape too, not only the colour (AUDIT UI-19).
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .accessibilityLabel("Mało miejsca")
+            let low = free < DashboardRow.lowDiskGB
+            let text = Text(String(format: "%.0f GB", free))
+                .monospacedDigit()
+                .foregroundStyle(low ? .orange : .primary)
+            // Low disk space is marked by a shape too, not only the colour (AUDIT UI-19).
+            let mark = Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityLabel("Mało miejsca")
+            // In a narrow column (details panel open in a small window) the gauge gives way (AUDIT UI-13).
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    Gauge(value: max(0, total - free), in: 0...total) { EmptyView() }
+                        .gaugeStyle(.accessoryLinearCapacity)
+                        .tint(low ? .orange : .accentColor)
+                        .frame(width: 44)
+                    text
+                    if low { mark }
+                }
+                HStack(spacing: 4) {
+                    text
+                    if low { mark }
                 }
             }
             .help(String(format: "Wolne %.0f z %.0f GB", free, total))

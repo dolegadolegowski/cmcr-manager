@@ -63,15 +63,17 @@ struct ScreenWallToolbarButton: View {
 // MARK: - Toolbar titles
 
 /// Shows every toolbar item with its title under the icon ("Icon and Text"), so nobody has to guess what an
-/// icon means. Put it in the background of the window's root view. Applied once per toolbar, so a different
-/// mode picked from the toolbar's context menu stays for the session.
+/// icon means. Put it in the background of the window's root view. A mode the user picks from the toolbar's
+/// context menu is remembered and used from then on, also after a restart (AUDIT UI-06).
 struct ToolbarTitlesShown: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { Probe() }
     func updateNSView(_ view: NSView, context: Context) { (view as? Probe)?.apply() }
 
     final class Probe: NSView {
         private var observation: NSKeyValueObservation?
+        private var modeObservation: NSKeyValueObservation?
         private weak var configured: NSToolbar?
+        static let key = "toolbarDisplayMode"
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -84,7 +86,11 @@ struct ToolbarTitlesShown: NSViewRepresentable {
         func apply() {
             guard let toolbar = window?.toolbar, toolbar !== configured else { return }
             configured = toolbar
-            toolbar.displayMode = .iconAndLabel
+            let saved = UserDefaults.standard.object(forKey: Self.key) as? UInt
+            toolbar.displayMode = saved.flatMap(NSToolbar.DisplayMode.init(rawValue:)) ?? .iconAndLabel
+            modeObservation = toolbar.observe(\.displayMode, options: [.new]) { toolbar, _ in
+                UserDefaults.standard.set(toolbar.displayMode.rawValue, forKey: Self.key)
+            }
         }
     }
 }
