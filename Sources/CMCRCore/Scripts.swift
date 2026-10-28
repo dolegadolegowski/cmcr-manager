@@ -723,11 +723,11 @@ public enum Scripts {
         RESTART=\#(restart ? 1 : 0); REC=\#(recommendedOnly ? 1 : 0); DL=\#(downloadOnly ? 1 : 0); MAJOR=\#(allowMajorUpgrade ? 1 : 0)
         CUR="$(sw_vers -productVersion 2>/dev/null)"; CUR="${CUR%%.*}"
         echo "→ softwareupdate --list"
-        softwareupdate --list > "$CMCR_TMP/updates" 2>&1
-        LABELS=(); SKIPPED=""; LABEL=""; NEEDS_RESTART=0
+        softwareupdate --list > "$CMCR_TMP/updates" 2>&1; LIST_RC=$?
+        LABELS=(); SKIPPED=""; LABEL=""; NEEDS_RESTART=0; LISTED=0
         while IFS= read -r line; do
           case "$line" in
-            "* Label: "*) LABEL="${line#\* Label: }" ;;
+            "* Label: "*) LABEL="${line#\* Label: }"; LISTED=1 ;;
             *"Title: "*)
               [ -n "$LABEL" ] || continue
               TITLE="${line#*Title: }"; TITLE="${TITLE%%,*}"
@@ -749,7 +749,16 @@ public enum Scripts {
         if [ -n "$SKIPPED" ]; then
           echo "↷ Pominięto przejście na nową wersję systemu: $SKIPPED (wymaga zaznaczenia „Pozwól na nową wersję macOS”)."
         fi
-        if [ ${#LABELS[@]} -eq 0 ]; then echo "✔ Brak aktualizacji do zainstalowania."; exit 0; fi
+        if [ ${#LABELS[@]} -eq 0 ]; then
+          # Nothing to install only when the list says so (or every listed update was skipped above); an empty
+          # answer is a failed list (no network, Apple's server unreachable), not "no updates".
+          if [ $LISTED = 1 ] || { [ $LIST_RC = 0 ] && grep -q "No new software available" "$CMCR_TMP/updates"; }; then
+            echo "✔ Brak aktualizacji do zainstalowania."; exit 0
+          fi
+          echo "✘ Nie udało się pobrać listy aktualizacji (softwareupdate --list, kod $LIST_RC) – nic nie zainstalowano:" >&2
+          grep -v '^ *$' "$CMCR_TMP/updates" | tail -n 20 | sed 's/^/  /' >&2
+          exit 1
+        fi
         if [ $DL = 1 ]; then ARGS=(--download); else ARGS=(--install); fi
         ARGS+=("${LABELS[@]}")
         if [ $DL = 0 ]; then ARGS+=(--agree-to-license); [ $RESTART = 1 ] && ARGS+=(--restart); fi

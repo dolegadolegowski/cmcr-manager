@@ -109,3 +109,23 @@ if pkgbuild --quiet --root "$P2/pkgroot" --identifier pl.cmcr.e2e.p2 --version 1
 else
   fail "pkgbuild/hdiutil niedostępne – pominięto test anulowania instalacji z .dmg"
 fi
+
+section "P2: instalacja aktualizacji – błąd listy to nie „brak aktualizacji” (AUDIT APL-10)"
+printf 'Software Update Tool\n\nFinding available software\nNo new software available.\n' > "$WORK/softwareupdate.list"
+clear_fakelog
+out="$(ctlpw _builder install-updates 1)"; code=$?
+expect_code "updates: brak aktualizacji – kod 0" "$code" 0 "$out"
+expect "updates: brak aktualizacji – komunikat" "$out" "Brak aktualizacji do zainstalowania"
+expect_not "updates: brak aktualizacji – nic nie instalowano" "$(fakelog)" "--install"
+printf 'Software Update Tool\n\nFinding available software\nCannot connect to the Software Update server (test)\n' > "$WORK/softwareupdate.list"
+echo 1 > "$WORK/softwareupdate.list.rc"
+out="$(ctlpw _builder install-updates 1)"; code=$?
+expect_code "updates: lista niedostępna – kod 1" "$code" 1 "$out"
+expect "updates: lista niedostępna – błąd z odpowiedzią softwareupdate" "$out" \
+  "Nie udało się pobrać listy aktualizacji" "Cannot connect to the Software Update server (test)"
+expect_not "updates: lista niedostępna – nie udaje braku aktualizacji" "$out" "Brak aktualizacji do zainstalowania"
+echo 0 > "$WORK/softwareupdate.list.rc"
+out="$(ctlpw _builder install-updates 1)"; code=$?
+expect_code "updates: lista niedostępna (kod 0) – kod 1" "$code" 1 "$out"
+expect_not "updates: lista niedostępna (kod 0) – nie udaje braku aktualizacji" "$out" "Brak aktualizacji do zainstalowania"
+rm -f "$WORK/softwareupdate.list" "$WORK/softwareupdate.list.rc"

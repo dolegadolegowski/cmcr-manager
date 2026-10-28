@@ -147,6 +147,12 @@ softwareupdate() {
   _e2e_log "softwareupdate $*"
   case " $* " in
     *" --list "*|*" -l "*)
+      # $CMCR_E2E_WORK/softwareupdate.list: printed instead of the list below, with the exit code from
+      # softwareupdate.list.rc (default 0) – no updates, or a server that cannot be reached (AUDIT APL-10).
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/softwareupdate.list" ]; then
+        cat "$CMCR_E2E_WORK/softwareupdate.list"
+        return "$(cat "$CMCR_E2E_WORK/softwareupdate.list.rc" 2>/dev/null || echo 0)"
+      fi
       cat <<'EOF'
 Software Update Tool
 
