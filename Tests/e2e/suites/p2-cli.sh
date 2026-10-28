@@ -83,3 +83,24 @@ if kill -0 "$P2DUMMY" 2>/dev/null; then fail "quit-app --force --yes: aplikacja 
 else pass "quit-app --force --yes: aplikacja zamknięta"; fi
 out="$(p2pw quit-app P2Dummy 1 </dev/null)"; code=$?
 expect_code "quit-app bez --force: bez pytania (kod 0)" "$code" 0 "$out"
+
+section "P2 cmcrctl – updates install --major (AUDIT APL-17)"
+clear_fakelog
+out="$(p2pw updates install 1)"; code=$?
+expect_code "updates install: kod 0" "$code" 0 "$out"
+expect "updates install: nowa wersja macOS pominięta z podpowiedzią dla cmcrctl" "$out" \
+  "Pominięto przejście na nową wersję systemu: macOS Testowy 99.1" "cmcrctl: dodaj --major"
+expect_not "updates install: bez --major nowa wersja nie jest instalowana" "$(fakelog)" "macOS Testowy 99.1-99A123"
+clear_fakelog
+out="$(p2pw updates install 1 --major </dev/null)"; code=$?
+expect_code "updates install --major bez terminala i bez --yes: kod 2" "$code" 2 "$out"
+expect "updates install --major: pytanie o nową wersję macOS" "$out" "razem z nową wersją macOS" "imac01" "dodaj --yes"
+expect_not "updates install --major bez potwierdzenia: nic nie zainstalowano" "$(fakelog)" "softwareupdate --install"
+out="$(p2pw updates install 1 --major --yes)"; code=$?
+expect_code "updates install --major --yes: kod 0" "$code" 0 "$out"
+expect "updates install --major: także nowa wersja macOS" "$(fakelog)" "softwareupdate --install macOS Testowy 99.1-99A123"
+expect_not "updates install --major: bez podpowiedzi o pominięciu" "$out" "Pominięto przejście"
+clear_fakelog
+out="$(p2pw updates install 1 --major --download </dev/null)"; code=$?
+expect_code "updates install --major --download: samo pobieranie bez pytania (kod 0)" "$code" 0 "$out"
+expect "updates install --major --download: pobiera także nową wersję" "$(fakelog)" "softwareupdate --download macOS Testowy 99.1-99A123"

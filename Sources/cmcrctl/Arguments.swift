@@ -5,7 +5,7 @@ import Foundation
 struct Arguments: Sendable {
     static let flags: Set<String> = [
         "--root", "--force", "--restart", "--download", "--recommended", "--notification", "--json", "--prefix",
-        "--dry-run", "--append", "--replace", "--yes", "-y", "--help", "-h",
+        "--dry-run", "--append", "--replace", "--yes", "-y", "--help", "-h", "--major",
     ]
     static let valueOptions: Set<String> = ["-j", "--jobs", "--host", "--port", "--mac", "--start", "--count", "--digits", "--domain"]
 

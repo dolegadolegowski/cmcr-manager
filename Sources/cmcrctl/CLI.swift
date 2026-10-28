@@ -39,9 +39,10 @@ Aplikacje
 
 Aktualizacje macOS
   updates list KOMP                        dostępne aktualizacje (równolegle)
-  updates install KOMP [--restart] [--download] [--recommended]
+  updates install KOMP [--restart] [--download] [--recommended] [--major]
                                            instalacja (--restart: z ponownym uruchomieniem,
-                                           --download: tylko pobierz, --recommended: tylko zalecane)
+                                           --download: tylko pobierz, --recommended: tylko zalecane,
+                                           --major: także nowa wersja macOS, po potwierdzeniu)
   updates history KOMP                     historia instalacji
 
 Sesja i zasilanie
@@ -247,9 +248,11 @@ struct CLI: Sendable {
 
     func header(_ host: Machine) -> String { "== \(host.name) (\(host.destination)) ==" }
 
-    /// Streams one remote script per host under a header; the common shape of most commands.
+    /// Streams one remote script per host under a header; the common shape of most commands. `note` may add a
+    /// hint for the terminal after a host's output (e.g. the cmcrctl option for what the script skipped).
     func runScript(on list: [Machine], jobs: Int? = nil, passThrough: Bool = false,
                    header makeHeader: (@Sendable (Machine) -> String)? = nil,
+                   note: (@Sendable (CommandResult) -> String?)? = nil,
                    _ script: @escaping @Sendable (Machine) -> RemoteScript) async -> Int32 {
         let ssh = sshSettings()
         let defaultHeader = header
@@ -257,6 +260,7 @@ struct CLI: Sendable {
             io.out(makeHeader?(io.host) ?? defaultHeader(io.host))
             let r = await SSH.run(script(io.host), on: io.host, password: Keychain.password(for: io.host),
                                   settings: ssh, onOutput: io.stream)
+            if let text = note?(r) { io.err(text) }
             return io.report(r, passThrough: passThrough)
         }
         return combine(codes, passThrough: passThrough)
@@ -566,15 +570,26 @@ struct CLI: Sendable {
             }
             return combine(codes)
         case "install":
-            args.expect("updates install", options: Self.parallel.union(["--restart", "--download", "--recommended"]),
-                        positional: 3)
+            args.expect("updates install",
+                        options: Self.parallel.union(["--restart", "--download", "--recommended", "--major"]), positional: 3)
             let list = targets(args[2])
             let restart = args.has("--restart"), download = args.has("--download"), recommended = args.has("--recommended")
-            if restart && !download {
-                confirm("Zainstalować aktualizacje z ponownym uruchomieniem na: \(names(list))? Zalogowani użytkownicy stracą niezapisane dane.")
+            // „Pozwól na nową wersję macOS” of the app: a new major version is installed only when asked for.
+            let major = args.has("--major")
+            if !download && (restart || major) {
+                confirm("Zainstalować aktualizacje" + (major ? " razem z nową wersją macOS (przejście na nowy system)" : "")
+                        + (restart ? " z ponownym uruchomieniem" : "") + " na: \(names(list))?"
+                        + (restart ? " Zalogowani użytkownicy stracą niezapisane dane." : "")
+                        + (major ? " Nowej wersji systemu nie da się potem cofnąć." : ""))
             }
-            return await runScript(on: list) { _ in
-                Scripts.installUpdates(restart: restart, recommendedOnly: recommended, downloadOnly: download)
+            // The script names the app's switch; at the terminal the same choice is --major.
+            let hint: @Sendable (CommandResult) -> String? = { r in
+                r.stdoutText.contains("Pominięto przejście na nową wersję systemu")
+                    ? "  (cmcrctl: dodaj --major, aby zainstalować także nową wersję macOS)" : nil
+            }
+            return await runScript(on: list, note: major ? nil : hint) { _ in
+                Scripts.installUpdates(restart: restart, recommendedOnly: recommended, downloadOnly: download,
+                                       allowMajorUpgrade: major)
             }
         case "history":
             args.expect("updates history", options: Self.parallel, positional: 3)
