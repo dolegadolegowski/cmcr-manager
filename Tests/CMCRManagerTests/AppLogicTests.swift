@@ -579,6 +579,24 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // select-online-while-checking (AUDIT KOM-05): ⇧⌘O during a refresh uses the last known state.
+    @Test func selectingTheMacsThatAreOnWorksDuringARefresh() {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        var on = HostStatus(), off = HostStatus()
+        on.reachability = .online
+        off.reachability = .offline
+        model.statuses = [a.id: on, b.id: off]
+        var checking = HostStatus()
+        checking.reachability = .checking
+        model.statuses = [a.id: checking, b.id: checking]
+        model.selection = [b.id]
+        model.selectOnline()
+        #expect(model.selection == [a.id])
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false

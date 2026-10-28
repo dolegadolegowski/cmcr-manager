@@ -151,10 +151,12 @@ struct DashboardView: View {
 
     var tiles: some View {
         let rows = self.rows
-        let online = rows.filter { $0.status.reachability == .online }
-        let offline = rows.filter { $0.status.reachability == .offline }
-        let users = rows.filter { !$0.user.isEmpty && $0.status.reachability == .online }
-        let problems = rows.filter { [.authFailed, .error].contains($0.status.reachability) }
+        // While the Macs are checked again the tiles keep their last known state (AUDIT KOM-05).
+        let known = { (row: DashboardRow) in model.knownReachability(row.machine) }
+        let online = rows.filter { known($0) == .online }
+        let offline = rows.filter { known($0) == .offline }
+        let users = rows.filter { !$0.user.isEmpty && known($0) == .online }
+        let problems = rows.filter { [.authFailed, .error].contains(known($0)) }
         let lowDisk = rows.filter(\.lowDisk)
         let all = Group {
             tile("Włączone", "\(online.count) z \(rows.count)", "checkmark", .green, online,
@@ -180,10 +182,12 @@ struct DashboardView: View {
     func tile(_ title: String, _ value: String, _ icon: String, _ color: Color, _ rows: [DashboardRow],
               help: String) -> some View {
         let ids = Set(rows.map(\.id))
+        // A tile without Macs selects nothing: clicking it must not clear the checked Macs (AUDIT KOM-08).
         return StatTile(title: title, value: value, icon: icon, color: color,
                         active: !ids.isEmpty && ids == model.selection, help: help) {
-            model.selection = ids
+            if !ids.isEmpty { model.selection = ids }
         }
+        .disabled(ids.isEmpty)
     }
 
     /// When the overview was last checked; it refreshes by itself every 2 minutes.

@@ -98,8 +98,10 @@ extension AppModel {
         selection = adding ? selection.union(ids) : ids
     }
 
+    /// The Macs that are on – during a refresh by their last known state, so ⇧⌘O never empties the selection
+    /// just because every Mac is being checked again (AUDIT KOM-05).
     func selectOnline() {
-        selection = Set(machines.filter { status($0).reachability == .online }.map(\.id))
+        selection = Set(machines.filter { knownReachability($0) == .online }.map(\.id))
     }
 
     func invertSelection() {
