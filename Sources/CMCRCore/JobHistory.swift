@@ -222,18 +222,42 @@ public enum JobHistory {
         }
     }
 
-    /// Newest records first, at most `limit`, reading month files from the newest.
-    public static func load(limit: Int = 3000, in dir: URL = directory) -> [JobRecord] {
+    /// Days the history is kept (`purge`, run at the app's start).
+    public static let keptDays = 90
+
+    /// Start of the oldest day whose batches keep their output: `purge` deletes the output folders of earlier days.
+    static func oldestKeptDay(olderThan days: Int, now: Date) -> Date? {
+        Calendar.current.date(byAdding: .day, value: -days, to: now).map { Calendar.current.startOfDay(for: $0) }
+    }
+
+    /// Newest records first, reading month files from the newest. Batches started before the kept period are left
+    /// out even while their month file still exists (`purge` removes a month file only once the whole month is
+    /// older, but the outputs day by day), and `limit` counts whole batches: the oldest batch loaded is never cut
+    /// short, so its number of Macs and „Zaznacz nieudane” stay right (AUDIT ZAD-05).
+    public static func load(limit: Int = 3000, in dir: URL = directory, now: Date = Date()) -> [JobRecord] {
         let files = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.lastPathComponent.hasPrefix("jobs-") && $0.pathExtension == "jsonl" }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
+        let oldest = oldestKeptDay(olderThan: keptDays, now: now) ?? .distantPast
         var result: [JobRecord] = []
+        var full = false
         for f in files {
             guard let data = try? Data(contentsOf: f) else { continue }
-            result += decodeLines(data).sorted { $0.finishedAt > $1.finishedAt }
-            if result.count >= limit { break }
+            result += decodeLines(data).filter { $0.batchStartedAt >= oldest }
+            // One more (older) month file once the limit is reached: a batch running over the end of a month has
+            // its first records there.
+            if full { break }
+            full = result.count >= limit
         }
-        return Array(result.sorted { $0.finishedAt > $1.finishedAt }.prefix(limit))
+        let sorted = result.sorted { $0.finishedAt > $1.finishedAt }
+        let sizes = Dictionary(grouping: sorted, by: \.batchID).mapValues(\.count)
+        var kept = Set<UUID>()
+        var count = 0
+        for r in sorted where count < limit && !kept.contains(r.batchID) {
+            kept.insert(r.batchID)
+            count += sizes[r.batchID] ?? 0
+        }
+        return sorted.filter { kept.contains($0.batchID) }
     }
 
     /// Groups records into batches, newest first.

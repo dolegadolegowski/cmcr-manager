@@ -53,3 +53,65 @@ struct P2JobHistoryWriteTests {
         #expect(lines.map(\.host) == ["imac01", "imac02"])
     }
 }
+
+// MARK: - ZAD-05: the history list matches what the purge keeps, and the limit never cuts a batch
+
+private func p2Date(_ y: Int, _ m: Int, _ d: Int, _ h: Int = 12, _ min: Int = 0) -> Date {
+    Calendar.current.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min))!
+}
+
+struct P2JobHistoryLoadTests {
+    /// AUDIT ZAD-05: the purge deletes outputs day by day but month files only once the whole month is older than
+    /// 90 days, so records up to ~120 days old stayed on the list with their output already gone.
+    @Test func recordsOlderThanTheKeptPeriodAreNotListed() throws {
+        let dir = try p2TemporaryDirectory("history")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let now = p2Date(2026, 10, 28)
+        let old = p2Record("imac01", batch: UUID(), start: p2Date(2026, 7, 15))
+        let kept = p2Record("imac02", batch: UUID(), start: p2Date(2026, 8, 10))
+        try JobHistory.write(old, output: nil, in: dir)
+        try JobHistory.write(kept, output: nil, in: dir)
+        JobHistory.purge(olderThan: 90, now: now, in: dir)
+        #expect(FileManager.default.fileExists(atPath: JobHistory.monthFile(for: old.finishedAt, in: dir).path),
+                "plik lipca zostaje (miesiąc nie jest jeszcze w całości starszy niż 90 dni)")
+        #expect(JobHistory.load(in: dir, now: now).map(\.host) == ["imac02"])
+    }
+
+    @Test func theLimitKeepsWholeBatches() throws {
+        let dir = try p2TemporaryDirectory("history")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let now = Date()
+        let newer = UUID(), older = UUID()
+        for (i, host) in ["imac01", "imac02", "imac03"].enumerated() {
+            let t = now.addingTimeInterval(-7200)
+            try JobHistory.write(p2Record(host, batch: older, start: t, finished: t.addingTimeInterval(Double(i))),
+                                 output: nil, in: dir)
+        }
+        for (i, host) in ["imac01", "imac02", "imac03"].enumerated() {
+            let t = now.addingTimeInterval(-3600)
+            try JobHistory.write(p2Record(host, batch: newer, start: t, finished: t.addingTimeInterval(Double(i))),
+                                 output: nil, in: dir)
+        }
+        let four = JobHistory.load(limit: 4, in: dir, now: now)
+        #expect(four.count == 6, "najstarsza wczytana partia nie może być niepełna")
+        #expect(JobHistory.batches(four).map(\.records.count) == [3, 3])
+        #expect(Set(JobHistory.load(limit: 3, in: dir, now: now).map(\.batchID)) == [newer])
+    }
+
+    /// A batch that runs over midnight at the end of a month has records in two month files.
+    @Test func aBatchSpanningTwoMonthFilesIsLoadedWhole() throws {
+        let dir = try p2TemporaryDirectory("history")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let now = p2Date(2026, 10, 28)
+        let newest = UUID(), spanning = UUID()
+        let start = p2Date(2026, 8, 31, 23, 50)
+        try JobHistory.write(p2Record("imac01", batch: spanning, start: start, finished: start.addingTimeInterval(60)),
+                             output: nil, in: dir)
+        try JobHistory.write(p2Record("imac02", batch: spanning, start: start, finished: p2Date(2026, 9, 1, 0, 5)),
+                             output: nil, in: dir)
+        try JobHistory.write(p2Record("imac01", batch: newest, start: p2Date(2026, 10, 2)), output: nil, in: dir)
+        try JobHistory.write(p2Record("imac02", batch: newest, start: p2Date(2026, 10, 2)), output: nil, in: dir)
+        let records = JobHistory.load(limit: 3, in: dir, now: now)
+        #expect(JobHistory.batches(records).map(\.records.count) == [2, 2])
+    }
+}
