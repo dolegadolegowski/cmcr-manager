@@ -689,6 +689,19 @@ extension AppLogicTests {
     }
 }
 
+extension AppLogicTests {
+    // invalid-name (AUDIT WSP-07): a name that cannot be used is explained in the browser, not just beeped at.
+    @Test func anInvalidNameIsExplained() {
+        let model = AppTestEnvironment.makeModel([AppTestEnvironment.closedHost("imac01")])
+        let browser = model.files.browser
+        browser.reportInvalidName("Prace 2024/25")
+        #expect(browser.notice?.isError == true)
+        #expect(browser.notice?.text.contains("„/”") == true)
+        browser.reportInvalidName("..")
+        #expect(browser.notice?.text.contains("„..”") == true)
+    }
+}
+
 private final class StopRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false

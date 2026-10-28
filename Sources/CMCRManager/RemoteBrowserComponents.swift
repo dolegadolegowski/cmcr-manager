@@ -446,7 +446,7 @@ struct NamePrompt: Identifiable {
 
 extension View {
     /// Alert with a text field used for "Nowy folder" and "Zmień nazwę".
-    func namePrompt(_ prompt: Binding<NamePrompt?>, folder: String,
+    func namePrompt(_ prompt: Binding<NamePrompt?>, folder: String, onInvalid: ((String) -> Void)? = nil,
                     onCommit: @escaping (NamePrompt, String) -> Void) -> some View {
         let isNew: Bool = { if case .newFolder = prompt.wrappedValue?.kind { return true } else { return false } }()
         return alert(isNew ? "Nowy folder" : "Zmień nazwę",
@@ -457,7 +457,13 @@ extension View {
                                              set: { prompt.wrappedValue?.text = $0 }))
             Button(isNew ? "Utwórz" : "Zmień nazwę") {
                 let name = (prompt.wrappedValue?.text ?? p.text).trimmingCharacters(in: .whitespaces)
-                if RemotePaths.isValidName(name) { onCommit(p, name) } else { NSSound.beep() }
+                if RemotePaths.isValidName(name) {
+                    onCommit(p, name)
+                } else if let onInvalid {
+                    onInvalid(name)
+                } else {
+                    NSSound.beep()
+                }
             }
             Button("Anuluj", role: .cancel) {}
         } message: { p in

@@ -40,8 +40,14 @@ final class RemoteBrowserModel: ObservableObject {
     @Published private(set) var activity: String?
     /// Result of the last change.
     @Published var notice: Notice?
-    /// Items saved by the last download.
-    private(set) var lastDownload: [URL] = []
+    /// Changes still running (several may run at once), oldest first; `activity` shows the latest one.
+    private var runningChanges: [(id: UUID, text: String)] = []
+    /// The user switched „Jako administrator” off in this folder: no automatic sudo until another folder or Mac
+    /// is opened (AUDIT PLI-14).
+    private var rootTurnedOff = false
+    /// Placeholders of the last folder that could be read, so a failed listing still carries over (AUDIT PLI-13).
+    private var lastConsoleUser: String?
+    private var lastAdminHome: String?
 
     private var history: [String] = []
     private var future: [String] = []
@@ -97,8 +103,15 @@ final class RemoteBrowserModel: ObservableObject {
 
     /// The current folder written with placeholders, so it means the same on every Mac.
     func portablePath(preferConsole: Bool = false) -> String {
-        RemotePaths.tokenize(path, studentUser: app.settings.studentUser, consoleUser: listing?.consoleUser,
-                             preferConsole: preferConsole, adminHome: listing?.adminHome)
+        RemotePaths.tokenize(path, studentUser: app.settings.studentUser, consoleUser: listing?.consoleUser ?? lastConsoleUser,
+                             preferConsole: preferConsole, adminHome: listing?.adminHome ?? lastAdminHome)
+    }
+
+    /// „Jako administrator” switched by the user: switching it off is respected (no automatic sudo here).
+    func setAsRoot(_ on: Bool) {
+        asRoot = on
+        rootTurnedOff = !on
+        reload()
     }
 
     // MARK: - Navigation
@@ -114,21 +127,26 @@ final class RemoteBrowserModel: ObservableObject {
     /// Shows the same folder on another Mac.
     func setHost(_ id: UUID?) {
         guard id != hostID else { return }
-        let carry = listing == nil ? path : portablePath()
+        // Written with placeholders also after a failed listing: ~/Desktop of imac01 is ~/Desktop on imac02.
+        let carry = portablePath()
         hostID = id
         history = []
         future = []
         listing = nil
         selection = []
+        notice = nil
+        rootTurnedOff = false
         if !carry.isEmpty { load(carry) } else { phase = .idle }
     }
 
     func open(_ newPath: String, on id: UUID? = nil) {
+        rootTurnedOff = false
         if let id, id != hostID {
             hostID = id
             history = []
             future = []
             listing = nil
+            notice = nil
         } else if !path.isEmpty, newPath != path {
             history.append(path)
             future = []
@@ -201,13 +219,15 @@ final class RemoteBrowserModel: ObservableObject {
                 self.listing = l
                 self.path = l.path
                 self.phase = .loaded
+                self.lastConsoleUser = l.consoleUser
+                self.lastAdminHome = l.adminHome
                 let names = Set(l.entries.map(\.id))
                 if let p = self.pendingSelection, names.contains(p) { self.selection = [p] }
                 self.selection.formIntersection(names)
                 self.pendingSelection = nil
             case .failure(.cancelled):
                 self.phase = self.listing == nil ? .idle : .loaded
-            case .failure(.accessDenied) where !root && self.autoElevate && !(password ?? "").isEmpty:
+            case .failure(.accessDenied) where !root && self.autoElevate && !self.rootTurnedOff && !(password ?? "").isEmpty:
                 self.asRoot = true
                 self.load(target, keepSelection: keepSelection)
             case .failure(let e):
@@ -229,12 +249,17 @@ final class RemoteBrowserModel: ObservableObject {
     private func runChange(_ title: String, on m: Machine, activity text: String,
                            operation: @escaping @MainActor (Job) async -> CommandResult,
                            done: (@MainActor (Bool) -> Void)? = nil) {
+        let token = UUID()
+        runningChanges.append((token, text))
         activity = text
         notice = nil
-        app.runBatch(title, on: [m], section: .browser, operation: { _, job in
+        // The Mac shown here just answered the listing: a stale „offline” must not skip the change (AUDIT PLI-15).
+        app.runBatch(title, on: [m], section: .browser, includeUnreachable: true, operation: { _, job in
             await operation(job)
         }, completion: { batch in
-            self.activity = nil
+            // Another change may still be running (AUDIT PLI-16): keep showing it.
+            self.runningChanges.removeAll { $0.id == token }
+            self.activity = self.runningChanges.last?.text
             let job = batch.jobs.first
             let ok = job?.state == .succeeded
             let summary = job?.summary ?? ""
@@ -281,17 +306,18 @@ final class RemoteBrowserModel: ObservableObject {
         guard let m = host, let l = listing, !entries.isEmpty else { return }
         let names = entries.map(\.name)
         let root = asRoot || l.asRoot
-        let what = entries.count == 1 ? "„\(entries[0].name)”" : Polish.count(entries.count, "element", "elementy", "elementów")
-        lastDownload = []
+        let what = entries.count == 1 ? "„\(entries[0].displayName)”" : Polish.count(entries.count, "element", "elementy", "elementów")
+        // Each download keeps its own list: two at once must not show each other's files (AUDIT PLI-16).
+        let saved = SavedFiles()
         runChange("Pobierz \(what) z \(m.name)", on: m, activity: "Pobieranie \(what)…", operation: { job in
-            let (r, saved) = await Operations.download(names, in: l.path, from: m, into: directory, asRoot: root,
+            let (r, files) = await Operations.download(names, in: l.path, from: m, into: directory, asRoot: root,
                                                        password: self.app.password(for: m),
                                                        settings: self.app.sshSettings, handle: job.handle,
                                                        onOutput: OutputSink(job).callback)
-            self.lastDownload = saved
+            saved.urls = files
             return r
         }, done: { _ in
-            if !self.lastDownload.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(self.lastDownload) }
+            if !saved.urls.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(saved.urls) }
         })
     }
 
@@ -318,9 +344,25 @@ final class RemoteBrowserModel: ObservableObject {
         }
     }
 
+    /// A name typed for a new folder or a rename that cannot be used: said in the status bar instead of a beep, which
+    /// left the teacher guessing why nothing happened (AUDIT WSP-07).
+    func reportInvalidName(_ name: String) {
+        let why = name.isEmpty ? "nazwa nie może być pusta"
+            : name == "." || name == ".." ? "„.” i „..” nie mogą być nazwą"
+            : name.utf8.count > 255 ? "nazwa jest za długa"
+            : "nazwa nie może zawierać „/”"
+        notice = Notice(text: "Nie utworzono ani nie zmieniono nazwy – \(why).", isError: true)
+    }
+
     /// Names of `urls` that already exist in the current folder (would be replaced by an upload).
     func conflicts(for urls: [URL]) -> [String] {
         let names = Set(listing?.entries.map(\.name) ?? [])
         return urls.map(\.lastPathComponent).filter { names.contains($0) }
     }
+}
+
+/// Files saved by one download, handed from its job to its completion.
+@MainActor
+private final class SavedFiles {
+    var urls: [URL] = []
 }

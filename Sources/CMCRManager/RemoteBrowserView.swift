@@ -52,7 +52,7 @@ private struct RemoteBrowserPage: View {
         .searchable(text: $browser.search, placement: .toolbar, prompt: "Szukaj w tym folderze")
         .navigationSubtitle(browser.host.map { "\($0.name) — \(browser.path)" } ?? "")
         .confirmation($confirm)
-        .namePrompt($prompt, folder: browser.path) { p, name in
+        .namePrompt($prompt, folder: browser.path, onInvalid: { browser.reportInvalidName($0) }) { p, name in
             switch p.kind {
             case .newFolder: browser.makeFolder(named: name)
             case .rename(let e): browser.rename(e, to: name)
@@ -168,7 +168,7 @@ private struct RemoteBrowserPage: View {
     }
 
     var asRoot: Binding<Bool> {
-        Binding(get: { browser.asRoot }, set: { browser.asRoot = $0; browser.reload() })
+        Binding(get: { browser.asRoot }, set: { browser.setAsRoot($0) })
     }
 
     var hiddenHelp: String {
@@ -340,7 +340,17 @@ private struct RemoteBrowserPage: View {
         let host = browser.host.map { " na komputerze \($0.name)" } ?? ""
         let urls = Pickers.files(message: "Wybierz pliki lub foldery do wysłania do \(target)\(host).")
         guard !urls.isEmpty else { return }
-        if let folder { browser.upload(urls, into: folder) } else { startUpload(urls) }
+        if let folder {
+            // Items with the same names in the subfolder are replaced (and the old ones removed): ask first, as for
+            // the current folder (AUDIT PLI-18).
+            confirm = ConfirmRequest(
+                title: "Wysłać do folderu „\(folder.displayName)”?",
+                message: "Elementy o tych samych nazwach w folderze „\(folder.displayName)” zostaną zastąpione, "
+                    + "a poprzednie wersje usunięte.",
+                button: "Wyślij", targets: []) { browser.upload(urls, into: folder) }
+        } else {
+            startUpload(urls)
+        }
     }
 
     func startUpload(_ urls: [URL]) {
