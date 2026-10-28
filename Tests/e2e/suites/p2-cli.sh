@@ -37,3 +37,27 @@ section "P2 cmcrctl – liczebniki w podsumowaniach (AUDIT TXT-22)"
 out="$(p2pw screen-watch 1 "$WORK/p2-watch" --frames 3 --interval 2)"; code=$?
 expect_code "screen-watch: kod 0" "$code" 0 "$out"
 expect "screen-watch: „3 cykle, 1 nowy obraz”" "$out" "Zakończono: 3 cykle, 1 nowy obraz."
+
+section "P2 cmcrctl – pomoc jednego polecenia podstawowego (AUDIT CLI-03)"
+clear_fakelog
+for cmd in exec status hosts power trust updates kill logout "hosts add" "updates install"; do
+  out="$(p2 $cmd --help </dev/null)"; code=$?
+  if [ "$code" = 0 ] && contains "" "$out" "Użycie:" && contains "" "$out" "cmcrctl ${cmd%% *} " \
+     && ! contains "" "$out" "Instalacja i inne" && [ "$(printf '%s\n' "$out" | wc -l)" -lt 30 ]; then
+    pass "$cmd --help: tylko pomoc polecenia, kod 0"
+  else
+    fail "$cmd --help: zamiast pomocy polecenia (kod $code, $(printf '%s\n' "$out" | wc -l | tr -d ' ') wierszy)" "$out"
+  fi
+done
+out="$(p2 exec 'echo nie-powinno' 1 -h)"
+expect "exec -h: pomoc z opisem KOMP" "$out" "cmcrctl exec \"polecenie\"" "KOMP:"
+expect_not "exec -h: nic nie wykonano" "$out" "nie-powinno"
+expect_not "--help: nic nie uruchomiono na komputerze" "$(fakelog)" "sudo"
+for h in "--help" "help"; do
+  out="$(p2 $h)"; code=$?
+  expect_code "cmcrctl $h: kod 0" "$code" 0 "$out"
+  expect "cmcrctl $h: pełna pomoc" "$out" "Stan i polecenia" "Instalacja i inne" "Zajęcia, zasilanie i raporty"
+done
+out="$(p2 help exec)"
+expect "cmcrctl help exec: pomoc polecenia" "$out" "cmcrctl exec \"polecenie\""
+expect_not "cmcrctl help exec: bez pełnej pomocy" "$out" "Instalacja i inne"

@@ -107,6 +107,12 @@ struct CLI: Sendable {
     /// Options of commands that run on several Macs through `runHosts`.
     static let parallel: Set<String> = ["-j", "--prefix"]
 
+    /// Core commands that accept `parallel` (their help describes -j and --prefix).
+    static let parallelCommands: Set<String> = [
+        "status", "exec", "push", "pull", "ls", "clean", "open-app", "quit-app", "open-url", "kill", "uninstall", "brew",
+        "updates", "message", "logout", "power",
+    ]
+
     var root: Bool { args.has("--root") }
     var force: Bool { args.has("--force") }
     var prefixLines: Bool { args.has("--prefix") }
@@ -117,7 +123,10 @@ struct CLI: Sendable {
             return ExitCode.success
         }
         if args.has("--help") || args.has("-h") || command == "help" {
-            Console.out(fullUsage)
+            // `cmcrctl POLECENIE --help` (or `help POLECENIE`): that command's help; `cmcrctl help`: everything.
+            let topic = command == "help" ? args[1] : command
+            Console.out(topic.map { commandHelp($0, spec: Self.parallelCommands.contains($0) ? ModuleSpec(parallel: true) : nil) }
+                        ?? fullUsage)
             return ExitCode.success
         }
         switch command {
