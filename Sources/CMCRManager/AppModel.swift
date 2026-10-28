@@ -659,7 +659,8 @@ final class AppModel: ObservableObject {
                     }
                     group.addTask {
                         if probeFirst.contains(m.id) {
-                            let answers = await SSH.portAnswers(m, settings: ss) == true
+                            // nil: the probe cannot tell (ProxyJump, nc failed) – check fully (AUDIT DOD-10).
+                            let answers = await SSH.portAnswers(m, settings: ss) != false
                             guard await self.finishPortProbe(m, answered: answers) else { return }
                         }
                         let r = await SSH.run(Scripts.status(), on: m, password: pw, settings: ss, timeout: timeout)
