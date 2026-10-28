@@ -88,7 +88,7 @@ struct InstallView: View {
         Section {
             TextField("Adres instalatora", text: $downloadURL, prompt: Text("https://…/Instalator.pkg"))
             HStack(spacing: 12) {
-                Text("Każdy komputer pobierze plik sam – wygodne przy dużych instalatorach (.pkg, .dmg lub .zip). Tylko adresy https://.")
+                Text("Każdy komputer pobierze plik sam – wygodne przy dużych instalatorach (.pkg, .dmg lub .zip). Tylko adresy https:// (albo file:// – plik, który już jest na iMacu).")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 12)

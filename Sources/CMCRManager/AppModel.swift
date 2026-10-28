@@ -503,7 +503,7 @@ final class AppModel: ObservableObject {
         }
         if job.handle.isCancelled {
             job.state = .cancelled
-            job.summary = "Anulowano"
+            job.summary = "Przerwano"
             return
         }
         job.state = .running
@@ -514,7 +514,7 @@ final class AppModel: ObservableObject {
         job.exitCode = r.exitCode
         if r.cancelled || job.handle.isCancelled {
             job.state = .cancelled
-            job.summary = "Anulowano"
+            job.summary = "Przerwano"
         } else if r.succeeded {
             job.state = .succeeded
             job.summary = job.lastLine.isEmpty ? "OK" : job.lastLine
