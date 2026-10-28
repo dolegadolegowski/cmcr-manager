@@ -372,3 +372,14 @@ out="$(p2 collect 1 --from "$WORK/p2-collect-src" --to "$WORK/p2-collected3" --n
 expect_code "collect spoza /Users: jak dotąd bez sudo (kod 0)" "$code" 0 "$out"
 out="$(p2 push --help)"
 expect "push --help: opis właściciela plików bez --root" "$out" "bez --root" "właściciel"
+
+section "P2 cmcrctl – ls ŚCIEŻKA KOMP i clean rozwijają {student} (AUDIT PLI-20)"
+out="$(p2 ls "/Users/{student}" 1)"; code=$?
+expect_code "ls /Users/{student}: kod 0" "$code" 0 "$out"
+expect "ls /Users/{student}: katalog konta ucznia" "$out" "Library"
+# A folder that does not exist: nothing in this Mac's real home folder is touched.
+out="$(p2pw clean "/Users/{student}/cmcr-e2e-brak-$$" 1 </dev/null)"; code=$?
+expect "clean: pytanie z rozwiniętą ścieżką" "$out" "/Users/$ME/cmcr-e2e-brak-$$"
+out="$(p2pw clean "/Users/{student}/cmcr-e2e-brak-$$" 1 --yes)"; code=$?
+expect "clean /Users/{student}/…: ścieżka konta ucznia" "$out" "Brak folderu: /Users/$ME/cmcr-e2e-brak-$$"
+expect_not "clean: bez dosłownego {student}" "$out" "{student}"

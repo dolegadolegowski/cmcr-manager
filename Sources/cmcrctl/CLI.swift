@@ -26,7 +26,8 @@ Pliki
                                            właścicielem plików jest konto administratora, z --root – uczeń
                                            (jak „Wyślij” w aplikacji)
   pull KOMP [--root]                       cmcr-pull: folder ucznia → ~/Public/cmcr/<host>
-  ls ŚCIEŻKA KOMP [--root]                 zawartość folderu ({console} = zalogowany użytkownik)
+  ls ŚCIEŻKA KOMP [--root]                 zawartość folderu ({student} = konto ucznia, {console} = zalogowany
+                                           użytkownik)
   clean ŚCIEŻKA KOMP                       usuń zawartość folderu (/Users/<konto>/…, /tmp, /Volumes)
 
 Aplikacje
@@ -455,7 +456,8 @@ struct CLI: Sendable {
 
     func listFolder() async -> Int32 {
         args.expect("ls", options: Self.parallel.union(["--root"]), positional: 3)
-        guard let path = args[1] else { usageError("Użycie: cmcrctl ls ŚCIEŻKA KOMP [--root]") }
+        // {student} as in every other path option (collect --from, rm, get…); {console} is resolved on the iMac.
+        guard let path = args[1].map(settings.resolve) else { usageError("Użycie: cmcrctl ls ŚCIEŻKA KOMP [--root]") }
         let list = targets(args[2])
         let asRoot = root
         return await runScript(on: list) { _ in Scripts.listFolder(path, asRoot: asRoot) }
@@ -463,7 +465,7 @@ struct CLI: Sendable {
 
     func clean() async -> Int32 {
         args.expect("clean", options: Self.parallel, positional: 3)
-        guard let path = args[1] else { usageError("Użycie: cmcrctl clean ŚCIEŻKA KOMP") }
+        guard let path = args[1].map(settings.resolve) else { usageError("Użycie: cmcrctl clean ŚCIEŻKA KOMP") }
         let list = targets(args[2])
         confirm("Usunąć całą zawartość folderu \(path) na: \(names(list))?")
         return await runScript(on: list) { _ in Scripts.cleanFolder(path) }
