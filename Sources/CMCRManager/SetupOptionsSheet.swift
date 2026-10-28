@@ -284,7 +284,7 @@ struct SetupOptionsSheet: View {
                              caption: "sudo bez hasła: każdy, kto ma klucz tej aplikacji, miałby pełne uprawnienia bez hasła.",
                              icon: "lock.open.fill", color: .red)
             }
-            OptionToggle(title: "Logowanie zdalne tylko kluczem", icon: "key.horizontal.fill", color: .blue,
+            OptionToggle(title: "Zdalne logowanie tylko kluczem", icon: "key.horizontal.fill", color: .blue,
                          detail: "Wyłącza logowanie hasłem przez SSH. Wymaga instalacji klucza tej aplikacji.",
                          isOn: $o.sshKeyOnly)
                 .disabled(!o.installKey)
