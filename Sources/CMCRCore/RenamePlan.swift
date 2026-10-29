@@ -14,6 +14,24 @@ public enum RenamePlan {
         }
     }
 
+    /// The `.local` names (lowercased) of the Macs on the list that are not renamed, with the Mac that has the name: from
+    /// its `.local` address, from its name on the list (the name a rename gives it by default) and from the
+    /// LocalHostName read from it, when known (`readNames`: the app passes what it read, cmcrctl reads nothing). A new
+    /// name among them is an error in `cmcrctl rename KOMP` and in the app's „Zmień nazwy komputerów” alike – one rule
+    /// for both (AUDIT REV-58): Bonjour would rename one of the Macs (imac04-2) and the updated list would point at the
+    /// other one (AUDIT KOM-15, REV-33).
+    public static func namesTaken(by machines: [Machine], renaming: Set<UUID>,
+                                  readNames: [UUID: String] = [:]) -> [String: String] {
+        var taken: [String: String] = [:]
+        for m in machines where !renaming.contains(m.id) {
+            var names = current(m, read: readNames[m.id])
+            let listed = ComputerNames.localHostName(from: m.name).lowercased()
+            if !listed.isEmpty { names.insert(listed) }
+            for name in names { taken[name] = m.name }
+        }
+        return taken
+    }
+
     /// The renamed Macs whose new `.local` name another Mac of the same run still has now and gives up – a renumbering
     /// (imac05 → imac06 while imac06 → imac07) or a swap – with that other Mac. Nothing makes the other Mac release the
     /// name first (cmcrctl renames in list order, the app all at once): the Mac claiming it would get a numbered name

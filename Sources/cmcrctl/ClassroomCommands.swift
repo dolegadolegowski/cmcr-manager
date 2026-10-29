@@ -300,19 +300,6 @@ enum ClassroomCLI {
         return status
     }
 
-    /// `.local` names (lowercased) of the Macs on the list that are not renamed, with the Mac that has the name: from
-    /// its `.local` address and from its name on the list (the name rename-computer gives it by default).
-    static func namesTaken(by machines: [Machine], renaming: Set<UUID>) -> [String: String] {
-        var taken: [String: String] = [:]
-        for m in machines where !renaming.contains(m.id) {
-            let own = ComputerNames.localHostName(from: m.name).lowercased()
-            if !own.isEmpty { taken[own] = m.name }
-            let address = m.address.lowercased()
-            if address.hasSuffix(".local") { taken[String(address.dropLast(".local".count))] = m.name }
-        }
-        return taken
-    }
-
     /// ComputerName, LocalHostName and HostName from the host list (or `--name` for one Mac). Always needs an
     /// explicit host list; every new name is checked before anything changes, and the change is confirmed.
     static func renameComputers(_ a: ModuleArguments, ssh: SSHSettings) async -> Int32 {
@@ -326,7 +313,9 @@ enum ClassroomCLI {
         }
         var planned: [(host: Machine, name: String, localHostName: String)] = []
         var invalid = false
-        let taken = Self.namesTaken(by: legacyCLI.hosts, renaming: Set(targets.map(\.id)))
+        // The names the other Macs on the list have: their .local addresses and their names on the list (cmcrctl
+        // reads no names from the iMacs).
+        let taken = RenamePlan.namesTaken(by: legacyCLI.hosts, renaming: Set(targets.map(\.id)))
         let stillHeld = RenamePlan.namesStillHeld(targets.map {
             RenamePlan.Rename(machine: $0, localHostName: ComputerNames.localHostName(from: a.value("--name") ?? $0.name))
         })
@@ -340,7 +329,7 @@ enum ClassroomCLI {
                 continue
             }
             // Bonjour would rename this Mac (imac04-2) and the updated list would point at the other one (AUDIT
-            // KOM-15, REV-33): the same rule as the app's „Zmień nazwy komputerów”.
+            // KOM-15, REV-33): the same rule as the app's „Zmień nazwy komputerów” (RenamePlan.namesTaken, REV-58).
             if let owner = taken[lhn.lowercased()] {
                 Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma już \(owner) z listy komputerów "
                             + "(dwa komputery nie mogą mieć tego samego adresu w sieci).")
