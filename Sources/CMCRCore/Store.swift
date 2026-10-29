@@ -34,15 +34,22 @@ public enum ConfigStore {
     }
 
     public static func loadHosts() -> [Machine] {
-        let loaded = loadHosts(from: hostsURL)
-        let hosts = record(loaded, for: hostsURL)
+        loadHosts(at: hostsURL)
+    }
+
+    static func loadHosts(at url: URL) -> [Machine] {
+        let loaded = loadHosts(from: url)
+        let hosts = record(loaded, for: url)
         // Repeated ids were replaced: keep the original next to the list and save the repaired one, so that the new
         // ids (selection, own passwords) stay the same on the next start.
-        if loaded.renumbered, !loaded.protect, let data = try? Data(contentsOf: hostsURL),
-           backupCopy(of: hostsURL, data: data) != nil {
-            saveHosts(hosts)
-        } else if loaded.issue == nil, let data = try? Data(contentsOf: hostsURL) {
-            remember(hosts, data: data, at: hostsURL)
+        if loaded.renumbered, !loaded.protect, let data = try? Data(contentsOf: url),
+           backupCopy(of: url, data: data) != nil {
+            _ = syncHosts(hosts, at: url)
+        } else if !loaded.protect {
+            // What the list was based on, so that what cmcrctl writes before this program's first save is merged in
+            // (AUDIT KON-04, REV-04): the file's bytes – a damaged file's too, its original is kept as .bak – or none
+            // when there is no file yet (a file created later counts as a change).
+            remember(hosts, data: (try? Data(contentsOf: url)) ?? Data(), at: url)
         }
         return hosts
     }

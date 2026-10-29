@@ -122,3 +122,62 @@ struct RevG1ClassroomConfigTests {
         #expect(g1Backups(in: dir, of: "classroom.json").count == 1)
     }
 }
+
+// MARK: - REV-04: hosts.json created by cmcrctl after a start without one
+
+/// What `cmcrctl hosts add imac16` writes when there is no hosts.json yet: its own default list (other ids than the
+/// app's in-memory one) plus the new Mac.
+private func g1CmcrctlList() -> [Machine] {
+    Machine.generate() + [Machine(name: "imac16", address: "imac16.local", user: "imac16")]
+}
+
+struct RevG1HostsFirstStartTests {
+    /// AUDIT REV-04: with no hosts.json at start nothing was remembered, so a list cmcrctl created later was neither
+    /// taken over when the app became active nor merged at its first save – the app's 15 defaults replaced it.
+    @Test func aListCreatedByCmcrctlAfterAStartWithoutAFileIsTakenOver() throws {
+        let dir = try g1TemporaryDirectory("hosts")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("hosts.json")
+        let mine = ConfigStore.loadHosts(at: url)
+        #expect(mine.map(\.name) == Machine.generate().map(\.name))
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        #expect(ConfigStore.hostsChangedOutside(keeping: mine, at: url) == nil)
+
+        let cli = g1CmcrctlList()
+        try JSONEncoder().encode(cli).write(to: url)
+        let taken = ConfigStore.hostsChangedOutside(keeping: mine, at: url)
+        #expect(taken == cli)
+    }
+
+    @Test func theFirstSaveAfterAStartWithoutAFileKeepsCmcrctlsList() throws {
+        let dir = try g1TemporaryDirectory("hosts")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("hosts.json")
+        let mine = ConfigStore.loadHosts(at: url)
+        let cli = g1CmcrctlList()
+        try JSONEncoder().encode(cli).write(to: url)
+        // The app saves before it noticed (an edit, a MAC learned in the background).
+        let saved = ConfigStore.syncHosts(mine, at: url)
+        #expect(saved.problem == nil)
+        #expect(saved.hosts == cli)
+        #expect(try JSONDecoder().decode([Machine].self, from: Data(contentsOf: url)) == cli)
+    }
+
+    /// The same after a start with a damaged list (kept as .bak, valid entries loaded): what cmcrctl writes next is
+    /// merged in, not overwritten by the app's first save.
+    @Test func aListWrittenByCmcrctlAfterADamagedStartIsMerged() throws {
+        let dir = try g1TemporaryDirectory("hosts")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("hosts.json")
+        let first = Machine(name: "imac01", address: "imac01.local", user: "imac01")
+        let good = try #require(String(data: JSONEncoder().encode([first]), encoding: .utf8))
+        try (String(good.dropLast()) + #",{"address":"imac02.local","port":"dwadzieścia dwa"}]"#).write(to: url, atomically: true, encoding: .utf8)
+        let mine = ConfigStore.loadHosts(at: url)
+        #expect(mine == [first])
+        #expect(g1Backups(in: dir, of: "hosts.json").count == 1)
+
+        let added = Machine(name: "imac16", address: "imac16.local", user: "imac16")
+        try JSONEncoder().encode([first, added]).write(to: url)
+        #expect(ConfigStore.hostsChangedOutside(keeping: mine, at: url) == [first, added])
+    }
+}
