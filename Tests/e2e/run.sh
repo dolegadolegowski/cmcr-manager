@@ -250,6 +250,11 @@ for suite in "$ROOT"/Tests/e2e/suites/*.sh; do
   fi
   # shellcheck disable=SC1090
   . "$suite"
+  # A suite's shared ssh connections (ControlPersist) must not outlive it: later suites count the test sshd's
+  # session processes (screens: "sesja zamknięta po zakończeniu podglądu").
+  for mux in "$CMCR_SSH_CONTROL_DIR"/*; do
+    [ -S "$mux" ] && ssh -o ControlPath="$mux" -O exit cmcr-e2e >/dev/null 2>&1
+  done
 done
 
 printf '\n\033[1mWynik: %d zaliczonych, %d niezaliczonych\033[0m\n' "$PASS" "$FAIL"
