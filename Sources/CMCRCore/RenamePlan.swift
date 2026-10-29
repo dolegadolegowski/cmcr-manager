@@ -24,10 +24,7 @@ public enum RenamePlan {
                                   readNames: [UUID: String] = [:]) -> [String: String] {
         var taken: [String: String] = [:]
         for m in machines where !renaming.contains(m.id) {
-            var names = current(m, read: readNames[m.id])
-            let listed = ComputerNames.localHostName(from: m.name).lowercased()
-            if !listed.isEmpty { names.insert(listed) }
-            for name in names { taken[name] = m.name }
+            for name in names(of: m, read: readNames[m.id]) { taken[name] = m.name }
         }
         return taken
     }
@@ -90,14 +87,19 @@ public enum RenamePlan {
     /// from Bonjour (imac06-2) and the updated list would point at no Mac. Such Macs are renamed one per run, in the
     /// order `advice(for:stillHeld:newNames:in:)` gives.
     ///
-    /// A Mac's current names: its `.local` address on the list and, in the app, the LocalHostName read from it
-    /// (`currentNames`). A Mac that keeps its name gives nothing up – another Mac with the same new name is a
-    /// duplicate, which the callers report as such (`repeatedNames`), before this.
+    /// A Mac's current names are the names `namesTaken` counts for a Mac that is not renamed: its `.local` address
+    /// on the list, its name on the list (the name a rename gives it by default) and, in the app, the LocalHostName
+    /// read from it (`currentNames`). Each step of the order checks its new name against all of them – also against
+    /// the name on the list of a Mac renamed in a later step (AUDIT REV-69): the app's advice gave „najpierw imac03 na
+    /// imac02, potem imac02 na imac03” while „imac02” at imac06.local was still on the list, and refused its first step.
+    /// In cmcrctl the name on the list is the new name, which a Mac keeps. A Mac that keeps its name gives nothing
+    /// up – another Mac with the same new name is a duplicate, which the callers report as such (`repeatedNames`),
+    /// before this.
     public static func namesStillHeld(_ renames: [Rename], currentNames: [UUID: String] = [:]) -> [UUID: Machine] {
         var givenUp: [String: Machine] = [:]
         for r in renames {
             let new = r.localHostName.lowercased()
-            for name in current(r.machine, read: currentNames[r.machine.id]) where name != new && givenUp[name] == nil {
+            for name in names(of: r.machine, read: currentNames[r.machine.id]) where name != new && givenUp[name] == nil {
                 givenUp[name] = r.machine
             }
         }
@@ -243,11 +245,14 @@ public enum RenamePlan {
         items.count < 2 ? items.joined() : items.dropLast().joined(separator: ", ") + " i " + items[items.count - 1]
     }
 
-    /// The `.local` names (lowercased) a Mac has now: from its `.local` address and the LocalHostName read from it.
-    static func current(_ machine: Machine, read: String?) -> Set<String> {
+    /// The `.local` names (lowercased) a Mac has now: from its `.local` address, from its name on the list and from the
+    /// LocalHostName read from it.
+    static func names(of machine: Machine, read: String?) -> Set<String> {
         var names: Set<String> = []
         let address = machine.address.lowercased()
         if address.hasSuffix(".local") { names.insert(String(address.dropLast(".local".count))) }
+        let listed = ComputerNames.localHostName(from: machine.name).lowercased()
+        if !listed.isEmpty { names.insert(listed) }
         if let read = read?.lowercased(), !read.isEmpty { names.insert(read) }
         return names
     }

@@ -320,9 +320,9 @@ struct RenameComputersSheet: View {
                         readNames: classroom.names.mapValues(\.localHostName))
     }
 
-    /// Renamed Macs whose new `.local` name another Mac renamed here still has now (its address or the name read from
-    /// it), with that Mac: a renumbering or a swap, renamed one Mac at a time (AUDIT REV-52, REV-63). The renames run
-    /// at once.
+    /// Renamed Macs whose new `.local` name another Mac renamed here still has now (its address, its name on the list
+    /// or the name read from it, AUDIT REV-69), with that Mac: a renumbering or a swap, renamed one Mac at a time
+    /// (AUDIT REV-52, REV-63). The renames run at once.
     var stillHeld: [UUID: Machine] {
         RenamePlan.namesStillHeld(changes.map { RenamePlan.Rename(machine: $0.machine, localHostName: $0.localHostName) },
                                   currentNames: classroom.names.mapValues(\.localHostName))
