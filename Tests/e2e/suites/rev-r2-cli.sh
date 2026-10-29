@@ -57,3 +57,26 @@ r2_before "logout, odmowa macOS: podpowiedź pod przyczyną" "$out" "✘ imac01:
 out="$(r2 logout "imac 05" --yes)"; code=$?
 expect "logout, nazwa ze spacją: podpowiedź do skopiowania" "$out" "(cmcrctl logout 'imac 05' --force"
 rm -f "$WORK/fake-ae-denied"
+
+section "REV R2 cmcrctl – uszkodzony classroom.json: ostrzeżenie w poleceniach zajęć (AUDIT REV-37)"
+printf '{"schedule": {"powerOnEnabled": tr' > "$R2/classroom.json"
+clear_fakelog
+out="$(r2 schedule set 1)"; code=$?
+expect "schedule set: ostrzeżenie o uszkodzonym classroom.json" "$out" \
+  "⚠ Plik ustawień zajęć (classroom.json) jest uszkodzony – przywrócono ustawienia domyślne"
+r2_before "schedule set: ostrzeżenie przed wynikiem" "$out" "⚠ Plik ustawień zajęć" "imac01:"
+out="$(r2 ask "Pytanie R2" 1)"; code=$?
+expect "ask: ostrzeżenie o uszkodzonym classroom.json" "$out" "⚠ Plik ustawień zajęć (classroom.json) jest uszkodzony"
+expect "ask: czas domyślny (2 min)" "$out" "Czas na odpowiedź: 2 min"
+out="$(r2 lesson start 1)"; code=$?
+expect "lesson: ostrzeżenie o uszkodzonym classroom.json" "$out" "⚠ Plik ustawień zajęć (classroom.json) jest uszkodzony"
+# Commands that do not use classroom.json do not read it: no warning, no backup copy.
+rm -f "$R2"/classroom.json.*.bak
+out="$(r2 list)"
+expect_not "list: bez ostrzeżenia o classroom.json" "$out" "ustawień zajęć"
+if ls "$R2"/classroom.json.*.bak >/dev/null 2>&1; then fail "list: kopia classroom.json mimo że go nie czyta" "$(ls "$R2")"
+else pass "list: classroom.json nieczytany (bez kopii .bak)"; fi
+# A good classroom.json: no warning.
+rm -f "$R2/classroom.json"
+out="$(r2 ask "Pytanie R2" 1 --buttons "Tak,Nie")"
+expect_not "ask, poprawne ustawienia: bez ostrzeżenia" "$out" "⚠"

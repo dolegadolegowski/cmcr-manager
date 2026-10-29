@@ -44,6 +44,16 @@ enum ClassroomCLI {
         "report": ModuleSpec(maxPositional: 1),
     ]
 
+    /// classroom.json as saved in the app (lesson scenarios, energy schedule, attention mode, question timeout). A
+    /// damaged file, whose values fall back to the defaults – e.g. the built-in schedule for `schedule set` – is
+    /// reported before the command runs, like settings.json in main.swift (AUDIT REV-37). Only the commands that use
+    /// the file read it: the others neither warn about it nor make a backup copy of it.
+    static func loadConfig() -> ClassroomConfig {
+        let config = ClassroomStore.loadConfig()
+        if let issue = ClassroomStore.loadIssue { Console.err("⚠ \(issue)") }
+        return config
+    }
+
     /// Runs a classroom command (`rawArgs` without the command word).
     static func run(_ command: String, _ rawArgs: [String], settings: AppSettings, ssh: SSHSettings) async -> Int32 {
         let a = ModuleArguments.parse(command, rawArgs, specs[command] ?? ModuleSpec())
@@ -58,7 +68,7 @@ enum ClassroomCLI {
                                 wait: !a.has("--no-wait"), yes: a.yes, settings: settings, ssh: ssh)
 
         case "lock":
-            let config = ClassroomStore.loadConfig()
+            let config = loadConfig()
             let message = a.value("--message") ?? config.lockMessage
             let mode: AttentionMode
             if let raw = a.value("--mode") {
@@ -89,7 +99,7 @@ enum ClassroomCLI {
             }
             // As in the app: „Czekaj na odpowiedź” from classroom.json unless --timeout says otherwise.
             let seconds = a.int("--timeout", in: 5...3600)
-                ?? min(3600, max(1, ClassroomStore.loadConfig().questionTimeoutMinutes) * 60)
+                ?? min(3600, max(1, loadConfig().questionTimeoutMinutes) * 60)
             let list = ModuleHosts.changing(a[1], command)
             Console.err("Czas na odpowiedź: " + (seconds % 60 == 0 ? "\(seconds / 60) min" : "\(seconds) s"))
             logAction(list)
@@ -105,7 +115,7 @@ enum ClassroomCLI {
             switch action {
             case "set":
                 // The schedule and the power policy saved in the app (classroom.json); the options change them.
-                let config = ClassroomStore.loadConfig()
+                let config = loadConfig()
                 let schedule = parseSchedule(a, saved: config.schedule)
                 let list = ModuleHosts.changing(a[1], "schedule set")
                 let autoRestart = config.autoRestartAfterPowerLoss && !a.has("--no-autorestart")
@@ -367,7 +377,7 @@ enum ClassroomCLI {
 
     static func lesson(start: Bool, hosts: [Machine], wait: Bool, yes: Bool, settings: AppSettings,
                        ssh: SSHSettings) async -> Int32 {
-        let config = ClassroomStore.loadConfig()
+        let config = loadConfig()
         let plan = start ? LessonPlan.start(config.start, settings: settings) : LessonPlan.end(config.end, settings: settings)
         guard !plan.steps.isEmpty else {
             moduleUsageError("lesson", "Scenariusz nie ma żadnych kroków (ustaw je w aplikacji: Zajęcia).")

@@ -20,7 +20,8 @@ if let first = argv.first, first.hasPrefix("__") {
 }
 
 // Problems with the configuration (e.g. a damaged settings.json, whose bad values fall back to the defaults) are
-// reported before any command runs – the module commands below end the process themselves.
+// reported before any command runs – the module commands below end the process themselves. classroom.json is read,
+// and its problems reported, only by the commands that use it (ClassroomCLI.loadConfig, AUDIT REV-37).
 _ = legacyCLI.settings
 for issue in ConfigStore.loadIssues { Console.err("⚠ \(issue)") }
 
