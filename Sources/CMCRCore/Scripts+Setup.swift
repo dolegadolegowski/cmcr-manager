@@ -37,7 +37,7 @@ public enum ReadinessCheck: String, CaseIterable, Identifiable, Sendable {
     /// What the check means and why the app needs it (tooltips and the legend).
     public var explanation: String {
         switch self {
-        case .ssh: return "Logowanie zdalne działa i klucz SSH tej aplikacji jest zainstalowany na koncie administratora (bez niego aplikacja loguje się hasłem)."
+        case .ssh: return "Zdalne logowanie działa i klucz SSH tej aplikacji jest zainstalowany na koncie administratora (bez niego aplikacja loguje się hasłem)."
         case .sudo: return "Zapisane hasło administratora działa z sudo – potrzebne do instalacji, aktualizacji, podglądu ekranu ucznia i konfiguracji."
         case .folder: return "Folder współdzielony ucznia istnieje, należy do konta ucznia i można do niego zapisywać."
         case .wol: return "„Budź przy dostępie do sieci” – pozwala obudzić uśpionego iMaca z aplikacji."
