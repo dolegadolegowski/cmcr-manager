@@ -47,4 +47,18 @@ import Testing
         #expect(!MainWindow.isMain(identifier: "screen-window-AppWindow-2", shown: true))
         #expect(!MainWindow.isMain(identifier: nil, shown: true))
     }
+
+    // REV-25: the generator's footer names the fields by their labels and reads as a sentence, also for an empty
+    // prefix (HostEntry.problem says „pusta wartość”).
+    @Test func theGeneratorFooterNamesTheFieldAndReadsAsASentence() {
+        #expect(HostListGeneratorSheet.patternProblem(prefix: "", domain: "local") == "Wpisz początek nazwy, zanim utworzysz listę.")
+        #expect(HostListGeneratorSheet.patternProblem(prefix: "im ac", domain: "local")
+                == "Początek nazwy: zawiera spację – popraw go, zanim utworzysz listę.")
+        #expect(HostListGeneratorSheet.patternProblem(prefix: "imac", domain: "lo cal")
+                == "Domena sieci: zawiera spację – popraw ją, zanim utworzysz listę.")
+        for prefix in ["", "-x", "imac;", "im,ac"] {
+            let text = HostListGeneratorSheet.patternProblem(prefix: prefix, domain: "local") ?? ""
+            #expect(!text.isEmpty && !text.contains("pusta wartość") && !text.contains("Przedrostek"), "\(text)")
+        }
+    }
 }
