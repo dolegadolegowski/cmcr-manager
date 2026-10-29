@@ -64,7 +64,10 @@ enum ClassroomCLI {
             guard let kind = a[0], kind == "start" || kind == "end" else {
                 use("Użycie: cmcrctl lesson start|end KOMP [--no-wait]")
             }
-            return await lesson(start: kind == "start", hosts: ModuleHosts.changing(a[1], "lesson \(kind)"),
+            // Read before the hosts: a damaged file is reported before „Wykonać na wszystkich?” (AUDIT REV-46), as
+            // in lock, ask and schedule set.
+            let config = loadConfig()
+            return await lesson(start: kind == "start", config: config, hosts: ModuleHosts.changing(a[1], "lesson \(kind)"),
                                 wait: !a.has("--no-wait"), yes: a.yes, settings: settings, ssh: ssh)
 
         case "lock":
@@ -391,9 +394,8 @@ enum ClassroomCLI {
         return status
     }
 
-    static func lesson(start: Bool, hosts: [Machine], wait: Bool, yes: Bool, settings: AppSettings,
-                       ssh: SSHSettings) async -> Int32 {
-        let config = loadConfig()
+    static func lesson(start: Bool, config: ClassroomConfig, hosts: [Machine], wait: Bool, yes: Bool,
+                       settings: AppSettings, ssh: SSHSettings) async -> Int32 {
         let plan = start ? LessonPlan.start(config.start, settings: settings) : LessonPlan.end(config.end, settings: settings)
         guard !plan.steps.isEmpty else {
             moduleUsageError("lesson", "Scenariusz nie ma żadnych kroków (ustaw je w aplikacji: Zajęcia).")

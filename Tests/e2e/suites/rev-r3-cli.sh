@@ -122,3 +122,19 @@ expect_not "lesson start, Ctrl-C: nic nie uruchomiono na komputerze" "$R3_OUT" "
 [ ! -e "$WORK/remote/Public/cmcr/duze" ] && pass "lesson start, Ctrl-C: materiały nie wysłane" \
   || fail "lesson start, Ctrl-C: materiały wysłane mimo przerwania" "$(ls -la "$WORK/remote/Public/cmcr")"
 rm -rf "$WORK/remote/Public/cmcr/duze" "$WORK/rev-r3-materials" "$WORK/rev-r3-pack" "$R3/classroom.json"
+
+section "REV R3 cmcrctl – lesson: ostrzeżenie o uszkodzonym classroom.json przed pytaniem o wszystkie komputery (AUDIT REV-46)"
+# At a terminal without a host list; no answer („nie”): the warning must come before the only question.
+for kind in start end; do
+  printf '{"schedule": {"powerOnEnabled": tr' > "$R3/classroom.json"
+  out="$(CMCR_CONFIG_DIR="$R3" script -q /dev/null "$CTL" lesson "$kind" </dev/null 2>&1)"; code=$?
+  expect "lesson $kind bez listy: pytanie o wszystkie komputery" "$out" "Wykonać na wszystkich?"
+  r3_before "lesson $kind bez listy: ostrzeżenie przed pytaniem" "$out" "⚠ Plik ustawień zajęć (classroom.json) jest uszkodzony" \
+    "Wykonać na wszystkich?"
+  expect_code "lesson $kind bez listy, odpowiedź „nie”: kod 1" "$code" 1 "$out"
+done
+# As before: lock reads the file before the question too.
+printf '{"schedule": {"powerOnEnabled": tr' > "$R3/classroom.json"
+out="$(CMCR_CONFIG_DIR="$R3" script -q /dev/null "$CTL" lock </dev/null 2>&1)"
+r3_before "lock bez listy: ostrzeżenie przed pytaniem" "$out" "⚠ Plik ustawień zajęć" "Wykonać na wszystkich?"
+rm -f "$R3/classroom.json" "$R3"/classroom.json.*.bak
