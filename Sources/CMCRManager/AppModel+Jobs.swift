@@ -142,7 +142,8 @@ extension AppModel {
         let hosts = requested.compactMap { machine($0.id) }
         let removed = requested.count - hosts.count
         if removed > 0 {
-            showToast(ActionToast(message: "Pominięto \(Polish.computers(removed)) usunięte z listy komputerów.",
+            let participle = Polish.plural(removed, "usunięty", "usunięte", "usuniętych")
+            showToast(ActionToast(message: "Pominięto \(Polish.computers(removed)) \(participle) z listy komputerów.",
                                   icon: "exclamationmark.triangle.fill"))
         }
         guard let rerun = batch.rerun, !hosts.isEmpty else { return }

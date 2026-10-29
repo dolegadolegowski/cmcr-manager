@@ -112,3 +112,23 @@ extension RevG3appmodelTests {
         #expect(NoticeWindows.pick([Window](), key: nil, main: nil, frontToBack: []) == nil)
     }
 }
+
+extension RevG3appmodelTests {
+    // REV-17: „Powtórz” on Macs removed from the list meanwhile – the participle agrees with the number.
+    @Test(arguments: [
+        (1, "Pominięto 1 komputer usunięty z listy komputerów."),
+        (3, "Pominięto 3 komputery usunięte z listy komputerów."),
+        (5, "Pominięto 5 komputerów usuniętych z listy komputerów."),
+        (12, "Pominięto 12 komputerów usuniętych z listy komputerów."),
+    ])
+    func repeatingOnRemovedMacsSaysHowManyWereLeftOut(removed: Int, message: String) async throws {
+        let hosts = (1...removed).map { AppTestEnvironment.closedHost(String(format: "imac%02d", $0)) }
+        let model = AppTestEnvironment.makeModel(hosts)
+        let batch = try #require(model.runBatch("Test", on: hosts) { _, _ in .failure("x") })
+        #expect(await AppTestEnvironment.wait { batch.finished })
+        model.machines = []
+        model.retry(batch, on: batch.retryableMachines)
+        #expect(model.toast?.message == message)
+        #expect(!model.batches.contains { $0.title == "Test (ponowienie)" })
+    }
+}
