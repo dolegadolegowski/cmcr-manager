@@ -506,3 +506,34 @@ done
 # Without a remote command running (question at the terminal) Ctrl-C ends at once, as before.
 out="$(p2pw exec 'echo "po-przerwaniu-$((1 + 1))"' 1)"
 expect "po Ctrl-C: kolejne polecenie działa" "$out" "po-przerwaniu-2"
+
+section "P2 cmcrctl – lesson start obsługuje komputery równolegle (AUDIT ZAJ-14)"
+# Every ssh connection takes 2 s here (ProxyCommand, no shared connections); the lesson only checks that the Macs
+# are on (wake step). One after another three Macs would take over 6 s.
+LS="$WORK/cfg-p2-lesson"
+mkdir -p "$LS"
+python3 - "$P2/settings.json" "$LS/settings.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+s["extraSSHOptions"] = s.get("extraSSHOptions", "") + "\nProxyCommand=/bin/sh -c 'sleep 2; exec /usr/bin/nc %h %p'"
+s["reuseConnections"] = False
+json.dump(s, open(sys.argv[2], "w"))
+PY
+cat > "$LS/hosts.json" <<EOF
+[
+ {"id":"51111111-1111-1111-1111-111111111111","name":"imac01","address":"127.0.0.1","user":"$ME","port":$PORT},
+ {"id":"52222222-2222-2222-2222-222222222222","name":"imac02","address":"127.0.0.1","user":"$ME","port":$PORT},
+ {"id":"53333333-3333-3333-3333-333333333333","name":"imac03","address":"127.0.0.1","user":"$ME","port":$PORT}
+]
+EOF
+cat > "$LS/classroom.json" <<'EOF'
+{"start": {"wake": true, "wakeWaitMinutes": 1, "sendMaterials": false, "openApps": false, "greet": false}}
+EOF
+t0=$(python3 -c 'import time; print(int(time.time() * 1000))')
+out="$(CMCR_CONFIG_DIR="$LS" CMCR_PASSWORD="$PASSWORD" "$CTL" lesson start all 2>&1)"; code=$?
+t1=$(python3 -c 'import time; print(int(time.time() * 1000))')
+expect_code "lesson start: kod 0" "$code" 0 "$out"
+if [ $((t1 - t0)) -lt 5500 ]; then pass "lesson start: trzy komputery naraz ($((t1 - t0)) ms)"
+else fail "lesson start: komputery po kolei ($((t1 - t0)) ms)" "$out"; fi
+order="$(printf '%s\n' "$out" | sed -n 's/^== \(imac0[0-9]\).*/\1/p' | tr '\n' ' ')"
+[ "$order" = "imac01 imac02 imac03 " ] && pass "lesson start: wyniki w kolejności listy" || fail "lesson start: kolejność: $order" "$out"

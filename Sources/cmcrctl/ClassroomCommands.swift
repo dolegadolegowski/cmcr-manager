@@ -5,7 +5,8 @@ import Foundation
 enum ClassroomCLI {
     static let usage = """
     Zajęcia, zasilanie i raporty
-      cmcrctl lesson start|end KOMP [--no-wait] [--yes]   scenariusz zajęć zapisany w aplikacji (classroom.json)
+      cmcrctl lesson start|end KOMP [--no-wait] [--yes]   scenariusz zajęć zapisany w aplikacji (classroom.json);
+                                                      komputery obsługiwane naraz, jak w aplikacji
       cmcrctl lock KOMP [--message "…"] [--mode automatic|lockScreen|overlay] [--minutes N]
       cmcrctl unlock KOMP                             zdejmij blokadę ekranu
       cmcrctl ask "pytanie" KOMP [--buttons "Tak,Nie"] [--timeout sekundy]
@@ -363,16 +364,32 @@ enum ClassroomCLI {
         defer { if let payload { try? FileManager.default.removeItem(at: payload) } }
         logAction(hosts)
 
-        func host(_ h: Machine) -> LessonRunner.Host {
-            LessonRunner.Host(machine: h, password: Keychain.password(for: h), macs: h.macAddress.isEmpty ? [] : [h.macAddress])
+        // As in the app: Wake-on-LAN for the same MACs (status-cache.json), every Mac at once – packets go out to all
+        // first, each Mac then only waits for itself – and the other steps share the usual number of connections
+        // (ConcurrencyLimiter, „Komputery obsługiwane naraz”). Output stays in list order.
+        let snapshots = ClassroomStore.loadSnapshots()
+        let targets = hosts.map { h -> LessonRunner.Host in
+            let info = snapshots[h.id]?.info ?? [:]
+            return LessonRunner.Host(machine: h, password: Keychain.password(for: h),
+                                     macs: WakeOnLAN.candidateMACs(listed: h.macAddress, lastStatus: info),
+                                     extraBroadcasts: WakeOnLAN.lastSeenBroadcasts(info))
         }
-        var status = ExitCode.success
+        let parallel = max(1, settings.maxParallel)
+        func runAll(_ range: Range<Int>, materials: URL?, limiter: ConcurrencyLimiter?, jobs: Int) async -> [Int32] {
+            await runHosts(hosts, jobs: jobs, prefixLines: false) { io in
+                io.out("== \(io.host.name)")
+                let r = await LessonRunner.run(plan, on: targets[io.index], ssh: ssh, materials: materials, range: range,
+                                               limiter: limiter, onOutput: io.stream)
+                guard r.succeeded else {
+                    io.write(.stderr, r.stderr)
+                    return ExitCode.failure
+                }
+                return ExitCode.success
+            }
+        }
         var first = 0
         if plan.steps.first == .warn {
-            for h in hosts {
-                Console.out("== \(h.name)")
-                _ = await LessonRunner.run(plan, on: host(h), ssh: ssh, materials: nil, range: 0..<1, onOutput: Console.printer)
-            }
+            _ = await runAll(0..<1, materials: nil, limiter: nil, jobs: parallel)
             if wait {
                 let secs = max(1, plan.end.warnMinutes) * 60
                 Console.out("Czekam \(secs / 60) min przed kolejnymi krokami…")
@@ -381,16 +398,16 @@ enum ClassroomCLI {
             first = 1
         }
         guard first < plan.steps.count else { return ExitCode.success }
-        for h in hosts {
-            Console.out("== \(h.name)")
-            let r = await LessonRunner.run(plan, on: host(h), ssh: ssh, materials: payload, range: first..<plan.steps.count,
-                                           onOutput: Console.printer)
-            if !r.succeeded {
-                Console.write(.stderr, r.stderr)
-                status = ExitCode.failure
+        let waking = plan.steps[first...].contains(.wake)
+        if waking {
+            for t in targets {
+                for mac in t.macs { _ = try? WakeOnLAN.wake(mac: mac, extraBroadcasts: t.extraBroadcasts) }
             }
         }
-        return status
+        let codes = await runAll(first..<plan.steps.count, materials: payload,
+                                 limiter: waking ? ConcurrencyLimiter(limit: parallel) : nil,
+                                 jobs: waking ? hosts.count : parallel)
+        return codes.allSatisfy { $0 == ExitCode.success } ? ExitCode.success : ExitCode.failure
     }
 
     static func inventoryReport(to path: String?, hosts: [Machine], ssh: SSHSettings) async -> Int32 {
