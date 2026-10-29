@@ -136,13 +136,24 @@ struct HostInspector: View {
     }
 
     func scheduleText(_ m: Machine) -> String {
-        // Until „Sprawdź teraz” the regular status already tells the repeating events (AUDIT KOM-10).
-        guard let info = classroom.schedules[m.id] else {
-            guard let events = model.status(m).powerSchedule else { return "nie sprawdzono" }
-            return events.replacingOccurrences(of: "; ", with: "\n")
+        Self.scheduleText(checked: classroom.schedules[m.id], status: model.status(m))
+    }
+
+    /// The answer of „Sprawdź teraz” first. Until then the regular status already tells the repeating events
+    /// (AUDIT KOM-10): pmset's lines joined with "; ", shown in the same Polish words as after the check. The status
+    /// always reports the key, so an empty value means no schedule („brak”); only a status without it (none yet,
+    /// or from an older version) is „nie sprawdzono” (AUDIT REV-21).
+    static func scheduleText(checked info: ScheduleInfo?, status: HostStatus) -> String {
+        if let info {
+            if let e = info.error { return e }
+            return info.events.isEmpty ? "brak" : info.events.map(\.text).joined(separator: "\n")
         }
-        if let e = info.error { return e }
-        return info.events.isEmpty ? "brak" : info.events.map(\.text).joined(separator: "\n")
+        guard let raw = status.info["power_schedule"] else { return "nie sprawdzono" }
+        if raw.isEmpty { return "brak" }
+        let lines = raw.replacingOccurrences(of: "; ", with: "\n")
+        let events = PowerScheduleParser.repeating("Repeating power events:\n" + lines)
+        // A line pmset words differently than expected is shown as it is rather than dropped.
+        return events.isEmpty ? lines : events.map(\.text).joined(separator: "\n")
     }
 
     func notes(_ m: Machine) -> Binding<String> {
