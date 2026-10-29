@@ -563,16 +563,23 @@ struct AppLogicTests {
 
 extension AppLogicTests {
     // stale-console-user (AUDIT KOM-04): a Mac that stops answering no longer shows the student logged in before,
-    // in any view (they all read the status); what else was known (MAC for Wake-on-LAN) stays.
+    // in any view (they all read the status); what else was known (MAC for Wake-on-LAN) stays. Only a Mac that is
+    // off: one that answers with an error keeps its students (AUDIT REV-11, RevG3appmodelTests).
     @Test func aMacThatStopsAnsweringHasNoLoggedInStudent() async throws {
         let a = AppTestEnvironment.closedHost("imac01")
         let model = AppTestEnvironment.makeModel([a])
+        // The Mac is off: ssh reports what it reports for a Mac gone from the network (a local ProxyCommand, no network;
+        // no shared connections, which would send its stderr to /dev/null).
+        model.settings.reuseConnections = false
+        model.settings.extraSSHOptions += "\nProxyCommand=/bin/sh -c "
+            + "'echo \"ssh: connect to host imac01 port 22: No route to host\" >&2; exit 255'"
         var st = HostStatus()
         st.reachability = .online
         st.info = ["console": "jan", "sessions": "jan,ola", "mac": "aa:bb:cc:dd:ee:ff"]
         model.statuses[a.id] = st
         model.refreshStatus([a])
         #expect(await AppTestEnvironment.wait(15) { ![.online, .checking].contains(model.status(a).reachability) })
+        #expect(model.status(a).reachability == .offline)
         #expect(model.status(a).consoleUser == nil)
         #expect(model.status(a).loggedInUsers.isEmpty)
         #expect(model.status(a).mac == "aa:bb:cc:dd:ee:ff")

@@ -79,8 +79,8 @@ final class Job: ObservableObject, Identifiable, @unchecked Sendable {
     /// Digest of the whole output taken before the in-memory log was cut to its tail (`trimAfterArchive`).
     private(set) var trimmedOutputDigest: String?
 
-    /// Error output was streamed into the log (from any thread): the result's stderr is then not added again.
-    let streamedErrors = StreamFlag()
+    /// Error output streamed into the log (from any thread): that part of the result's stderr is not added again.
+    let streamedErrors = StreamedErrors()
 
     // `output` is served straight from the bounded buffer: a second published copy would make every
     // append copy the whole log (copy-on-write).
@@ -223,18 +223,55 @@ final class OutputSink: @unchecked Sendable {
         { [self] channel, data in
             let text = channel == .stdout ? out.decode(data) : err.decode(data)
             guard !text.isEmpty else { return }
-            if channel == .stderr { job?.streamedErrors.set() }
+            if channel == .stderr { job?.streamedErrors.record(text) }
             job?.receive(TerminalText.visibleDirectionOverrides(text))      // names from the iMacs (AUDIT DOD-13)
         }
     }
 }
 
-/// A flag set from any thread.
-final class StreamFlag: @unchecked Sendable {
+/// Error output a job streamed into its log (recorded from any thread; only the last `limit` characters are kept).
+/// The job's result repeats it in its stderr, and may add a message of its own that was never streamed – a local
+/// step that failed after the remote part, such as unpacking „Zbierz prace” on a full disk.
+final class StreamedErrors: @unchecked Sendable {
     private let lock = NSLock()
-    private var value = false
-    func set() { lock.withLock { value = true } }
-    var isSet: Bool { lock.withLock { value } }
+    private var text = ""
+    private var bytes = 0
+    private var cut = false
+    static let limit = Job.maxOutput
+
+    func record(_ s: String) {
+        lock.withLock {
+            text += s
+            bytes += s.utf8.count
+            if bytes > 2 * Self.limit {
+                text = String(text.suffix(Self.limit))
+                bytes = text.utf8.count
+                cut = true
+            }
+        }
+    }
+
+    /// The part of `stderr` (a result's error output, trimmed) the log does not have yet: nothing when it was all
+    /// streamed (AUDIT ZAD-10), what follows the streamed text, or – when it was never streamed – all of it
+    /// (AUDIT REV-12).
+    func missing(from stderr: String) -> String {
+        let (seen, wasCut) = lock.withLock { (text.trimmingCharacters(in: .whitespacesAndNewlines), cut) }
+        guard !seen.isEmpty, !stderr.isEmpty else { return stderr }
+        if seen.contains(stderr) || (wasCut && stderr.hasSuffix(seen)) { return "" }
+        if stderr.hasPrefix(seen) {
+            return String(stderr.dropFirst(seen.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return stderr
+    }
+
+    /// Frees the recorded text once the job's result is in.
+    func discard() {
+        lock.withLock {
+            text = ""
+            bytes = 0
+            cut = false
+        }
+    }
 }
 
 /// A message for an alert: what failed and why.
@@ -562,6 +599,7 @@ final class AppModel: ObservableObject {
     private func execute(_ job: Job, in batch: Batch,
                          operation: @MainActor (Machine, Job) async -> CommandResult) async {
         defer {
+            job.streamedErrors.discard()
             batch.completed += 1
             runningJobCount -= 1
             archive(job, in: batch)
@@ -593,9 +631,10 @@ final class AppModel: ObservableObject {
         } else {
             job.state = .failed
             let (reach, message) = SSH.diagnose(r)
-            let stderr = r.stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Streamed error output is in the log already; adding it again doubled it (AUDIT ZAD-10).
-            if !stderr.isEmpty && !job.streamedErrors.isSet && !job.output.contains(stderr) { job.append(stderr + "\n") }
+            // Streamed error output is in the log already; adding it again doubled it (AUDIT ZAD-10). What the result
+            // has beyond it (a local step that failed afterwards) is the reason of the failure (AUDIT REV-12).
+            let missing = job.streamedErrors.missing(from: r.stderrText.trimmingCharacters(in: .whitespacesAndNewlines))
+            if !missing.isEmpty && !job.output.contains(missing) { job.append(missing + "\n") }
             let detail = message.hasPrefix("Polecenie zakończone") && !job.lastLine.isEmpty
                 ? "\(job.lastLine) (kod \(r.exitCode))" : message
             job.summary = detail
@@ -742,11 +781,14 @@ final class AppModel: ObservableObject {
             st.reachability = reach == .online ? .error : reach
             st.message = message
             st.info = statuses[m.id]?.info ?? [:]
-            // Who is logged in is known only from a check that worked: a Mac that is off or answers with an error
-            // must not show (in the list, the details, searches and confirmations) the student from before (KOM-04).
-            st.info["console"] = nil
-            st.info["sessions"] = nil
             if reach == .offline {
+                // A Mac that is off has nobody at it: the list, the details, searches and confirmations do not show
+                // the student from before (KOM-04). After any other failure (the status script ran too long on
+                // a busy Mac, sshd refused a session for a moment, a login failed until the password is fixed) the
+                // Mac may still take the next action, so the last known users stay: „Pomiń komputery z zalogowanym
+                // uczniem” must still leave it out of a restart or logout (AUDIT REV-11).
+                st.info["console"] = nil
+                st.info["sessions"] = nil
                 // Full background checks after 2, 4, 8 and then every 10 min (minus slack for the 2 min timer).
                 let n = (offlineStreak[m.id] ?? 0) + 1
                 offlineStreak[m.id] = n

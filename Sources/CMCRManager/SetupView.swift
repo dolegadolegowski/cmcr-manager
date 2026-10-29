@@ -1121,6 +1121,7 @@ struct AppSettingsWindow: View {
                 .tag(SettingsTab.updates)
         }
         .frame(width: 620)
+        .noticeAlert()
         .onSnapshotSubpage { sub in
             // An empty sub-page is the default tab (AUDIT UI-25: the dark snapshot kept the previous tab).
             tab = SettingsTab(rawValue: sub) ?? .general
