@@ -231,22 +231,36 @@ public enum ConfigStore {
                       protect: backup == nil)
     }
 
-    /// Keeps every top-level value of a damaged JSON object that is still valid on its own (the type's decoder
-    /// fills in defaults for the rest); returns the names of the dropped values, sorted. nil when the data is not a
-    /// JSON object at all.
-    static func salvage<T: Decodable>(_ type: T.Type, from data: Data) -> (value: T, dropped: [String])? {
+    /// Keeps every value of a damaged JSON object that is still valid on its own, also inside nested objects – one
+    /// bad field of a lesson routine keeps the routine's other fields (AUDIT REV-03) – and the type's decoder fills in
+    /// defaults for the rest. Returns the dropped values as key paths ("start.wakeWaitMinutes"), sorted; nil when the
+    /// data is not a JSON object at all.
+    static func salvage<T: Decodable>(_ type: T.Type, from data: Data,
+                                      decoder: JSONDecoder = JSONDecoder()) -> (value: T, dropped: [String])? {
         guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
-        let decoder = JSONDecoder()
-        var good: [String: Any] = [:]
-        var bad: [String] = []
-        for (key, value) in object {
-            if let one = try? JSONSerialization.data(withJSONObject: [key: value]),
-               (try? decoder.decode(T.self, from: one)) != nil {
-                good[key] = value
-            } else {
-                bad.append(key)
-            }
+        /// Whether `value` alone, at `path` in an otherwise empty object, decodes.
+        func decodes(_ value: Any, at path: [String]) -> Bool {
+            let wrapped = path.reversed().reduce(value) { inner, key in [key: inner] }
+            guard let one = try? JSONSerialization.data(withJSONObject: wrapped) else { return false }
+            return (try? decoder.decode(T.self, from: one)) != nil
         }
+        var bad: [String] = []
+        /// The valid part of `value` at `path` (nil: none); what is dropped goes to `bad`.
+        func kept(_ value: Any, at path: [String]) -> Any? {
+            if decodes(value, at: path) { return value }
+            guard let nested = value as? [String: Any], !nested.isEmpty else {
+                bad.append(path.joined(separator: "."))
+                return nil
+            }
+            var good: [String: Any] = [:]
+            for (key, inner) in nested { good[key] = kept(inner, at: path + [key]) }
+            if good.isEmpty { return nil }
+            if decodes(good, at: path) { return good }
+            bad.append(path.joined(separator: "."))
+            return nil
+        }
+        var good: [String: Any] = [:]
+        for (key, value) in object { good[key] = kept(value, at: [key]) }
         guard let d = try? JSONSerialization.data(withJSONObject: good), let value = try? decoder.decode(T.self, from: d)
         else { return nil }
         return (value, bad.sorted())
