@@ -169,15 +169,19 @@ final class HostIO: @unchecked Sendable {
     func out(_ text: String) { write(.stdout, Data((text + "\n").utf8)) }
     func err(_ text: String) { write(.stderr, Data((text + "\n").utf8)) }
 
-    /// Prints the failure explanation (if any) and returns the code to report for this host.
+    /// Prints the failure explanation (if any) and returns the code to report for this host. `passThrough` (exec)
+    /// returns the command's own exit code – only when the command ended by itself on a Mac that answered: ssh's 255
+    /// for a connection that failed or broke off under a running command („Połączenie zostało przerwane…”) is not the
+    /// command's code, and is reported as 1 (AUDIT REV-51).
     @discardableResult
     func report(_ r: CommandResult, passThrough: Bool = false) -> Int32 {
         if r.succeeded { return ExitCode.success }
-        err("✘ \(host.name): \(SSH.diagnose(r).1)")
+        let (reach, message) = SSH.diagnose(r)
+        err("✘ \(host.name): \(message)")
         if !r.started, HostTrust.refusal(r) != nil {
             err("  W terminalu: cmcrctl trust \(host.name) – pokaże odcisk klucza i zapyta o zaufanie.")
         }
-        if passThrough, r.exitCode > 0 { return r.exitCode }
+        if passThrough, reach == .online, r.exitCode > 0 { return r.exitCode }
         return ExitCode.failure
     }
 

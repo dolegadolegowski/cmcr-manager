@@ -138,3 +138,34 @@ printf '{"schedule": {"powerOnEnabled": tr' > "$R3/classroom.json"
 out="$(CMCR_CONFIG_DIR="$R3" script -q /dev/null "$CTL" lock </dev/null 2>&1)"
 r3_before "lock bez listy: ostrzeżenie przed pytaniem" "$out" "⚠ Plik ustawień zajęć" "Wykonać na wszystkich?"
 rm -f "$R3/classroom.json" "$R3"/classroom.json.*.bak
+
+section "REV R3 cmcrctl – exec: zerwane połączenie to kod 1, nie 255 (AUDIT REV-51)"
+r3_close_masters
+rm -f "$WORK/rev-r3-exec.out" "$WORK/rev-r3-exec-done"
+CMCR_CONFIG_DIR="$R3" "$CTL" exec "echo ruszyło-r3; sleep 4; touch '$WORK/rev-r3-exec-done'" 1 >"$WORK/rev-r3-exec.out" 2>&1 &
+r3_pid=$!
+for _ in $(seq 1 150); do grep -q "ruszyło-r3" "$WORK/rev-r3-exec.out" 2>/dev/null && break; sleep 0.1; done
+r3_sock="$(find "$CMCR_SSH_CONTROL_DIR" -type s 2>/dev/null | head -n 1)"
+if [ -n "$r3_sock" ]; then
+  # The shared connection goes away under the running command (as when the network drops it).
+  ssh -S "$r3_sock" -O exit cmcr-e2e >/dev/null 2>&1
+  wait "$r3_pid"
+  code=$?
+  out="$(cat "$WORK/rev-r3-exec.out")"
+  expect "exec, zerwane połączenie: błąd połączenia" "$out" "Połączenie zostało przerwane"
+  expect_code "exec, zerwane połączenie: kod 1 (nie 255)" "$code" 1 "$out"
+else
+  kill "$r3_pid" 2>/dev/null
+  wait "$r3_pid" 2>/dev/null
+  fail "exec, zerwane połączenie: brak gniazda wspólnego połączenia" "$(ls -la "$CMCR_SSH_CONTROL_DIR" 2>&1)"
+fi
+# The command goes on on the Mac: let it end before the next suites count the test sshd's sessions.
+for _ in $(seq 1 100); do [ -e "$WORK/rev-r3-exec-done" ] && break; sleep 0.1; done
+out="$(r3 exec 'true' 9)"; code=$?
+expect_code "exec, komputer nieosiągalny: kod 1 (nie 255)" "$code" 1 "$out"
+# The command's own codes are still passed through – also its own 255 (e.g. another ssh inside it).
+out="$(r3 exec 'echo "ssh: connect to host inny.local port 22: Operation timed out" >&2; exit 255' 1)"; code=$?
+expect_code "exec, kod 255 samego polecenia: przekazany" "$code" 255 "$out"
+out="$(r3 exec 'exit 7' 1,9)"; code=$?
+expect_code "exec, kod polecenia i niedostępny komputer: kod polecenia" "$code" 7 "$out"
+

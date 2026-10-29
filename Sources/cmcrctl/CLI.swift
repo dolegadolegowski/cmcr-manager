@@ -84,7 +84,8 @@ Opcje
 
 Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie (także opcja,
 której polecenie nie używa, lub nadmiarowy argument – wtedy nic nie jest wykonywane);
-exec zwraca kod zdalnego polecenia (najwyższy z kilku komputerów), screen-watch – także 3–6;
+exec zwraca kod zdalnego polecenia (najwyższy z kilku komputerów; nieudane lub zerwane połączenie – 1),
+screen-watch – także 3–6;
 130 – przerwano: Ctrl-C zatrzymuje także na iMacach każde polecenie, które coś na nich zmienia, i nie uruchamia go
 już na kolejnych; ponowne Ctrl-C kończy od razu.
 
