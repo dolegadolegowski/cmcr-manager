@@ -93,4 +93,85 @@ out="$(ctlpw _builder push 1 "$RV3_DEST" "$(id -u):staff" "" "$RV3/send/rev-r3-p
 expect_code "push: numer istniejącego konta – kod 0" "$code" 0 "$out"
 rm -rf "$RV3_DEST"
 
+# rv3_setup_begin – a configured iMac in $WORK/setup-root (as in suites/rev-r2-scripts.sh); fails when the
+# redirection is off. Each section ends with rv3_setup_end: later suites start from a fresh state.
+RV3_SR="$WORK/setup-root"
+RV3_SS="$WORK/setup-sys"
+RV3_CONF="$WORK/config-rev-r3-setup"
+RV3_HOME="$RV3_SR/Users/$ME"
+RV3_DROPIN="$RV3_SR/etc/ssh/sshd_config.d/050-cmcr-manager.conf"
+rv3s() { CMCR_CONFIG_DIR="$RV3_CONF" CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }
+rv3_setup_begin() {
+  mkdir -p "$RV3_HOME/Public" "$RV3_SR/etc/ssh/sshd_config.d" "$RV3_SR/private/etc/sudoers.d" \
+    "$RV3_SR/Library/Preferences" "$RV3_SS" "$RV3_CONF"
+  chmod 755 "$RV3_HOME"
+  printf '# test\nInclude /etc/ssh/sshd_config.d/*\nPasswordAuthentication yes\n' > "$RV3_SR/etc/ssh/sshd_config"
+  printf 'root ALL = (ALL) ALL\n#includedir /private/etc/sudoers.d\n' > "$RV3_SR/etc/sudoers"
+  printf 'womp 1\nsleep 1\ntcpkeepalive 1\n' > "$RV3_SS/pmset"
+  echo false > "$RV3_SS/screen-preflight"
+  echo "FileVault is Off." > "$RV3_SS/filevault"
+  cp "$WORK/config/hosts.json" "$RV3_CONF/hosts.json"
+  cat > "$RV3_CONF/settings.json" <<EOF
+{"identityFile":"$WORK/client","extraSSHOptions":"UserKnownHostsFile=$WORK/known_hosts",
+ "sharedFolder":"/Users/{student}/Public/cmcr","localFolder":"$WORK/local","studentUser":"$ME","connectTimeout":3}
+EOF
+  out="$(rv3s setup 1 --no-ssh-acl)"; code=$?
+  if ! contains "" "$out" "(TEST: pliki systemowe przekierowane do $RV3_SR)"; then
+    fail "setup: przekierowanie ścieżek nieaktywne – pominięto testy skryptu konfiguracyjnego" "$out"
+    return 1
+  fi
+  expect_code "setup: przygotowanie – kod 0" "$code" 0 "$out"
+}
+rv3_setup_end() { rm -rf "$RV3_SS" "$RV3_SR" "$RV3_CONF"; }
+
+section "REV-49: --ssh-key-only bez zainstalowanego klucza – raport mówi, czy logowanie hasłem jest wyłączone"
+if rv3_setup_begin; then
+  out="$(rv3s setup 1 --no-ssh-acl --ssh-key-only)"; code=$?
+  expect_code "setup --ssh-key-only: kod 0" "$code" 0 "$out"
+  grep -q '^PasswordAuthentication no' "$RV3_DROPIN" 2>/dev/null && pass "setup --ssh-key-only: logowanie hasłem wyłączone" \
+    || fail "setup --ssh-key-only: brak PasswordAuthentication no" "$(cat "$RV3_DROPIN" 2>&1)"
+  # ~/.ssh is a link: the key is not installed (step_ssh_key refuses), the sshd file stays as it was.
+  mkdir -p "$RV3_HOME/.ssh"
+  mv "$RV3_HOME/.ssh" "$RV3_HOME/ssh-prawdziwy" && ln -s ssh-prawdziwy "$RV3_HOME/.ssh"
+  out="$(rv3s setup 1 --no-ssh-acl --ssh-key-only)"; code=$?
+  expect_code "setup --ssh-key-only, klucz nie zainstalowany: kod 1" "$code" 1 "$out"
+  expect "setup --ssh-key-only, klucz nie zainstalowany: logowanie hasłem nadal wyłączone – wprost" "$out" \
+    "--ssh-key-only: klucza aplikacji nie udało się zainstalować." \
+    "ustawienia sshd bez zmian, logowanie hasłem pozostaje wyłączone (SSH wyłącznie z kluczem: włączone)"
+  expect_not "setup --ssh-key-only, klucz nie zainstalowany: nie twierdzi, że logowanie hasłem działa" "$out" \
+    "logowanie hasłem zostaje włączone"
+  grep -q '^PasswordAuthentication no' "$RV3_DROPIN" && pass "setup --ssh-key-only, klucz nie zainstalowany: plik sshd bez zmian" \
+    || fail "setup --ssh-key-only, klucz nie zainstalowany: zmieniono plik sshd" "$(cat "$RV3_DROPIN" 2>&1)"
+  rm -f "$RV3_HOME/.ssh" && mv "$RV3_HOME/ssh-prawdziwy" "$RV3_HOME/.ssh"
+  # Without --pubkey (a script saved without the app's key, run with --ssh-key-only): the same.
+  rv3s setup-script --no-key > "$RV3/bez-klucza.sh"
+  out="$(ctlpw exec "/bin/bash $RV3/bez-klucza.sh --no-guide --no-ssh-acl --ssh-key-only" 1 --root)"; code=$?
+  expect_code "skrypt --ssh-key-only bez klucza: kod 1" "$code" 1 "$out"
+  expect "skrypt --ssh-key-only bez klucza: logowanie hasłem nadal wyłączone – wprost" "$out" \
+    "--ssh-key-only wymaga podania klucza (--pubkey)." \
+    "ustawienia sshd bez zmian, logowanie hasłem pozostaje wyłączone (SSH wyłącznie z kluczem: włączone)"
+  expect_not "skrypt --ssh-key-only bez klucza: nie twierdzi, że logowanie hasłem działa" "$out" \
+    "logowanie hasłem zostaje włączone"
+  grep -q '^PasswordAuthentication no' "$RV3_DROPIN" && pass "skrypt --ssh-key-only bez klucza: plik sshd bez zmian" \
+    || fail "skrypt --ssh-key-only bez klucza: zmieniono plik sshd" "$(cat "$RV3_DROPIN" 2>&1)"
+  # Password login on again: then both reports say it stays on.
+  out="$(rv3s setup 1 --no-ssh-acl --no-ssh-key-only)"; code=$?
+  expect_code "setup --no-ssh-key-only: kod 0" "$code" 0 "$out"
+  out="$(ctlpw exec "/bin/bash $RV3/bez-klucza.sh --no-guide --no-ssh-acl --ssh-key-only" 1 --root)"; code=$?
+  expect "skrypt --ssh-key-only bez klucza, logowanie hasłem włączone: tak w raporcie" "$out" \
+    "--ssh-key-only wymaga podania klucza (--pubkey)." \
+    "logowanie hasłem zostaje włączone, inaczej utracisz dostęp (SSH wyłącznie z kluczem: wyłączone)"
+  expect_not "skrypt --ssh-key-only bez klucza, logowanie hasłem włączone: nie „pozostaje wyłączone”" "$out" \
+    "pozostaje wyłączone"
+  mv "$RV3_HOME/.ssh" "$RV3_HOME/ssh-prawdziwy" && ln -s ssh-prawdziwy "$RV3_HOME/.ssh"
+  out="$(rv3s setup 1 --no-ssh-acl --ssh-key-only)"; code=$?
+  expect "setup --ssh-key-only, klucz nie zainstalowany, logowanie hasłem włączone: tak w raporcie" "$out" \
+    "--ssh-key-only: klucza aplikacji nie udało się zainstalować." \
+    "logowanie hasłem zostaje włączone, inaczej utracisz dostęp (SSH wyłącznie z kluczem: wyłączone)"
+  grep -Eq '^(PasswordAuthentication|KbdInteractiveAuthentication)' "$RV3_DROPIN" \
+    && fail "setup --ssh-key-only, klucz nie zainstalowany: wyłączono logowanie hasłem" "$(cat "$RV3_DROPIN")" \
+    || pass "setup --ssh-key-only, klucz nie zainstalowany: logowanie hasłem nadal włączone"
+fi
+rv3_setup_end
+
 rm -rf "$RV3"

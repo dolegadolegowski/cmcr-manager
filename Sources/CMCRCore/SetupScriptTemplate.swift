@@ -583,11 +583,13 @@ step_sshd_tuning() {
     } > "$want"
   fi
   if [ "$OPT_SSH_KEY_ONLY" = 1 ] && [ "$KEY_OK" != 1 ]; then
-    if [ -z "$OPT_PUBKEYS" ]; then
-      record sshd_conf fail "--ssh-key-only wymaga podania klucza (--pubkey) – inaczej utracisz dostęp. Pominięto."
-    else
-      record sshd_conf fail "--ssh-key-only: klucza aplikacji nie udało się zainstalować, więc logowanie hasłem zostaje włączone (inaczej utracisz dostęp). Pominięto."
-    fi
+    # Plik sshd zostaje, jaki był – a wcześniejsze uruchomienie z --ssh-key-only mogło już wyłączyć logowanie hasłem.
+    local why state
+    if [ -z "$OPT_PUBKEYS" ]; then why="--ssh-key-only wymaga podania klucza (--pubkey)."
+    else why="--ssh-key-only: klucza aplikacji nie udało się zainstalować."; fi
+    if [ "$cur_ko" = 1 ]; then state="ustawienia sshd bez zmian, logowanie hasłem pozostaje wyłączone ($(key_only_text 1))"
+    else state="logowanie hasłem zostaje włączone, inaczej utracisz dostęp ($(key_only_text 0))"; fi
+    record sshd_conf fail "$why Pominięto – $state."
     return
   fi
   if [ -f "$SSHD_DROPIN" ] && cmp -s "$want" "$SSHD_DROPIN"; then
