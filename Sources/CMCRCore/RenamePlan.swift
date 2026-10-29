@@ -57,6 +57,28 @@ public enum RenamePlan {
         return held
     }
 
+    /// How the Macs `namesStillHeld` reported can be renamed after all: one Mac per run, with the list updated after
+    /// each, since every run checks the new names against the list (AUDIT REV-54).
+    public enum Order: Equatable, Sendable {
+        /// A renumbering: the Mac whose new name is free first, the Mac asked about last (imac05 → imac06 → imac07 →
+        /// imac08: imac08, imac07, imac06).
+        case steps([Machine])
+        /// The names go round – a swap or a rotation (imac01 → imac02 → imac03 → imac01): none of these Macs can be
+        /// renamed first, one of them needs a temporary name. Starts at the Mac asked about when it is one of them.
+        case loop([Machine])
+    }
+
+    /// The order for `machine`: along the Macs that still have the name the previous one gets (`stillHeld`, from
+    /// `namesStillHeld`) to a Mac whose new name is free, or back to a Mac met before.
+    public static func order(of machine: Machine, stillHeld: [UUID: Machine]) -> Order {
+        var chain = [machine]
+        while let holder = stillHeld[chain[chain.count - 1].id] {
+            if let start = chain.firstIndex(where: { $0.id == holder.id }) { return .loop(Array(chain[start...])) }
+            chain.append(holder)
+        }
+        return .steps(chain.reversed())
+    }
+
     /// The `.local` names (lowercased) a Mac has now: from its `.local` address and the LocalHostName read from it.
     static func current(_ machine: Machine, read: String?) -> Set<String> {
         var names: Set<String> = []

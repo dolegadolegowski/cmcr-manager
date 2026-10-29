@@ -90,3 +90,52 @@ r4_renamed "$B" imac01
 out="$(r4 rename @1 --name imac02 --dry-run)"; code=$?
 expect_code "rename, zamiana, krok 3 (docelowa nazwa przez --name): kod 0" "$code" 0 "$out"
 expect "rename, zamiana, krok 3: nowa nazwa" "$out" "tymczasowa: „imac02” → imac02.local"
+
+section "REV R4 cmcrctl – rename: nazwy przesuwane w kółko między trzema komputerami (AUDIT REV-54)"
+r4_hosts "$A imac02 imac01.local" "$B imac03 imac02.local" "$C imac01 imac03.local"
+out="$(r4 rename @1,@2,@3 --dry-run)"; code=$?
+expect_code "rename, nazwy w kółko: kod 2" "$code" 2 "$out"
+expect "rename, nazwy w kółko: każdy komputer wskazany" "$out" \
+  "imac02: „imac02” → imac02.local – ten adres ma teraz imac03 (imac02.local)" \
+  "imac03: „imac03” → imac03.local – ten adres ma teraz imac01 (imac03.local)" \
+  "imac01: „imac01” → imac01.local – ten adres ma teraz imac02 (imac01.local)" "nic nie zostało zmienione"
+expect "rename, nazwy w kółko: rada z nazwą tymczasową" "$out" \
+  "Komputery imac02, imac03 i imac01 zamieniają się nazwami w kółko: nadaj najpierw jednemu z nich nazwę tymczasową (--name)" \
+  "Komputery imac03, imac01 i imac02 zamieniają się nazwami w kółko" \
+  "Komputery imac01, imac02 i imac03 zamieniają się nazwami w kółko" \
+  "potem zmień nazwy pozostałych po kolei, a na końcu nadaj mu docelową nazwę (--name), za każdym razem z --update-list."
+expect_not "rename, nazwy w kółko: bez rady „w dwóch krokach”, której nie da się wykonać" "$out" "w dwóch krokach"
+# The advice works: a temporary name first, then the others in the order cmcrctl gives, the target name last.
+out="$(r4 rename @1 --name tymczasowa --dry-run)"; code=$?
+expect_code "rename, w kółko, krok 1 (nazwa tymczasowa): kod 0" "$code" 0 "$out"
+r4_renamed "$A" tymczasowa
+out="$(r4 rename @2,@3 --dry-run)"; code=$?
+expect_code "rename, w kółko, pozostałe razem: kod 2" "$code" 2 "$out"
+expect "rename, w kółko, pozostałe: kolejność" "$out" "najpierw imac01, potem imac03."
+out="$(r4 rename @3 --dry-run)"; code=$?
+expect_code "rename, w kółko, krok 2: kod 0" "$code" 0 "$out"
+r4_renamed "$C" imac01
+out="$(r4 rename @2 --dry-run)"; code=$?
+expect_code "rename, w kółko, krok 3: kod 0" "$code" 0 "$out"
+r4_renamed "$B" imac03
+out="$(r4 rename @1 --name imac02 --dry-run)"; code=$?
+expect_code "rename, w kółko, krok 4 (docelowa nazwa przez --name): kod 0" "$code" 0 "$out"
+
+section "REV R4 cmcrctl – rename: przenumerowanie trzech komputerów – cała kolejność (AUDIT REV-54)"
+r4_hosts "$A imac06 imac05.local" "$B imac07 imac06.local" "$C imac08 imac07.local"
+out="$(r4 rename imac06,imac07,imac08 --dry-run)"; code=$?
+expect_code "rename, przenumerowanie trzech: kod 2" "$code" 2 "$out"
+expect "rename, przenumerowanie trzech: kolejność od wolnej nazwy" "$out" \
+  "imac06: „imac06” → imac06.local – ten adres ma teraz imac07 (imac06.local)" \
+  "Zmień nazwy po kolei, za każdym razem z --update-list: najpierw imac08, potem imac07, potem imac06." \
+  "imac07: „imac07” → imac07.local – ten adres ma teraz imac08 (imac07.local)" \
+  "Zmień nazwy w dwóch krokach, za każdym razem z --update-list: najpierw imac08, potem imac07." \
+  "imac08: „imac08” → imac08.local"
+out="$(r4 rename imac08 --dry-run)"; code=$?
+expect_code "rename, przenumerowanie trzech, krok 1: kod 0" "$code" 0 "$out"
+r4_renamed "$C" imac08
+out="$(r4 rename imac07 --dry-run)"; code=$?
+expect_code "rename, przenumerowanie trzech, krok 2: kod 0" "$code" 0 "$out"
+r4_renamed "$B" imac07
+out="$(r4 rename imac06 --dry-run)"; code=$?
+expect_code "rename, przenumerowanie trzech, krok 3: kod 0" "$code" 0 "$out"
