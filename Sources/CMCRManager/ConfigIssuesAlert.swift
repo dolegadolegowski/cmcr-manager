@@ -61,9 +61,10 @@ extension View {
 /// main window, the Screen Wall, the screen windows and Ustawienia. Only one of them shows a notice, the one the
 /// user works in (`NoticeWindows`): with the main window closed and the Screen Wall left on a projector, a failed
 /// screenshot save or Screen Sharing tunnel is not lost, and does not pop up later in the main window
-/// (AUDIT REV-13, REV-22).
+/// (AUDIT REV-13, REV-22). Every window looks again when a message gets another window (AUDIT REV-72).
 struct NoticeAlert: ViewModifier {
     @EnvironmentObject var model: AppModel
+    @ObservedObject private var noticeWindows = NoticeWindows.shared
     /// Short messages without a batch („Łączenie z … przez szyfrowany tunel SSH…”) also appear here while this is
     /// the key window – for the screen windows; the main window has its own (ActionToastOverlay in DetailView).
     var showsToasts = false
@@ -73,7 +74,7 @@ struct NoticeAlert: ViewModifier {
 
     private var isPresenter: Bool {
         guard let notice = model.notice, let mine = window.window else { return false }
-        return NoticeWindows.shared.presenter(for: notice) === mine
+        return noticeWindows.presenter(for: notice) === mine
     }
 
     func body(content: Content) -> some View {
@@ -83,9 +84,12 @@ struct NoticeAlert: ViewModifier {
         content
             .background(WindowReader { w, shown in
                 guard let w else { return }
-                NoticeWindows.shared.register(w)
+                noticeWindows.register(w)
                 if window.window !== w { window = WeakWindow(w) }
-                if onScreen != shown { onScreen = shown }
+                if onScreen != shown {
+                    onScreen = shown
+                    noticeWindows.windowChanged(w, onScreen: shown)
+                }
             })
             .overlay(alignment: .top) {
                 if visible, showsToasts, let toast = model.toast, toast.batchID == nil, mine?.isKeyWindow == true {
@@ -118,18 +122,20 @@ struct ConfigIssuesNotice: ViewModifier {
     let window: WeakWindow
     /// Whether that window is on screen: a change shows a warning that waited for an open window.
     let visible: Bool
+    /// A warning that gets another window is shown there at once (AUDIT REV-72).
+    @ObservedObject private var noticeWindows = NoticeWindows.shared
 
     private func isPresenter(_ batch: ConfigIssuesBatch) -> Bool {
         guard let mine = window.window else { return false }
-        return NoticeWindows.shared.presenter(for: batch) === mine
+        return noticeWindows.presenter(for: batch) === mine
     }
 
     private func dismiss(_ batch: ConfigIssuesBatch) {
-        if let rest = NoticeWindows.shared.dismiss(batch, from: model.configIssues) { model.configIssues = rest }
+        if let rest = noticeWindows.dismiss(batch, from: model.configIssues) { model.configIssues = rest }
     }
 
     func body(content: Content) -> some View {
-        let batch = window.window == nil ? nil : NoticeWindows.shared.configIssues(for: model.configIssues)
+        let batch = window.window == nil ? nil : noticeWindows.configIssues(for: model.configIssues)
         content.alert("Nie udało się wczytać części konfiguracji", isPresented: Binding(
             get: { batch.map { isPresenter($0) } ?? false },
             // Only the window that shows the warning dismisses it, as with a notice.
@@ -160,9 +166,11 @@ struct WeakWindow {
 }
 
 /// The windows that can show a notice (`NoticeAlert`) and the one chosen for the current notice and for the current
-/// configuration problems.
+/// configuration problems. Only a window that updates asks for the choice; when a message gets another window – the
+/// one that showed it was minimized or closed – every window looks again (`placements`), so the window chosen now
+/// shows it at once, not after some unrelated change of the model (AUDIT REV-72).
 @MainActor
-final class NoticeWindows {
+final class NoticeWindows: ObservableObject {
     static let shared = NoticeWindows()
     /// What a window shows for the model: `model.notice` or `model.configIssues`, each chosen on its own.
     enum Kind { case notice, configIssues }
@@ -170,6 +178,35 @@ final class NoticeWindows {
     private var chosen: [Kind: (id: AnyHashable, window: WeakWindow)] = [:]
     /// The configuration problems the alert shows now, until it is dismissed.
     private var shownIssues: ConfigIssuesBatch?
+    /// Changes – a moment later, never during a view update – whenever a message got another window.
+    @Published private(set) var placements = 0
+    private var announcing = false
+
+    /// Makes every window look again at the choices (after the view update that made them).
+    private func announcePlacement() {
+        guard !announcing else { return }
+        announcing = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.announcing = false
+            self.placements &+= 1
+        }
+    }
+
+    /// `window` came on screen or left it (WindowReader in `NoticeAlert`). A window with a message that leaves –
+    /// closed by code, without updating itself – makes the others look again. When a window comes back (restored from
+    /// the Dock), a message the window chosen for it does not show – nothing is attached to that window – is placed
+    /// anew, by the window the user works in now. A message that a window shows stays where it is.
+    func windowChanged(_ window: NSWindow, onScreen: Bool) {
+        if onScreen {
+            for (kind, c) in chosen where c.window.window?.attachedSheet == nil {
+                chosen[kind] = nil
+                announcePlacement()
+            }
+        } else if chosen.values.contains(where: { $0.window.window === window }) {
+            announcePlacement()
+        }
+    }
 
     func register(_ window: NSWindow) {
         windows.removeAll { $0.window == nil }
@@ -215,9 +252,12 @@ final class NoticeWindows {
         if let c = chosen[kind], c.id == id, let w = c.window.window, open.contains(where: { $0 === w }) {
             return w
         }
+        let before = chosen[kind]
         let w = Self.pick(open, key: NSApp.keyWindow.map(Self.owner), main: NSApp.mainWindow.map(Self.owner),
                           frontToBack: NSApp.orderedWindows)
         chosen[kind] = w.map { (id, WeakWindow($0)) }
+        // Only the window that updates asked: the one chosen now must look too (AUDIT REV-72).
+        if let w, before?.id != id || before?.window.window !== w { announcePlacement() }
         return w
     }
 

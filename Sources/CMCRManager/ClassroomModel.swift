@@ -183,9 +183,16 @@ final class ClassroomModel: ObservableObject {
     private func scheduleSave() {
         saveWork?.cancel()
         let snapshot = config
-        let work = DispatchWorkItem { ClassroomStore.saveConfig(snapshot) }
+        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.save(snapshot) } }
         saveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    /// Writes classroom.json. A save that failed (read-only configuration folder, full disk) is shown like one of
+    /// hosts.json or settings.json: the lesson scenarios, the power schedule and the attention mode would otherwise
+    /// look saved and be gone after the next start (AUDIT REV-75).
+    func save(_ c: ClassroomConfig) {
+        (model ?? AppModel.shared)?.reportSaveProblem(ClassroomStore.saveConfig(c), in: "classroom.json")
     }
 
     // MARK: - Last-known state

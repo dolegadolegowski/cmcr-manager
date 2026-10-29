@@ -486,10 +486,13 @@ public enum ClassroomStore {
                      protect: backup == nil)
     }
 
-    /// Does nothing while the file is protected (see `loadConfig`).
-    public static func saveConfig(_ c: ClassroomConfig) { saveConfig(c, to: configURL) }
+    /// Does nothing while the file is protected (see `loadConfig`). Returns why the file could not be written
+    /// (read-only folder, full disk) – the app shows it (AUDIT REV-75).
+    @discardableResult
+    public static func saveConfig(_ c: ClassroomConfig) -> String? { saveConfig(c, to: configURL) }
 
-    static func saveConfig(_ c: ClassroomConfig, to url: URL) { ConfigStore.save(c, to: url) }
+    @discardableResult
+    static func saveConfig(_ c: ClassroomConfig, to url: URL) -> String? { ConfigStore.save(c, to: url) }
 
     public static func loadSnapshots() -> [UUID: HostSnapshot] {
         let dec = JSONDecoder()

@@ -302,7 +302,7 @@ final class AppModel: ObservableObject {
             if !applyingSavedHosts {
                 // cmcrctl may have changed hosts.json meanwhile: its changes are merged in, not overwritten.
                 let saved = ConfigStore.syncHosts(machines)
-                reportSaveProblem(saved.problem)
+                reportSaveProblem(saved.problem, in: "hosts.json")
                 if let issue = saved.issue, !configIssues.contains(issue) { configIssues.append(issue) }
                 if saved.hosts != machines { applySavedHosts(saved.hosts) }
             }
@@ -314,7 +314,7 @@ final class AppModel: ObservableObject {
     @Published var settings: AppSettings {
         didSet {
             if settings != oldValue {
-                reportSaveProblem(ConfigStore.saveSettings(settings))
+                reportSaveProblem(ConfigStore.saveSettings(settings), in: "settings.json")
                 closeStaleConnections(oldSettings: oldValue)
             }
         }
@@ -477,14 +477,16 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// The save error last shown, so a folder that stays read-only does not raise an alert on every keystroke.
-    private var shownSaveProblem: String?
+    /// The save error last shown for each file, so a folder that stays read-only does not raise an alert on every
+    /// keystroke – nor again for one file whenever another one was saved or failed in between.
+    private var shownSaveProblems: [String: String] = [:]
 
-    /// Tells the user once that hosts.json or settings.json could not be saved (AUDIT KON-03): the table and the
-    /// settings would otherwise look saved, and the changes would be gone after the next start.
-    func reportSaveProblem(_ problem: String?) {
-        defer { shownSaveProblem = problem }
-        guard let problem, problem != shownSaveProblem else { return }
+    /// Tells the user once that `file` – hosts.json, settings.json or classroom.json – could not be saved (AUDIT
+    /// KON-03, REV-75): the table, the settings, the lesson scenarios and the power schedule would otherwise look
+    /// saved, and the changes would be gone after the next start.
+    func reportSaveProblem(_ problem: String?, in file: String) {
+        defer { shownSaveProblems[file] = problem }
+        guard let problem, problem != shownSaveProblems[file] else { return }
         notice = AppNotice(
             title: "Nie udało się zapisać konfiguracji",
             message: problem + "\n\nZmiany obowiązują do zamknięcia aplikacji, ale nie zostaną zachowane. "
@@ -648,9 +650,20 @@ final class AppModel: ObservableObject {
                 var st = statuses[job.machine.id] ?? HostStatus()
                 st.reachability = reach
                 st.message = message
+                if reach == .offline { Self.forgetStudents(in: &st) }
                 statuses[job.machine.id] = st
             }
         }
+    }
+
+    /// A Mac that is off has nobody at it: the list, the details, searches and confirmations do not show the student
+    /// from before (KOM-04) – after a status check as after an action that found it off (AUDIT REV-74). After any
+    /// other failure (the status script ran too long on a busy Mac, sshd refused a session for a moment, a login
+    /// failed until the password is fixed) the Mac may still take the next action, so the last known users stay:
+    /// „Pomiń komputery z zalogowanym uczniem” must still leave it out of a restart or logout (AUDIT REV-11).
+    private static func forgetStudents(in st: inout HostStatus) {
+        st.info["console"] = nil
+        st.info["sessions"] = nil
     }
 
     /// Output kept per job result; the job log itself is capped separately (Job.maxOutput).
@@ -787,13 +800,7 @@ final class AppModel: ObservableObject {
             st.message = message
             st.info = statuses[m.id]?.info ?? [:]
             if reach == .offline {
-                // A Mac that is off has nobody at it: the list, the details, searches and confirmations do not show
-                // the student from before (KOM-04). After any other failure (the status script ran too long on
-                // a busy Mac, sshd refused a session for a moment, a login failed until the password is fixed) the
-                // Mac may still take the next action, so the last known users stay: „Pomiń komputery z zalogowanym
-                // uczniem” must still leave it out of a restart or logout (AUDIT REV-11).
-                st.info["console"] = nil
-                st.info["sessions"] = nil
+                Self.forgetStudents(in: &st)
                 // Full background checks after 2, 4, 8 and then every 10 min (minus slack for the 2 min timer).
                 let n = (offlineStreak[m.id] ?? 0) + 1
                 offlineStreak[m.id] = n
