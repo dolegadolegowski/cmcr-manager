@@ -33,6 +33,39 @@ expect_code "status przez ProxyCommand: kod 0" "$code" 0 "$out"
 expect "status przez ProxyCommand: komputer online" "$out" "● imac03"
 cp "$G6/hosts.json" "$WORK/rev-g6-hosts.orig"
 
+section "REV cmcrctl – rename-computer: nazwa innego komputera z listy (AUDIT REV-33)"
+clear_fakelog
+for name in imac04 IMAC04 cmcr-e2e-g6-04 "cmcr e2e g6 04"; do
+  out="$(g6 rename-computer 3 --name "$name" --update-list --yes </dev/null)"; code=$?
+  expect_code "rename-computer --name „$name”: kod 2" "$code" 2 "$out"
+  expect "rename-computer --name „$name”: wskazany komputer z listy" "$out" "ma już imac04" "nic nie zostało zmienione"
+done
+out="$(g6 rename-computer 3 --name imac04 --dry-run </dev/null)"; code=$?
+expect_code "rename-computer --name imac04 --dry-run: kod 2" "$code" 2 "$out"
+expect_not "rename-computer: nazwa innego komputera – scutil nie uruchomiony" "$(fakelog)" "scutil"
+cmp -s "$G6/hosts.json" "$WORK/rev-g6-hosts.orig" && pass "rename-computer: nazwa innego komputera – lista bez zmian" \
+  || fail "rename-computer: zmieniono listę mimo konfliktu" "$(cat "$G6/hosts.json")"
+# Each Mac keeps its own name: not a conflict.
+out="$(g6 rename-computer all --dry-run </dev/null)"; code=$?
+expect_code "rename-computer all --dry-run (nazwy z listy): kod 0" "$code" 0 "$out"
+expect "rename-computer all --dry-run: podgląd" "$out" "imac03: „imac03” → imac03.local" "imac04: „imac04” → imac04.local"
+out="$(g6 rename-computer 3 --name imac05 --dry-run </dev/null)"; code=$?
+expect_code "rename-computer --name wolna nazwa --dry-run: kod 0" "$code" 0 "$out"
+# Two Macs renamed to the same .local name (the list names differ only in punctuation).
+G6D="$WORK/cfg-rev-g6-dup"
+mkdir -p "$G6D"
+cp "$G6/settings.json" "$G6D/"
+cat > "$G6D/hosts.json" <<EOF
+[
+ {"id":"64111111-1111-1111-1111-111111111111","name":"imac-05","address":"cmcr-e2e-g6-05.local","user":"$ME","port":$PORT},
+ {"id":"64222222-2222-2222-2222-222222222222","name":"imac 05","address":"cmcr-e2e-g6-06.local","user":"$ME","port":$PORT}
+]
+EOF
+out="$(CMCR_CONFIG_DIR="$G6D" "$CTL" rename-computer all --update-list --yes </dev/null 2>&1)"; code=$?
+expect_code "rename-computer: ten sam adres dla dwóch komputerów – kod 2" "$code" 2 "$out"
+expect "rename-computer: ten sam adres dla dwóch komputerów – komunikat" "$out" "imac-05.local – ten adres powtarza się"
+expect_not "rename-computer: ten sam adres dla dwóch komputerów – scutil nie uruchomiony" "$(fakelog)" "scutil"
+
 section "REV cmcrctl – rename-computer --update-list zachowuje zaufany klucz (AUDIT REV-01)"
 cp "$WORK/rev-g6-hosts.orig" "$G6/hosts.json"
 printf '[cmcr-e2e-g6-03.local]:%s %s\n[cmcr-e2e-g6-04.local]:%s %s\n' "$PORT" "$G6_KEY" "$PORT" "$G6_KEY" > "$G6_KNOWN"
