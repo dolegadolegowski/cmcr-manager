@@ -261,7 +261,8 @@ struct CLI: Sendable {
     func header(_ host: Machine) -> String { "== \(host.name) (\(host.destination)) ==" }
 
     /// Streams one remote script per host under a header; the common shape of most commands. `note` may add a
-    /// hint for the terminal after a host's output (e.g. the cmcrctl option for what the script skipped).
+    /// hint for the terminal under a host's result – below the reason of a failure (AUDIT REV-38) – e.g. the
+    /// cmcrctl option for what the script skipped.
     func runScript(on list: [Machine], jobs: Int? = nil, passThrough: Bool = false,
                    header makeHeader: (@Sendable (Machine) -> String)? = nil,
                    note: (@Sendable (Machine, CommandResult) -> String?)? = nil,
@@ -273,8 +274,9 @@ struct CLI: Sendable {
             // A registered job: Ctrl-C stops it on the iMac too (Interruption).
             let r = await Interruption.shared.run(script(io.host), on: io.host, password: Keychain.password(for: io.host),
                                                   settings: ssh, onOutput: io.stream)
+            let code = io.report(r, passThrough: passThrough)
             if let text = note?(io.host, r) { io.err(text) }
-            return io.report(r, passThrough: passThrough)
+            return code
         }
         return combine(codes, passThrough: passThrough)
     }
@@ -673,9 +675,15 @@ struct CLI: Sendable {
             confirm("Poprosić o wylogowanie użytkowników na: \(names(list))? Aplikacje mogą zapytać o zapisanie zmian "
                     + "(albo wstrzymać wylogowanie).")
         }
-        // The script points to the app's „Wyloguj natychmiast”; at the terminal that is --force.
+        // When the request was refused or did not end every session, the script itself points to the app's „Wyloguj
+        // natychmiast”; at the terminal that is --force. Not for a Mac that was not reached (off, asleep, unknown key,
+        // wrong password, timeout): --force would fail the same way (AUDIT REV-38). The name is quoted for the shell.
         let hint: @Sendable (Machine, CommandResult) -> String? = { h, r in
-            r.succeeded ? nil : "  (cmcrctl logout \(h.name) --force – wylogowanie natychmiastowe, niezapisane dane przepadną)"
+            guard r.started, !r.cancelled, !r.timedOut, r.exitCode == 1, r.stderrText.contains("Wyloguj natychmiast") else {
+                return nil
+            }
+            return "  (cmcrctl \(CommandLineLog.describe(["logout", h.name, "--force"])) – wylogowanie natychmiastowe, "
+                + "niezapisane dane przepadną)"
         }
         logAction(list)
         return await runScript(on: list, note: now ? nil : hint) { _ in Scripts.logoutUser(force: now) }
