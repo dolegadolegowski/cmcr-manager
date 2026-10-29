@@ -55,3 +55,38 @@ expect_code "rename, adres .local innego komputera (wielkość liter): kod 2" "$
 expect "rename, adres .local innego komputera: komunikat" "$out" "ten adres ma już imac06 z listy komputerów"
 out="$(r4 rename imac05 --name imac04 --dry-run)"; code=$?
 expect_code "rename, wolna nazwa: kod 0" "$code" 0 "$out"
+
+section "REV R4 cmcrctl – rename: rada „w dwóch krokach” i przy zamianie nazw wymienia --update-list (AUDIT REV-55)"
+r4_hosts "$A imac06 imac05.local" "$B imac07 imac06.local"
+out="$(r4 rename imac06,imac07 --dry-run)"; code=$?
+expect_code "rename, przenumerowanie: kod 2" "$code" 2 "$out"
+expect "rename, przenumerowanie: dwa kroki z --update-list" "$out" \
+  "imac06: „imac06” → imac06.local – ten adres ma teraz imac07 (imac06.local)" \
+  "Zmień nazwy w dwóch krokach, za każdym razem z --update-list: najpierw imac07, potem imac06."
+out="$(r4 rename imac07 --dry-run)"; code=$?
+expect_code "rename, przenumerowanie, krok 1: kod 0" "$code" 0 "$out"
+# Without --update-list the list still says imac07 is at imac06.local: the second step is refused (that is why the
+# advice names the option).
+out="$(r4 rename imac06 --dry-run)"; code=$?
+expect_code "rename, przenumerowanie, krok 2 bez aktualizacji listy: kod 2" "$code" 2 "$out"
+expect "rename, przenumerowanie, krok 2 bez aktualizacji listy: komunikat" "$out" "ten adres ma już imac07 z listy komputerów"
+r4_renamed "$B" imac07
+out="$(r4 rename imac06 --dry-run)"; code=$?
+expect_code "rename, przenumerowanie, krok 2 po --update-list: kod 0" "$code" 0 "$out"
+
+r4_hosts "$A imac02 imac01.local" "$B imac01 imac02.local"
+out="$(r4 rename @1,@2 --dry-run)"; code=$?
+expect_code "rename, zamiana nazw: kod 2" "$code" 2 "$out"
+expect "rename, zamiana nazw: nazwa tymczasowa, docelowa na końcu, z --update-list" "$out" \
+  "Przy zamianie nazw nadaj najpierw jednemu z nich nazwę tymczasową (--name), potem zmień nazwę drugiego, a na końcu nadaj pierwszemu docelową nazwę (--name), za każdym razem z --update-list."
+r4_lines "rename, zamiana nazw: rada przy obu komputerach" "$out" "nazwę tymczasową (--name)" 2
+# The advice, followed step by step.
+out="$(r4 rename @1 --name tymczasowa --dry-run)"; code=$?
+expect_code "rename, zamiana, krok 1 (nazwa tymczasowa): kod 0" "$code" 0 "$out"
+r4_renamed "$A" tymczasowa
+out="$(r4 rename @2 --dry-run)"; code=$?
+expect_code "rename, zamiana, krok 2 (drugi komputer): kod 0" "$code" 0 "$out"
+r4_renamed "$B" imac01
+out="$(r4 rename @1 --name imac02 --dry-run)"; code=$?
+expect_code "rename, zamiana, krok 3 (docelowa nazwa przez --name): kod 0" "$code" 0 "$out"
+expect "rename, zamiana, krok 3: nowa nazwa" "$out" "tymczasowa: „imac02” → imac02.local"

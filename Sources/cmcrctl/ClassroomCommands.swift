@@ -337,14 +337,18 @@ enum ClassroomCLI {
                 continue
             }
             // The address of another Mac renamed here, which gives it up only with its own rename – a renumbering or a
-            // swap: the same Bonjour conflict (AUDIT REV-52).
+            // swap: the same Bonjour conflict (AUDIT REV-52). Every step needs --update-list: otherwise the list
+            // keeps the old address of the Mac renamed first, and the next step is refused as taken (AUDIT REV-55).
+            // With it the temporary name goes to the list too, so the target name is given with --name at the end.
             if let other = stillHeld[h.id] {
                 let swap = stillHeld[other.id]?.id == h.id
                 Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma teraz \(other.name) (\(other.address)), którego "
                             + "nazwa też jest zmieniana (macOS nadałby wtedy jednemu z nich inny adres). "
                             + (swap ? "Przy zamianie nazw nadaj najpierw jednemu z nich nazwę tymczasową (--name), potem zmień "
-                               + "nazwy po kolei."
-                               : "Zmień nazwy w dwóch krokach: najpierw \(other.name), potem \(h.name)."))
+                               + "nazwę drugiego, a na końcu nadaj pierwszemu docelową nazwę (--name), za każdym razem z "
+                               + "--update-list."
+                               : "Zmień nazwy w dwóch krokach, za każdym razem z --update-list: najpierw \(other.name), "
+                               + "potem \(h.name)."))
                 invalid = true
                 continue
             }
