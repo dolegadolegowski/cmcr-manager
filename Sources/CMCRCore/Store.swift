@@ -34,15 +34,22 @@ public enum ConfigStore {
     }
 
     public static func loadHosts() -> [Machine] {
-        let loaded = loadHosts(from: hostsURL)
-        let hosts = record(loaded, for: hostsURL)
+        loadHosts(at: hostsURL)
+    }
+
+    static func loadHosts(at url: URL) -> [Machine] {
+        let loaded = loadHosts(from: url)
+        let hosts = record(loaded, for: url)
         // Repeated ids were replaced: keep the original next to the list and save the repaired one, so that the new
         // ids (selection, own passwords) stay the same on the next start.
-        if loaded.renumbered, !loaded.protect, let data = try? Data(contentsOf: hostsURL),
-           backupCopy(of: hostsURL, data: data) != nil {
-            saveHosts(hosts)
-        } else if loaded.issue == nil, let data = try? Data(contentsOf: hostsURL) {
-            remember(hosts, data: data, at: hostsURL)
+        if loaded.renumbered, !loaded.protect, let data = try? Data(contentsOf: url),
+           backupCopy(of: url, data: data) != nil {
+            _ = syncHosts(hosts, at: url)
+        } else if !loaded.protect {
+            // What the list was based on, so that what cmcrctl writes before this program's first save is merged in
+            // (AUDIT KON-04, REV-04): the file's bytes – a damaged file's too, its original is kept as .bak – or none
+            // when there is no file yet (a file created later counts as a change).
+            remember(hosts, data: (try? Data(contentsOf: url)) ?? Data(), at: url)
         }
         return hosts
     }
@@ -54,13 +61,15 @@ public enum ConfigStore {
     }
 
     /// Saves the host list without undoing what another program (cmcrctl) wrote since this one last read or saved
-    /// it (AUDIT KON-04): such changes are merged in (`Machine.merge`). Returns the list as saved.
-    public static func syncHosts(_ hosts: [Machine]) -> (hosts: [Machine], problem: String?) {
+    /// it (AUDIT KON-04): such changes are merged in (`Machine.merge`). Returns the list as saved, why it could not be
+    /// saved (`problem`) and what the user must be told although it was saved (`issue`, see `syncHosts(_:at:)`).
+    public static func syncHosts(_ hosts: [Machine]) -> (hosts: [Machine], problem: String?, issue: String?) {
         syncHosts(hosts, at: hostsURL)
     }
 
     /// The list as written by another program since it was last read or saved here, merged with `current`;
-    /// nil when the file did not change (or cannot be read – a damaged file is never taken over).
+    /// nil when the file did not change (or cannot be read – a damaged file is dealt with by the next save, which keeps
+    /// it as .bak and reports it, see `syncHosts(_:at:)`).
     public static func hostsChangedOutside(keeping current: [Machine]) -> [Machine]? {
         hostsChangedOutside(keeping: current, at: hostsURL)
     }
@@ -81,8 +90,8 @@ public enum ConfigStore {
 
     private enum OutsideChange {
         case none
-        /// Changed, but not readable as a host list.
-        case unreadable(Data)
+        /// Changed, but not readable as a host list: the list it was based on and the file's bytes.
+        case unreadable(base: [Machine], data: Data)
         /// The other program's list, the list it was based on and the file's bytes.
         case changed(base: [Machine], theirs: [Machine], data: Data)
     }
@@ -90,28 +99,48 @@ public enum ConfigStore {
     private static func outsideChange(at url: URL) -> OutsideChange {
         guard let last = syncedHosts.withValue({ $0[url.path] }),
               let disk = try? Data(contentsOf: url), disk != last.data else { return .none }
-        guard let theirs = try? JSONDecoder().decode([Machine].self, from: disk) else { return .unreadable(disk) }
+        guard let theirs = try? JSONDecoder().decode([Machine].self, from: disk) else {
+            return .unreadable(base: last.hosts, data: disk)
+        }
         return .changed(base: last.hosts, theirs: Machine.withUniqueIDs(theirs).hosts, data: disk)
     }
 
-    static func syncHosts(_ mine: [Machine], at url: URL) -> (hosts: [Machine], problem: String?) {
-        if loadState.withValue({ $0.protected.contains(url.path) }) { return (mine, nil) }
+    static func syncHosts(_ mine: [Machine], at url: URL) -> (hosts: [Machine], problem: String?, issue: String?) {
+        if loadState.withValue({ $0.protected.contains(url.path) }) { return (mine, nil, nil) }
+        var issue: String?
         var hosts = mine
         switch outsideChange(at: url) {
         case .changed(let base, let theirs, _):
             hosts = Machine.merge(base: base, mine: mine, theirs: theirs)
-        case .unreadable(let disk):
-            // Changed outside and not readable as a list: keep that version next to the list before replacing it.
-            _ = backupCopy(of: url, data: disk)
+        case .unreadable(let base, let disk):
+            // Changed outside and not readable as a list (a hand edit with a mistake): it is replaced only once its
+            // original is kept next to it, and the user is told where (AUDIT REV-05). Its valid entries are taken over;
+            // a damaged entry looks the same as a removed one, so nothing missing from it is removed.
+            let name = url.lastPathComponent
+            guard let backup = backupCopy(of: url, data: disk) else {
+                return (mine, "Lista komputerów (\(name)) została zmieniona poza aplikacją i jest uszkodzona, a nie udało się "
+                        + "zachować jej kopii, więc nie została zastąpiona. Popraw plik \(url.path).", nil)
+            }
+            let readable = Machine.withUniqueIDs(
+                (try? JSONDecoder().decode([Lossy<Machine>].self, from: disk))?.compactMap(\.value) ?? []).hosts
+            if readable.isEmpty {
+                issue = "Lista komputerów (\(name)) zmieniona poza aplikacją była uszkodzona i nie dało się jej wczytać – "
+                    + "zastąpiono ją listą z aplikacji. \(backupNote(backup))"
+            } else {
+                let ids = Set(readable.map(\.id))
+                hosts = Machine.merge(base: base, mine: mine, theirs: readable + base.filter { !ids.contains($0.id) })
+                issue = "Lista komputerów (\(name)) zmieniona poza aplikacją była częściowo uszkodzona – przejęto z niej "
+                    + "poprawne wpisy, a wpisy uszkodzone lub usunięte w pliku zostały na liście bez zmian. \(backupNote(backup))"
+            }
         case .none:
             break
         }
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? enc.encode(hosts) else { return (hosts, "Nie można zapisać \(url.path)") }
-        if let problem = write(data, to: url) { return (hosts, problem) }
+        guard let data = try? enc.encode(hosts) else { return (hosts, "Nie można zapisać \(url.path)", nil) }
+        if let problem = write(data, to: url) { return (hosts, problem, nil) }
         remember(hosts, data: data, at: url)
-        return (hosts, nil)
+        return (hosts, nil, issue)
     }
 
     static func hostsChangedOutside(keeping current: [Machine], at url: URL) -> [Machine]? {
@@ -231,22 +260,36 @@ public enum ConfigStore {
                       protect: backup == nil)
     }
 
-    /// Keeps every top-level value of a damaged JSON object that is still valid on its own (the type's decoder
-    /// fills in defaults for the rest); returns the names of the dropped values, sorted. nil when the data is not a
-    /// JSON object at all.
-    static func salvage<T: Decodable>(_ type: T.Type, from data: Data) -> (value: T, dropped: [String])? {
+    /// Keeps every value of a damaged JSON object that is still valid on its own, also inside nested objects – one
+    /// bad field of a lesson routine keeps the routine's other fields (AUDIT REV-03) – and the type's decoder fills in
+    /// defaults for the rest. Returns the dropped values as key paths ("start.wakeWaitMinutes"), sorted; nil when the
+    /// data is not a JSON object at all.
+    static func salvage<T: Decodable>(_ type: T.Type, from data: Data,
+                                      decoder: JSONDecoder = JSONDecoder()) -> (value: T, dropped: [String])? {
         guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
-        let decoder = JSONDecoder()
-        var good: [String: Any] = [:]
-        var bad: [String] = []
-        for (key, value) in object {
-            if let one = try? JSONSerialization.data(withJSONObject: [key: value]),
-               (try? decoder.decode(T.self, from: one)) != nil {
-                good[key] = value
-            } else {
-                bad.append(key)
-            }
+        /// Whether `value` alone, at `path` in an otherwise empty object, decodes.
+        func decodes(_ value: Any, at path: [String]) -> Bool {
+            let wrapped = path.reversed().reduce(value) { inner, key in [key: inner] }
+            guard let one = try? JSONSerialization.data(withJSONObject: wrapped) else { return false }
+            return (try? decoder.decode(T.self, from: one)) != nil
         }
+        var bad: [String] = []
+        /// The valid part of `value` at `path` (nil: none); what is dropped goes to `bad`.
+        func kept(_ value: Any, at path: [String]) -> Any? {
+            if decodes(value, at: path) { return value }
+            guard let nested = value as? [String: Any], !nested.isEmpty else {
+                bad.append(path.joined(separator: "."))
+                return nil
+            }
+            var good: [String: Any] = [:]
+            for (key, inner) in nested { good[key] = kept(inner, at: path + [key]) }
+            if good.isEmpty { return nil }
+            if decodes(good, at: path) { return good }
+            bad.append(path.joined(separator: "."))
+            return nil
+        }
+        var good: [String: Any] = [:]
+        for (key, value) in object { good[key] = kept(value, at: [key]) }
         guard let d = try? JSONSerialization.data(withJSONObject: good), let value = try? decoder.decode(T.self, from: d)
         else { return nil }
         return (value, bad.sorted())

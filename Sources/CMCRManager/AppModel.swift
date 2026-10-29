@@ -266,6 +266,7 @@ final class AppModel: ObservableObject {
                 // cmcrctl may have changed hosts.json meanwhile: its changes are merged in, not overwritten.
                 let saved = ConfigStore.syncHosts(machines)
                 reportSaveProblem(saved.problem)
+                if let issue = saved.issue, !configIssues.contains(issue) { configIssues.append(issue) }
                 if saved.hosts != machines { applySavedHosts(saved.hosts) }
             }
             pruneSelection()

@@ -1,5 +1,22 @@
 import Foundation
 
+// MARK: - Decoding of classroom.json
+
+extension CodingUserInfoKey {
+    /// Set while classroom.json is loaded (`ClassroomStore.loadConfig`): an unknown choice is then an error.
+    fileprivate static let strictChoices = CodingUserInfoKey(rawValue: "pl.cmcr.classroom.strictChoices")!
+}
+
+extension KeyedDecodingContainer {
+    /// A choice (enum) value; an unknown one – another app version, a hand edit – falls back to `fallback`. While
+    /// classroom.json is loaded it fails instead, so the file is kept as .bak and the value is named in the warning
+    /// rather than replaced by the next save without a word (AUDIT REV-03).
+    fileprivate func choice<T: Decodable>(_ type: T.Type, forKey key: Key, fallback: T, decoder: Decoder) throws -> T {
+        if decoder.userInfo[.strictChoices] as? Bool == true { return try decodeIfPresent(type, forKey: key) ?? fallback }
+        return (try? decodeIfPresent(type, forKey: key)) ?? fallback
+    }
+}
+
 // MARK: - Energy schedule (pmset repeat)
 
 /// Days as `pmset repeat` spells them: M T W R F S U (Monday…Sunday).
@@ -117,11 +134,11 @@ public struct EnergySchedule: Codable, Equatable, Sendable {
         let d = EnergySchedule()
         let c = try decoder.container(keyedBy: CodingKeys.self)
         powerOnEnabled = try c.decodeIfPresent(Bool.self, forKey: .powerOnEnabled) ?? d.powerOnEnabled
-        onType = (try? c.decodeIfPresent(OnType.self, forKey: .onType)) ?? d.onType
+        onType = try c.choice(OnType.self, forKey: .onType, fallback: d.onType, decoder: decoder)
         onDays = try c.decodeIfPresent(Set<Weekday>.self, forKey: .onDays) ?? d.onDays
         onTime = try c.decodeIfPresent(ClockTime.self, forKey: .onTime) ?? d.onTime
         powerOffEnabled = try c.decodeIfPresent(Bool.self, forKey: .powerOffEnabled) ?? d.powerOffEnabled
-        offType = (try? c.decodeIfPresent(OffType.self, forKey: .offType)) ?? d.offType
+        offType = try c.choice(OffType.self, forKey: .offType, fallback: d.offType, decoder: decoder)
         offDays = try c.decodeIfPresent(Set<Weekday>.self, forKey: .offDays) ?? d.offDays
         offTime = try c.decodeIfPresent(ClockTime.self, forKey: .offTime) ?? d.offTime
     }
@@ -250,7 +267,7 @@ public struct LessonStartConfig: Codable, Equatable, Sendable {
         wakeWaitMinutes = try c.decodeIfPresent(Int.self, forKey: .wakeWaitMinutes) ?? d.wakeWaitMinutes
         sendMaterials = try c.decodeIfPresent(Bool.self, forKey: .sendMaterials) ?? d.sendMaterials
         materialsFolder = try c.decodeIfPresent(String.self, forKey: .materialsFolder) ?? d.materialsFolder
-        destination = (try? c.decodeIfPresent(Destination.self, forKey: .destination)) ?? d.destination
+        destination = try c.choice(Destination.self, forKey: .destination, fallback: d.destination, decoder: decoder)
         openApps = try c.decodeIfPresent(Bool.self, forKey: .openApps) ?? d.openApps
         apps = try c.decodeIfPresent(String.self, forKey: .apps) ?? d.apps
         greet = try c.decodeIfPresent(Bool.self, forKey: .greet) ?? d.greet
@@ -310,7 +327,7 @@ public struct LessonEndConfig: Codable, Equatable, Sendable {
         cleanShared = try c.decodeIfPresent(Bool.self, forKey: .cleanShared) ?? d.cleanShared
         cleanDownloads = try c.decodeIfPresent(Bool.self, forKey: .cleanDownloads) ?? d.cleanDownloads
         logout = try c.decodeIfPresent(Bool.self, forKey: .logout) ?? d.logout
-        power = (try? c.decodeIfPresent(PowerChoice.self, forKey: .power)) ?? d.power
+        power = try c.choice(PowerChoice.self, forKey: .power, fallback: d.power, decoder: decoder)
     }
 
     public var appList: [String] { LessonStartConfig.splitList(apps) }
@@ -354,12 +371,14 @@ public struct ClassroomConfig: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let d = ClassroomConfig()
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        start = (try? c.decodeIfPresent(LessonStartConfig.self, forKey: .start)) ?? d.start
-        end = (try? c.decodeIfPresent(LessonEndConfig.self, forKey: .end)) ?? d.end
+        // A bad value inside a routine or the schedule fails the whole file (AUDIT REV-03): `loadConfig` then keeps
+        // the original as .bak, the routine's other values and reports it – it no longer resets the whole routine.
+        start = try c.decodeIfPresent(LessonStartConfig.self, forKey: .start) ?? d.start
+        end = try c.decodeIfPresent(LessonEndConfig.self, forKey: .end) ?? d.end
         lockMessage = try c.decodeIfPresent(String.self, forKey: .lockMessage) ?? d.lockMessage
-        lockMode = (try? c.decodeIfPresent(AttentionMode.self, forKey: .lockMode)) ?? d.lockMode
+        lockMode = try c.choice(AttentionMode.self, forKey: .lockMode, fallback: d.lockMode, decoder: decoder)
         autoUnlockMinutes = try c.decodeIfPresent(Int.self, forKey: .autoUnlockMinutes) ?? d.autoUnlockMinutes
-        schedule = (try? c.decodeIfPresent(EnergySchedule.self, forKey: .schedule)) ?? d.schedule
+        schedule = try c.decodeIfPresent(EnergySchedule.self, forKey: .schedule) ?? d.schedule
         autoRestartAfterPowerLoss = try c.decodeIfPresent(Bool.self, forKey: .autoRestartAfterPowerLoss) ?? d.autoRestartAfterPowerLoss
         wakeOnLAN = try c.decodeIfPresent(Bool.self, forKey: .wakeOnLAN) ?? d.wakeOnLAN
         lastQuestion = try c.decodeIfPresent(String.self, forKey: .lastQuestion) ?? d.lastQuestion
@@ -452,10 +471,12 @@ public enum ClassroomStore {
                          issue: "Nie można odczytać ustawień zajęć (\(url.path)): \(error.localizedDescription). Zmiany tych ustawień nie będą zapisywane.",
                          protect: true)
         }
-        if let c = try? JSONDecoder().decode(ClassroomConfig.self, from: data) { return .init(value: c) }
+        let decoder = JSONDecoder()
+        decoder.userInfo[.strictChoices] = true
+        if let c = try? decoder.decode(ClassroomConfig.self, from: data) { return .init(value: c) }
         let backup = ConfigStore.backupCopy(of: url, data: data)
         let note = ConfigStore.backupNote(backup)
-        if let (c, bad) = ConfigStore.salvage(ClassroomConfig.self, from: data) {
+        if let (c, bad) = ConfigStore.salvage(ClassroomConfig.self, from: data, decoder: decoder) {
             return .init(value: c,
                          issue: "Niektóre ustawienia zajęć (\(url.lastPathComponent)) były nieprawidłowe i przywrócono im wartości domyślne (\(bad.joined(separator: ", "))). \(note)",
                          protect: backup == nil)

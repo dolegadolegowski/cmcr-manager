@@ -760,7 +760,16 @@ public enum SSH {
             // problem, and the Mac is not marked as off or skipped because of its command (AUDIT ZAD-07).
             if r.exitCode == 255 {
                 if lower.contains("timeout, server") || lower.contains("not responding") { return (.offline, sessionLost) }
-                if lower.contains("closed by remote host") || lower.contains("broken pipe") { return (.error, sessionClosed) }
+                // A reset or closed connection ("Read from remote host …: Connection reset by peer", "client_loop:
+                // send disconnect: …", "Connection reset by <ip> port 22"). Through a shared connection (the
+                // default) ssh says nothing at all when that connection dies – its messages go to /dev/null – so
+                // 255 with an empty stderr is a broken session too; a command's own 255 (another ssh) says why.
+                if lower.contains("closed by remote host") || lower.contains("broken pipe")
+                    || lower.contains("read from remote host") || lower.contains("send disconnect")
+                    || lower.range(of: #"connection (closed|reset) by \S+ port \d+"#, options: .regularExpression) != nil
+                    || err.allSatisfy(\.isWhitespace) {
+                    return (.error, sessionClosed)
+                }
             }
         } else if r.exitCode == 255 || lower.contains("ssh:") {
             if lower.contains("permission denied") || lower.contains("too many authentication failures") {
