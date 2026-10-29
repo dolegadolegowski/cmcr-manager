@@ -326,7 +326,7 @@ struct BatchDetailView: View {
             } label: {
                 Label("Kopiuj wyniki wszystkich komputerów", systemImage: "doc.on.doc")
             }
-            Button { BatchExport.save(batch) } label: { Label("Zapisz do pliku…", systemImage: "square.and.arrow.down") }
+            Button { BatchExport.save(batch) } label: { Label("Zapisz do pliku…", systemImage: "square.and.arrow.up") }
         } label: {
             Label("Eksportuj", systemImage: "square.and.arrow.up")
         }

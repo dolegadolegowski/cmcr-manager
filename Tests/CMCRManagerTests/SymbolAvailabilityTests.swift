@@ -139,6 +139,27 @@ import Testing
         }
     }
 
+    /// Reading a file into the app and writing one out are opposite actions, so they never share a symbol
+    /// (AUDIT UI-08: „Wczytaj listę z pliku…” and „Zapisz skrypt do pliku…” were both square.and.arrow.down).
+    @Test func importAndSaveHaveDifferentSymbols() throws {
+        var imports: [String: String] = [:], saves: [String: String] = [:]
+        for file in Self.appSources {
+            for use in Self.labels(in: try String(contentsOf: file, encoding: .utf8), file: file.lastPathComponent) {
+                if use.title.contains("z pliku") || use.title.hasPrefix("Wczytaj") || use.title.hasPrefix("Importuj") {
+                    imports[use.symbol] = "„\(use.title)” (\(use.place))"
+                } else if use.title.hasPrefix("Zapisz") || use.title.hasPrefix("Eksportuj") || use.title.contains("do pliku") {
+                    saves[use.symbol] = "„\(use.title)” (\(use.place))"
+                }
+            }
+        }
+        #expect(!imports.isEmpty && saves.count >= 2, "nie znaleziono akcji wczytywania i zapisu")
+        for (symbol, use) in imports {
+            if let save = saves[symbol] {
+                Issue.record("\(use) i \(save) mają ten sam symbol \(symbol)")
+            }
+        }
+    }
+
     @Test func noSymbolReservedByAppleIsUsed() throws {
         let data = try Data(contentsOf: Self.table)
         let plist = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])

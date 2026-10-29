@@ -434,7 +434,7 @@ struct ReadinessView: View {
         Button {
             sheet = .save
         } label: {
-            Label("Zapisz skrypt do pliku…", systemImage: "square.and.arrow.down")
+            Label("Zapisz skrypt do pliku…", systemImage: "square.and.arrow.up")
         }
         .help("Zapisuje skrypt do uruchomienia przy iMacu (np. z pendrive’a) – gdy połączenie zdalne jeszcze nie działa.")
         Menu {

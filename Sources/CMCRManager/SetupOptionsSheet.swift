@@ -119,7 +119,7 @@ struct SetupOptionsSheet: View {
                 if isSave { save() } else { run(.apply) }
             } label: {
                 Label(isSave ? "Zapisz…" : "Skonfiguruj \(Polish.computers(reachable.count))",
-                      systemImage: isSave ? "square.and.arrow.down" : "wrench.and.screwdriver")
+                      systemImage: isSave ? "square.and.arrow.up" : "wrench.and.screwdriver")
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)

@@ -423,7 +423,7 @@ struct ScreenMoreMenuItems: View {
 
     var body: some View {
         Button { actions.refresh([machine]) } label: { Label("Odśwież teraz", systemImage: "arrow.clockwise") }
-        Button { actions.save(feed, of: machine) } label: { Label("Zapisz zrzut ekranu…", systemImage: "square.and.arrow.down") }
+        Button { actions.save(feed, of: machine) } label: { Label("Zapisz zrzut ekranu…", systemImage: "square.and.arrow.up") }
             .disabled(feed.image == nil)
         ScreenDisplayPicker(machine: machine, feed: feed, center: actions.center)
         Divider()
