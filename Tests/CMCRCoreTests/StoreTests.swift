@@ -125,7 +125,8 @@ struct ConfigRecoveryTests {
         chmod(dir.path, 0o500)
         let problem = ConfigStore.save(Machine.generate(), to: url)
         #expect(problem?.contains(url.path) == true)
-        #expect(ConfigStore.lastSaveError == problem)
+        // Not checked: ConfigStore.lastSaveError – it is global, and the successful saves of other suites running at
+        // the same time (RevG1coreTests, the rest of this suite) reset it, so comparing it here was a race.
         #expect(try JSONDecoder().decode([Machine].self, from: Data(contentsOf: url)).isEmpty)
     }
 
