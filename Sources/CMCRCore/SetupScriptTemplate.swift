@@ -545,8 +545,16 @@ EOF
   fi
 }
 
+# Opis „SSH wyłącznie z kluczem” (1/0) do raportu.
+key_only_text() { if [ "$1" = 1 ]; then printf 'SSH wyłącznie z kluczem: włączone'; else printf 'SSH wyłącznie z kluczem: wyłączone'; fi; }
+
 step_sshd_tuning() {
-  [ "$OPT_SSH_TUNING" = 1 ] || [ "$OPT_SSH_KEY_ONLY" = 1 ] || { record sshd_conf skipped "Ustawienia sshd bez zmian."; return; }
+  # Raport mówi wprost, czy logowanie hasłem jest wyłączone i czy to uruchomienie to zmienia (włącza albo wyłącza).
+  local cur_ko=0
+  grep -Eq '^PasswordAuthentication[[:space:]]+no' "$SSHD_DROPIN" 2>/dev/null && cur_ko=1
+  [ "$OPT_SSH_TUNING" = 1 ] || [ "$OPT_SSH_KEY_ONLY" = 1 ] || {
+    record sshd_conf skipped "Ustawienia sshd bez zmian ($(key_only_text $cur_ko))."; return
+  }
   if ! grep -Eq '^Include[[:space:]]+/etc/ssh/sshd_config\.d/\*' "$SSHD_CONFIG" 2>/dev/null; then
     record sshd_conf warn "sshd_config nie wczytuje /etc/ssh/sshd_config.d – pomijam (nie zmieniam głównego pliku)."
     return
@@ -572,10 +580,16 @@ step_sshd_tuning() {
     return
   fi
   if [ -f "$SSHD_DROPIN" ] && cmp -s "$want" "$SSHD_DROPIN"; then
-    record sshd_conf ok "Ustawienia sshd (keepalive$([ "$OPT_SSH_KEY_ONLY" = 1 ] && echo ', tylko klucze')) są aktualne."
+    record sshd_conf ok "Ustawienia sshd są aktualne (keepalive; $(key_only_text "$OPT_SSH_KEY_ONLY"))."
     return
   fi
-  if [ $CHANGE -eq 0 ]; then run "zapis $SSHD_DROPIN"; changed_or_planned sshd_conf "Ustawienia sshd (keepalive)." "zapisać ustawienia sshd (keepalive)."; return; fi
+  local what now="" plan=""
+  what="keepalive; $(key_only_text "$OPT_SSH_KEY_ONLY")"
+  if [ "$cur_ko" != "$OPT_SSH_KEY_ONLY" ]; then
+    if [ "$OPT_SSH_KEY_ONLY" = 1 ]; then now=" – logowanie hasłem przestaje działać"; plan=" – logowanie hasłem przestanie działać"
+    else now=" – logowanie hasłem znów działa"; plan=" – logowanie hasłem znów zadziała"; fi
+  fi
+  if [ $CHANGE -eq 0 ]; then run "zapis $SSHD_DROPIN"; changed_or_planned sshd_conf "Ustawienia sshd ($what$now)." "zapisać ustawienia sshd ($what$plan)."; return; fi
   # sshd -t wymaga kluczy hosta; przy pierwszym włączeniu SSH mogą jeszcze nie istnieć.
   if ! ls "$R"/etc/ssh/ssh_host_*_key >/dev/null 2>&1; then
     if [ -n "$R" ]; then ssh-keygen -A -f "$R" >/dev/null 2>&1; else ssh-keygen -A >/dev/null 2>&1; fi
@@ -585,7 +599,7 @@ step_sshd_tuning() {
   install -m 0644 "$want" "$SSHD_DROPIN" && chown root:wheel "$SSHD_DROPIN"
   if [ -n "$R" ]; then sshd -t -f "$SSHD_CONFIG" 2>"$WORK/sshd.err"; rc=$?; else sshd -t 2>"$WORK/sshd.err"; rc=$?; fi
   if [ $rc -eq 0 ]; then
-    changed_or_planned sshd_conf "Zapisano $SSHD_DROPIN (nowe połączenia SSH od razu go używają)."
+    changed_or_planned sshd_conf "Zapisano $SSHD_DROPIN ($what$now; nowe połączenia SSH od razu go używają)."
   else
     if [ -n "$backup" ]; then cp -p "$backup" "$SSHD_DROPIN"; else rm -f "$SSHD_DROPIN"; fi
     record sshd_conf fail "sshd -t odrzucił konfigurację – przywrócono poprzednią: $(head -n 1 "$WORK/sshd.err")"

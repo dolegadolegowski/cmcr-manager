@@ -314,6 +314,22 @@ if p2_setup_begin; then
 fi
 p2_setup_end
 
+section "P2: skrypt konfiguracyjny – raport mówi, czy SSH jest wyłącznie z kluczem (AUDIT PRZ-11)"
+if p2_setup_begin; then
+  expect "setup: stan „SSH wyłącznie z kluczem” w raporcie" "$out" "SSH wyłącznie z kluczem: wyłączone"
+  out="$(p2s setup 1 --no-ssh-acl --ssh-key-only)"; code=$?
+  expect_code "setup --ssh-key-only: kod 0" "$code" 0 "$out"
+  expect "setup --ssh-key-only: włączenie nazwane wprost" "$out" "SSH wyłącznie z kluczem: włączone – logowanie hasłem przestaje działać"
+  out="$(p2s setup 1 --no-ssh-acl --verify)"
+  expect "setup --verify bez --ssh-key-only: plan wyłączenia nazwany wprost" "$out" \
+    "Wymaga zmiany: zapisać ustawienia sshd (keepalive; SSH wyłącznie z kluczem: wyłączone – logowanie hasłem znów zadziała)"
+  out="$(p2s setup 1 --no-ssh-acl)"
+  expect "setup bez --ssh-key-only: wyłączenie nazwane wprost" "$out" "SSH wyłącznie z kluczem: wyłączone – logowanie hasłem znów działa"
+  out="$(p2s setup 1 --no-ssh-acl --verify)"
+  expect "setup --verify: stan bez zmian nazwany wprost" "$out" "Ustawienia sshd są aktualne (keepalive; SSH wyłącznie z kluczem: wyłączone)"
+fi
+p2_setup_end
+
 section "P2: podgląd ekranu – jakość JPEG także bez zmniejszania (AUDIT ZAJ-08)"
 cp "$WORK/config/settings.json" "$P2/settings.json.bak"
 p2_quality() { # p2_quality Q FILE – a screenshot at full size with JPEG quality Q
