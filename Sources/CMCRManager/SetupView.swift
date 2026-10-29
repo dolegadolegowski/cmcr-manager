@@ -985,9 +985,14 @@ struct ScreenPreviewSettings: View {
 
     var body: some View {
         Section {
-            OptionToggle(title: "Powiadamiaj o podglądzie", icon: "bell.badge.fill", color: .red,
-                         detail: "Osoba przy komputerze dostaje powiadomienie, gdy zaczyna się podgląd jej ekranu",
-                         isOn: $model.settings.notifyOnObserve)
+            // Not a setting: the student is always told (README, AUDIT KON-06).
+            LabeledContent {
+                Text("zawsze").foregroundStyle(.secondary)
+            } label: {
+                SettingLabel(title: "Powiadomienie ucznia o podglądzie",
+                             caption: "Osoba przy komputerze zawsze widzi komunikat „Administrator rozpoczął podgląd Twojego ekranu” – raz na sesję podglądu i ponownie po każdym zalogowaniu",
+                             icon: "bell.badge.fill", color: .red)
+            }
             OptionToggle(title: "Tylko konta standardowe", icon: "person.badge.shield.checkmark.fill", color: .blue,
                          detail: "Ekrany kont administratorów nie są pokazywane",
                          isOn: $model.settings.observeOnlyStandardAccounts)

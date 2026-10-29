@@ -79,7 +79,7 @@ public struct ScreenCaptureOptions: Sendable, Equatable {
     public init(settings: AppSettings, maxSize: Int? = nil, interval: Int? = nil, notify: Bool? = nil,
                 alreadyNotifiedUser: String? = nil, display: ScreenDisplay = .main, frames: Int = 1) {
         self.init(maxSize: maxSize ?? settings.screenshotMaxSize, quality: settings.screenshotQuality,
-                  interval: interval ?? settings.screenshotInterval, notify: notify ?? settings.notifyOnObserve,
+                  interval: interval ?? settings.screenshotInterval, notify: notify ?? true,
                   alreadyNotifiedUser: alreadyNotifiedUser, onlyStandardAccounts: settings.observeOnlyStandardAccounts,
                   allowedUsers: settings.observeAllowedUserList, display: display, frames: frames)
     }
@@ -205,7 +205,8 @@ public enum ScreenEvent: Equatable, Sendable {
     /// The display looks exactly like the last frame sent for it.
     case unchanged(display: Int, count: Int, hash: String)
     case state(ScreenIssue)
-    case notified(user: String)
+    /// The notice is on the screen of `user`; `session` identifies the login (what `alreadyNotifiedUser` takes).
+    case notified(user: String, session: String)
     case bye(reason: String)
 }
 
@@ -268,7 +269,8 @@ public struct ScreenStreamParser: Sendable {
         case "STATE":
             return ScreenIssue(stateCode: field(2), user: field(3), detail: field(4)).map { .state($0) }
         case "NOTIFIED":
-            return optional(2).map { .notified(user: $0) }
+            // An older script sends only the account; it then stands for the session too.
+            return optional(2).map { .notified(user: $0, session: optional(3) ?? $0) }
         case "BYE":
             return .bye(reason: field(2))
         default:
@@ -349,7 +351,8 @@ public extension Scripts {
           if [ "$SCR_ME" = "$CONSOLE_UID" ]; then "${1##*/}" "${@:2}"; else launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" -- "$@"; fi
         }
         scr_allowed() {
-          if [ -z "$CONSOLE_USER" ]; then scr_emit STATE nouser; SCR_RC=\#(ScriptCode.noConsoleUser); return 1; fi
+          # Nobody at the screen: whoever logs in next is told again (AUDIT ZAJ-04).
+          if [ -z "$CONSOLE_USER" ]; then CMCR_LAST=""; scr_emit STATE nouser; SCR_RC=\#(ScriptCode.noConsoleUser); return 1; fi
           if [ -n "$CMCR_ALLOWED" ]; then
             case ",$CMCR_ALLOWED," in
               *",$CONSOLE_USER,"*) ;;
@@ -378,10 +381,25 @@ public extension Scripts {
         # Notification Center permission and Focus does not hide it, and it confirms that it is on screen
         # (CMCR:NOTICE:shown). Without that confirmation the user counts as not notified: nothing is captured
         # (STATE notify) and the next cycle tries again.
+        # The login session at the screen: the account and its loginwindow process, which macOS starts anew for
+        # every login. Logging out and in again – also to the same shared student account – is someone new at
+        # the screen, who is told again (AUDIT ZAJ-04).
+        scr_session() {
+          local p=""
+          [ -n "$CONSOLE_UID" ] && p="$(pgrep -u "$CONSOLE_UID" -x loginwindow 2>/dev/null | head -n 1)"
+          SCR_SESSION="$CONSOLE_USER${p:+#$p}"
+        }
         scr_notify() {
           [ "$CMCR_NOTIFY" = 1 ] || return 0
-          [ "$CONSOLE_USER" = "$CMCR_LAST" ] && return 0
+          scr_session
+          [ "$SCR_SESSION" = "$CMCR_LAST" ] && return 0
           local out err pid i=0 state="" rc="" detail="" why
+          # A screen covered by the attention-mode lock hides the panel: nobody could read it (AUDIT ZAJ-05).
+          if pgrep -x LockScreen >/dev/null 2>&1 || pgrep -f "CMCR_ATT""ENTION" >/dev/null 2>&1; then
+            scr_emit STATE notify "$CONSOLE_USER" "ekran jest zablokowany w trybie uwagi – komunikat zostanie pokazany po odblokowaniu"
+            SCR_RC=\#(ScriptCode.observeNotNotified)
+            return 1
+          fi
           # Fresh files per attempt: a late answer of an earlier attempt must not count for this one.
           SCR_NOTICE_N=$((${SCR_NOTICE_N:-0} + 1))
           rm -f "$SCR_DIR"/notice.* 2>/dev/null
@@ -401,11 +419,12 @@ public extension Scripts {
             sleep 0.1; i=$((i + 1))
           done
           if [ "$state" = shown ]; then
-            CMCR_LAST="$CONSOLE_USER"
-            scr_emit NOTIFIED "$CONSOLE_USER"
+            CMCR_LAST="$SCR_SESSION"
+            scr_emit NOTIFIED "$CONSOLE_USER" "$SCR_SESSION"
             return 0
           fi
-          if [ "$state" = hidden ]; then detail="okno komunikatu nie pojawiło się na ekranie"
+          if [ "$state" = locked ]; then detail="ekran jest zablokowany lub uśpiony – komunikat zostanie pokazany po jego odblokowaniu"
+          elif [ "$state" = hidden ]; then detail="okno komunikatu nie pojawiło się na ekranie"
           elif [ -n "$rc" ]; then detail="osascript zakończył się kodem $rc"
           else
             # A hung osascript must not outlive the attempt (each cycle would leave one more behind).
@@ -615,7 +634,18 @@ public extension Scripts {
             p.contentView.addSubview(m);
             panels.push(p);
           }
+          // A locked screen (screen saver with password, lock screen) or a sleeping display: the panel would be
+          // drawn where nobody sees it, so it does not count as shown (AUDIT ZAJ-05).
+          var covered = false;
+          try {
+            ObjC.import('CoreGraphics');
+            var session = ObjC.castRefToObject($.CGSessionCopyCurrentDictionary());
+            var locked = session.objectForKey('CGSSessionScreenIsLocked');
+            covered = (!locked.isNil() && locked.boolValue) || $.CGDisplayIsAsleep($.CGMainDisplayID()) != 0;
+          } catch (e) {}
+          if (argv.indexOf('--screen-state') >= 0) { return covered ? 'covered' : 'visible'; }
           if (dry) { return 'panels=' + panels.length; }
+          if (covered) { say('CMCR:NOTICE:locked'); return; }
           $.NSTimer.scheduledTimerWithTimeIntervalTargetSelectorUserInfoRepeats(\(max(2, seconds)), app, 'terminate:', null, false);
           var shown = false;
           for (var j = 0; j < panels.length; j++) {
@@ -661,6 +691,8 @@ public extension Operations {
         public var issue: ScreenIssue?
         /// Console user who got the observation notification during this capture.
         public var notifiedUser: String?
+        /// Their login session, to pass as `alreadyNotifiedUser` to the next capture.
+        public var notifiedSession: String?
         /// Every captured display (`imageData` is the first one).
         public var frames: [ScreenFrame] = []
         public var privileged = false
@@ -692,7 +724,9 @@ public extension Operations {
                 shot.frames.append(ScreenFrame(display: d, count: n, hash: hash, data: data))
             case .unchanged: break
             case .state(let issue): shot.issue = issue
-            case .notified(let user): shot.notifiedUser = user
+            case .notified(let user, let session):
+                shot.notifiedUser = user
+                shot.notifiedSession = session
             case .bye: break
             }
         }

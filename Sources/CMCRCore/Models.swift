@@ -177,8 +177,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var screenshotInterval = 10
     public var screenshotMaxSize = 1280
     public var screenshotQuality = 60
-    /// Show a notification on the observed Mac when a preview starts.
-    public var notifyOnObserve = true
+    /// The observed student is always told that the preview started (README); there is no setting to turn it off
+    /// (AUDIT KON-06). An old settings file that still has `notifyOnObserve: false` is read, but changes nothing.
+    public var notifyOnObserve: Bool { true }
     /// Refuse to capture sessions of administrator accounts (preview only restricted/standard accounts).
     public var observeOnlyStandardAccounts = true
     /// Comma separated list of accounts that may be observed; empty means any (subject to the rule above).
@@ -202,7 +203,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
         screenshotInterval = try c.decodeIfPresent(Int.self, forKey: .screenshotInterval) ?? d.screenshotInterval
         screenshotMaxSize = try c.decodeIfPresent(Int.self, forKey: .screenshotMaxSize) ?? d.screenshotMaxSize
         screenshotQuality = try c.decodeIfPresent(Int.self, forKey: .screenshotQuality) ?? d.screenshotQuality
-        notifyOnObserve = try c.decodeIfPresent(Bool.self, forKey: .notifyOnObserve) ?? d.notifyOnObserve
         observeOnlyStandardAccounts = try c.decodeIfPresent(Bool.self, forKey: .observeOnlyStandardAccounts) ?? d.observeOnlyStandardAccounts
         observeAllowedUsers = try c.decodeIfPresent(String.self, forKey: .observeAllowedUsers) ?? d.observeAllowedUsers
         snippets = try c.decodeIfPresent([Snippet].self, forKey: .snippets) ?? d.snippets

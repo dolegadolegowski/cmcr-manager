@@ -84,7 +84,7 @@ import Testing
     let host = UUID()
     let t0 = Date(timeIntervalSince1970: 1000)
     ledger.observed(host, at: t0)
-    ledger.recordNotified(host, user: "student")
+    ledger.recordNotified(host, session: "student")
     // A tile scrolled away and back (or a paused window) keeps the session.
     ledger.unobserved(host, at: t0.addingTimeInterval(10))
     ledger.observed(host, at: t0.addingTimeInterval(60))
@@ -102,7 +102,7 @@ import Testing
     var ledger = ObservationLedger(grace: 60)
     let host = UUID()
     let t0 = Date(timeIntervalSince1970: 0)
-    ledger.recordNotified(host, user: "a")
+    ledger.recordNotified(host, session: "a")
     let first = ledger.shouldLog(host, user: "a")
     let again = ledger.shouldLog(host, user: "a")
     let other = ledger.shouldLog(host, user: "b")
@@ -135,7 +135,7 @@ private func frameBytes(display: Int, count: Int, payload: Data, hash: String = 
         .info(user: "student", frontApp: "Safari"),
         .frame(display: 1, count: 1, hash: "abc", data: payload),
         .unchanged(display: 1, count: 1, hash: "abc"),
-        .notified(user: "student"),
+        .notified(user: "student", session: "student"),
         .bye(reason: "maxtime"),
     ])
 }
@@ -270,4 +270,34 @@ private func solidImage(width: Int, height: Int) -> CGImage? {
     #expect(both.width == 160 + 10 + 160)
     #expect(ScreenImage.sideBySide([a]) === a)
     #expect(ScreenImage.sideBySide([]) == nil)
+}
+
+/// AUDIT ZAJ-04: the capture script reports the login session with the notice; the app keeps it and forgets it
+/// when nobody is logged in, so a new login – also to the same shared account – is told again.
+@Test func theNoticeBelongsToALoginSession() {
+    var parser = ScreenStreamParser()
+    let events = parser.feed(Data("CMCR1\tNOTIFIED\tstudent\tstudent#4711\nCMCR1\tNOTIFIED\tjan\n".utf8))
+    #expect(events == [.notified(user: "student", session: "student#4711"), .notified(user: "jan", session: "jan")])
+    var ledger = ObservationLedger()
+    let host = UUID()
+    ledger.recordNotified(host, session: "student#4711")
+    #expect(ledger.notifiedUser(host) == "student#4711")
+    ledger.forgetNotified(host)
+    #expect(ledger.notifiedUser(host) == nil)
+    let script = Scripts.screenCapture(ScreenCaptureOptions(maxSize: 800)).body
+    #expect(script.contains("pgrep -u \"$CONSOLE_UID\" -x loginwindow"))
+    #expect(script.contains("[ \"$SCR_SESSION\" = \"$CMCR_LAST\" ]"))
+}
+
+/// AUDIT ZAJ-05: on a locked or sleeping screen (or behind the attention-mode lock) the notice does not count as
+/// shown. The check itself runs here, in this Mac's session: it must not fail, whatever the state of the screen.
+@Test func theNoticeIsNotCountedOnACoveredScreen() async {
+    let script = Scripts.screenCapture(ScreenCaptureOptions(maxSize: 800)).body
+    #expect(script.contains("pgrep -x LockScreen"))
+    #expect(script.contains("[ \"$state\" = locked ]"))
+    let jxa = Scripts.observeNoticeJXA()
+    #expect(jxa.contains("CGSSessionScreenIsLocked") && jxa.contains("CGDisplayIsAsleep"))
+    let r = await ProcessRunner.run("/usr/bin/osascript", ["-l", "JavaScript", "-e", jxa, "CMCR_OBSERVE_NOTICE", "--screen-state"], timeout: 20)
+    #expect(["visible", "covered"].contains(r.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)),
+            "osascript: \(r.stdoutText) \(r.stderrText)")
 }

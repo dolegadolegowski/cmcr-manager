@@ -109,7 +109,7 @@ private final class WatchState: @unchecked Sendable {
             default: if i.isIdle { cycles += 1 }
             }
             return "⚠︎ \(i.message)"
-        case .notified(let user):
+        case .notified(let user, _):
             return "Powiadomiono użytkownika \(user) o podglądzie."
         case .bye(let reason):
             return "Koniec sesji (\(reason))."

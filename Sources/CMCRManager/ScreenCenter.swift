@@ -558,6 +558,8 @@ final class ScreenCenter: ObservableObject {
                    let name = model?.machine(host)?.name {
                     ConfigStore.log("Podgląd ekranu → \(name): nie udało się powiadomić użytkownika \(user) (\(detail)) – obraz nie jest pobierany")
                 }
+                // Logged out: whoever logs in next is told again, also on the same account (AUDIT ZAJ-04).
+                if issue == .noUser { ledger.forgetNotified(host) }
                 feed.set(\.issue, issue)
                 if issue.hidesImage {
                     feed.image = nil
@@ -566,8 +568,8 @@ final class ScreenCenter: ObservableObject {
                 }
                 if !issue.isIdle { s.exitIssue = issue }
                 if issue.isIdle { feed.confirmedAt = now }
-            case .notified(let user):
-                ledger.recordNotified(host, user: user)
+            case .notified(let user, let session):
+                ledger.recordNotified(host, session: session)
                 if let name = model?.machine(host)?.name {
                     ConfigStore.log("Podgląd ekranu → \(name): powiadomiono użytkownika \(user)")
                 }

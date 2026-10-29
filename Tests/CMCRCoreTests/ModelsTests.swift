@@ -121,7 +121,9 @@ import Testing
         let s = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
         #expect(s.studentUser == "uczen")
         #expect(s.maxParallel == 3)
-        #expect(!s.notifyOnObserve)
+        // AUDIT KON-06: an old file that turned the notice off no longer does – the student is always told.
+        #expect(s.notifyOnObserve)
+        #expect(ScreenCaptureOptions(settings: s).notify)
         #expect(s.screenshotQuality == AppSettings().screenshotQuality)
         #expect(s.sharedFolder == AppSettings().sharedFolder)
     }

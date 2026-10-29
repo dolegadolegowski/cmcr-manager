@@ -78,7 +78,8 @@ screencapture() {
 
 # Observation notice of the screen preview (Scripts.observeNoticeJXA, tag CMCR_OBSERVE_NOTICE): answers like
 # the real panel. Control files in $CMCR_E2E_WORK: fake-notify-fail (osascript fails, e.g. no access to the
-# GUI session), fake-notify-hidden (the panel is not on screen), fake-notify-silent (no answer at all),
+# GUI session), fake-notify-hidden (the panel is not on screen), fake-notify-locked (the screen is locked or
+# asleep), fake-notify-silent (no answer at all),
 # fake-notify-hang (no answer from a real process that does not quit for a minute, like an osascript stuck in
 # the GUI session; its command line holds "cmcr-fake-osascript $CMCR_E2E_WORK/", so tests can look for leftovers).
 _e2e_notice() {
@@ -88,6 +89,8 @@ _e2e_notice() {
     echo "execution error: Error: Connection to the window server refused (-2700)" >&2; return 1
   fi
   if [ -e "$w/fake-notify-hidden" ]; then echo "CMCR:NOTICE:hidden"; return 0; fi
+  # fake-notify-locked: the student's screen is locked or the display sleeps (AUDIT ZAJ-05).
+  if [ -e "$w/fake-notify-locked" ]; then echo "CMCR:NOTICE:locked"; return 0; fi
   if [ -e "$w/fake-notify-silent" ]; then sleep 10; return 0; fi
   if [ -e "$w/fake-notify-hang" ]; then
     /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i + 1)); done' "cmcr-fake-osascript $w/"

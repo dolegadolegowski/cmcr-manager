@@ -27,11 +27,8 @@ struct ScreenRestrictionsBar: View {
         return HStack(spacing: short ? 12 : 16) {
             item("eye", short ? "Tylko podgląd" : "Tylko podgląd – bez sterowania",
                  "Aplikacja pokazuje obraz ekranu; nie może klikać ani pisać na komputerze ucznia.")
-            item(s.notifyOnObserve ? "bell.badge" : "bell.slash",
-                 s.notifyOnObserve ? (short ? "Z powiadomieniem" : "Uczeń dostaje powiadomienie") : "Bez powiadomienia",
-                 s.notifyOnObserve
-                    ? "Na początku podglądu uczeń widzi „Administrator rozpoczął podgląd Twojego ekranu” – raz na sesję podglądu i ponownie, gdy zaloguje się inna osoba."
-                    : "Uczeń nie jest powiadamiany o podglądzie.")
+            item("bell.badge", short ? "Z powiadomieniem" : "Uczeń dostaje powiadomienie",
+                 "Na początku podglądu uczeń widzi „Administrator rozpoczął podgląd Twojego ekranu” – raz na sesję podglądu i ponownie po każdym zalogowaniu. Obraz jest pobierany dopiero, gdy komunikat jest na odblokowanym ekranie.")
             item("person.badge.shield.checkmark",
                  s.observeOnlyStandardAccounts ? (short ? "Konta standardowe" : "Tylko konta standardowe")
                     : (short ? "Wszystkie konta" : "Także konta administratorów"),
