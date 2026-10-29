@@ -648,9 +648,20 @@ final class AppModel: ObservableObject {
                 var st = statuses[job.machine.id] ?? HostStatus()
                 st.reachability = reach
                 st.message = message
+                if reach == .offline { Self.forgetStudents(in: &st) }
                 statuses[job.machine.id] = st
             }
         }
+    }
+
+    /// A Mac that is off has nobody at it: the list, the details, searches and confirmations do not show the student
+    /// from before (KOM-04) – after a status check as after an action that found it off (AUDIT REV-74). After any
+    /// other failure (the status script ran too long on a busy Mac, sshd refused a session for a moment, a login
+    /// failed until the password is fixed) the Mac may still take the next action, so the last known users stay:
+    /// „Pomiń komputery z zalogowanym uczniem” must still leave it out of a restart or logout (AUDIT REV-11).
+    private static func forgetStudents(in st: inout HostStatus) {
+        st.info["console"] = nil
+        st.info["sessions"] = nil
     }
 
     /// Output kept per job result; the job log itself is capped separately (Job.maxOutput).
@@ -787,13 +798,7 @@ final class AppModel: ObservableObject {
             st.message = message
             st.info = statuses[m.id]?.info ?? [:]
             if reach == .offline {
-                // A Mac that is off has nobody at it: the list, the details, searches and confirmations do not show
-                // the student from before (KOM-04). After any other failure (the status script ran too long on
-                // a busy Mac, sshd refused a session for a moment, a login failed until the password is fixed) the
-                // Mac may still take the next action, so the last known users stay: „Pomiń komputery z zalogowanym
-                // uczniem” must still leave it out of a restart or logout (AUDIT REV-11).
-                st.info["console"] = nil
-                st.info["sessions"] = nil
+                Self.forgetStudents(in: &st)
                 // Full background checks after 2, 4, 8 and then every 10 min (minus slack for the 2 min timer).
                 let n = (offlineStreak[m.id] ?? 0) + 1
                 offlineStreak[m.id] = n
