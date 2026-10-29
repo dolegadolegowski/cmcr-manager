@@ -27,7 +27,10 @@ enum SetupCommands {
         }
         let cl: SetupCommandLine
         do {
-            cl = try SetupCommandLine(parsing: args)
+            // readiness uses no setup option, so the options saved in the app do not matter to it: they must not
+            // turn --no-key into advice to add a setup option that readiness then refuses (AUDIT REV-34).
+            cl = command == "readiness" ? try SetupCommandLine(parsing: args, saved: SetupOptions())
+                                        : try SetupCommandLine(parsing: args)
         } catch {
             err("✘ \(error.localizedDescription)\nPomoc: cmcrctl \(command) --help")
             return 2
@@ -45,7 +48,11 @@ enum SetupCommands {
             err("✘ Opcja --verify/--dry-run dotyczy polecenia setup. Przy iMacu sprawdź zapisany skrypt: sudo bash \(SetupScript.fileName) --verify\nPomoc: cmcrctl setup-script --help")
             return 2
         }
-        if command == "readiness", let flag = cl.configurationFlags.first {
+        // readiness takes only the key to look for (--pubkey, --pubkey-file); --no-key, --verify and --dry-run belong
+        // to setup like the configuration options.
+        if command == "readiness", let flag = cl.configurationFlags.first
+            ?? (cl.mode == .verify ? "--verify" : cl.mode == .dryRun ? "--dry-run" : nil)
+            ?? (cl.options.installKey ? nil : "--no-key") {
             err("✘ Polecenie readiness tylko sprawdza gotowość – opcja \(flag) dotyczy polecenia setup. Nic nie zostało wykonane.\nPomoc: cmcrctl readiness --help")
             return 2
         }

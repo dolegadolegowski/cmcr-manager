@@ -280,6 +280,19 @@ enum ClassroomCLI {
         return status
     }
 
+    /// `.local` names (lowercased) of the Macs on the list that are not renamed, with the Mac that has the name: from
+    /// its `.local` address and from its name on the list (the name rename-computer gives it by default).
+    static func namesTaken(by machines: [Machine], renaming: Set<UUID>) -> [String: String] {
+        var taken: [String: String] = [:]
+        for m in machines where !renaming.contains(m.id) {
+            let own = ComputerNames.localHostName(from: m.name).lowercased()
+            if !own.isEmpty { taken[own] = m.name }
+            let address = m.address.lowercased()
+            if address.hasSuffix(".local") { taken[String(address.dropLast(".local".count))] = m.name }
+        }
+        return taken
+    }
+
     /// ComputerName, LocalHostName and HostName from the host list (or `--name` for one Mac). Always needs an
     /// explicit host list; every new name is checked before anything changes, and the change is confirmed.
     static func renameComputers(_ a: ModuleArguments, ssh: SSHSettings) async -> Int32 {
@@ -293,11 +306,27 @@ enum ClassroomCLI {
         }
         var planned: [(host: Machine, name: String, localHostName: String)] = []
         var invalid = false
+        let taken = Self.namesTaken(by: legacyCLI.hosts, renaming: Set(targets.map(\.id)))
+        var seen: Set<String> = []
         for h in targets {
             let name = a.value("--name") ?? h.name
             let lhn = ComputerNames.localHostName(from: name)
             guard ComputerNames.isValidLocalHostName(lhn) else {
                 Console.err("\(h.name): niepoprawna nazwa „\(name)”.")
+                invalid = true
+                continue
+            }
+            // Bonjour would rename this Mac (imac04-2) and the updated list would point at the other one (AUDIT
+            // KOM-15, REV-33): the same rule as the app's „Zmień nazwy komputerów”.
+            if let owner = taken[lhn.lowercased()] {
+                Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma już \(owner) z listy komputerów "
+                            + "(dwa komputery nie mogą mieć tego samego adresu w sieci).")
+                invalid = true
+                continue
+            }
+            guard seen.insert(lhn.lowercased()).inserted else {
+                Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres powtarza się "
+                            + "(dwa komputery nie mogą mieć tego samego adresu w sieci).")
                 invalid = true
                 continue
             }
@@ -318,12 +347,19 @@ enum ClassroomCLI {
                                   onOutput: Console.printer)
             if report(r) != ExitCode.success { status = ExitCode.failure }
             if r.succeeded, a.has("--update-list"), let i = hosts.firstIndex(where: { $0.id == p.host.id }) {
+                let before = hosts[i]
                 hosts[i].name = p.name
                 if let address = ComputerNames.addressAfterRename(hosts[i].address, localHostName: p.localHostName) {
                     hosts[i].address = address
                 }
                 saveHostsOrFail(hosts)
                 Console.out("Zaktualizowano listę komputerów: \(hosts[i].name) → \(hosts[i].address)")
+                // The Mac keeps its host keys: trust them under the new address too, as the app does – otherwise
+                // every later connection is refused as an unknown Mac (AUDIT KOM-07, REV-01).
+                if hosts[i].address != before.address,
+                   await HostTrust.carryTrust(from: before, to: hosts[i], settings: ssh) {
+                    Console.out("Zaufany klucz SSH obowiązuje także pod nowym adresem \(hosts[i].address).")
+                }
             }
         }
         return status

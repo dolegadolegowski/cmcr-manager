@@ -15,7 +15,7 @@ extension CLI {
     /// together with other keys (the app never preselects it): see `trustChanged`.
     func trust() async -> Int32 {
         args.expect("trust", options: ["--dry-run"], positional: 2)
-        let list = targetsOrAllAtTerminal(args[1], command: "trust", ask: false)
+        let list = targetsOrAllAtTerminal(args[1], command: "trust")
         let ssh = sshSettings()
         var scans = Array(repeating: HostTrust.Scan?.none, count: list.count)
         await withTaskGroup(of: (Int, HostTrust.Scan).self) { group in
