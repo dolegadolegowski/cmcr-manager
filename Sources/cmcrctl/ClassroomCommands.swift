@@ -318,12 +318,19 @@ enum ClassroomCLI {
                                   onOutput: Console.printer)
             if report(r) != ExitCode.success { status = ExitCode.failure }
             if r.succeeded, a.has("--update-list"), let i = hosts.firstIndex(where: { $0.id == p.host.id }) {
+                let before = hosts[i]
                 hosts[i].name = p.name
                 if let address = ComputerNames.addressAfterRename(hosts[i].address, localHostName: p.localHostName) {
                     hosts[i].address = address
                 }
                 saveHostsOrFail(hosts)
                 Console.out("Zaktualizowano listę komputerów: \(hosts[i].name) → \(hosts[i].address)")
+                // The Mac keeps its host keys: trust them under the new address too, as the app does – otherwise
+                // every later connection is refused as an unknown Mac (AUDIT KOM-07, REV-01).
+                if hosts[i].address != before.address,
+                   await HostTrust.carryTrust(from: before, to: hosts[i], settings: ssh) {
+                    Console.out("Zaufany klucz SSH obowiązuje także pod nowym adresem \(hosts[i].address).")
+                }
             }
         }
         return status
