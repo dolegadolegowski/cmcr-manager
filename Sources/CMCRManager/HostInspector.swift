@@ -260,7 +260,8 @@ struct RenameComputersSheet: View {
                         Label("\(e.localHostName).local ma jeszcze \(other.name)", systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red)
                             .help("Ten adres ma teraz \(other.name), którego nazwa też jest zmieniana – macOS nadałby jednemu z nich inny adres. "
-                                  + RenamePlan.advice(for: e.machine, stillHeld: stillHeld, newNames: newNames, in: .app))
+                                  + RenamePlan.advice(for: e.machine, stillHeld: stillHeld, newNames: newNames,
+                                                      rejected: rejected, in: .app))
                     } else {
                         Text("\(e.localHostName).local").font(.body.monospaced())
                             .foregroundStyle(isUnchanged(e) ? .secondary : .primary)
@@ -325,6 +326,13 @@ struct RenameComputersSheet: View {
     var stillHeld: [UUID: Machine] {
         RenamePlan.namesStillHeld(changes.map { RenamePlan.Rename(machine: $0.machine, localHostName: $0.localHostName) },
                                   currentNames: classroom.names.mapValues(\.localHostName))
+    }
+
+    /// Macs whose new names are wrong whatever the order (invalid, taken, repeated – the rows above in red): the
+    /// advice gives no order through one of them, it names them to correct first (AUDIT REV-64).
+    var rejected: [UUID: RenamePlan.Rejection] {
+        RenamePlan.rejections(entries.map { RenamePlan.Rename(machine: $0.machine, localHostName: $0.localHostName) },
+                              taken: takenBy)
     }
 
     /// The name typed for each Mac, for the advice on the order.

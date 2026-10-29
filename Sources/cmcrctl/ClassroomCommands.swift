@@ -320,38 +320,42 @@ enum ClassroomCLI {
             RenamePlan.Rename(machine: $0, localHostName: ComputerNames.localHostName(from: a.value("--name") ?? $0.name))
         }
         let stillHeld = RenamePlan.namesStillHeld(renames)
-        let repeated = RenamePlan.repeatedNames(renames.map(\.localHostName))
+        // The Macs whose new names are wrong whatever the order – the same rule as the app (RenamePlan.rejections),
+        // known for all of them before the first advice, which gives no order through one of them (AUDIT REV-64).
+        let rejected = RenamePlan.rejections(renames, taken: taken)
         for h in targets {
             let name = a.value("--name") ?? h.name
             let lhn = ComputerNames.localHostName(from: name)
-            guard ComputerNames.isValidLocalHostName(lhn) else {
+            switch rejected[h.id] {
+            case .invalid?:
                 Console.err("\(h.name): niepoprawna nazwa „\(name)”.")
                 invalid = true
                 continue
-            }
-            // Bonjour would rename this Mac (imac04-2) and the updated list would point at the other one (AUDIT
-            // KOM-15, REV-33): the same rule as the app's „Zmień nazwy komputerów” (RenamePlan.namesTaken, REV-58).
-            if let owner = taken[lhn.lowercased()] {
+            case .taken(let owner)?:
+                // Bonjour would rename this Mac (imac04-2) and the updated list would point at the other one (AUDIT
+                // KOM-15, REV-33): the same rule as the app's „Zmień nazwy komputerów” (RenamePlan.namesTaken, REV-58).
                 Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma już \(owner) z listy komputerów "
                             + "(dwa komputery nie mogą mieć tego samego adresu w sieci).")
                 invalid = true
                 continue
-            }
-            // A name two of the renamed Macs would get – reported for each of them and before the order below, as in
-            // the app (taken, repeated, still held): advice about the order cannot be completed while two Macs want
-            // one name (AUDIT REV-62).
-            if repeated.contains(lhn.lowercased()) {
+            case .repeated?:
+                // A name two of the renamed Macs would get – reported for each of them and before the order below, as
+                // in the app (taken, repeated, still held): advice about the order cannot be completed while two Macs
+                // want one name (AUDIT REV-62).
                 Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres powtarza się "
                             + "(dwa komputery nie mogą mieć tego samego adresu w sieci).")
                 invalid = true
                 continue
+            case nil:
+                break
             }
             // The address of another Mac renamed here, which gives it up only with its own rename – a renumbering or a
-            // swap: the same Bonjour conflict (AUDIT REV-52). The advice gives the whole order (AUDIT REV-54, REV-61).
+            // swap: the same Bonjour conflict (AUDIT REV-52). The advice gives the whole order (AUDIT REV-54, REV-61),
+            // or the wrong names to correct first when the order runs through them (AUDIT REV-64).
             if let other = stillHeld[h.id] {
                 Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma teraz \(other.name) (\(other.address)), którego "
                             + "nazwa też jest zmieniana (macOS nadałby wtedy jednemu z nich inny adres). "
-                            + RenamePlan.advice(for: h, stillHeld: stillHeld, in: .cmcrctl))
+                            + RenamePlan.advice(for: h, stillHeld: stillHeld, rejected: rejected, in: .cmcrctl))
                 invalid = true
                 continue
             }
