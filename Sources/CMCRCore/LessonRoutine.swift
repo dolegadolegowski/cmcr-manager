@@ -22,17 +22,19 @@ public enum LessonStepKind: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    /// The symbol of the same action elsewhere in the app – Aplikacje › „Uruchom”, Zasilanie › „Wyślij wiadomość”,
+    /// Pliki › „Wyczyść folder…”… (AUDIT UI-08, UI-33).
     public var icon: String {
         switch self {
         case .wake: return "sunrise"
         case .materials: return "paperplane"
-        case .openApps: return "macwindow.badge.plus"
-        case .greet: return "hand.wave"
+        case .openApps: return "play.fill"
+        case .greet: return "text.bubble"
         case .warn: return "exclamationmark.bubble"
         case .collect: return "tray.and.arrow.down"
-        case .quitApps: return "xmark.app"
-        case .cleanShared: return "folder.badge.minus"
-        case .cleanDownloads: return "arrow.down.circle.dotted"
+        case .quitApps: return "xmark.circle"
+        case .cleanShared: return "trash"
+        case .cleanDownloads: return "trash"
         case .logout: return "rectangle.portrait.and.arrow.right"
         case .sleep: return "powersleep"
         case .shutdown: return "power"
