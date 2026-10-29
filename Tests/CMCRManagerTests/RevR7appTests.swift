@@ -87,3 +87,51 @@ extension RevR7appTests {
         #expect(windows.presenter(for: again) === main, "ten sam problem pokazało okno wybrane poprzednio")
     }
 }
+
+extension RevR7appTests {
+    /// The steps of both routines with everything switched on.
+    static var allSteps: [[LessonStepKind]] {
+        var start = LessonStartConfig()
+        start.wake = true
+        start.sendMaterials = true
+        start.openApps = true
+        start.apps = "Safari"
+        start.greet = true
+        var end = LessonEndConfig()
+        end.warn = true
+        end.quitApps = true
+        end.collect = true
+        end.cleanShared = true
+        end.cleanDownloads = true
+        end.logout = true
+        end.power = .shutdown
+        return [LessonPlan.start(start, settings: AppSettings()).steps, LessonPlan.end(end, settings: AppSettings()).steps]
+    }
+
+    // UI-34: both cleanup steps have `trash`, the symbol of Pliki › „Wyczyść folder…” (UI-33), and the header of the
+    // lesson run grid showed only the symbols – two identical columns side by side: a red ✕ under one of them did
+    // not say which folder was not cleaned. A step whose symbol another step of the plan has too gets a short caption.
+    @Test func everyColumnOfTheRunGridHasAHeaderOfItsOwn() throws {
+        for steps in Self.allSteps {
+            let headers = steps.map { "\($0.icon) \($0.gridCaption(in: steps) ?? "")" }
+            #expect(Set(headers).count == steps.count, "\(headers)")
+        }
+        let end = Self.allSteps[1]
+        #expect(end.contains(.cleanShared) && end.contains(.cleanDownloads))
+        #expect(LessonStepKind.cleanShared.gridCaption(in: end) == "folder ucznia")
+        #expect(LessonStepKind.cleanDownloads.gridCaption(in: end) == "Pobrane")
+        // A symbol of its own says enough: no caption, the grid stays compact.
+        #expect(LessonStepKind.collect.gridCaption(in: end) == nil)
+        #expect(LessonStepKind.cleanDownloads.gridCaption(in: [.quitApps, .cleanDownloads]) == nil)
+        // Any two steps with one symbol (also ones added later) get short captions of their own.
+        for a in LessonStepKind.allCases {
+            for b in LessonStepKind.allCases where a != b && a.icon == b.icon {
+                let captionA = a.gridCaption(in: [a, b]), captionB = b.gridCaption(in: [a, b])
+                #expect(captionA != nil && captionA != captionB, "\(a) i \(b): \(captionA ?? "-") / \(captionB ?? "-")")
+                #expect((captionA ?? "").count <= 14, "za długi podpis kolumny: \(captionA ?? "")")
+            }
+        }
+        // The header of the grid in Zajęcia shows them.
+        #expect(try RevR6appTests.source("ClassroomView.swift").contains("gridCaption(in: run.plan.steps)"))
+    }
+}
