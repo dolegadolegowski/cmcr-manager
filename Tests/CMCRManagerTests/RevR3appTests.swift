@@ -67,3 +67,39 @@ extension RevR3appTests {
         #expect(BatchExport.text(batch).contains("=== imac04 – Błąd, kod \(code) ===\n"), "\(BatchExport.text(batch))")
     }
 }
+
+extension RevR3appTests {
+    // upload-into-names-the-mac (AUDIT UI-31, UI-04): the question before uploading into a subfolder in Przeglądarka
+    // plików names the browsed computer, as the questions before replacing and deleting there do.
+    @Test func theUploadIntoASubfolderQuestionNamesTheComputer() throws {
+        let a = AppTestEnvironment.closedHost("imac04")
+        let model = AppTestEnvironment.makeModel([a])
+        let browser = model.files.browser
+        browser.open("/Users/uczen/Desktop", on: a.id)
+        defer { browser.cancel() }
+        let folder = RemoteEntry(name: "Prace", kind: .directory)
+        let request = browser.uploadConfirmation([URL(fileURLWithPath: "/tmp/zadanie.txt")], into: folder)
+        #expect(request.title == "Wysłać do folderu „Prace”?")
+        #expect(request.message.hasPrefix("Pliki o tych samych nazwach w folderze „Prace” na komputerze imac04 zostaną zastąpione"),
+                "\(request.message)")
+        #expect(request.targets?.isEmpty == true, "pytanie dotyczy przeglądanego komputera, nie zaznaczonych na liście")
+    }
+
+    // The name comes from the host list (an imported or hand-edited hosts.json): a direction override in it is shown,
+    // not applied to the rest of the question, as in the names read from the iMac (AUDIT REV-19, DOD-13).
+    @Test func theComputerInTheBrowsersQuestionsShowsDirectionOverrides() throws {
+        let a = AppTestEnvironment.closedHost("imac\u{202E}40")
+        let model = AppTestEnvironment.makeModel([a])
+        let browser = model.files.browser
+        browser.open("/Users/uczen/Desktop", on: a.id)
+        defer { browser.cancel() }
+        let upload = browser.uploadConfirmation([URL(fileURLWithPath: "/tmp/zadanie.txt")],
+                                                into: RemoteEntry(name: "Prace", kind: .directory))
+        let delete = try #require(browser.deleteConfirmation([RemoteEntry(name: "zadanie.txt", kind: .file)]))
+        for message in [upload.message, delete.message] {
+            #expect(message.contains("imac\\u{202E}40"), "\(message)")
+            #expect(!message.unicodeScalars.contains { (0x202A...0x202E).contains($0.value) || (0x2066...0x2069).contains($0.value) },
+                    "\(message.debugDescription)")
+        }
+    }
+}
