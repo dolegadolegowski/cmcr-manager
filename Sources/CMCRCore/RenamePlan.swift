@@ -14,6 +14,24 @@ public enum RenamePlan {
         }
     }
 
+    /// The `.local` names (lowercased) of the Macs on the list that are not renamed, with the Mac that has the name: from
+    /// its `.local` address, from its name on the list (the name a rename gives it by default) and from the
+    /// LocalHostName read from it, when known (`readNames`: the app passes what it read, cmcrctl reads nothing). A new
+    /// name among them is an error in `cmcrctl rename KOMP` and in the app's „Zmień nazwy komputerów” alike – one rule
+    /// for both (AUDIT REV-58): Bonjour would rename one of the Macs (imac04-2) and the updated list would point at the
+    /// other one (AUDIT KOM-15, REV-33).
+    public static func namesTaken(by machines: [Machine], renaming: Set<UUID>,
+                                  readNames: [UUID: String] = [:]) -> [String: String] {
+        var taken: [String: String] = [:]
+        for m in machines where !renaming.contains(m.id) {
+            var names = current(m, read: readNames[m.id])
+            let listed = ComputerNames.localHostName(from: m.name).lowercased()
+            if !listed.isEmpty { names.insert(listed) }
+            for name in names { taken[name] = m.name }
+        }
+        return taken
+    }
+
     /// The renamed Macs whose new `.local` name another Mac of the same run still has now and gives up – a renumbering
     /// (imac05 → imac06 while imac06 → imac07) or a swap – with that other Mac. Nothing makes the other Mac release the
     /// name first (cmcrctl renames in list order, the app all at once): the Mac claiming it would get a numbered name
@@ -37,6 +55,28 @@ public enum RenamePlan {
             }
         }
         return held
+    }
+
+    /// How the Macs `namesStillHeld` reported can be renamed after all: one Mac per run, with the list updated after
+    /// each, since every run checks the new names against the list (AUDIT REV-54).
+    public enum Order: Equatable, Sendable {
+        /// A renumbering: the Mac whose new name is free first, the Mac asked about last (imac05 → imac06 → imac07 →
+        /// imac08: imac08, imac07, imac06).
+        case steps([Machine])
+        /// The names go round – a swap or a rotation (imac01 → imac02 → imac03 → imac01): none of these Macs can be
+        /// renamed first, one of them needs a temporary name. Starts at the Mac asked about when it is one of them.
+        case loop([Machine])
+    }
+
+    /// The order for `machine`: along the Macs that still have the name the previous one gets (`stillHeld`, from
+    /// `namesStillHeld`) to a Mac whose new name is free, or back to a Mac met before.
+    public static func order(of machine: Machine, stillHeld: [UUID: Machine]) -> Order {
+        var chain = [machine]
+        while let holder = stillHeld[chain[chain.count - 1].id] {
+            if let start = chain.firstIndex(where: { $0.id == holder.id }) { return .loop(Array(chain[start...])) }
+            chain.append(holder)
+        }
+        return .steps(chain.reversed())
     }
 
     /// The `.local` names (lowercased) a Mac has now: from its `.local` address and the LocalHostName read from it.

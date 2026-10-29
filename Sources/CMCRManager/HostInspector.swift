@@ -313,8 +313,8 @@ struct RenameComputersSheet: View {
         return twice.union(Set(entries.map { $0.localHostName.lowercased() }).intersection(takenBy.keys))
     }
 
-    /// `.local` names of the Macs that are not renamed here (from their addresses and the names read from them),
-    /// with the Mac that has the name (AUDIT KOM-15).
+    /// `.local` names of the Macs that are not renamed here (from their addresses, their names on the list and the
+    /// names read from them), with the Mac that has the name (AUDIT KOM-15, REV-58).
     var takenBy: [String: String] {
         Self.namesTaken(by: model.machines, renaming: Set(entries.map(\.id)),
                         readNames: classroom.names.mapValues(\.localHostName))
@@ -327,14 +327,9 @@ struct RenameComputersSheet: View {
                                   currentNames: classroom.names.mapValues(\.localHostName))
     }
 
+    /// The same rule as `cmcrctl rename KOMP` (AUDIT REV-58); the app also knows the names read from the iMacs.
     static func namesTaken(by machines: [Machine], renaming: Set<UUID>, readNames: [UUID: String]) -> [String: String] {
-        var taken: [String: String] = [:]
-        for m in machines where !renaming.contains(m.id) {
-            let address = m.address.lowercased()
-            if address.hasSuffix(".local") { taken[String(address.dropLast(".local".count))] = m.name }
-            if let lhn = readNames[m.id]?.lowercased(), !lhn.isEmpty { taken[lhn] = m.name }
-        }
-        return taken
+        RenamePlan.namesTaken(by: machines, renaming: renaming, readNames: readNames)
     }
 
     func isUnchanged(_ e: Entry) -> Bool {
