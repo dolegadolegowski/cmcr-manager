@@ -347,15 +347,21 @@ enum MainWindow {
     /// Shows the main window (opening a new one when it was closed).
     @MainActor static func bringToFront(_ openWindow: OpenWindowAction) {
         NSApp.activate(ignoringOtherApps: true)
-        let candidates = NSApp.windows.filter {
-            $0.canBecomeMain && !ScreenWindowRegistry.contains($0) && ($0.isVisible || $0.isMiniaturized)
-        }
-        if let main = candidates.first(where: { $0.identifier?.rawValue.hasPrefix(id) == true }) ?? candidates.first {
+        if let main = NSApp.windows.first(where: {
+            isMain(identifier: $0.identifier?.rawValue, shown: $0.isVisible || $0.isMiniaturized)
+        }) {
             if main.isMiniaturized { main.deminiaturize(nil) }
             main.makeKeyAndOrderFront(nil)
         } else {
             openWindow(id: id)
         }
+    }
+
+    /// A window of the main WindowGroup ("main-AppWindow-1") that is on screen or in the Dock. No other window stands
+    /// in for it: with the main window closed, the Settings window or a screen window must not be brought forward
+    /// instead – the section change would stay invisible (AUDIT KON-10, REV-23).
+    static func isMain(identifier: String?, shown: Bool) -> Bool {
+        shown && identifier?.hasPrefix(id) == true
     }
 }
 

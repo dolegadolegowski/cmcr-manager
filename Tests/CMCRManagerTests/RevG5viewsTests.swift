@@ -36,4 +36,15 @@ import Testing
         st.info = Parsers.keyValues("power_schedule=\n")
         #expect(HostInspector.scheduleText(checked: ScheduleInfo(error: "Brak połączenia"), status: st) == "Brak połączenia")
     }
+
+    // REV-23: Przejdź › section, ⇧⌘, and a notification click show the main window. The Settings window (or a screen
+    // window) left on screen while the main window is closed is not it – a new main window must be opened instead.
+    @Test func onlyAWindowOfTheMainGroupCountsAsTheMainWindow() {
+        #expect(MainWindow.isMain(identifier: "main-AppWindow-1", shown: true))
+        #expect(!MainWindow.isMain(identifier: "main-AppWindow-1", shown: false))     // closed
+        #expect(!MainWindow.isMain(identifier: "com_apple_SwiftUI_Settings_window", shown: true))
+        #expect(!MainWindow.isMain(identifier: "screen-wall-AppWindow-1", shown: true))
+        #expect(!MainWindow.isMain(identifier: "screen-window-AppWindow-2", shown: true))
+        #expect(!MainWindow.isMain(identifier: nil, shown: true))
+    }
 }
