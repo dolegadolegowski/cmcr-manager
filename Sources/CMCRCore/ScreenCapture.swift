@@ -445,16 +445,18 @@ public extension Scripts {
           raw="$(scr_gui_user /usr/bin/lsappinfo info -only name "$asn" </dev/null 2>/dev/null)"
           SCR_FRONT="$(printf '%s\n' "$raw" | sed -n -e 's/^"LSDisplayName"="\(.*\)"[[:space:]]*$/\1/p' -e 's/^"\([^"]*\)" ASN:.*/\1/p' | head -n 1)"
         }
-        # Sends one captured display: resized only when larger than requested, skipped when unchanged.
+        # Sends one captured display: always re-encoded with the JPEG quality from the settings (screencapture
+        # uses its own), resized only when larger than requested, skipped when unchanged.
         scr_send() {
           local d="$1" n="$2" raw="$3" out hash size
-          out="$raw"
+          out="$SCR_DIR/out$d.jpg"
           if [ -z "${SCR_DIM[$d]:-}" ] || [ $((SCR_N % 30)) = 0 ]; then
             SCR_DIM[$d]="$(sips -g pixelWidth -g pixelHeight "$raw" 2>/dev/null | awk '/pixel(Width|Height)/ { if ($2 > m) m = $2 } END { print m + 0 }')"
           fi
           if [ "${SCR_DIM[$d]:-0}" -gt "$CMCR_MAXSIZE" ]; then
-            out="$SCR_DIR/out$d.jpg"
             sips -s format jpeg -s formatOptions "$CMCR_QUALITY" -Z "$CMCR_MAXSIZE" "$raw" --out "$out" >/dev/null 2>&1 || out="$raw"
+          else
+            sips -s format jpeg -s formatOptions "$CMCR_QUALITY" "$raw" --out "$out" >/dev/null 2>&1 || out="$raw"
           fi
           hash="$(md5 -q "$out" 2>/dev/null)"
           if [ "$SCR_FORCE" != 1 ] && [ -n "$hash" ] && [ "$hash" = "${SCR_HASH[$d]:-}" ]; then

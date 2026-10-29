@@ -32,7 +32,7 @@ CMCR_SETUP_SCHEMA=1
 NL=$'\n'
 
 # >>> CMCR-DEFAULTS – CMCR Manager podmienia ten blok przy generowaniu skryptu >>>
-OPT_PUBKEYS=''            # klucze publiczne menedżera (po jednym w linii)
+OPT_PUBKEYS=''            # klucze publiczne aplikacji (po jednym w linii)
 OPT_ADMIN=''              # konto administracyjne; puste = konto, które wywołało sudo
 OPT_STUDENT='student'     # konto ucznia
 OPT_SHARED=''             # folder współdzielony; puste = /Users/<uczeń>/Public/cmcr
@@ -41,7 +41,7 @@ OPT_SHARED_ACL=1          # dziedziczone ACL: uczeń i grupa admin mają pełny 
 OPT_SSH_ACL=1             # SSH tylko dla administratorów (com.apple.access_ssh)
 OPT_SSH_TUNING=1          # /etc/ssh/sshd_config.d/050-cmcr-manager.conf (keepalive)
 OPT_SSH_KEY_ONLY=0        # wyłącz logowanie hasłem przez SSH (tylko klucze)
-OPT_KEY_FROM=''           # ogranicz klucz menedżera do adresów (from="…")
+OPT_KEY_FROM=''           # ogranicz klucz aplikacji do adresów (from="…")
 OPT_VNC=0                 # 1 = włącz Udostępnianie ekranu (tylko administratorzy)
 OPT_SUDO_NOPASSWD=''      # yes / no / puste = bez zmian
 OPT_HOSTNAME=''           # nazwa komputera; "auto" = nazwa konta administratora
@@ -50,7 +50,7 @@ OPT_NO_SLEEP=0            # 1 = komputer nie usypia się (pmset sleep 0)
 OPT_DISPLAY_SLEEP=''      # minuty do uśpienia ekranu; puste = bez zmian
 OPT_AUTORESTART=0         # 1 = uruchom po zaniku zasilania
 OPT_POWER_SCHEDULE=''     # "MTWRF 07:30 17:00 [shutdown|sleep]", "off" lub puste
-OPT_ROSETTA=0             # 1 = zainstaluj Rosetta 2 (Apple Silicon)
+OPT_ROSETTA=0             # 1 = zainstaluj Rosettę 2 (Apple Silicon)
 OPT_UPDATES=''            # check / download / auto / puste = bez zmian
 OPT_FIX_FIREWALL=0        # 1 = wyłącz „Blokuj wszystkie połączenia przychodzące”
 OPT_GUIDE='auto'          # auto / yes / no – prowadzenie przez kroki ręczne
@@ -89,7 +89,7 @@ Nazwa i zasilanie:
   --power-schedule "MTWRF 07:30 17:00 [shutdown|sleep]" | off
                            harmonogram włączania/wyłączania (dni: M T W R F S U)
 Inne:
-  --rosetta                zainstaluj Rosetta 2 (Apple Silicon)
+  --rosetta                zainstaluj Rosettę 2 (Apple Silicon)
   --updates check|download|auto
                            automatyczne aktualizacje: tylko sprawdzaj / pobieraj
                            i instaluj poprawki bezpieczeństwa / instaluj wszystko
@@ -467,16 +467,26 @@ step_ssh_key() {
   sshdir="$home/.ssh"; ak="$sshdir/authorized_keys"; grp="$(id -gn "$ADMIN" 2>/dev/null || echo staff)"
   if [ -z "$OPT_PUBKEYS" ]; then
     if [ -s "$ak" ]; then
-      record ssh_key skipped "Nie podano klucza (--pubkey) – w authorized_keys jest już $(grep -c . "$ak" 2>/dev/null) wpis(ów)."
+      record ssh_key skipped "Nie podano klucza (--pubkey) – authorized_keys nie jest pusty (wpisów: $(grep -c . "$ak" 2>/dev/null))."
     else
       record ssh_key warn "Nie podano klucza (--pubkey) – aplikacja będzie logować się hasłem."
     fi
     return
   fi
   if [ -L "$sshdir" ] || [ -L "$ak" ]; then record ssh_key fail "$sshdir lub authorized_keys jest dowiązaniem – przerwano ze względów bezpieczeństwa."; return; fi
-  # StrictModes w sshd odrzuca klucze, gdy katalog domowy jest zapisywalny dla grupy/innych.
+  # StrictModes w sshd odrzuca klucze, gdy katalog domowy jest zapisywalny dla grupy/innych – to też zmiana
+  # (w trybie --verify/--dry-run: do zrobienia), nawet gdy klucz już jest w authorized_keys.
+  local home_fix=0
   case "$(stat -f %Lp "$home" 2>/dev/null)" in
-    *[2367]?|*?[2367]) run chmod go-w "$home"; detail "Usunięto prawo zapisu grupy/innych z $home (wymóg sshd)." ;;
+    *[2367]?|*?[2367])
+      home_fix=1
+      if [ $CHANGE -eq 1 ]; then
+        chmod go-w "$home" || { record ssh_key fail "Nie udało się usunąć prawa zapisu grupy/innych z $home – sshd odrzuci klucz."; return; }
+        detail "Usunięto prawo zapisu grupy/innych z $home (wymóg sshd)."
+      else
+        run chmod go-w "$home"
+        detail "Do zmiany: usunąć prawo zapisu grupy/innych z $home (wymóg sshd)."
+      fi ;;
   esac
   [ -d "$sshdir" ] || run as_user "$ADMIN" /bin/mkdir -m 700 "$sshdir"
   local cur="$WORK/ak.cur" new="$WORK/ak.new"
@@ -515,7 +525,7 @@ EOF
       as_user "$ADMIN" /bin/sh -c 'cat > "$1"' sh "$tmp" < "$new" && chmod 600 "$tmp" && mv -f "$tmp" "$ak" \
         || { rm -f "$tmp"; record ssh_key fail "Nie udało się zapisać $ak."; return; }
     else
-      run "zapis $n_added klucza(y) do $ak"
+      run "zapis do $ak (kluczy: $n_added)"
     fi
   fi
   if [ $CHANGE -eq 1 ]; then
@@ -525,15 +535,26 @@ EOF
   # i trafia do setup.json.
   KEY_FPS="$fps"; KEY_OK=1
   if [ $n_added -gt 0 ]; then
-    changed_or_planned ssh_key "Klucz SSH menedżera zainstalowany dla $ADMIN ($KEY_FPS)." \
-      "zainstalować klucz SSH menedżera dla $ADMIN ($KEY_FPS)."
+    changed_or_planned ssh_key "Klucz SSH aplikacji zainstalowany dla $ADMIN ($KEY_FPS)." \
+      "zainstalować klucz SSH aplikacji dla $ADMIN ($KEY_FPS)."
+  elif [ $home_fix -eq 1 ]; then
+    changed_or_planned ssh_key "Klucz SSH aplikacji był już zainstalowany ($KEY_FPS); usunięto prawo zapisu grupy/innych z $home – bez tego sshd go odrzucał." \
+      "usunąć prawo zapisu grupy/innych z $home – bez tego sshd odrzuca klucz SSH aplikacji ($KEY_FPS)."
   else
-    record ssh_key ok "Klucz SSH menedżera jest już zainstalowany ($KEY_FPS)."
+    record ssh_key ok "Klucz SSH aplikacji jest już zainstalowany ($KEY_FPS)."
   fi
 }
 
+# Opis „SSH wyłącznie z kluczem” (1/0) do raportu.
+key_only_text() { if [ "$1" = 1 ]; then printf 'SSH wyłącznie z kluczem: włączone'; else printf 'SSH wyłącznie z kluczem: wyłączone'; fi; }
+
 step_sshd_tuning() {
-  [ "$OPT_SSH_TUNING" = 1 ] || [ "$OPT_SSH_KEY_ONLY" = 1 ] || { record sshd_conf skipped "Ustawienia sshd bez zmian."; return; }
+  # Raport mówi wprost, czy logowanie hasłem jest wyłączone i czy to uruchomienie to zmienia (włącza albo wyłącza).
+  local cur_ko=0
+  grep -Eq '^PasswordAuthentication[[:space:]]+no' "$SSHD_DROPIN" 2>/dev/null && cur_ko=1
+  [ "$OPT_SSH_TUNING" = 1 ] || [ "$OPT_SSH_KEY_ONLY" = 1 ] || {
+    record sshd_conf skipped "Ustawienia sshd bez zmian ($(key_only_text $cur_ko))."; return
+  }
   if ! grep -Eq '^Include[[:space:]]+/etc/ssh/sshd_config\.d/\*' "$SSHD_CONFIG" 2>/dev/null; then
     record sshd_conf warn "sshd_config nie wczytuje /etc/ssh/sshd_config.d – pomijam (nie zmieniam głównego pliku)."
     return
@@ -559,10 +580,16 @@ step_sshd_tuning() {
     return
   fi
   if [ -f "$SSHD_DROPIN" ] && cmp -s "$want" "$SSHD_DROPIN"; then
-    record sshd_conf ok "Ustawienia sshd (keepalive$([ "$OPT_SSH_KEY_ONLY" = 1 ] && echo ', tylko klucze')) są aktualne."
+    record sshd_conf ok "Ustawienia sshd są aktualne (keepalive; $(key_only_text "$OPT_SSH_KEY_ONLY"))."
     return
   fi
-  if [ $CHANGE -eq 0 ]; then run "zapis $SSHD_DROPIN"; changed_or_planned sshd_conf "Ustawienia sshd (keepalive)." "zapisać ustawienia sshd (keepalive)."; return; fi
+  local what now="" plan=""
+  what="keepalive; $(key_only_text "$OPT_SSH_KEY_ONLY")"
+  if [ "$cur_ko" != "$OPT_SSH_KEY_ONLY" ]; then
+    if [ "$OPT_SSH_KEY_ONLY" = 1 ]; then now=" – logowanie hasłem przestaje działać"; plan=" – logowanie hasłem przestanie działać"
+    else now=" – logowanie hasłem znów działa"; plan=" – logowanie hasłem znów zadziała"; fi
+  fi
+  if [ $CHANGE -eq 0 ]; then run "zapis $SSHD_DROPIN"; changed_or_planned sshd_conf "Ustawienia sshd ($what$now)." "zapisać ustawienia sshd ($what$plan)."; return; fi
   # sshd -t wymaga kluczy hosta; przy pierwszym włączeniu SSH mogą jeszcze nie istnieć.
   if ! ls "$R"/etc/ssh/ssh_host_*_key >/dev/null 2>&1; then
     if [ -n "$R" ]; then ssh-keygen -A -f "$R" >/dev/null 2>&1; else ssh-keygen -A >/dev/null 2>&1; fi
@@ -572,7 +599,7 @@ step_sshd_tuning() {
   install -m 0644 "$want" "$SSHD_DROPIN" && chown root:wheel "$SSHD_DROPIN"
   if [ -n "$R" ]; then sshd -t -f "$SSHD_CONFIG" 2>"$WORK/sshd.err"; rc=$?; else sshd -t 2>"$WORK/sshd.err"; rc=$?; fi
   if [ $rc -eq 0 ]; then
-    changed_or_planned sshd_conf "Zapisano $SSHD_DROPIN (nowe połączenia SSH od razu go używają)."
+    changed_or_planned sshd_conf "Zapisano $SSHD_DROPIN ($what$now; nowe połączenia SSH od razu go używają)."
   else
     if [ -n "$backup" ]; then cp -p "$backup" "$SSHD_DROPIN"; else rm -f "$SSHD_DROPIN"; fi
     record sshd_conf fail "sshd -t odrzucił konfigurację – przywrócono poprzednią: $(head -n 1 "$WORK/sshd.err")"
@@ -725,7 +752,12 @@ pm_set() {   # pm_set KLUCZ WARTOŚĆ OPIS
   local cur; cur="$(pm_get "$1")"
   if ! pm_cap "$1"; then detail "$3: nieobsługiwane na tym komputerze."; return 0; fi
   if [ "$cur" = "$2" ]; then PM_OK="${PM_OK}${PM_OK:+, }$3"; return 0; fi
-  run pmset -a "$1" "$2" && PM_DID="${PM_DID}${PM_DID:+, }$3"
+  # Nieudane pmset (albo ustawienie, które po zmianie nadal ma starą wartość) to błąd kroku, nie „bez zmian”.
+  if run pmset -a "$1" "$2" && { [ $CHANGE -eq 0 ] || [ "$(pm_get "$1")" = "$2" ]; }; then
+    PM_DID="${PM_DID}${PM_DID:+, }$3"
+  else
+    PM_FAIL="${PM_FAIL}${PM_FAIL:+, }$3"
+  fi
 }
 
 step_power() {
@@ -734,13 +766,14 @@ step_power() {
   eth="$(networksetup -listallhardwareports 2>/dev/null | awk '/^Hardware Port:/{p=$0; sub(/^Hardware Port: /,"",p)} /^Ethernet Address:/{ if (p ~ /^Ethernet/ && p !~ /Adapter|Thunderbolt/) print $3 }')"
   ETH_MACS="$(echo $eth)"
   [ -n "$ETH_MACS" ] && detail "Adres MAC Ethernet (do Wake-on-LAN): $ETH_MACS"
-  PM_OK=""; PM_DID=""
+  PM_OK=""; PM_DID=""; PM_FAIL=""
   [ "$OPT_WOL" = 1 ] && pm_set womp 1 "budzenie przy dostępie do sieci"
   [ "$OPT_WOL" = 1 ] && pm_set tcpkeepalive 1 "podtrzymanie sieci w uśpieniu"
   [ "$OPT_NO_SLEEP" = 1 ] && pm_set sleep 0 "bez usypiania komputera"
   [ -n "$OPT_DISPLAY_SLEEP" ] && pm_set displaysleep "$OPT_DISPLAY_SLEEP" "uśpienie ekranu po $OPT_DISPLAY_SLEEP min"
   [ "$OPT_AUTORESTART" = 1 ] && pm_set autorestart 1 "start po zaniku zasilania"
-  if [ -n "$PM_DID" ]; then changed_or_planned power "Zasilanie: $PM_DID."
+  if [ -n "$PM_FAIL" ]; then record power fail "pmset nie zmienił ustawień zasilania: $PM_FAIL${PM_DID:+ (zmieniono: $PM_DID)}."
+  elif [ -n "$PM_DID" ]; then changed_or_planned power "Zasilanie: $PM_DID."
   elif [ -n "$PM_OK" ]; then record power ok "Zasilanie: $PM_OK."
   else record power skipped "Ustawienia zasilania bez zmian."; fi
 
@@ -797,8 +830,10 @@ step_hostname() {
   if [ "$(scutil --get ComputerName 2>/dev/null)" = "$name" ] && [ "$(scutil --get LocalHostName 2>/dev/null)" = "$name" ]; then
     record hostname ok "Nazwa komputera: $name ($name.local)."; return
   fi
-  run scutil --set ComputerName "$name"
-  run scutil --set LocalHostName "$name"
+  if ! run scutil --set ComputerName "$name" || ! run scutil --set LocalHostName "$name"; then
+    record hostname fail "Nie udało się ustawić nazwy komputera $name (scutil --set zakończył się błędem)."
+    return
+  fi
   changed_or_planned hostname "Nazwa komputera ustawiona na $name ($name.local)." "ustawić nazwę komputera na $name ($name.local)."
 }
 
@@ -842,21 +877,21 @@ step_rosetta() {
   if rosetta_installed; then record rosetta ok "Rosetta 2 jest zainstalowana."; return; fi
   [ "$OPT_ROSETTA" = 1 ] || { record rosetta skipped "Rosetta 2 nie jest zainstalowana (opcja --rosetta)."; return; }
   section "Rosetta 2"
-  if [ $CHANGE -eq 0 ]; then run softwareupdate --install-rosetta --agree-to-license; changed_or_planned rosetta "Instalacja Rosetta 2." "zainstalować Rosetta 2."; return; fi
+  if [ $CHANGE -eq 0 ]; then run softwareupdate --install-rosetta --agree-to-license; changed_or_planned rosetta "Instalacja Rosetty 2." "zainstalować Rosettę 2."; return; fi
   softwareupdate --install-rosetta --agree-to-license 2>&1 | tail -n 3 | sed 's/^/   /'
-  if rosetta_installed; then record rosetta changed "Zainstalowano Rosetta 2."
-  else record rosetta fail "Instalacja Rosetta 2 nie powiodła się (sprawdź połączenie z internetem)."; fi
+  if rosetta_installed; then record rosetta changed "Zainstalowano Rosettę 2."
+  else record rosetta fail "Instalacja Rosetty 2 nie powiodła się (sprawdź połączenie z internetem)."; fi
 }
 
 su_set() {   # su_set KLUCZ true|false
   local cur; cur="$(defaults read "$SU_PLIST" "$1" 2>/dev/null)"
   case "$cur:$2" in 1:true|0:false) return 0 ;; esac
-  run defaults write "$SU_PLIST" "$1" -bool "$2" && SU_DID=1
+  if run defaults write "$SU_PLIST" "$1" -bool "$2"; then SU_DID=1; else SU_FAIL="${SU_FAIL}${SU_FAIL:+, }$1"; fi
 }
 
 step_updates() {
   [ -n "$OPT_UPDATES" ] || { record updates skipped "Ustawienia automatycznych aktualizacji bez zmian."; return; }
-  SU_DID=""
+  SU_DID=""; SU_FAIL=""
   local dl=false crit=false os=false label
   case "$OPT_UPDATES" in
     check)    label="tylko sprawdzanie" ;;
@@ -868,7 +903,8 @@ step_updates() {
   su_set ConfigDataInstall "$crit"
   su_set CriticalUpdateInstall "$crit"
   su_set AutomaticallyInstallMacOSUpdates "$os"
-  if [ -n "$SU_DID" ]; then changed_or_planned updates "Aktualizacje: $label."; else record updates ok "Aktualizacje: $label."; fi
+  if [ -n "$SU_FAIL" ]; then record updates fail "Nie udało się zmienić ustawień automatycznych aktualizacji ($SU_FAIL)."
+  elif [ -n "$SU_DID" ]; then changed_or_planned updates "Aktualizacje: $label."; else record updates ok "Aktualizacje: $label."; fi
   [ "$OS_MAJOR" -ge 15 ] && [ "$OPT_UPDATES" != auto ] && \
     detail "macOS 15.4+ potrafi sam ponownie włączyć automatyczne aktualizacje – trwałą blokadę daje tylko MDM."
 }
@@ -927,17 +963,17 @@ step_tcc() {
   esac
   # Systemowa baza TCC jest chroniona przez SIP – tych uprawnień nie da się nadać skryptem (tylko ręcznie lub przez MDM).
   case "$FDA_REMOTE" in
-    yes) record tcc_fda ok "Pełny dostęp do dysku dla użytkowników zdalnych: włączony." ;;
-    *)   record tcc_fda todo "Ustawienia › Ogólne › Udostępnianie › (i) przy „Zdalne logowanie” › włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”$([ "$FDA_REMOTE" = unknown ] && echo ' (nie da się tego sprawdzić lokalnie – sprawdź z aplikacji)')."
+    yes) record tcc_fda ok "„Daj użytkownikom zdalnym pełny dostęp do dysku”: włączone." ;;
+    *)   record tcc_fda todo "Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie” › włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”$([ "$FDA_REMOTE" = unknown ] && echo ' (nie da się tego sprawdzić lokalnie – sprawdź z aplikacji)')."
          if open_pane "x-apple.systempreferences:com.apple.preferences.sharing?Services_RemoteLogin"; then
-           detail "Otworzyłem Udostępnianie: kliknij (i) obok „Zdalne logowanie”, włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”, OK."
+           detail "Otworzyłem Udostępnianie: kliknij ⓘ przy „Zdalne logowanie”, włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”, OK."
            wait_enter
          fi ;;
   esac
   case "$SC_REMOTE" in
     yes) if [ -z "$sc_why" ]; then record tcc_screen ok "Nagrywanie ekranu dla sesji SSH: zezwolono (podgląd ekranów działa)."
          else record tcc_screen ok "Nagrywanie ekranu dla sesji SSH: wpis w TCC zezwala – sprawdź w Gotowości ($sc_why)."; fi ;;
-    *)   record tcc_screen todo "Ustawienia › Prywatność i ochrona › Nagrywanie ekranu$([ "$OS_MAJOR" -ge 15 ] && echo ' i dźwięku systemowego') › „+” › ⌘⇧G › /usr/libexec/sshd-keygen-wrapper › włącz$([ "$OS_MAJOR" -ge 15 ] && echo '; jeśli podgląd nadal pokazuje tylko tapetę, dodaj tak samo /usr/libexec/sshd-session')$([ "$SC_REMOTE" = unknown ] && echo ' (stan pokaże CMCR Manager: Konfiguracja › Przygotowanie iMaców › Sprawdź)')."
+    *)   record tcc_screen todo "Ustawienia › Prywatność i ochrona › Nagrywanie ekranu$([ "$OS_MAJOR" -ge 15 ] && echo ' i dźwięku systemowego') › „+” › ⌘⇧G › /usr/libexec/sshd-keygen-wrapper › włącz$([ "$OS_MAJOR" -ge 15 ] && echo '; jeśli podgląd nadal pokazuje tylko tapetę, dodaj tak samo /usr/libexec/sshd-session')$([ "$SC_REMOTE" = unknown ] && echo ' (stan pokaże CMCR Manager: Konfiguracja › Przygotowanie iMaców › Sprawdź wszystkie)')."
          if open_pane "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"; then
            detail "Otworzyłem Nagrywanie ekranu: „+”, ⌘⇧G, wpisz /usr/libexec/sshd-keygen-wrapper, Otwórz, włącz przełącznik."
            detail "Jeśli „+” nie przyjmuje narzędzia (macOS 26.1–26.2): przeciągnij plik z Findera (⌘⇧G /usr/libexec/)."

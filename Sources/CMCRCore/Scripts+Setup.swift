@@ -37,7 +37,7 @@ public enum ReadinessCheck: String, CaseIterable, Identifiable, Sendable {
     /// What the check means and why the app needs it (tooltips and the legend).
     public var explanation: String {
         switch self {
-        case .ssh: return "Logowanie zdalne działa i klucz SSH tej aplikacji jest zainstalowany na koncie administratora (bez niego aplikacja loguje się hasłem)."
+        case .ssh: return "Zdalne logowanie działa i klucz SSH tej aplikacji jest zainstalowany na koncie administratora (bez niego aplikacja loguje się hasłem)."
         case .sudo: return "Zapisane hasło administratora działa z sudo – potrzebne do instalacji, aktualizacji, podglądu ekranu ucznia i konfiguracji."
         case .folder: return "Folder współdzielony ucznia istnieje, należy do konta ucznia i można do niego zapisywać."
         case .wol: return "„Budź przy dostępie do sieci” – pozwala obudzić uśpionego iMaca z aplikacji."
@@ -163,20 +163,20 @@ public struct ReadinessReport: Sendable {
         switch v["key"] {
         case "ok": items[.ssh] = ReadinessItem(.ok, "klucz", "Połączenie działa, klucz SSH aplikacji jest zainstalowany.")
         case "missing": items[.ssh] = ReadinessItem(.warning, "hasło",
-            "Połączenie działa, ale klucz SSH tej aplikacji nie jest zainstalowany – logowanie hasłem. Napraw: „Skonfiguruj zaznaczone” albo „Roześlij klucz SSH”.")
+            "Połączenie działa, ale klucz SSH tej aplikacji nie jest zainstalowany – logowanie hasłem. Napraw: „Zainstaluj klucz logowania” (niżej), „Skonfiguruj zaznaczone” albo „Roześlij klucz” (Konfiguracja › Dostęp i hasła).")
         default: items[.ssh] = ReadinessItem(.ok, "połączono",
-            "Połączenie działa. Na tym Macu nie ma jeszcze klucza SSH aplikacji (Dostęp i hasła › Wygeneruj nowy klucz), więc nie sprawdzono, czy jest zainstalowany.")
+            "Połączenie działa. Na tym Macu nie ma jeszcze klucza SSH aplikacji (Konfiguracja › Dostęp i hasła › Utwórz klucz), więc nie sprawdzono, czy jest zainstalowany.")
         }
 
         switch v["sudo"] {
         case "root", "ok": items[.sudo] = ReadinessItem(.ok, "OK", "sudo działa z zapisanym hasłem administratora.")
         case "nopasswd": items[.sudo] = ReadinessItem(.ok, "bez hasła", "sudo działa bez hasła (reguła NOPASSWD na tym iMacu).")
         case "nopassword": items[.sudo] = ReadinessItem(.unknown, "brak hasła",
-            "Nie zapisano hasła administratora – zapisz je w Konfiguracja › Dostęp i hasła. Bez sudo nie da się sprawdzić uprawnień nagrywania ekranu ani skonfigurować iMaca.")
+            "Nie zapisano hasła administratora – zapisz je w Konfiguracji › Dostęp i hasła. Bez sudo nie da się sprawdzić uprawnień nagrywania ekranu ani skonfigurować iMaca.")
         case "notadmin": items[.sudo] = ReadinessItem(.problem, "nie admin",
             "Konto \(v["admin"] ?? "SSH") nie jest administratorem tego iMaca – aplikacja potrzebuje konta z uprawnieniami administratora.")
         case "badpassword": items[.sudo] = ReadinessItem(.problem, "złe hasło",
-            "sudo odrzuciło zapisane hasło administratora. Popraw je w Konfiguracja › Dostęp i hasła (wspólne lub własne hasło komputera).")
+            "sudo odrzuciło zapisane hasło administratora. Popraw je w Konfiguracji › Dostęp i hasła (wspólne lub własne hasło komputera).")
         default: items[.sudo] = ReadinessItem(.problem, "błąd", "sudo nie działa: \(v["sudo_error"].flatMap { $0.isEmpty ? nil : $0 } ?? "nieznany błąd").")
         }
 
@@ -190,7 +190,7 @@ public struct ReadinessReport: Sendable {
                 "Uczeń „\(student)” jeszcze nigdy nie zalogował się na tym iMacu, więc nie ma folderu domowego (tworzy go macOS przy pierwszym logowaniu). Zaloguj się raz na konto ucznia przy komputerze, a potem użyj „Skonfiguruj zaznaczone”.")
         } else if folder == "nostudent" {
             items[.folder] = ReadinessItem(.problem, "brak konta",
-                "Na tym iMacu nie ma konta ucznia „\(student)”. Utwórz je w Ustawieniach (Użytkownicy i grupy) albo popraw nazwę w Konfiguracja › Ustawienia.")
+                "Na tym iMacu nie ma konta ucznia „\(student)”. Utwórz je w Ustawieniach systemowych › Użytkownicy i grupy albo popraw nazwę w Konfiguracji › Ustawienia.")
         } else if folder.hasPrefix("perm") {
             let p = folder.split(separator: " ")
             let owner = p.count > 1 ? String(p[1]) : "?", mode = p.count > 2 ? String(p[2]) : "?"
@@ -247,7 +247,7 @@ public struct ReadinessReport: Sendable {
         items[.fda] = fdaGranted
             ? ReadinessItem(.ok, "włączony", "Sesje SSH mają pełny dostęp do dysku.")
             : ReadinessItem(.manual, "ręcznie",
-                "„Daj użytkownikom zdalnym pełny dostęp do dysku” jest wyłączone – pobieranie prac z Biurka/Dokumentów ucznia i podmiana aplikacji mogą się nie udać. Włącza się to przy komputerze (Otwórz instrukcję).")
+                "„Daj użytkownikom zdalnym pełny dostęp do dysku” jest wyłączone – pobieranie prac z Biurka/Dokumentów ucznia i podmiana aplikacji mogą się nie udać. Włącza się to przy komputerze: Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie” (Otwórz instrukcję).")
 
         switch v["filevault"] {
         case "off": items[.filevault] = ReadinessItem(.ok, "wyłączony", "Po restarcie iMac od razu jest dostępny przez SSH.")
@@ -267,7 +267,7 @@ public struct ReadinessReport: Sendable {
                     "Ostatnie uruchomienie skryptu \(ver)\(when) zgłosiło błędy – zobacz raport i uruchom ponownie.")
             } else if order == .orderedDescending {
                 items[.setup] = ReadinessItem(.ok, "v\(ver)",
-                    "Skonfigurowano nowszą wersją skryptu (\(ver))\(when) niż ta aplikacja (\(expectedVersion)) – zaktualizuj CMCR Manager, zanim uruchomisz konfigurację ponownie.")
+                    "Skonfigurowano nowszą wersją skryptu (\(ver))\(when) niż ta aplikacja (\(expectedVersion)) – uaktualnij CMCR Manager, zanim uruchomisz konfigurację ponownie.")
             } else {
                 items[.setup] = ReadinessItem(.ok, "v\(ver)", "Skonfigurowano skryptem CMCR \(ver)\(when).")
             }
@@ -422,11 +422,13 @@ public extension Scripts {
           kv sudo "$SUDO"
           printf '%s\n' "$ROOTOUT" | grep -v '^root='
         else
-          ERR="$(grep -v '^ *$' "$CMCR_TMP/readiness.err" 2>/dev/null | head -n 1)"
-          case "$ERR" in
-            *"incorrect password"*|*"Sorry, try again"*|*"no password was provided"*) kv sudo badpassword ;;
-            *) kv sudo error; kv sudo_error "$ERR" ;;
-          esac
+          # The whole answer counts: before an account's first successful sudo, macOS prints its warning ("WARNING:
+          # Improper use of the sudo command…") ahead of "Sorry, try again". The last line is the error itself.
+          if grep -qE 'incorrect password|Sorry, try again|no password was provided' "$CMCR_TMP/readiness.err" 2>/dev/null; then
+            kv sudo badpassword
+          else
+            kv sudo error; kv sudo_error "$(grep -v '^ *$' "$CMCR_TMP/readiness.err" 2>/dev/null | tail -n 1)"
+          fi
         fi
         """#)
     }

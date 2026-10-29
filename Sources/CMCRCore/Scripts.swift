@@ -68,7 +68,7 @@ public enum Scripts {
           echo "setup_time=$(plutil -extract timestamp raw -o - "$SJ" 2>/dev/null)"
           echo "setup_todo=$(plutil -extract todo_count raw -o - "$SJ" 2>/dev/null)"
         fi
-        # Listing this folder needs Full Disk Access ("Pełny dostęp do dysku dla zdalnych użytkowników");
+        # Listing this folder needs Full Disk Access („Daj użytkownikom zdalnym pełny dostęp do dysku”);
         # a denial is silent, macOS never asks.
         if ls "/Library/Application Support/com.apple.TCC/" >/dev/null 2>&1; then echo "fda=yes"; else echo "fda=no"; fi
         echo "sshuser=$(id -un)"
@@ -124,11 +124,16 @@ public enum Scripts {
         """#)
     }
 
+    /// Applications in the Applications folders. A link is listed where the app really is: /Applications/Safari.app
+    /// leads into the system cryptex since macOS 13, and an app outside /Applications is not offered for uninstalling.
     public static func installedApps() -> RemoteScript {
         RemoteScript(#"""
         for d in /Applications /Applications/Utilities /System/Applications /System/Applications/Utilities ${CONSOLE_USER:+"/Users/$CONSOLE_USER/Applications"}; do
-          for a in "$d"/*.app; do [ -e "$a" ] && echo "$a"; done
-        done
+          for a in "$d"/*.app; do
+            if [ -L "$a" ]; then cmcr_realdir "$a"
+            elif [ -e "$a" ]; then echo "$a"; fi
+          done
+        done | awk 'NF && !seen[$0]++'
         exit 0
         """#)
     }
@@ -217,7 +222,10 @@ public enum Scripts {
         return RemoteScript(#"""
         NEEDLE=\#(shQuote(needle)); NAME=\#(shQuote(name))
         FORCE=\#(force ? 1 : 0); FALLBACK=\#(terminateIfRunning ? 1 : 0); WAIT=\#(max(1, wait))
-        if [ -z "$CONSOLE_USER" ]; then echo "Brak zalogowanego użytkownika."; exit 0; fi
+        if [ -z "$CONSOLE_USER" ]; then
+          \#(backgroundSessionCheck(what: "aplikacji w tej sesji nie zamknięto"))
+          echo "CMCR:NOUSER"; echo "Brak zalogowanego użytkownika."; exit 0
+        fi
         app_pids() { cmcr_ps -axww -o pid=,user=,comm= | awk -v u="$CONSOLE_USER" -v n="$NEEDLE" '$2 == u && index($0, n) > 0 {print $1}'; }
         PIDS="$(app_pids)"
         if [ -z "$PIDS" ]; then echo "Aplikacja nie jest uruchomiona."; exit 0; fi
@@ -275,13 +283,39 @@ public enum Scripts {
         """#)
     }
 
-    public static func killProcess(_ pid: Int, force: Bool) -> RemoteScript {
-        RemoteScript(#"""
-        asroot kill -\#(force ? "KILL" : "TERM") \#(pid) && echo "Wysłano SIG\#(force ? "KILL" : "TERM") do PID \#(pid)."
+    /// Ends one process of the logged-in user („Wymuś zamknięcie” in the list of running apps, `cmcrctl kill`).
+    /// The PID comes from a list that may be stale (the app quit, the student logged out) and is signalled as root,
+    /// so the process is checked first: it must belong to the console user and, with `bundlePath` (the app from
+    /// the list), still run that application. Otherwise nothing is signalled.
+    public static func killProcess(_ pid: Int, force: Bool, bundlePath: String? = nil) -> RemoteScript {
+        let want = (bundlePath ?? "").precomposedStringWithCanonicalMapping   // cmcr_ps lists precomposed names (NFC)
+        return RemoteScript(#"""
+        PID=\#(pid); SIG=\#(force ? "KILL" : "TERM"); WANT=\#(shQuote(want))
+        if [ -z "$CONSOLE_USER" ]; then echo "Brak zalogowanego użytkownika – nie zamykam procesu $PID." >&2; exit \#(ScriptCode.noConsoleUser); fi
+        LINE="$(cmcr_ps -o user=,comm= -p "$PID" 2>/dev/null | head -n 1)"
+        if [ -z "$LINE" ]; then echo "Proces $PID już nie działa."; exit 0; fi
+        OWNER="$(printf '%s\n' "$LINE" | awk '{print $1}')"
+        EXE="$(printf '%s\n' "$LINE" | sed 's/^ *[^ ]* *//')"
+        if [ "$OWNER" != "$CONSOLE_USER" ]; then
+          echo "✘ Odmowa: proces $PID ($EXE) należy do konta „${OWNER}”, nie do zalogowanego użytkownika $CONSOLE_USER – lista mogła być nieaktualna. Nic nie zamknięto." >&2
+          exit 1
+        fi
+        if [ -n "$WANT" ]; then
+          case "$EXE" in
+            "$WANT"/Contents/MacOS/*) ;;
+            *) echo "✘ Odmowa: proces $PID to już nie $(basename "$WANT") ($EXE) – lista była nieaktualna. Nic nie zamknięto, odśwież listę." >&2
+               exit 1 ;;
+          esac
+        fi
+        asroot kill -$SIG "$PID" && echo "Wysłano SIG$SIG do PID $PID ($EXE)."
         """#)
     }
 
     /// Removes an application bundle from /Applications (or `$CMCR_APPS_DIR`, used by the tests).
+    ///
+    /// Its processes (of every user) are stopped only once it is certain the app can go: links (Safari is a link into
+    /// the system cryptex) and items with the SIP flag `restricted` are refused, and the bundle is first moved aside
+    /// within its folder – the same permission as deleting it, which macOS refuses without Full Disk Access.
     public static func uninstallApp(_ path: String) -> RemoteScript {
         RemoteScript(#"""
         APP=\#(shQuote(path)); APPS="${CMCR_APPS_DIR:-/Applications}"
@@ -295,14 +329,33 @@ public enum Scripts {
         [ -e "$APP" ] || [ -L "$APP" ] || { echo "Nie znaleziono: $APP"; exit 0; }
         PARENT="$(cmcr_realdir "$(dirname "$APP")")"; RAPPS="$(cmcr_realdir "$APPS")"
         case "$PARENT/" in "$RAPPS"/*) ;; *) echo "Odmowa: $APP wskazuje poza $APPS ($PARENT)." >&2; exit 2 ;; esac
+        if [ -L "$APP" ]; then
+          echo "✘ Odmowa: $APP to tylko dowiązanie do „$(readlink "$APP")” (tak macOS umieszcza w folderze Aplikacje np. Safari) – nie odinstalowuję. Aplikacji systemowych nie można odinstalować." >&2
+          exit 2
+        fi
+        case "$(stat -f %Sf "$APP" 2>/dev/null)" in
+          *restricted*) echo "✘ $APP jest chroniona przez macOS (System Integrity Protection) – aplikacji systemowych nie można odinstalować." >&2; exit 2 ;;
+        esac
+        FDA="  macOS chroni aplikacje: włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)."
         NAME="$(basename "$APP" .app)"
         PIDS="$(cmcr_ps -axww -o pid=,comm= | awk -v n="/$NAME.app/Contents/MacOS/" 'index($0, n) > 0 {print $1}')"
+        # Moved aside first (a rename needs the same permission as deleting): an app macOS protects stays where it is
+        # and keeps running, instead of being quit for every user and then not removed.
+        GONE="$(mktemp -d "$PARENT/.cmcr-uninstall.XXXXXX" 2>"$CMCR_TMP/rm.err")" \
+          && /bin/mv "$APP" "$GONE/" 2>"$CMCR_TMP/rm.err" || {
+          [ -n "$GONE" ] && rmdir "$GONE" 2>/dev/null
+          echo "✘ Nie udało się usunąć $APP: $(head -1 "$CMCR_TMP/rm.err") – aplikacji nie zamknięto." >&2
+          echo "$FDA" >&2
+          exit 1
+        }
         [ -n "$PIDS" ] && kill -KILL $PIDS 2>/dev/null
-        if rm -rf "$APP" 2>"$CMCR_TMP/rm.err" && [ ! -e "$APP" ]; then
+        if rm -rf "$GONE" 2>"$CMCR_TMP/rm.err" && [ ! -e "$GONE" ]; then
           echo "Usunięto $APP"
         else
+          # Back in place, so the list still shows it and the next attempt finds it.
+          if [ ! -e "$APP" ] && [ -e "$GONE/$NAME.app" ]; then /bin/mv "$GONE/$NAME.app" "$APP" 2>/dev/null && rmdir "$GONE" 2>/dev/null; fi
           echo "✘ Nie udało się usunąć $APP: $(head -1 "$CMCR_TMP/rm.err")" >&2
-          echo "  macOS chroni aplikacje: włącz „Pełny dostęp do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie)." >&2
+          echo "$FDA" >&2
           exit 1
         fi
         """#, asRoot: true)
@@ -320,7 +373,7 @@ public enum Scripts {
     static let installLibrary = #"""
     CMCR_APPS="${CMCR_APPS_DIR:-/Applications}"
     cmcr_fda_hint() {
-      echo "  Wskazówka: jeśli aplikacja nie jest uruchomiona, włącz „Pełny dostęp do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie) – bez tego macOS nie pozwala podmieniać aplikacji." >&2
+      echo "  Wskazówka: jeśli aplikacja nie jest uruchomiona, włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”) – bez tego macOS nie pozwala podmieniać aplikacji." >&2
     }
     # Apple's own software, Mac App Store apps or a Developer ID certificate issued by Apple (chain checked).
     CMCR_APPLE_REQ='anchor apple or (anchor apple generic and (certificate leaf[field.1.2.840.113635.100.6.1.9] or certificate leaf[field.1.2.840.113635.100.6.1.13]))'
@@ -373,7 +426,7 @@ public enum Scripts {
         echo "⚠︎ $name: $why – instaluję mimo to (zezwolono na instalatory bez podpisu)." >&2
         return 0
       fi
-      echo "✘ $name: $why – nie instaluję. Programy bez ważnego podpisu i notaryzacji Apple mogą być podrobione albo zmienione po drodze. Jeśli to zaufany instalator (np. przygotowany w szkole), zaznacz „Zezwól na instalatory bez podpisu” w dziale Instalacja (cmcrctl: --allow-unsigned)." >&2
+      echo "✘ $name: $why – nie instaluję. Programy bez ważnego podpisu i notaryzacji Apple mogą być podrobione albo zmienione po drodze. Jeśli to zaufany instalator (np. przygotowany w szkole), zaznacz „Zezwalaj na instalatory bez podpisu Apple” w dziale Instalacja › Bezpieczeństwo (cmcrctl: --allow-unsigned)." >&2
       return 1
     }
     cmcr_skip_uninstaller() {
@@ -410,18 +463,34 @@ public enum Scripts {
       echo "→ installer -pkg $(basename "$1")"
       installer -pkg "$1" -target / && echo "✔ Zainstalowano pakiet $(basename "$1")"
     }
+    # Disk images still mounted when the job ends early (cancelled: SIGTERM to the job) are detached by the EXIT trap,
+    # so a hidden (-nobrowse) volume does not stay until the next restart.
+    CMCR_DMG_BASES=""; CMCR_DMG_TRAP=0
+    cmcr_dmg_cleanup() {
+      local b m
+      for b in $CMCR_DMG_BASES; do
+        for m in "$b"/*; do
+          [ -d "$m" ] || continue
+          hdiutil detach "$m" -force -quiet 2>/dev/null
+          rmdir "$m" 2>/dev/null
+        done
+        rmdir "$b" 2>/dev/null
+      done
+    }
     cmcr_install_dmg() {
       local base err mnt rc=0 found=0 p
       base="$(mktemp -d /tmp/cmcr-mnt.XXXXXX)" || return 1
       # In the private $CMCR_TMP: a name derived from $base in world-writable /tmp could be pre-created
       # as a symlink by another user and root would overwrite its target.
       err="$(mktemp "$CMCR_TMP/hdiutil.XXXXXX")" || { rmdir "$base"; return 1; }
+      [ $CMCR_DMG_TRAP = 1 ] || { cmcr_on_exit cmcr_dmg_cleanup; CMCR_DMG_TRAP=1; }
+      CMCR_DMG_BASES="$CMCR_DMG_BASES $base"
       echo "→ Montowanie $(basename "$1")"
       # PAGER=cat + yes: images with a licence agreement would otherwise wait for "Agree Y/N?".
       # -mountrandom also copes with images that contain several volumes.
       if ! yes | PAGER=cat hdiutil attach "$1" -readonly -nobrowse -noverify -noautoopen -mountrandom "$base" >/dev/null 2>"$err"; then
         echo "✘ Nie można zamontować obrazu dysku: $(grep -v deprecated "$err" | head -3)" >&2
-        rm -f "$err"; rmdir "$base" 2>/dev/null; return 1
+        rm -f "$err"; rmdir "$base" 2>/dev/null; CMCR_DMG_BASES="${CMCR_DMG_BASES// $base/}"; return 1
       fi
       rm -f "$err"
       for mnt in "$base"/*; do
@@ -446,6 +515,8 @@ public enum Scripts {
         rmdir "$mnt" 2>/dev/null
       done
       rmdir "$base" 2>/dev/null
+      # Detached: the trap must not touch the name later (another job may get the same one from mktemp).
+      CMCR_DMG_BASES="${CMCR_DMG_BASES// $base/}"
       if [ $found = 0 ]; then echo "✘ W obrazie nie ma pliku .pkg ani .app" >&2; return 1; fi
       return $rc
     }
@@ -565,10 +636,23 @@ public enum Scripts {
         """#)
     }
 
+    /// The official installer is downloaded to a file first: `bash -c "$(curl …)"` ran an empty script – and
+    /// reported success – when the download failed. Success means `brew` is there afterwards.
     public static func installHomebrew() -> RemoteScript {
         RemoteScript(#"""
         if command -v brew >/dev/null 2>&1; then echo "Homebrew już jest: $(brew --version | head -1)"; exit 0; fi
-        with_askpass env NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        F="$CMCR_TMP/brew-install.sh"
+        echo "→ Pobieranie instalatora Homebrew"
+        if ! curl -fsSL --retry 2 --connect-timeout 20 -o "$F" https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh || [ ! -s "$F" ]; then
+          echo "✘ Nie udało się pobrać instalatora Homebrew (brak internetu albo zablokowany GitHub) – nic nie zainstalowano." >&2
+          exit 1
+        fi
+        with_askpass env NONINTERACTIVE=1 /bin/bash "$F"; RC=$?
+        if [ $RC -ne 0 ]; then echo "✘ Instalator Homebrew zakończył się błędem (kod $RC)." >&2; exit $RC; fi
+        if ! command -v brew >/dev/null 2>&1; then
+          echo "✘ Instalator Homebrew zakończył pracę, ale nie znaleziono polecenia brew." >&2; exit 1
+        fi
+        echo "✔ Zainstalowano $(brew --version | head -1)"
         """#)
     }
 
@@ -642,11 +726,11 @@ public enum Scripts {
         RESTART=\#(restart ? 1 : 0); REC=\#(recommendedOnly ? 1 : 0); DL=\#(downloadOnly ? 1 : 0); MAJOR=\#(allowMajorUpgrade ? 1 : 0)
         CUR="$(sw_vers -productVersion 2>/dev/null)"; CUR="${CUR%%.*}"
         echo "→ softwareupdate --list"
-        softwareupdate --list > "$CMCR_TMP/updates" 2>&1
-        LABELS=(); SKIPPED=""; LABEL=""; NEEDS_RESTART=0
+        softwareupdate --list > "$CMCR_TMP/updates" 2>&1; LIST_RC=$?
+        LABELS=(); SKIPPED=""; LABEL=""; NEEDS_RESTART=0; LISTED=0
         while IFS= read -r line; do
           case "$line" in
-            "* Label: "*) LABEL="${line#\* Label: }" ;;
+            "* Label: "*) LABEL="${line#\* Label: }"; LISTED=1 ;;
             *"Title: "*)
               [ -n "$LABEL" ] || continue
               TITLE="${line#*Title: }"; TITLE="${TITLE%%,*}"
@@ -668,7 +752,16 @@ public enum Scripts {
         if [ -n "$SKIPPED" ]; then
           echo "↷ Pominięto przejście na nową wersję systemu: $SKIPPED (wymaga zaznaczenia „Pozwól na nową wersję macOS”)."
         fi
-        if [ ${#LABELS[@]} -eq 0 ]; then echo "✔ Brak aktualizacji do zainstalowania."; exit 0; fi
+        if [ ${#LABELS[@]} -eq 0 ]; then
+          # Nothing to install only when the list says so (or every listed update was skipped above); an empty
+          # answer is a failed list (no network, Apple's server unreachable), not "no updates".
+          if [ $LISTED = 1 ] || { [ $LIST_RC = 0 ] && grep -q "No new software available" "$CMCR_TMP/updates"; }; then
+            echo "✔ Brak aktualizacji do zainstalowania."; exit 0
+          fi
+          echo "✘ Nie udało się pobrać listy aktualizacji (softwareupdate --list, kod $LIST_RC) – nic nie zainstalowano:" >&2
+          grep -v '^ *$' "$CMCR_TMP/updates" | tail -n 20 | sed 's/^/  /' >&2
+          exit 1
+        fi
         if [ $DL = 1 ]; then ARGS=(--download); else ARGS=(--install); fi
         ARGS+=("${LABELS[@]}")
         if [ $DL = 0 ]; then ARGS+=(--agree-to-license); [ $RESTART = 1 ] && ARGS+=(--restart); fi
@@ -765,6 +858,11 @@ public enum Scripts {
         cmcr_on_exit 'rm -f "$TAR"'
         cmcr_require_console "$DEST" "$OWNER"
         DEST="${DEST//\{console\}/$CONSOLE_USER}"; OWNER="${OWNER//\{console\}/$CONSOLE_USER}"
+        # Before anything is written: an account that does not exist (a typo in „Inny…”) would leave the files root's.
+        OWNER_USER="${OWNER%%:*}"
+        if [ -n "$OWNER_USER" ] && ! id -u "$OWNER_USER" >/dev/null 2>&1; then
+          echo "✘ Konto „${OWNER_USER}” nie istnieje na tym komputerze – nic nie wysłano (właściciel: ${OWNER})." >&2; exit 2
+        fi
         DEST="${DEST/#\~/$HOME}"
         while [ "${DEST%/}" != "$DEST" ]; do DEST="${DEST%/}"; done
         case "$DEST" in /?*) ;; *) echo "✘ Folder docelowy musi być pełną ścieżką (np. /Users/student/Desktop): „${DEST}”" >&2; exit 2 ;; esac
@@ -778,7 +876,7 @@ public enum Scripts {
           # On-disk spelling: /users, /USERS or /Volumes/Macintosh HD/Users are /Users too.
           case "$(cmcr_realdir "$P")" in
             ""|/|/Users|/Volumes|/private|/private/var|/System|/System/Volumes|/System/Volumes/Data)
-              echo "✘ Folder $(dirname "$DEST") nie istnieje na tym Macu (np. konto bez katalogu domowego) – nie tworzę go." >&2; exit 2 ;;
+              echo "✘ Folder $(dirname "$DEST") nie istnieje na tym iMacu (np. konto bez katalogu domowego) – nie tworzę go." >&2; exit 2 ;;
           esac
         fi
         # From here on: relative paths inside the checked folder only.
@@ -805,7 +903,7 @@ public enum Scripts {
         fi
         HERE="$(stat -f %d:%i .)"
         PROBE="$(mktemp -d ./.cmcr-push.XXXXXX 2>/dev/null)" || {
-          echo "✘ Nie można zapisać w $DEST – brak uprawnień. Biurko, Dokumenty i Pobrane ucznia wymagają „Pełnego dostępu do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie)." >&2
+          echo "✘ Nie można zapisać w $DEST – brak uprawnień. Biurko, Dokumenty i Pobrane rzeczy ucznia wymagają opcji „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)." >&2
           exit 2
         }
         rmdir "$PROBE"
@@ -819,23 +917,33 @@ public enum Scripts {
         for item in "$STAGE/new"/* "$STAGE/new"/.[!.]* "$STAGE/new"/..?*; do
           [ -e "$item" ] || [ -L "$item" ] || continue
           n="$(basename "$item")"; t="./$n"
-          if [ -n "$OWNER" ]; then chown -R "$OWNER" "$item" || echo "⚠︎ chown $OWNER nie powiódł się dla $n" >&2; fi
-          if [ -n "$MODE" ]; then chmod -R "$MODE" "$item" || echo "⚠︎ chmod $MODE nie powiódł się dla $n" >&2; fi
+          # An item whose owner or mode cannot be set is not put in place: it would stay root's in the student's
+          # folder (with "Bez zmian" the student could not edit it).
+          if [ -n "$OWNER" ] && ! chown -R "$OWNER" "$item"; then
+            echo "✘ Nie udało się ustawić właściciela „${OWNER}” dla $n – nie zapisano go w $DEST." >&2; RC=1; continue
+          fi
+          if [ -n "$MODE" ] && ! chmod -R "$MODE" "$item"; then
+            echo "✘ Nie udało się ustawić uprawnień $MODE dla $n – nie zapisano go w $DEST." >&2; RC=1; continue
+          fi
           case "$n" in *.app) xattr -dr com.apple.quarantine "$item" 2>/dev/null ;; esac
           if [ -d "$item" ] && [ ! -L "$item" ] && [ -d "$t" ] && [ ! -L "$t" ] && [ "${n%.app}" = "$n" ]; then
             # Merged from inside the existing folder, so a folder swapped for a link meanwhile is not followed
             # (ditto never follows links in the destination and replaces files rather than writing into them).
-            if ! ( { cd -P -- "$t" 2>/dev/null && [ "$(stat -f %d:%i ..)" = "$HERE" ]; } || exit 1
-                   ditto "$item" . || exit 1
-                   if [ -n "$OWNER" ]; then chown "$OWNER" . || echo "⚠︎ chown $OWNER nie powiódł się dla $n" >&2; fi
-                   if [ -n "$MODE" ]; then chmod "$MODE" . || echo "⚠︎ chmod $MODE nie powiódł się dla $n" >&2; fi ); then
-              echo "✘ Kopiowanie $n do $DEST nie powiodło się" >&2; RC=1; continue
-            fi
+            ( { cd -P -- "$t" 2>/dev/null && [ "$(stat -f %d:%i ..)" = "$HERE" ]; } || exit 1
+              ditto "$item" . || exit 1
+              if [ -n "$OWNER" ]; then chown "$OWNER" . || exit 4; fi
+              if [ -n "$MODE" ]; then chmod "$MODE" . || exit 4; fi ); X=$?
+            case $X in
+              0) ;;
+              4) echo "✘ $DEST/$n: zawartość skopiowana, ale nie udało się ustawić właściciela ($OWNER) lub uprawnień ($MODE) folderu." >&2
+                 RC=1; continue ;;
+              *) echo "✘ Kopiowanie $n do $DEST nie powiodło się" >&2; RC=1; continue ;;
+            esac
           else
             if [ -e "$t" ] || [ -L "$t" ]; then
               if ! /bin/mv "$t" "$STAGE/old/$n" 2>/dev/null; then
                 echo "✘ Nie można zastąpić $DEST/$n" >&2
-                case "$n" in *.app) echo "  Jeśli aplikacja nie jest uruchomiona: włącz „Pełny dostęp do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie)." >&2 ;; esac
+                case "$n" in *.app) echo "  Jeśli aplikacja nie jest uruchomiona: włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)." >&2 ;; esac
                 RC=1; continue
               fi
             fi
@@ -888,6 +996,8 @@ public enum Scripts {
         DIR="${DIR//\{console\}/$CONSOLE_USER}"
         while [ "${DIR%/}" != "$DIR" ]; do DIR="${DIR%/}"; done
         case "$DIR/" in */../*|*/./*|*//*) echo "Odmowa: ścieżka nie może zawierać . , .. ani //" >&2; exit 2 ;; esac
+        # „~/…” is how the folder picker writes the administrator's home: protected, whatever follows.
+        case "$DIR" in "~"|"~/"*) echo "Odmowa: ~ to folder domowy administratora ($HOME) – jest chroniony (podano: $DIR)." >&2; exit 2 ;; esac
         case "$DIR" in /?*) ;; *) echo "Odmowa: podaj pełną ścieżkę (podano: $DIR)" >&2; exit 2 ;; esac
         # Early check on the given path; the resolved path is checked again below.
         shopt -s nocasematch
@@ -936,7 +1046,7 @@ public enum Scripts {
         if find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +; then
           echo "Wyczyszczono $REAL"
         else
-          echo "⚠︎ Nie wszystko udało się usunąć. Foldery Biurko/Dokumenty wymagają „Pełnego dostępu do dysku dla zdalnych użytkowników”." >&2
+          echo "⚠︎ Nie wszystko udało się usunąć. Foldery Biurko/Dokumenty wymagają opcji „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)." >&2
           RC=1
         fi
         ls -la .
@@ -944,11 +1054,13 @@ public enum Scripts {
         """#, asRoot: true)
     }
 
+    /// `ls -la` of a folder; `{console}` is the logged-in user and a leading `~` the administrator's home (the
+    /// folder picker writes folders there as „~/…”), as in `pullArchive`.
     public static func listFolder(_ path: String, asRoot: Bool) -> RemoteScript {
         RemoteScript(#"""
         DIR=\#(shQuote(path))
         cmcr_require_console "$DIR"
-        DIR="${DIR//\{console\}/$CONSOLE_USER}"
+        DIR="${DIR//\{console\}/$CONSOLE_USER}"; DIR="${DIR/#\~/$HOME}"
         ls -la "$DIR"
         """#, asRoot: asRoot)
     }
@@ -963,7 +1075,7 @@ public enum Scripts {
         while [ "${DIR%/}" != "$DIR" ]; do DIR="${DIR%/}"; done
         case "$DIR" in /?*) ;; *) echo "✘ Podaj pełną ścieżkę folderu (podano: $DIR)" >&2; exit 2 ;; esac
         case "$DIR/" in */../*|*/./*|*//*) echo "✘ Niepoprawna ścieżka: $DIR" >&2; exit 2 ;; esac
-        id "$U" >/dev/null 2>&1 || { echo "✘ Konto $U nie istnieje na tym Macu." >&2; exit 2; }
+        id "$U" >/dev/null 2>&1 || { echo "✘ Konto $U nie istnieje na tym iMacu." >&2; exit 2; }
         H="$(dscl . -read "/Users/$U" NFSHomeDirectory 2>/dev/null | awk 'NR == 1 {print $2}')"
         CDIR="$(cmcr_canonpath "$DIR")" || { echo "✘ Niepoprawna ścieżka: $DIR" >&2; exit 2; }
         if [ -n "$H" ] && [ ! -d "$H" ]; then
@@ -1116,7 +1228,7 @@ public enum Scripts {
       elif ! fdesetup list 2>/dev/null | grep -q "^$CMCR_ADMIN_USER,"; then
         echo "  Konto $CMCR_ADMIN_USER nie może odblokować FileVault (brak na liście fdesetup list)." >&2
       elif [ "$(fdesetup supportsauthrestart 2>/dev/null)" != "true" ]; then
-        echo "  Ten Mac nie obsługuje restartu z odblokowaniem (fdesetup supportsauthrestart)." >&2
+        echo "  Ten iMac nie obsługuje restartu z odblokowaniem (fdesetup supportsauthrestart)." >&2
       fi
       return 1
     }

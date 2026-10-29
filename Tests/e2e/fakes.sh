@@ -25,6 +25,11 @@ sudo() {
   fi
   if [ $nonint = 1 ]; then echo "sudo: a password is required" >&2; return 1; fi
   if [ $askpass = 0 ]; then echo "sudo: a terminal is required to read the password" >&2; return 1; fi
+  # $CMCR_E2E_WORK/sudo.lecture: the warning macOS sudo prints before the first successful authentication of an
+  # account (on stderr when it has no terminal), ahead of "Sorry, try again" (AUDIT PRZ-08).
+  if [ -e "${CMCR_E2E_WORK:-/nonexistent}/sudo.lecture" ]; then
+    printf '\nWARNING: Improper use of the sudo command could lead to data loss\nor the deletion of important system files. Please double-check your\ntyping when using sudo. Type "man sudo" for more information.\n\nTo proceed, enter your password, or type Ctrl-C to abort.\n\n' >&2
+  fi
   local pw
   pw="$("$SUDO_ASKPASS" "Password:")" || { echo "sudo: no password was provided" >&2; return 1; }
   if [ "$pw" != "${CMCR_E2E_PASSWORD:-}" ]; then
@@ -150,6 +155,12 @@ softwareupdate() {
   _e2e_log "softwareupdate $*"
   case " $* " in
     *" --list "*|*" -l "*)
+      # $CMCR_E2E_WORK/softwareupdate.list: printed instead of the list below, with the exit code from
+      # softwareupdate.list.rc (default 0) – no updates, or a server that cannot be reached (AUDIT APL-10).
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/softwareupdate.list" ]; then
+        cat "$CMCR_E2E_WORK/softwareupdate.list"
+        return "$(cat "$CMCR_E2E_WORK/softwareupdate.list.rc" 2>/dev/null || echo 0)"
+      fi
       cat <<'EOF'
 Software Update Tool
 
@@ -177,6 +188,15 @@ EOF
 
 installer() {
   _e2e_log "installer $*"
+  # $CMCR_E2E_WORK/installer.cancel: the job is cancelled while the package installs – SIGTERM to the shell of
+  # the job, as the remote cancel sends it (AUDIT APL-08). One time only.
+  if [ -e "${CMCR_E2E_WORK:-/nonexistent}/installer.cancel" ]; then
+    rm -f "$CMCR_E2E_WORK/installer.cancel"
+    _e2e_log "installer: anulowano"
+    builtin kill -TERM $$
+    sleep 2 & wait $!
+    return 143
+  fi
   local pkg=""
   while [ $# -gt 0 ]; do case "$1" in -pkg) pkg="$2"; shift 2 ;; *) shift ;; esac; done
   [ -e "$pkg" ] || { echo "installer: Error - the package path specified was invalid: '$pkg'." >&2; return 1; }
@@ -184,11 +204,19 @@ installer() {
 }
 
 # chown: logged only. The working directory is logged too: scripts change owners from inside a folder ("chown x .").
-chown() { _e2e_log "chown $* (cwd $PWD)"; return 0; }
+# With $CMCR_E2E_WORK/chown.fail it refuses, like chown for an account that does not exist (AUDIT PLI-08).
+chown() {
+  _e2e_log "chown $* (cwd $PWD)"
+  if [ -e "${CMCR_E2E_WORK:-/nonexistent}/chown.fail" ]; then echo "chown: odmowa (test)" >&2; return 1; fi
+  return 0
+}
 systemsetup() { _e2e_log "systemsetup $*"; echo "Remote Login: On"; }
+# scutil --set: logged only; with $CMCR_E2E_WORK/scutil-set.fail it fails (AUDIT PRZ-16).
 scutil() {
   case "${1:-}" in
-    --set) _e2e_log "scutil $*" ;;
+    --set)
+      _e2e_log "scutil $*"
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/scutil-set.fail" ]; then echo "SCPreferencesSetComputerName() failed: test" >&2; return 1; fi ;;
     *) command scutil "$@" ;;
   esac
 }
@@ -214,9 +242,13 @@ spctl() {
     *) _e2e_log "spctl $*"; return 0 ;;
   esac
 }
+# defaults write/delete: logged only; with $CMCR_E2E_WORK/defaults-write.fail they fail (AUDIT PRZ-16).
 defaults() {
   case " $* " in
-    *" write "*|*" delete "*) _e2e_log "defaults $*"; return 0 ;;
+    *" write "*|*" delete "*)
+      _e2e_log "defaults $*"
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/defaults-write.fail" ]; then echo "Could not write domain (test)" >&2; return 1; fi
+      return 0 ;;
     *) command defaults "$@" ;;
   esac
 }
@@ -276,6 +308,12 @@ stat() {
   # /dev/console (e.g. "daemon" for a student session that needs root, "root" for the login window).
   if [ "$*" = "-f%Su /dev/console" ] && [ -s "${CMCR_E2E_WORK:-/nonexistent}/console_user" ]; then
     cat "$CMCR_E2E_WORK/console_user"; return 0
+  fi
+  # Paths listed in $CMCR_E2E_WORK/restricted.paths carry the SIP flag "restricted" (stat -f %Sf), like the
+  # system's own applications (AUDIT APL-07).
+  if [ "${1:-} ${2:-}" = "-f %Sf" ] && [ -s "${CMCR_E2E_WORK:-/nonexistent}/restricted.paths" ] \
+     && grep -qxF -- "${3:-}" "$CMCR_E2E_WORK/restricted.paths"; then
+    echo restricted; return 0
   fi
   command stat "$@"
 }
@@ -596,6 +634,8 @@ pmset() {
         echo "System-wide power settings:"; echo "Currently in use:"
         sed 's/^/ /' "$st/pmset" 2>/dev/null ;;
       "-a "*)
+        # setup-sys/pmset-a.fail: pmset refuses the settings listed there, one name per line (AUDIT PRZ-16).
+        if grep -qxF -- "${2:-}" "$st/pmset-a.fail" 2>/dev/null; then echo "pmset: odmowa (test)" >&2; return 1; fi
         { grep -v "^${2:-} " "$st/pmset" 2>/dev/null; echo "${2:-} ${3:-}"; } > "$st/pmset.new"
         mv "$st/pmset.new" "$st/pmset" ;;
       "repeat cancel") rm -f "$st/sched" ;;

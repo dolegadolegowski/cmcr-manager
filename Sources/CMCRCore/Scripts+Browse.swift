@@ -74,7 +74,7 @@ public extension Scripts {
     cmcr_refuse() { echo "CMCR:REFUSED" >&2; echo "Odmowa: $1" >&2; return 65; }
     cmcr_privacy() {
       echo "CMCR:PRIVACY" >&2
-      echo "macOS blokuje dostęp do $1 (ochrona prywatności) – włącz pełny dostęp do dysku dla Zdalnego logowania." >&2
+      echo "macOS blokuje dostęp do $1 (ochrona prywatności) – włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)." >&2
       exit 64
     }
     cmcr_guard_item() {
