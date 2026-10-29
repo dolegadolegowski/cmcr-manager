@@ -302,7 +302,7 @@ final class AppModel: ObservableObject {
             if !applyingSavedHosts {
                 // cmcrctl may have changed hosts.json meanwhile: its changes are merged in, not overwritten.
                 let saved = ConfigStore.syncHosts(machines)
-                reportSaveProblem(saved.problem)
+                reportSaveProblem(saved.problem, in: "hosts.json")
                 if let issue = saved.issue, !configIssues.contains(issue) { configIssues.append(issue) }
                 if saved.hosts != machines { applySavedHosts(saved.hosts) }
             }
@@ -314,7 +314,7 @@ final class AppModel: ObservableObject {
     @Published var settings: AppSettings {
         didSet {
             if settings != oldValue {
-                reportSaveProblem(ConfigStore.saveSettings(settings))
+                reportSaveProblem(ConfigStore.saveSettings(settings), in: "settings.json")
                 closeStaleConnections(oldSettings: oldValue)
             }
         }
@@ -477,14 +477,16 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// The save error last shown, so a folder that stays read-only does not raise an alert on every keystroke.
-    private var shownSaveProblem: String?
+    /// The save error last shown for each file, so a folder that stays read-only does not raise an alert on every
+    /// keystroke – nor again for one file whenever another one was saved or failed in between.
+    private var shownSaveProblems: [String: String] = [:]
 
-    /// Tells the user once that hosts.json or settings.json could not be saved (AUDIT KON-03): the table and the
-    /// settings would otherwise look saved, and the changes would be gone after the next start.
-    func reportSaveProblem(_ problem: String?) {
-        defer { shownSaveProblem = problem }
-        guard let problem, problem != shownSaveProblem else { return }
+    /// Tells the user once that `file` – hosts.json, settings.json or classroom.json – could not be saved (AUDIT
+    /// KON-03, REV-75): the table, the settings, the lesson scenarios and the power schedule would otherwise look
+    /// saved, and the changes would be gone after the next start.
+    func reportSaveProblem(_ problem: String?, in file: String) {
+        defer { shownSaveProblems[file] = problem }
+        guard let problem, problem != shownSaveProblems[file] else { return }
         notice = AppNotice(
             title: "Nie udało się zapisać konfiguracji",
             message: problem + "\n\nZmiany obowiązują do zamknięcia aplikacji, ale nie zostaną zachowane. "

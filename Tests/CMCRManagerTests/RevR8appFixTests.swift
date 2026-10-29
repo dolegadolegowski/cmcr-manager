@@ -55,3 +55,44 @@ extension RevR8appFixTests {
         #expect(model.status(a).loggedInUsers == ["jan", "ola"])
     }
 }
+
+extension RevR8appFixTests {
+    // REV-75: classroom.json – the lesson scenarios, the power schedule, the attention mode, the question timeout –
+    // that could not be saved (read-only configuration folder, full disk) was not reported: ClassroomStore.saveConfig
+    // dropped the reason, the change looked saved and was gone after the next start. It is shown like a failed save of
+    // hosts.json or settings.json (AUDIT KON-03): once per file, also when another file fails or saves in between.
+    @Test func aFailedSaveOfTheClassroomSettingsIsShown() throws {
+        let model = AppTestEnvironment.makeModel([AppTestEnvironment.closedHost("imac01")])
+        let classroom = ClassroomModel.shared
+        model.notice = nil
+        let dir = ConfigStore.directory.path
+        chmod(dir, 0o500)
+        defer { chmod(dir, 0o700) }
+        var config = classroom.config
+        config.questionTimeoutMinutes += 1
+        classroom.save(config)
+        let notice = try #require(model.notice, "błąd zapisu classroom.json nie został pokazany")
+        #expect(notice.title == "Nie udało się zapisać konfiguracji")
+        #expect(notice.message.contains("classroom.json"), "\(notice.message)")
+        model.notice = nil
+        config.questionTimeoutMinutes += 1
+        classroom.save(config)
+        #expect(model.notice == nil, "ten sam błąd nie powinien wracać przy każdej zmianie")
+
+        // The host list fails too: reported once as well, and neither warning comes back after the other.
+        model.machines[0].port = 2
+        #expect(model.notice?.message.contains("hosts.json") == true, "\(model.notice?.message ?? "brak komunikatu")")
+        model.notice = nil
+        classroom.save(config)
+        #expect(model.notice == nil, "błąd zapisu classroom.json wrócił po błędzie zapisu hosts.json")
+        model.machines[0].port = 3
+        #expect(model.notice == nil, "błąd zapisu hosts.json wrócił po błędzie zapisu classroom.json")
+
+        chmod(dir, 0o700)
+        classroom.save(classroom.config)
+        model.machines[0].port = 4
+        #expect(model.notice == nil)
+        let file = ConfigStore.directory.appendingPathComponent("classroom.json")
+        #expect(try JSONDecoder().decode(ClassroomConfig.self, from: Data(contentsOf: file)) == classroom.config)
+    }
+}
