@@ -158,6 +158,7 @@ struct ScreenWallView: View {
             if window !== w { window = w }
         }
         .sheet(isPresented: $composing) { MessageComposer(targets: selectedMachines) }
+        .noticeAlert(showsToasts: true)
         .onChange(of: list.map(\.id)) { _, ids in selection.formIntersection(ids) }
         .task {
             if model.openWindowAction == nil { model.openWindowAction = openWindow }
@@ -277,13 +278,16 @@ struct ScreenWindowView: View {
     let machineID: UUID?
 
     var body: some View {
-        if let id = machineID, let m = model.machine(id) {
-            ScreenWindowContent(machine: m, feed: center.feed(for: m.id))
-        } else {
-            ContentUnavailableView("Nie ma takiego komputera", systemImage: "desktopcomputer.trianglebadge.exclamationmark",
-                                   description: Text("Ten komputer usunięto z listy w Konfiguracji."))
-                .frame(minWidth: 420, minHeight: 300)
+        Group {
+            if let id = machineID, let m = model.machine(id) {
+                ScreenWindowContent(machine: m, feed: center.feed(for: m.id))
+            } else {
+                ContentUnavailableView("Nie ma takiego komputera", systemImage: "desktopcomputer.trianglebadge.exclamationmark",
+                                       description: Text("Ten komputer usunięto z listy w Konfiguracji."))
+                    .frame(minWidth: 420, minHeight: 300)
+            }
         }
+        .noticeAlert(showsToasts: true)
     }
 }
 

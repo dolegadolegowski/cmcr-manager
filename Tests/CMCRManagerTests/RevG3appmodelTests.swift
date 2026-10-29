@@ -79,3 +79,36 @@ extension RevG3appmodelTests {
         #expect(other.summary.hasPrefix("tar: Error exit delayed"), "podsumowanie: \(other.summary)")
     }
 }
+
+extension RevG3appmodelTests {
+    // REV-13, REV-22: a notice (a screenshot that could not be saved, a refused or failed Screen Sharing tunnel,
+    // settings that could not be saved) is shown in every window that can raise it, not only in the main one – the
+    // Screen Wall may be the only window left open on a projector (AUDIT WSP-03).
+    @Test func everyWindowShowsNotices() {
+        let roots: [(String, Any.Type)] = [
+            ("Ściana ekranów", ScreenWallView.Body.self),
+            ("Podgląd ekranu", ScreenWindowView.Body.self),
+            ("Ustawienia", AppSettingsWindow.Body.self),
+            ("okno główne", ConfigIssuesAlert.Body.self),
+        ]
+        for (name, type) in roots {
+            #expect(String(reflecting: type).contains("NoticeAlert"), "\(name): \(String(reflecting: type))")
+        }
+    }
+
+    // …and only one window shows it: the one the user works in.
+    @Test func aNoticeIsShownInTheWindowInUse() {
+        final class Window {}
+        let main = Window(), wall = Window(), savePanel = Window()
+        let open = [main, wall]
+        #expect(NoticeWindows.pick(open, key: wall, main: wall, frontToBack: [wall, main]) === wall)
+        #expect(NoticeWindows.pick(open, key: main, main: main, frontToBack: [main, wall]) === main)
+        // The save panel of „Zapisz zrzut ekranu…” is still key: the Screen Wall it belongs to (main) shows it.
+        #expect(NoticeWindows.pick(open, key: savePanel, main: wall, frontToBack: [savePanel, wall, main]) === wall)
+        // The app is in the background: the front-most of its windows.
+        #expect(NoticeWindows.pick(open, key: nil, main: nil, frontToBack: [wall, main]) === wall)
+        // The main window is closed: only the Screen Wall is open.
+        #expect(NoticeWindows.pick([wall], key: nil, main: main, frontToBack: [wall]) === wall)
+        #expect(NoticeWindows.pick([Window](), key: nil, main: nil, frontToBack: []) == nil)
+    }
+}
