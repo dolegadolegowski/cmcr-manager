@@ -267,7 +267,7 @@ public struct ReadinessReport: Sendable {
                     "Ostatnie uruchomienie skryptu \(ver)\(when) zgłosiło błędy – zobacz raport i uruchom ponownie.")
             } else if order == .orderedDescending {
                 items[.setup] = ReadinessItem(.ok, "v\(ver)",
-                    "Skonfigurowano nowszą wersją skryptu (\(ver))\(when) niż ta aplikacja (\(expectedVersion)) – zaktualizuj CMCR Manager, zanim uruchomisz konfigurację ponownie.")
+                    "Skonfigurowano nowszą wersją skryptu (\(ver))\(when) niż ta aplikacja (\(expectedVersion)) – uaktualnij CMCR Manager, zanim uruchomisz konfigurację ponownie.")
             } else {
                 items[.setup] = ReadinessItem(.ok, "v\(ver)", "Skonfigurowano skryptem CMCR \(ver)\(when).")
             }
