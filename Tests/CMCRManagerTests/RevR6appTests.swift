@@ -3,7 +3,7 @@ import Testing
 @testable import CMCRCore
 @testable import CMCRManager
 
-/// Fixes from the sixth review round in the app (AUDIT UI-33).
+/// Fixes from the sixth review round in the app (AUDIT UI-33, REV-66).
 @MainActor
 @Suite struct RevR6appTests {
     /// The source of the app file `name` (Sources/CMCRManager or Sources/CMCRCore).
@@ -68,5 +68,16 @@ extension RevR6appTests {
                         "krok „\(step.title)” ma symbol \(step.icon), a „\(action.title)” (\(action.file)) – \(symbol)")
             }
         }
+    }
+}
+
+extension RevR6appTests {
+    // REV-66: the configuration problems (hosts.json damaged by a hand edit while the app runs, classroom.json that
+    // could not be read) are shown like a notice – by the window the user works in, also by the Screen Wall left
+    // alone on a projector, the screen windows and Ustawienia – not only by the main window. Every window has
+    // NoticeAlert (RevG3appmodelTests.everyWindowShowsNotices), which shows them too.
+    @Test func everyWindowShowsConfigurationProblems() {
+        let notice = String(reflecting: NoticeAlert.Body.self)
+        #expect(notice.contains("ConfigIssuesNotice"), "\(notice)")
     }
 }
