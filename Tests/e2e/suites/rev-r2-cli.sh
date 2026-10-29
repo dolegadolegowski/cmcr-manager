@@ -80,3 +80,30 @@ else pass "list: classroom.json nieczytany (bez kopii .bak)"; fi
 rm -f "$R2/classroom.json"
 out="$(r2 ask "Pytanie R2" 1 --buttons "Tak,Nie")"
 expect_not "ask, poprawne ustawienia: bez ostrzeżenia" "$out" "⚠"
+
+section "REV R2 cmcrctl – Ctrl-C przy kilku komputerach: wynik każdego z nich (AUDIT REV-35)"
+# Two Macs at once (-j 2): the second one's output waits for the first, and must not be lost when cmcrctl ends.
+R2S="$WORK/rev-r2-started"
+R2M="$WORK/rev-r2-mark"
+rm -f "$R2S" "$R2M"
+r2_interrupt '[ "$(grep -c x "$R2S" 2>/dev/null)" = 2 ]' \
+  exec "echo x >> '$R2S'; sleep 4; echo zrobione >> '$R2M'" 1,2 -j 2 --prefix
+expect_code "-j 2, Ctrl-C: kod 130" "$R2_CODE" 130 "$R2_OUT"
+expect "-j 2, Ctrl-C: polecenie zatrzymane na obu komputerach" "$R2_OUT" \
+  "[imac01] ▸ Zatrzymano polecenie na komputerze." "[imac02] ▸ Zatrzymano polecenie na komputerze."
+expect "-j 2, Ctrl-C: wynik każdego komputera" "$R2_OUT" "[imac01] ✘ imac01: Anulowano." "[imac02] ✘ imac02: Anulowano."
+r2_before "-j 2, Ctrl-C: wyniki w kolejności listy" "$R2_OUT" "[imac01] ✘ imac01" "[imac02] Running command"
+sleep 4
+[ ! -e "$R2M" ] && pass "-j 2, Ctrl-C: polecenie nie dokończyło się na żadnym komputerze" \
+  || fail "-j 2, Ctrl-C: polecenie dokończyło się mimo przerwania" "$(cat "$R2M"; echo; echo "$R2_OUT")"
+# One Mac at a time: after Ctrl-C the next Mac does not start, and the output says so.
+rm -f "$R2S" "$R2M"
+r2_interrupt 'grep -q x "$R2S" 2>/dev/null' exec "echo x >> '$R2S'; sleep 4; echo zrobione >> '$R2M'" 1,2 --prefix
+expect_code "-j 1, Ctrl-C: kod 130" "$R2_CODE" 130 "$R2_OUT"
+expect "-j 1, Ctrl-C: zatrzymane na pierwszym komputerze" "$R2_OUT" "[imac01] ▸ Zatrzymano polecenie na komputerze."
+expect "-j 1, Ctrl-C: komputer, na którym nic nie uruchomiono" "$R2_OUT" \
+  "▸ Nie uruchomiono polecenia na 1 komputerze: imac02."
+expect_not "-j 1, Ctrl-C: drugi komputer nie zaczął" "$R2_OUT" "[imac02]"
+sleep 4
+[ "$(grep -c x "$R2S" 2>/dev/null)" = 1 ] && [ ! -e "$R2M" ] && pass "-j 1, Ctrl-C: nic więcej nie uruchomiono" \
+  || fail "-j 1, Ctrl-C: polecenie działało dalej" "$(cat "$R2S" "$R2M" 2>&1; echo "$R2_OUT")"

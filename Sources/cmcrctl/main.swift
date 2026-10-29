@@ -25,7 +25,9 @@ if let first = argv.first, first.hasPrefix("__") {
 _ = legacyCLI.settings
 for issue in ConfigStore.loadIssues { Console.err("⚠ \(issue)") }
 
-if let code = await ExtraCommands.run(argv) { exit(code) }
+// An interrupted command (Ctrl-C) has stopped its jobs on the iMacs and printed their results: it ends with
+// 128 + signal (Interruption, AUDIT REV-35).
+if let code = await ExtraCommands.run(argv) { exit(Interruption.shared.exitCode(code)) }
 
 let cli = CLI(args: Arguments(argv))
-exit(await cli.run())
+exit(Interruption.shared.exitCode(await cli.run()))
