@@ -482,3 +482,27 @@ expect_not "screen-watch --notified-user w testach: bez ponownego powiadomienia"
 expect "screen-watch --notified-user w testach: sesja w dzienniku działań" "$(cat "$P2LOG" 2>/dev/null)" \
   "Podgląd ekranu (cmcrctl screen-watch) → imac01 (użytkownik daemon)"
 rm -f "$WORK/console_user"
+
+section "P2 cmcrctl – Ctrl-C zatrzymuje polecenie także na iMacu (AUDIT ZAD-13)"
+# SIGINT for cmcrctl alone (kill -INT), then for its whole process group as Ctrl-C in a terminal sends it
+# (ssh gets it as well). The remote command would leave a marker after 4 s; stopped, it never does.
+for how in proces grupa; do
+  MARK="$WORK/p2-int-$how"
+  rm -f "$MARK"
+  set -m
+  CMCR_CONFIG_DIR="$P2" CMCR_PASSWORD="$PASSWORD" "$CTL" exec "sleep 4; echo zrobione > '$MARK'" 1 > "$WORK/p2-int-$how.out" 2>&1 &
+  pid=$!
+  set +m
+  sleep 2
+  if [ "$how" = proces ]; then kill -INT "$pid"; else kill -INT -- "-$pid"; fi
+  wait "$pid"; code=$?
+  out="$(cat "$WORK/p2-int-$how.out")"
+  expect_code "Ctrl-C ($how): kod 130" "$code" 130 "$out"
+  expect "Ctrl-C ($how): polecenie zatrzymane na komputerze" "$out" "Przerywanie" "Zatrzymano polecenie na komputerze"
+  sleep 4
+  [ ! -e "$MARK" ] && pass "Ctrl-C ($how): polecenie nie dokończyło się na iMacu" \
+    || fail "Ctrl-C ($how): polecenie wykonało się mimo przerwania" "$out"
+done
+# Without a remote command running (question at the terminal) Ctrl-C ends at once, as before.
+out="$(p2pw exec 'echo "po-przerwaniu-$((1 + 1))"' 1)"
+expect "po Ctrl-C: kolejne polecenie działa" "$out" "po-przerwaniu-2"

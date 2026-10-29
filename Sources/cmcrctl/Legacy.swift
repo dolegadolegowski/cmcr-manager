@@ -77,8 +77,8 @@ func runEach(_ list: [Machine], _ a: ModuleArguments, ssh: SSHSettings, timeout:
              _ script: @escaping @Sendable (Machine) -> RemoteScript) async -> Int32 {
     logAction(list)
     return await eachHost(list, a) { io in
-        let r = await SSH.run(script(io.host), on: io.host, password: Keychain.password(for: io.host), settings: ssh,
-                              timeout: timeout, onOutput: io.stream)
+        let r = await Interruption.shared.run(script(io.host), on: io.host, password: Keychain.password(for: io.host),
+                                              settings: ssh, timeout: timeout, onOutput: io.stream)
         return io.report(r)
     }
 }

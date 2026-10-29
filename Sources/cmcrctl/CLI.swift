@@ -84,7 +84,8 @@ Opcje
 
 Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie (także opcja,
 której polecenie nie używa, lub nadmiarowy argument – wtedy nic nie jest wykonywane);
-exec zwraca kod zdalnego polecenia (najwyższy z kilku komputerów), screen-watch – także 3–6.
+exec zwraca kod zdalnego polecenia (najwyższy z kilku komputerów), screen-watch – także 3–6;
+130 – przerwano (Ctrl-C zatrzymuje polecenie także na iMacach, ponowne Ctrl-C kończy od razu).
 
 W terminalu znaki sterujące w wynikach z iMaców (np. sekwencje ESC w nazwach plików) są pokazywane
 jako ^[, ^M…; wynik przekierowany do pliku lub potoku (… | cat) pozostaje dosłowny.
@@ -269,8 +270,9 @@ struct CLI: Sendable {
         let defaultHeader = header
         let codes = await runHosts(list, jobs: jobs ?? args.jobs ?? 1, prefixLines: prefixLines) { io in
             io.out(makeHeader?(io.host) ?? defaultHeader(io.host))
-            let r = await SSH.run(script(io.host), on: io.host, password: Keychain.password(for: io.host),
-                                  settings: ssh, onOutput: io.stream)
+            // A registered job: Ctrl-C stops it on the iMac too (Interruption).
+            let r = await Interruption.shared.run(script(io.host), on: io.host, password: Keychain.password(for: io.host),
+                                                  settings: ssh, onOutput: io.stream)
             if let text = note?(io.host, r) { io.err(text) }
             return io.report(r, passThrough: passThrough)
         }
