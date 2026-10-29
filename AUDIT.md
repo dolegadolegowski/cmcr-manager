@@ -55,8 +55,8 @@ Ocena poszczególnych miejsc jest w tabelach usterek (kategoria współbieżnoś
 |---|---:|---:|---:|---:|---:|
 | P0 | 11 | 11 | 0 | 0 | 0 |
 | P1 | 32 | 32 | 0 | 0 | 0 |
-| P2 | 245 | 241 | 4 | 0 | 0 |
-| **Razem** | **288** | **284** | **4** | **0** | **0** |
+| P2 | 246 | 242 | 4 | 0 | 0 |
+| **Razem** | **289** | **285** | **4** | **0** | **0** |
 
 P0 – awaria, utrata danych lub bezpieczeństwo; P1 – funkcja opisana w README nie działa; P2 – UX, drobne, teksty. Plik i linia wskazują stan sprzed poprawki (gałąź `main` @ `c7d00ec`). Szczegóły każdej pozycji są niżej, w sekcji „Szczegóły”.
 
@@ -81,6 +81,7 @@ Poprawki z etapu 2 przeszły kolejne rundy niezależnego przeglądu, aż runda n
 - Runda 8 (po poprawkach rundy 7): 6 zgłoszeń, wszystkie P2. Jedno odrzucone (AUDIT.md nieprzegenerowany w chwili przeglądu), 5 przyjętych → REV-72…REV-75 i jedno zdanie w opisie przeglądu interfejsu.
 - Runda 9 (po poprawkach rundy 8; zakres: regresje z rundy 8 i usterki P0/P1 w całej gałęzi): 1 zgłoszenie, odrzucone przez obu sceptyków (REV-76, w tabeli odrzuconych). Brak nowych usterek – przegląd zakończony.
 - REV-59: niestabilny test (wyścig o stan globalny), który ujawnił się po scaleniu rundy 4.
+- REV-77: test z za ciasnym limitem czasu, który nie przeszedł na runnerze CI pull requesta.
 - REV-43: błąd w testach e2e (kolejność grup), zgłoszony przez wątek naprawczy rundy 2.
 - UI-26…UI-28 dopisano przy budowaniu słownika symboli i porównywaniu zrzutów „po”.
 
@@ -303,6 +304,7 @@ Poprawki z etapu 2 przeszły kolejne rundy niezależnego przeglądu, aż runda n
 | [REV-73](#rev-73) | Przegląd poprawek | `Sources/CMCRManager/HostInspector.swift:262` | Okno zmiany nazw wskazuje zły komputer i opisuje nieistniejący konflikt Bonjour, gdy nową nazwę ma inny komputer tylko jako nazwę na liście | naprawione (d2e8652) |
 | [REV-74](#rev-74) | Przegląd poprawek | `README.md:106` | Nieudane działanie na komputerze, który przestał odpowiadać, oznacza go jako niedostępny, ale zostawia ostatnio zalogowanego ucznia | naprawione (d4cad13) |
 | [REV-75](#rev-75) | Przegląd poprawek | `README.md:180` | Błąd zapisu classroom.json w aplikacji nie jest zgłaszany, a cmcrctl status przy błędzie zapisu adresu MAC kończy się kodem 0 – wbrew README | naprawione (0b945d8, 88d2c7b) |
+| [REV-77](#rev-77) | Przegląd poprawek | `Tests/CMCRCoreTests/P2CoreTests.swift:553` | Test przerwania przed znacznikiem startu ma zbyt ciasny limit czasu i nie przechodzi na runnerze CI | naprawione (8e0e9af) |
 | [TXT-01](#txt-01) | Teksty | `Sources/CMCRManager/MainToolbar.swift:59` | Podpowiedź „Ściana ekranów” obiecuje tylko zaznaczone komputery, a okno domyślnie pokazuje wszystkie | naprawione (8c553df) |
 | [TXT-02](#txt-02) | Teksty | `README.md:106` | README: filtr i skrót opisane jako „online”, w UI to „Włączone” | naprawione (077b036) |
 | [TXT-03](#txt-03) | Teksty | `README.md:114` | README: „Pliki › Konwencja cmcr-helpers” – takiej pozycji nie ma | naprawione (077b036) |
@@ -2205,6 +2207,16 @@ README (wiersz 180): gdy pliku nie da się zapisać, aplikacja to zgłasza, a cm
 Scenariusz: folder konfiguracji tylko do odczytu; zmiana scenariusza „Koniec lekcji” w aplikacji – brak komunikatu, zmiana znika po ponownym uruchomieniu.
 
 **Status:** naprawione (0b945d8, 88d2c7b). Przyczyna nieudanego zapisu classroom.json (scenariusze zajęć, harmonogram zasilania, tryb uwagi) była gubiona, więc zmiana bez ostrzeżenia znikała po ponownym uruchomieniu. Teraz ClassroomStore.saveConfig zwraca przyczynę, a aplikacja pokazuje ją tak jak dla hosts.json i settings.json, raz na plik (ostatni błąd jest pamiętany osobno dla każdego pliku). Część o `cmcrctl status` opisuje README (88d2c7b): status tylko ostrzega, że nie zapisał adresu MAC.
+
+### REV-77
+
+**Test przerwania przed znacznikiem startu ma zbyt ciasny limit czasu i nie przechodzi na runnerze CI** – P2, Przegląd poprawek, `Tests/CMCRCoreTests/P2CoreTests.swift:553`
+
+P2CancelBeforeTheMarkerTests.aCancelWhileStillLoggingInThroughASharedConnectionNeedsNoRemoteStop wymagał zakończenia w 3 s. Na GitHub Actions (macos-26, równoległe zestawy testów) przerwanie trwało 3,6 s, więc CI pull requesta #1 nie przeszło, choć zachowanie było poprawne (nie było próby zdalnego zatrzymania).
+
+Scenariusz: `scripts/test.sh --unit` w workflow CI – „(Date().timeIntervalSince(start) → 3.6294100284576416) &lt; (3 → 3.0)”.
+
+**Status:** naprawione (8e0e9af). Limit podniesiony do 15 s z komentarzem: zdalne zatrzymanie czekałoby na ConnectTimeout i OperationTimeout.cancel (po 30 s), więc test nadal je wykrywa; tekst „zatrzymać” sprawdza osobna asercja.
 
 ### TXT-01
 
