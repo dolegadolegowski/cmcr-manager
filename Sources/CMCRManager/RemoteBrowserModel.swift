@@ -316,8 +316,9 @@ final class RemoteBrowserModel: ObservableObject {
         guard let m = host, let l = listing, !entries.isEmpty else { return }
         let paths = entries.map { RemotePaths.join(l.path, $0.name) }
         let root = needsRoot(l, entries: entries)
-        let what = entries.count == 1 ? "„\(entries[0].displayName)”" : Polish.count(entries.count, "element", "elementy", "elementów")
-        runChange("Usuń \(what) z \(TerminalText.escape(l.path, keepBackslash: true))", on: m, activity: "Usuwanie \(what)…") { job in
+        let what = Self.subject(entries.map(\.displayName))
+        runChange("Usuń \(what.title) z \(TerminalText.escape(l.path, keepBackslash: true))", on: m,
+                  activity: "Usuwanie \(what.activity)…") { job in
             await self.app.ssh(Scripts.deleteItems(paths, asRoot: root), on: m, job: job)
         }
     }
@@ -327,10 +328,10 @@ final class RemoteBrowserModel: ObservableObject {
         guard let m = host, let l = listing, !entries.isEmpty else { return }
         let names = entries.map(\.name)
         let root = asRoot || l.asRoot
-        let what = entries.count == 1 ? "„\(entries[0].displayName)”" : Polish.count(entries.count, "element", "elementy", "elementów")
+        let what = Self.subject(entries.map(\.displayName))
         // Each download keeps its own list: two at once must not show each other's files (AUDIT PLI-16).
         let saved = SavedFiles()
-        runChange("Pobierz \(what) z \(m.name)", on: m, activity: "Pobieranie \(what)…", operation: { job in
+        runChange("Pobierz \(what.title) z \(m.name)", on: m, activity: "Pobieranie \(what.activity)…", operation: { job in
             let (r, files) = await Operations.download(names, in: l.path, from: m, into: directory, asRoot: root,
                                                        password: self.app.password(for: m),
                                                        settings: self.app.sshSettings, handle: job.handle,
@@ -350,8 +351,8 @@ final class RemoteBrowserModel: ObservableObject {
         let groupName = subfolder?.group ?? l.group
         let owner = ownerName == l.adminUser || ownerName.isEmpty ? "" : "\(ownerName):\(groupName)"
         let root = asRoot || !owner.isEmpty || !l.writable
-        let what = urls.count == 1 ? "„\(urls[0].lastPathComponent)”" : Polish.count(urls.count, "element", "elementy", "elementów")
-        runChange("Wyślij \(what) → \(m.name):\(destination)", on: m, activity: "Wysyłanie \(what)…") { job in
+        let what = Self.subject(urls.map(\.lastPathComponent))
+        runChange("Wyślij \(what.title) → \(m.name):\(destination)", on: m, activity: "Wysyłanie \(what.activity)…") { job in
             switch await Payload.make(urls, handle: job.handle) {
             case .failure(let e):
                 return .failure(e.localizedDescription)
@@ -363,6 +364,15 @@ final class RemoteBrowserModel: ObservableObject {
                                              onOutput: OutputSink(job).callback)
             }
         }
+    }
+
+    /// What a change acts on: one name in quotes, or how many items. `title` follows a verb („Usuń 3 elementy”),
+    /// `activity` a verbal noun („Usuwanie 3 elementów…”), which takes the genitive (AUDIT REV-16).
+    static func subject(_ shownNames: [String]) -> (title: String, activity: String) {
+        let n = shownNames.count
+        if n == 1 { return ("„\(shownNames[0])”", "„\(shownNames[0])”") }
+        // After a numeral in the genitive every number from 2 on takes „elementów” (trzech, dwudziestu dwóch…).
+        return (Polish.count(n, "element", "elementy", "elementów"), "\(n) elementów")
     }
 
     /// A name typed for a new folder or a rename that cannot be used: said in the status bar instead of a beep, which

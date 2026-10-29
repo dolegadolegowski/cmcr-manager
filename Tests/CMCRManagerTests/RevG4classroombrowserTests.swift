@@ -69,6 +69,20 @@ private final class Gate {
         #expect(after.skippedHosts == 0)
         #expect(after.outcome.text.hasPrefix("Problemy na 1 komputerze –"), "\(after.outcome.text)")
     }
+
+    // browser-genitive (AUDIT REV-16): „Usuń 3 elementy” in the title, but „Usuwanie 3 elementów…” in the status bar.
+    @Test func statusBarTextsUseTheGenitive() {
+        let names = { (n: Int) in (1...n).map { "plik\($0).txt" } }
+        for (n, title) in [(2, "2 elementy"), (3, "3 elementy"), (5, "5 elementów"), (12, "12 elementów"),
+                           (22, "22 elementy"), (101, "101 elementów")] {
+            let what = RemoteBrowserModel.subject(names(n))
+            #expect(what.title == title)
+            #expect(what.activity == "\(n) elementów")
+        }
+        let one = RemoteBrowserModel.subject(["praca.txt"])
+        #expect(one.title == "„praca.txt”")
+        #expect(one.activity == "„praca.txt”")
+    }
 }
 
 /// Review fixes (AUDIT REV-xx) of the classroom and file browser models that need an AppModel.
