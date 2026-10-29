@@ -303,14 +303,11 @@ struct RenameComputersSheet: View {
     var changes: [Entry] { entries.filter { !isUnchanged($0) } }
 
     /// `.local` names (lowercased) given to more than one of the Macs, or already used by another Mac on the list;
-    /// Bonjour would rename the extra ones (imac04-2) and the updated list would point at the other Mac.
+    /// Bonjour would rename the extra ones (imac04-2) and the updated list would point at the other Mac. The same rule
+    /// as `cmcrctl rename KOMP` (RenamePlan.repeatedNames, AUDIT REV-62).
     var duplicates: Set<String> {
-        var seen: Set<String> = [], twice: Set<String> = []
-        for e in entries {
-            let name = e.localHostName.lowercased()
-            if !seen.insert(name).inserted { twice.insert(name) }
-        }
-        return twice.union(Set(entries.map { $0.localHostName.lowercased() }).intersection(takenBy.keys))
+        RenamePlan.repeatedNames(entries.map(\.localHostName))
+            .union(Set(entries.map { $0.localHostName.lowercased() }).intersection(takenBy.keys))
     }
 
     /// `.local` names of the Macs that are not renamed here (from their addresses, their names on the list and the

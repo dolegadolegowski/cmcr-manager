@@ -338,10 +338,11 @@ enum ClassroomCLI {
         // The names the other Macs on the list have: their .local addresses and their names on the list (cmcrctl
         // reads no names from the iMacs).
         let taken = RenamePlan.namesTaken(by: legacyCLI.hosts, renaming: Set(targets.map(\.id)))
-        let stillHeld = RenamePlan.namesStillHeld(targets.map {
+        let renames = targets.map {
             RenamePlan.Rename(machine: $0, localHostName: ComputerNames.localHostName(from: a.value("--name") ?? $0.name))
-        })
-        var seen: Set<String> = []
+        }
+        let stillHeld = RenamePlan.namesStillHeld(renames)
+        let repeated = RenamePlan.repeatedNames(renames.map(\.localHostName))
         for h in targets {
             let name = a.value("--name") ?? h.name
             let lhn = ComputerNames.localHostName(from: name)
@@ -358,18 +359,21 @@ enum ClassroomCLI {
                 invalid = true
                 continue
             }
+            // A name two of the renamed Macs would get – reported for each of them and before the order below, as in
+            // the app (taken, repeated, still held): advice about the order cannot be completed while two Macs want
+            // one name (AUDIT REV-62).
+            if repeated.contains(lhn.lowercased()) {
+                Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres powtarza się "
+                            + "(dwa komputery nie mogą mieć tego samego adresu w sieci).")
+                invalid = true
+                continue
+            }
             // The address of another Mac renamed here, which gives it up only with its own rename – a renumbering or a
             // swap: the same Bonjour conflict (AUDIT REV-52).
             if let other = stillHeld[h.id] {
                 Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma teraz \(other.name) (\(other.address)), którego "
                             + "nazwa też jest zmieniana (macOS nadałby wtedy jednemu z nich inny adres). "
                             + Self.renameOrderAdvice(for: h, stillHeld: stillHeld))
-                invalid = true
-                continue
-            }
-            guard seen.insert(lhn.lowercased()).inserted else {
-                Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres powtarza się "
-                            + "(dwa komputery nie mogą mieć tego samego adresu w sieci).")
                 invalid = true
                 continue
             }

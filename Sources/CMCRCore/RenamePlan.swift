@@ -32,6 +32,18 @@ public enum RenamePlan {
         return taken
     }
 
+    /// The new `.local` names (lowercased) that more than one of the renamed Macs would get: an error for each of those
+    /// Macs, in `cmcrctl rename KOMP` and the app's „Zmień nazwy komputerów” alike, reported before the order of a
+    /// renumbering or a swap (AUDIT REV-62) – advice about the order cannot be completed while two Macs want one name,
+    /// and Bonjour would rename all but one of them (imac04-2).
+    public static func repeatedNames(_ localHostNames: [String]) -> Set<String> {
+        var seen: Set<String> = [], twice: Set<String> = []
+        for name in localHostNames.map({ $0.lowercased() }) where !seen.insert(name).inserted {
+            twice.insert(name)
+        }
+        return twice
+    }
+
     /// The renamed Macs whose new `.local` name another Mac of the same run still has now and gives up – a renumbering
     /// (imac05 → imac06 while imac06 → imac07) or a swap – with that other Mac. Nothing makes the other Mac release the
     /// name first (cmcrctl renames in list order, the app all at once): the Mac claiming it would get a numbered name
@@ -39,7 +51,7 @@ public enum RenamePlan {
     ///
     /// A Mac's current names: its `.local` address on the list and, in the app, the LocalHostName read from it
     /// (`currentNames`). A Mac that keeps its name gives nothing up – another Mac with the same new name is a
-    /// duplicate, which the callers report as such.
+    /// duplicate, which the callers report as such (`repeatedNames`), before this.
     public static func namesStillHeld(_ renames: [Rename], currentNames: [UUID: String] = [:]) -> [UUID: Machine] {
         var givenUp: [String: Machine] = [:]
         for r in renames {
