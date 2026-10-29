@@ -8,6 +8,7 @@ import Foundation
 ///       and `CMCR:RESULT …` last
 ///   cmcrctl __forget-host-key nr
 ///   cmcrctl __close-master nr
+///   cmcrctl __vnc-tunnel nr      – opens the Screen Sharing tunnel like the app (prints `CMCR:TUNNEL port=…`)
 enum HiddenCommands {
     static func run(_ command: String, _ args: [String], select: (String?) -> [Machine], root: Bool,
                     settings: SSHSettings) async -> Int32 {
@@ -45,6 +46,19 @@ enum HiddenCommands {
             FileHandle.standardOutput.write(r.stdout)
             FileHandle.standardError.write(r.stderr)
             return r.exitCode
+
+        case "__vnc-tunnel":
+            guard let spec = args.first, let host = select(spec).first else { return 2 }
+            switch await SSH.screenSharingTunnel(to: host, password: Keychain.password(for: host), settings: settings,
+                                                 linger: 20) {
+            case .success(let port):
+                print("CMCR:TUNNEL port=\(port)")
+                print(SSH.screenSharingURL(user: host.user, localPort: port)?.absoluteString ?? "")
+                return 0
+            case .failure(let r):
+                FileHandle.standardError.write(Data((SSH.diagnose(r).1 + "\n").utf8))
+                return 1
+            }
 
         case "__close-master":
             guard let spec = args.first, let host = select(spec).first else { return 2 }

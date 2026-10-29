@@ -12,14 +12,18 @@ final class ReadinessStore: ObservableObject {
     @Published private(set) var reports: [UUID: ReadinessReport] = [:]
     @Published private(set) var checking: Set<UUID> = []
     @Published private(set) var lastCheck: Date?
+    /// Asked to check again while a check was running (e.g. right after a fix): run once that one ends, so the
+    /// older result does not stay in the table (AUDIT PRZ-12).
+    private var recheck: Set<UUID> = []
 
     func check(_ machines: [Machine], model: AppModel) {
         let settings = model.settings
         let ss = model.sshSettings
         let student = settings.studentUser
-        let folder = settings.resolve(settings.sharedFolder)
+        let folder = settings.studentFolder
         let script = Scripts.readiness(student: student, sharedFolder: folder, publicKey: model.managerPublicKey)
         let timeout = TimeInterval(settings.connectTimeout + 45)
+        recheck.formUnion(machines.filter { checking.contains($0.id) }.map(\.id))
         let jobs = machines.filter { !checking.contains($0.id) }.map { ($0, model.password(for: $0)) }
         guard !jobs.isEmpty else { return }
         checking.formUnion(jobs.map(\.0.id))
@@ -36,7 +40,7 @@ final class ReadinessStore: ObservableObject {
                         let report = r.succeeded
                             ? ReadinessReport.parse(r.stdoutText, student: student, sharedFolder: folder)
                             : ReadinessReport.unreachable(r)
-                        await self.finish(m.id, report)
+                        await self.finish(m.id, report, model: model)
                     }
                     active += 1
                 }
@@ -44,11 +48,15 @@ final class ReadinessStore: ObservableObject {
         }
     }
 
-    private func finish(_ id: UUID, _ report: ReadinessReport) {
+    private func finish(_ id: UUID, _ report: ReadinessReport, model: AppModel) {
         reports[id] = report
         checking.remove(id)
         lastCheck = Date()
+        if recheck.remove(id) != nil, let m = model.machine(id) { check([m], model: model) }
     }
+
+    /// Whether a check of the Mac waits for the running one (for tests).
+    func isRecheckPending(_ id: UUID) -> Bool { recheck.contains(id) }
 }
 
 /// Hides the machine-readable JSON block of the setup report from the job log (the app reads it from stdout).
@@ -120,11 +128,14 @@ extension AppModel {
         }
         switch fix {
         case .key:
-            guard let pub = managerPublicKey else { NSSound.beep(); return }
+            guard let pub = managerPublicKey else {
+                reportFailure("Brak klucza publicznego", hint: "Utwórz klucz logowania w Konfiguracji › Dostęp i hasła albo dodaj plik .pub obok wybranego klucza.")
+                return
+            }
             runScript("Instalacja klucza SSH", on: targets, section: .setup,
                       script: { _ in Scripts.distributeKey(pub) }, onResult: recheck)
         case .folder:
-            let path = settings.resolve(settings.sharedFolder), owner = settings.studentUser
+            let path = settings.studentFolder, owner = settings.studentUser
             runScript("Folder ucznia \(path)", on: targets, section: .setup,
                       script: { _ in Scripts.createStudentFolder(path, owner: owner) }, onResult: recheck)
         case .wol:
@@ -277,7 +288,8 @@ enum ManualStep: String, CaseIterable, Identifiable {
             return ["Otwórz Ustawienia systemowe › Prywatność i ochrona › Nagrywanie ekranu i dźwięku systemowego (w macOS 14 i starszych: Nagrywanie ekranu).",
                     "Kliknij „+” pod listą i podaj hasło administratora.",
                     "Naciśnij ⌘⇧G, wpisz /usr/libexec/sshd-keygen-wrapper i kliknij Otwórz.",
-                    "Sprawdź, czy przełącznik przy sshd-keygen-wrapper jest włączony."]
+                    "Sprawdź, czy przełącznik przy sshd-keygen-wrapper jest włączony.",
+                    "Jeśli podgląd nadal pokazuje tylko tapetę (nowszy macOS, OpenSSH 9.8+), dodaj tak samo /usr/libexec/sshd-session."]
         case .screenSharing:
             return ["Otwórz Ustawienia systemowe › Ogólne › Udostępnianie.",
                     "Wyłącz i ponownie włącz „Udostępnianie ekranu”.",
@@ -308,7 +320,10 @@ enum ManualStep: String, CaseIterable, Identifiable {
     }
 
     /// Text worth copying while following the steps.
-    var copyText: String? { self == .screenRecording ? "/usr/libexec/sshd-keygen-wrapper" : nil }
+    /// Paths to paste in the file dialog: both ssh programs that may need Screen Recording (AUDIT TXT-14).
+    var copyTexts: [String] {
+        self == .screenRecording ? ["/usr/libexec/sshd-keygen-wrapper", "/usr/libexec/sshd-session"] : []
+    }
 
     func applies(to r: ReadinessReport) -> Bool {
         switch self {
@@ -419,7 +434,7 @@ struct ReadinessView: View {
         Button {
             sheet = .save
         } label: {
-            Label("Zapisz skrypt do pliku…", systemImage: "square.and.arrow.down")
+            Label("Zapisz skrypt do pliku…", systemImage: "square.and.arrow.up")
         }
         .help("Zapisuje skrypt do uruchomienia przy iMacu (np. z pendrive’a) – gdy połączenie zdalne jeszcze nie działa.")
         Menu {
@@ -442,7 +457,7 @@ struct ReadinessView: View {
                 .disabled(model.actionTargets.isEmpty)
             }
             Section("Klucze komputerów (pierwsze połączenie, reinstalacja)") {
-                Button("Sprawdź klucz komputera…", systemImage: "lock.shield") {
+                Button("Sprawdź klucz komputera…", systemImage: "key.viewfinder") {
                     model.reviewHostKeys(model.selectedMachines)
                 }
                 .help("Pokazuje odcisk klucza SSH zaznaczonych iMaców do potwierdzenia – przy pierwszym połączeniu albo po reinstalacji lub wymianie iMaca.")
@@ -481,7 +496,7 @@ struct ReadinessView: View {
             ReadinessChip(title: "Wizyta przy komputerze", value: "\(visit.count)",
                           icon: "hand.raised.fill", color: visit.isEmpty ? .secondary : .blue, machines: visit),
             ReadinessChip(title: "Bez połączenia", value: "\(offline.count)",
-                          icon: "wifi.slash", color: offline.isEmpty ? .secondary : .red, machines: offline),
+                          icon: "moon.zzz.fill", color: offline.isEmpty ? .secondary : .red, machines: offline),
         ]
         return VStack(alignment: .leading, spacing: 6) {
             // One row only when every chip fits whole at the same width; otherwise two rows of two.
@@ -779,6 +794,9 @@ struct ReadinessCellDetail: View {
         switch (check, item.state) {
         case (_, .ok):
             EmptyView()
+        // No button can fix these: the account has to be created, or made an administrator, at the iMac (PRZ-13).
+        case (.folder, .problem) where item.short == "brak konta", (.sudo, .problem) where item.short == "nie admin":
+            EmptyView()
         case (.ssh, .warning):
             fix("Zainstaluj klucz logowania", "key.horizontal", .key)
         case (.ssh, .problem) where connectionFailure == .hostKeyChanged || connectionFailure == .hostKeyUnknown:
@@ -787,7 +805,7 @@ struct ReadinessCellDetail: View {
                 model.reviewHostKeys([machine])
                 onDone()
             } label: {
-                Label("Sprawdź klucz komputera…", systemImage: "lock.shield")
+                Label("Sprawdź klucz komputera…", systemImage: "key.viewfinder")
             }
             .help(connectionFailure == .hostKeyChanged
                   ? "Tylko jeśli ten iMac był reinstalowany lub wymieniony – inaczej zmieniony klucz może oznaczać, że w sieci podszywa się pod niego inne urządzenie."
@@ -921,7 +939,7 @@ struct ManualStepGuideContent: View {
             ForEach(Array(step.steps.enumerated()), id: \.offset) { i, text in
                 NumberedStep(n: i + 1, text: text)
             }
-            if let copy = step.copyText {
+            ForEach(step.copyTexts, id: \.self) { copy in
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(copy, forType: .string)

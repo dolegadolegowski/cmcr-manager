@@ -22,8 +22,12 @@ final class LessonRun: ObservableObject, Identifiable, @unchecked Sendable {
 
     init(plan: LessonPlan, machines: [Machine]) {
         self.plan = plan
-        self.machines = machines
-        states = Dictionary(uniqueKeysWithValues: machines.map { ($0.id, Array(repeating: StepState.pending, count: plan.steps.count)) })
+        // One row per Mac, also when the host list repeats an id.
+        var seen = Set<UUID>()
+        let unique = machines.filter { seen.insert($0.id).inserted }
+        self.machines = unique
+        states = Dictionary(unique.map { ($0.id, Array(repeating: StepState.pending, count: plan.steps.count)) },
+                            uniquingKeysWith: { first, _ in first })
     }
 
     func update(_ host: UUID, _ index: Int, _ state: StepState) {
@@ -33,12 +37,20 @@ final class LessonRun: ObservableObject, Identifiable, @unchecked Sendable {
     }
 
     func cancel() {
+        guard !cancelled else { return }
         cancelled = true
         countdownEnd = nil
         batches.forEach { $0.cancel() }
     }
 
     func state(_ host: UUID, _ index: Int) -> StepState { states[host]?[index] ?? .pending }
+
+    /// The time left in the end-of-lesson countdown for `Text(timerInterval:)`. The countdown loop clears
+    /// `countdownEnd` up to half a second after the end, and a view drawn in between must not build `now...end`
+    /// with `end` already in the past (Swift stops the program on such a range).
+    func countdownRange(now: Date = Date()) -> ClosedRange<Date>? {
+        countdownEnd.map { now...max(now, $0) }
+    }
 
     /// Marks the run finished; steps that never ran (cancelled, or a phase that was not started) are skipped.
     func complete() {
@@ -58,6 +70,35 @@ final class LessonRun: ObservableObject, Identifiable, @unchecked Sendable {
 
     var failedHosts: Int {
         states.values.filter { $0.contains { if case .failed = $0 { return true } else { return false } } }.count
+    }
+
+    /// The state of the steps that a phase of the routine left a Mac out of (unreachable, or with a logged-in
+    /// student and „Pomiń komputery z zalogowanym użytkownikiem”); shown in the lesson table.
+    static func leftOut(loggedIn: Bool) -> StepState {
+        .skipped(leftOutPrefix + (loggedIn ? "zalogowany użytkownik" : "komputer niedostępny"))
+    }
+
+    private static let leftOutPrefix = "pominięto – "
+
+    /// Macs that a phase of the routine left out (`leftOut`) and where nothing failed (those count as problems).
+    /// A step that ran and had nothing to do („nikt nie jest zalogowany”, an empty materials folder) is not a skip
+    /// of the Mac (AUDIT REV-14).
+    var skippedHosts: Int {
+        states.values.filter { row in
+            !row.contains { if case .failed = $0 { return true } else { return false } }
+                && row.contains { if case .skipped(let why) = $0 { return why.hasPrefix(Self.leftOutPrefix) } else { return false } }
+        }.count
+    }
+
+    /// The summary once the routine ended: only a routine that ran everywhere is „Gotowe” (AUDIT ZAJ-13).
+    var outcome: (text: String, clean: Bool) {
+        if cancelled { return ("Przerwano – pozostałe kroki nie zostały wykonane.", false) }
+        var parts: [String] = []
+        if failedHosts > 0 { parts.append("problemy \(Polish.onComputers(failedHosts))") }
+        if skippedHosts > 0 { parts.append("pominięto \(Polish.computers(skippedHosts))") }
+        if parts.isEmpty { return ("Gotowe na wszystkich komputerach.", true) }
+        let text = parts.joined(separator: ", ")
+        return (text.prefix(1).uppercased() + text.dropFirst() + " – szczegóły w dziale Zadania.", false)
     }
 }
 
@@ -122,6 +163,11 @@ final class ClassroomModel: ObservableObject {
     @Published var question: QuestionRound?
     @Published var schedules: [UUID: ScheduleInfo] = [:]
     @Published var fileVault: [UUID: Bool] = [:]
+    /// The Mac supports the one-time FileVault unlock at restart (`fdesetup supportsauthrestart`).
+    @Published var fileVaultAutoUnlock: [UUID: Bool] = [:]
+    /// Why the last FileVault or name check of a Mac failed (shown instead of „nie sprawdzono”/„sprawdzanie…”).
+    @Published var fileVaultErrors: [UUID: String] = [:]
+    @Published var nameErrors: [UUID: String] = [:]
     @Published var lastSeen: [UUID: Date] = [:]
     @Published var names: [UUID: ComputerNameInfo] = [:]
     @Published var appVersions: AppVersionsResult?
@@ -137,9 +183,16 @@ final class ClassroomModel: ObservableObject {
     private func scheduleSave() {
         saveWork?.cancel()
         let snapshot = config
-        let work = DispatchWorkItem { ClassroomStore.saveConfig(snapshot) }
+        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.save(snapshot) } }
         saveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    /// Writes classroom.json. A save that failed (read-only configuration folder, full disk) is shown like one of
+    /// hosts.json or settings.json: the lesson scenarios, the power schedule and the attention mode would otherwise
+    /// look saved and be gone after the next start (AUDIT REV-75).
+    func save(_ c: ClassroomConfig) {
+        (model ?? AppModel.shared)?.reportSaveProblem(ClassroomStore.saveConfig(c), in: "classroom.json")
     }
 
     // MARK: - Last-known state
@@ -148,6 +201,8 @@ final class ClassroomModel: ObservableObject {
     func attach(_ model: AppModel) {
         guard self.model == nil else { return }
         self.model = model
+        // A damaged classroom.json is reported with the other configuration problems (AUDIT KOM-02).
+        if let issue = ClassroomStore.loadIssue, !model.configIssues.contains(issue) { model.configIssues.append(issue) }
         let snapshots = ClassroomStore.loadSnapshots()
         for m in model.machines {
             guard model.statuses[m.id] == nil, let snap = snapshots[m.id] else { continue }
@@ -277,8 +332,12 @@ final class ClassroomModel: ObservableObject {
             if !sleeping.isEmpty { Task { _ = await send(sleeping) } }
         }
         var items: [URL] = []
+        var materialsProblem: String?
         if plan.steps.contains(.materials) {
-            items = materialItems(config.start.materialsFolder)
+            switch materials(config.start.materialsFolder) {
+            case .success(let found): items = found
+            case .failure(let problem): materialsProblem = problem.message
+            }
         }
         // Packed on first use and again for "Powtórz na nieudanych" after the cleanup (a retry reuses the batch's
         // operation, so a one-off archive would already be deleted then).
@@ -287,7 +346,7 @@ final class ClassroomModel: ObservableObject {
         // once, the other steps share the usual number of parallel connections.
         let limiter = plan.steps.contains(.wake) ? ConcurrencyLimiter(limit: model.settings.maxParallel) : nil
         launch(plan, run: run, title: "Rozpoczęcie zajęć", range: nil, model: model, payload: payload,
-               limiter: limiter) { [weak self] in
+               materialsProblem: materialsProblem, limiter: limiter) { [weak self] in
             payload?.discard()          // deferred until no job (a retry included) uses the archive
             run.complete()
             self?.syncLessonState(model)
@@ -344,8 +403,8 @@ final class ClassroomModel: ObservableObject {
     }
 
     private func launch(_ plan: LessonPlan, run: LessonRun, title: String, range: Range<Int>?, model: AppModel,
-                        payload: SharedPayload? = nil, limiter: ConcurrencyLimiter? = nil,
-                        completion: @escaping @MainActor () -> Void) {
+                        payload: SharedPayload? = nil, materialsProblem: String? = nil,
+                        limiter: ConcurrencyLimiter? = nil, completion: @escaping @MainActor () -> Void) {
         let ss = model.sshSettings
         // A lesson that starts by waking the Macs must not skip the ones that are still asleep.
         let batch = model.runBatch(title, on: run.machines, section: .classroom,
@@ -353,16 +412,16 @@ final class ClassroomModel: ObservableObject {
                                    includeUnreachable: plan.steps.contains(.wake), operation: { m, job in
             // A retry passes the batch's copy of the Mac; the host list entry may have changed since.
             let host = self.lessonHost(model.machine(m.id) ?? m, model)
-            let steps: @MainActor (URL?) async -> CommandResult = { materials in
-                await LessonRunner.run(plan, on: host, ssh: ss, materials: materials, range: range, limiter: limiter,
+            let steps: @MainActor (URL?, String?) async -> CommandResult = { materials, problem in
+                await LessonRunner.run(plan, on: host, ssh: ss, materials: materials, materialsProblem: problem,
+                                       range: range, limiter: limiter,
                                        handle: job.handle, onOutput: OutputSink(job).callback) { index, state in
                     DispatchQueue.main.async { run.update(m.id, index, state) }
                 }
             }
-            guard let payload else { return await steps(nil) }
-            return await payload.useIfAvailable { materials, failure in
-                if let failure { job.note("Materiały: \(failure)") }
-                return await steps(materials)
+            guard let payload else { return await steps(nil, materialsProblem) }
+            return await payload.useIfAvailable(handle: job.handle) { materials, failure in
+                await steps(materials, failure.map { "nie udało się spakować materiałów: \($0)" })
             }
         }, completion: { _ in
             // Step updates are queued on the main queue; run the completion after them.
@@ -370,20 +429,20 @@ final class ClassroomModel: ObservableObject {
         })
         guard let batch else { return }
         run.batches.append(batch)
+        // „Przerwij” on any of the routine's batches (Zadania, Aktywność, the result box) stops the whole routine:
+        // otherwise a cancelled warning would still be followed by the countdown, logging out and switching off.
+        batch.onCancel = { [weak run] in run?.cancel() }
         // Macs left out on purpose or known to be off never run their steps: say why in the lesson table.
         for job in batch.jobs where job.state == .skipped {
-            let why = job.skipReason == .loggedInUser ? "pominięto – zalogowany użytkownik" : "pominięto – komputer niedostępny"
-            for i in range ?? 0..<plan.steps.count { run.update(job.machine.id, i, .skipped(why)) }
+            let state = LessonRun.leftOut(loggedIn: job.skipReason == .loggedInUser)
+            for i in range ?? 0..<plan.steps.count { run.update(job.machine.id, i, state) }
         }
     }
 
-    /// Files and folders inside the materials folder (the folder itself is not sent).
-    func materialItems(_ folder: String) -> [URL] {
-        guard !folder.isEmpty else { return [] }
-        let url = URL(fileURLWithPath: expandTilde(folder), isDirectory: true)
-        return ((try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.lastPathComponent != ".DS_Store" }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+    /// Files and folders inside the materials folder (the folder itself is not sent), or why it cannot be read;
+    /// see `LessonMaterials`.
+    func materials(_ folder: String) -> Result<[URL], LessonMaterials.Problem> {
+        LessonMaterials.items(in: folder)
     }
 
     // MARK: - Attention mode
@@ -392,7 +451,12 @@ final class ClassroomModel: ObservableObject {
         let message = config.lockMessage, mode = config.lockMode, minutes = config.autoUnlockMinutes
         model.runScript("Tryb uwagi: zablokuj ekrany", on: targets, section: .classroom,
                         script: { _ in Scripts.lockScreen(message: message, mode: mode, autoUnlockMinutes: minutes) }) { m, r in
-            guard r.succeeded else { return }
+            guard r.succeeded else {
+                // The script takes the old lock off before starting the new one: once it ran, a failure leaves the
+                // screen unlocked – the app must not keep showing it as locked (AUDIT ZAJ-10).
+                if r.started { self.locks[m.id] = nil }
+                return
+            }
             let used = r.stdoutText.split(whereSeparator: \.isNewline)
                 .first { $0.hasPrefix("CMCR:LOCK:") }.map { String($0.dropFirst("CMCR:LOCK:".count)) } ?? ""
             if used == "lockscreen" || used == "overlay" {
@@ -428,6 +492,11 @@ final class ClassroomModel: ObservableObject {
         question = round
         round.batch = model.runBatch("Pytanie: \(text.prefix(50))", on: targets, section: .classroom,
                                      maxParallel: targets.count) { m, job in
+            // „Powtórz na nieudanych” asks again on the same round: until this Mac answers, it waits for the answer
+            // instead of showing the earlier skip, error or answer (AUDIT REV-20).
+            round.errors[m.id] = nil
+            round.answers[m.id] = nil
+            round.answeredAt[m.id] = nil
             let r = await model.ssh(Scripts.ask(title: "Pytanie od nauczyciela", prompt: text, buttons: buttons,
                                                  timeoutSeconds: seconds),
                                     on: m, job: job, timeout: TimeInterval(seconds + 60))
@@ -438,6 +507,12 @@ final class ClassroomModel: ObservableObject {
                 round.errors[m.id] = SSH.diagnose(r).1
             }
             return r
+        }
+        // Macs left out (unreachable, „Pomiń niedostępne”) never answer: say so instead of waiting for them forever
+        // (AUDIT ZAJ-11).
+        for job in round.batch?.jobs ?? [] where job.state == .skipped {
+            round.errors[job.machine.id] = job.skipReason == .loggedInUser ? "pominięto – zalogowany użytkownik"
+                : "pominięto – komputer niedostępny"
         }
     }
 
@@ -451,7 +526,7 @@ final class ClassroomModel: ObservableObject {
     }
 
     func cancelDelayedPower(_ model: AppModel, _ targets: [Machine]) {
-        model.runScript("Anuluj zaplanowane wyłączenie/restart", on: targets, section: .power) { _ in
+        model.runScript("Odwołaj zaplanowane uśpienie/restart/wyłączenie", on: targets, section: .power) { _ in
             Scripts.cancelDelayedPower()
         }
     }
@@ -463,9 +538,14 @@ final class ClassroomModel: ObservableObject {
             let pw = model.password(for: m)
             Task {
                 let r = await SSH.run(Scripts.fileVaultStatus(), on: m, password: pw, settings: ss, timeout: 25)
-                guard r.succeeded else { return }
+                guard r.succeeded else {
+                    self.fileVaultErrors[m.id] = SSH.diagnose(r).1      // AUDIT KOM-06
+                    return
+                }
+                self.fileVaultErrors[m.id] = nil
                 let kv = Parsers.keyValues(r.stdoutText)
                 self.fileVault[m.id] = kv["fv"] == "on"
+                self.fileVaultAutoUnlock[m.id] = kv["authrestart"] == "yes"
                 var st = model.statuses[m.id] ?? HostStatus()
                 st.info["fv"] = kv["fv"]
                 model.statuses[m.id] = st
@@ -518,7 +598,11 @@ final class ClassroomModel: ObservableObject {
             let pw = model.password(for: m)
             Task {
                 let r = await SSH.run(Scripts.computerNames(), on: m, password: pw, settings: ss, timeout: 25)
-                guard r.succeeded else { return }
+                guard r.succeeded else {
+                    self.nameErrors[m.id] = SSH.diagnose(r).1           // AUDIT KOM-06
+                    return
+                }
+                self.nameErrors[m.id] = nil
                 let kv = Parsers.keyValues(r.stdoutText)
                 self.names[m.id] = ComputerNameInfo(computerName: kv["cn"] ?? "", localHostName: kv["lhn"] ?? "",
                                                     hostName: kv["hn"] ?? "")
@@ -534,22 +618,37 @@ final class ClassroomModel: ObservableObject {
 
     /// Renames the Macs; on success optionally updates the app's host list (name and `.local` address).
     func rename(_ model: AppModel, _ entries: [RenameEntry], updateList: Bool) {
-        let byID = Dictionary(uniqueKeysWithValues: entries.map { ($0.machine.id, $0) })
+        let byID = Dictionary(entries.map { ($0.machine.id, $0) }, uniquingKeysWith: { first, _ in first })
         model.runScript("Zmiana nazw komputerów", on: entries.map(\.machine), section: .dashboard,
                         script: { m in
                             let e = byID[m.id]!
                             return Scripts.renameComputer(computerName: e.computerName, localHostName: e.localHostName)
                         }) { m, r in
             guard r.succeeded, let e = byID[m.id] else { return }
-            self.names[m.id] = ComputerNameInfo(computerName: e.computerName, localHostName: e.localHostName,
-                                                hostName: e.localHostName)
-            guard updateList, let i = model.machines.firstIndex(where: { $0.id == m.id }) else { return }
-            if model.machines[i].name != e.computerName { model.machines[i].name = e.computerName }
-            if let address = ComputerNames.addressAfterRename(model.machines[i].address, localHostName: e.localHostName),
-               address != model.machines[i].address {
-                model.machines[i].address = address
-            }
+            self.renamed(e, model: model, updateList: updateList)
         }
+    }
+
+    /// A Mac was renamed: shows its new names and, with `updateList`, updates its host list entry.
+    func renamed(_ e: RenameEntry, model: AppModel, updateList: Bool) {
+        let id = e.machine.id
+        names[id] = ComputerNameInfo(computerName: e.computerName, localHostName: e.localHostName, hostName: e.localHostName)
+        guard updateList, let before = model.machine(id) else { return }
+        var updated = before
+        updated.name = e.computerName
+        if let address = ComputerNames.addressAfterRename(before.address, localHostName: e.localHostName) {
+            updated.address = address
+        }
+        guard updated != before else { return }
+        // One write, by id: saving the list takes over what cmcrctl changed in hosts.json meanwhile and may replace
+        // the whole array (AUDIT KON-04), so an index taken before a write can point at another Mac after it
+        // (AUDIT REV-18).
+        if let i = model.machines.firstIndex(where: { $0.id == id }) { model.machines[i] = updated }
+        guard updated.address != before.address else { return }
+        // The Mac keeps its host keys: trust them under the new address too, so the next connection is not
+        // refused as an unknown Mac (AUDIT KOM-07).
+        let after = model.machine(id) ?? updated, ss = model.sshSettings
+        Task { await HostTrust.carryTrust(from: before, to: after, settings: ss) }
     }
 
     // MARK: - App versions
@@ -593,7 +692,7 @@ final class ClassroomModel: ObservableObject {
             ConfigStore.log("Raport CSV → \(url.path)")
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } catch {
-            NSSound.beep()
+            model.reportFailure("Nie udało się zapisać raportu", error)
         }
     }
 
@@ -603,7 +702,7 @@ final class ClassroomModel: ObservableObject {
             try CSV.render(rows).write(to: url, atomically: true, encoding: .utf8)
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } catch {
-            NSSound.beep()
+            AppModel.shared?.reportFailure("Nie udało się zapisać pliku CSV", error)
         }
     }
 }

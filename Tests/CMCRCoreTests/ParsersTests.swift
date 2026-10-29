@@ -63,6 +63,25 @@ import Testing
         #expect(!apps.contains { $0.bundlePath.contains("Helper") })
     }
 
+    /// running-apps-hidden (AUDIT APL-02): only system services are "background"; Safari (a cryptex since macOS 13)
+    /// and apps a student started from Downloads, a disk image or a USB stick are the student's apps.
+    @Test func onlySystemServicesCountAsBackground() {
+        func app(_ path: String) -> RunningApp {
+            RunningApp(pid: 1, name: ((path as NSString).lastPathComponent as NSString).deletingPathExtension, bundlePath: path)
+        }
+        for user in ["/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app",
+                     "/Applications/Pages.app", "/System/Applications/Calculator.app",
+                     "/Users/student/Downloads/Gra.app", "/Users/student/Applications/Edytor.app",
+                     "/private/var/folders/xy/abc/T/AppTranslocation/1234/d/Gra.app", "/Volumes/PENDRIVE/Gra.app"] {
+            #expect(!app(user).isSystem, "\(user)")
+        }
+        for system in ["/System/Library/CoreServices/Finder.app", "/System/Library/CoreServices/Dock.app",
+                       "/Library/Application Support/Firma/Agent.app", "/usr/libexec/Usluga.app",
+                       "/Users/student/Library/Application Support/X/Pomocnik.app"] {
+            #expect(app(system).isSystem, "\(system)")
+        }
+    }
+
     @Test func runningAppsWithoutConsoleUser() {
         let (user, apps) = Parsers.runningApps("USER:\n")
         #expect(user == nil)
@@ -97,6 +116,26 @@ import Testing
     @Test func softwareUpdatesLabelWithoutTitleFallsBackToLabel() {
         let text = "* Label: Old Format Update-1.0\n* Label: Another-2.0\n\tTitle: Another, Version: 2.0,\n* Label: Last-3.0\n"
         #expect(Parsers.softwareUpdates(text) == ["Old Format Update-1.0", "Another", "Last-3.0"])
+    }
+
+    /// AUDIT APL-04: only "No new software available" means up to date; an error or a timeout is a failed check.
+    @Test func failedUpdateCheckIsNotUpToDate() {
+        func result(_ text: String, code: Int32 = 0, timedOut: Bool = false) -> CommandResult {
+            CommandResult(exitCode: code, stdout: Data(text.utf8), timedOut: timedOut, started: true)
+        }
+        let header = "Software Update Tool\n\nFinding available software\n"
+        #expect(Parsers.softwareUpdateCheck(result(header + "No new software available.\n")) == .upToDate)
+        #expect(Parsers.softwareUpdateCheck(result(header + "* Label: Safari99-1\n\tTitle: Safari, Version: 99,\n"))
+                == .available(["Safari"]))
+        guard case .failed(let offline) = Parsers.softwareUpdateCheck(
+            result(header + "Cannot connect to the server. The Internet connection appears to be offline.\n", code: 1))
+        else { Issue.record("offline counted as checked"); return }
+        #expect(offline.contains("Cannot connect"))
+        guard case .failed(let slow) = Parsers.softwareUpdateCheck(result(header, code: -1, timedOut: true))
+        else { Issue.record("timeout counted as checked"); return }
+        #expect(slow.contains("w wyznaczonym czasie"))
+        guard case .failed = Parsers.softwareUpdateCheck(result(header))
+        else { Issue.record("header only counted as up to date"); return }
     }
 
     @Test func linesSkipsEmptyOnes() {

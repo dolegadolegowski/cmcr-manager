@@ -28,7 +28,7 @@ struct AppsView: View {
                     Section {
                         BatchResultsView(batch: batch)
                     } header: {
-                        Label("Wynik ostatniej operacji", systemImage: "list.bullet.rectangle")
+                        Label("Wynik ostatniego działania", systemImage: "list.bullet.rectangle")
                     }
                     .id(batch.id)
                 }
@@ -38,6 +38,13 @@ struct AppsView: View {
         .groupedFormPageBackground()
         .onAppear {
             if !model.selectedMachines.isEmpty { model.refreshRunningApps(model.selectedMachines) }
+        }
+        // Macs checked later are read too, instead of waiting as „Wczytywanie listy…” for good (AUDIT UI-07).
+        .onChange(of: model.selection) { _, _ in
+            let missing = model.selectedMachines.filter {
+                model.runningApps[$0.id] == nil && !model.runningAppsLoading.contains($0.id)
+            }
+            if !missing.isEmpty { model.refreshRunningApps(missing) }
         }
         .confirmation($confirm)
     }
@@ -132,7 +139,7 @@ struct AppsView: View {
                 .disabled(urlToOpen.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         } header: {
-            Label("Otwórz stronę internetową lub plik", systemImage: "safari")
+            Label("Otwórz stronę internetową lub plik", systemImage: "globe")
         }
     }
 
@@ -189,7 +196,11 @@ struct AppsView: View {
         }
         for m in model.selectedMachines {
             guard let info = model.runningApps[m.id] else {
-                add("Wczytywanie listy…", "hourglass", .secondary, m)
+                if model.runningAppsLoading.contains(m.id) {
+                    add("Wczytywanie listy…", "hourglass", .secondary, m)
+                } else {
+                    add("Nie wczytano – kliknij „Odśwież listę”.", "arrow.clockwise", .secondary, m)
+                }
                 continue
             }
             if let error = info.error {
@@ -279,13 +290,17 @@ struct AppsView: View {
 
     var installedSection: some View {
         let checked = model.selectedMachines.filter { model.installedApps[$0.id] != nil }.count
+        let loading = model.selectedMachines.filter { model.installedAppsLoading.contains($0.id) }.count
+        let failed = model.selectedMachines.compactMap { m in model.installedAppsErrors[m.id].map { (m.name, $0) } }
         let rows = installedRows
         let filter = installedFilter.trimmingCharacters(in: .whitespaces)
         let shown = filter.isEmpty ? rows : rows.filter { Self.appName($0.path).localizedStandardContains(filter) }
         let selected = shown.first { $0.id == installedSelection }
         return Section {
-            FormActionRow("Aplikacje w folderach Programy",
-                          caption: checked == 0
+            FormActionRow("Aplikacje w folderach Aplikacje",
+                          caption: loading > 0
+                              ? "Wczytywanie listy \(Polish.onComputers(loading))…"
+                              : checked == 0
                               ? "Pobierz listę, aby zobaczyć, na ilu komputerach jest każda aplikacja."
                               : "Sprawdzono \(Polish.computers(checked)). Pomarańczowa liczba – aplikacji brakuje na części z nich.") {
                 TargetButton(title: checked == 0 ? "Pobierz listę" : "Odśwież listę",
@@ -293,18 +308,21 @@ struct AppsView: View {
                     model.refreshInstalledApps(model.selectedMachines)
                 }
             }
+            // Macs whose list could not be read say why, instead of quietly missing from the counts (AUDIT WSP-06).
+            ForEach(failed.prefix(4), id: \.0) { name, error in
+                Label("\(name): \(error)", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.callout)
+            }
+            if failed.count > 4 {
+                Text("… i \(Polish.computers(failed.count - 4)) z błędem").font(.callout).foregroundStyle(.secondary)
+            }
             if !rows.isEmpty {
                 SearchField(text: $installedFilter, prompt: "Szukaj aplikacji")
                     .accessibilityLabel("Szukaj aplikacji")
                 installedTable(shown, checked: checked, filter: filter)
                     .frame(height: 300)
                 HStack(spacing: 10) {
-                    Text(selected.map { "Zaznaczona: \(Self.appName($0.path))" } ?? "Zaznacz aplikację na liście.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 12)
                     Button(role: .destructive) {
                         if let selected { confirmUninstall(selected) }
                     } label: {
@@ -313,9 +331,16 @@ struct AppsView: View {
                     }
                     .disabled(selected.map(Self.canUninstall) != true || model.actionTargets.isEmpty)
                     .help(selected.map { Self.canUninstall($0)
-                        ? "Usuń \(Self.appName($0.path)) z folderu Programy na zaznaczonych komputerach (z potwierdzeniem)"
-                        : "Aplikacji systemowych i spoza folderu Programy nie można tu odinstalować." }
+                        ? "Usuń \(Self.appName($0.path)) z folderu Aplikacje na zaznaczonych komputerach (z potwierdzeniem)"
+                        : "Aplikacji systemowych i spoza folderu Aplikacje nie można tu odinstalować." }
                         ?? "Zaznacz aplikację na liście.")
+                    Divider().frame(height: 18)
+                    Text(selected.map { "Zaznaczona: \(Self.appName($0.path))" } ?? "Zaznacz aplikację na liście.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 12)
                     Button {
                         if let selected { model.launchApp(selected.path, on: model.selectedMachines) }
                     } label: {
@@ -327,7 +352,7 @@ struct AppsView: View {
                 }
             }
         } header: {
-            Label("Zainstalowane aplikacje", systemImage: "square.grid.3x3")
+            Label("Zainstalowane aplikacje", systemImage: "square.grid.2x2")
         }
     }
 
@@ -435,13 +460,6 @@ struct RunningAppRow: View {
                     .help("Proces nr \(app.pid): \(app.bundlePath)")
             }
             Spacer(minLength: 8)
-            Button {
-                onQuit(false)
-            } label: {
-                Label("Zamknij", systemImage: "xmark.circle")
-            }
-            .controlSize(.small)
-            .help("Zamknij \(app.name) – aplikacja może zapytać o zapisanie zmian")
             Button(role: .destructive) {
                 onQuit(true)
             } label: {
@@ -450,6 +468,14 @@ struct RunningAppRow: View {
             }
             .controlSize(.small)
             .help("Wymuś zamknięcie \(app.name) od razu (z potwierdzeniem) – niezapisane zmiany przepadną")
+            Divider().frame(height: 14)
+            Button {
+                onQuit(false)
+            } label: {
+                Label("Zamknij", systemImage: "xmark.circle")
+            }
+            .controlSize(.small)
+            .help("Zamknij \(app.name) – aplikacja może zapytać o zapisanie zmian")
         }
         .accessibilityElement(children: .contain)
     }

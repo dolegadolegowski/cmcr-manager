@@ -265,6 +265,16 @@ final class ScreenCenter: ObservableObject {
 
     func display(for host: UUID) -> ScreenDisplay { displays[host] ?? .main }
 
+    /// How many screens the Mac has. A frame of one chosen screen reports a count of 1: keep the larger number seen
+    /// before, so the screen menu does not disappear after choosing „Ekran 2” (AUDIT ZAJ-17).
+    nonisolated static func knownDisplayCount(_ count: Int, previous: Int, shown: ScreenDisplay) -> Int {
+        switch shown {
+        case .all: return max(1, count)
+        case .number(let n): return max(previous, count, n)
+        case .main: return max(previous, count, 1)
+        }
+    }
+
     func setDisplay(_ display: ScreenDisplay, for host: UUID) {
         displays[host] = display
         sessions[host]?.displayImages = [:]
@@ -392,7 +402,7 @@ final class ScreenCenter: ObservableObject {
         if s.failures == 0, status.reachability == .offline || status.reachability == .authFailed,
            let checked = status.updatedAt, now.timeIntervalSince(checked) < 300 {
             trace(host, "pominięto – według stanu \(status.reachability.label)")
-            feed.set(\.issue, .connection(status.reachability, status.message.isEmpty ? status.reachability.label : status.message))
+            feed.set(\.issue, .connection(status.reachability, status.message.isEmpty ? status.reachability.displayName : status.message))
             feed.set(\.phase, .offline)
             s.retryAt = now.addingTimeInterval(60)
             startQueue.removeAll { $0 == host }
@@ -507,7 +517,8 @@ final class ScreenCenter: ObservableObject {
             let ordered = s.displayImages.keys.sorted().compactMap { s.displayImages[$0] }
             if count <= 1 || ordered.count >= count {
                 feed.image = count <= 1 ? image : ScreenImage.sideBySide(ordered)
-                feed.set(\.displayCount, max(1, count))
+                feed.set(\.displayCount, Self.knownDisplayCount(count, previous: feed.displayCount,
+                                                               shown: self.display(for: host)))
                 feed.confirmedAt = now
                 feed.set(\.issue, nil)
                 feed.set(\.phase, s.remotePaused ? .paused : .live)
@@ -547,6 +558,8 @@ final class ScreenCenter: ObservableObject {
                    let name = model?.machine(host)?.name {
                     ConfigStore.log("Podgląd ekranu → \(name): nie udało się powiadomić użytkownika \(user) (\(detail)) – obraz nie jest pobierany")
                 }
+                // Logged out: whoever logs in next is told again, also on the same account (AUDIT ZAJ-04).
+                if issue == .noUser { ledger.forgetNotified(host) }
                 feed.set(\.issue, issue)
                 if issue.hidesImage {
                     feed.image = nil
@@ -555,8 +568,8 @@ final class ScreenCenter: ObservableObject {
                 }
                 if !issue.isIdle { s.exitIssue = issue }
                 if issue.isIdle { feed.confirmedAt = now }
-            case .notified(let user):
-                ledger.recordNotified(host, user: user)
+            case .notified(let user, let session):
+                ledger.recordNotified(host, session: session)
                 if let name = model?.machine(host)?.name {
                     ConfigStore.log("Podgląd ekranu → \(name): powiadomiono użytkownika \(user)")
                 }

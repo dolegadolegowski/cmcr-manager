@@ -1,0 +1,64 @@
+Pasek narzędzi:
+  Wyczyść zakończone
+  Historia
+  Odśwież
+  Ściana ekranów
+  Aktywność
+Menu:
+  CMCR Manager
+    CMCR Manager…
+    Sprawdź uaktualnienia…
+    Konfiguracja…  [⌘,]
+    Ustawienia…  [⌘,]
+    Usługi
+    Ukryj CMCR Manager  [⌘H]
+    Ukryj pozostałe  [⌥⌘H]
+    Pokaż wszystkie
+    Zakończ CMCR Manager  [⌘Q]
+  Plik
+    Nowe okno CMCR Manager  [⌘N]
+    Zamknij  [⌘W]
+    Zamknij wszystkie  [⌥⌘W]
+  Edycja
+    Cofnij  [⌘Z]
+    Przywróć  [⇧⌘Z]
+    Wytnij  [⌘X]
+    Kopiuj  [⌘C]
+    Wklej  [⌘V]
+    Usuń
+    Zaznacz wszystko  [⌘A]
+    Zaznacz wszystkie komputery  [⇧⌘A]
+    Zaznacz włączone komputery  [⇧⌘O]
+    Odznacz wszystkie komputery  [⇧⌘D]
+    Wypełnianie
+    Uruchom Dyktowanie…
+    Emoji i symbole  [⌘ ]
+  Widok
+    Odśwież stan komputerów  [⌘R]
+    Pokaż pasek boczny  [⌃⌘S]
+  Przejdź
+    Pracownia
+    Komputery  [⌘1]
+    Zajęcia  [⌘2]
+    Podgląd ekranów  [⌘3]
+    Sesja i zasilanie  [⌘4]
+    Pliki i programy
+    Pliki  [⌘5]
+    Przeglądarka plików  [⌘6]
+    Aplikacje  [⌘7]
+    Instalacja  [⌘8]
+    Aktualizacje  [⌘9]
+    Administracja
+    Zadania  [⌘0]
+    Polecenia  [⇧⌘P]
+    Konfiguracja  [⌘,]
+  Okno
+    Minimalizuj okno  [⌘M]
+    Zoom
+    Umieść wszystko na wierzchu
+    Ściana ekranów  [⇧⌘E]
+    Wstrzymaj podgląd ekranów  [⌥⌘P]
+    CMCR Manager
+    CMCR Manager
+  Pomoc
+    Pomoc aplikacji CMCR Manager  [⌘?]

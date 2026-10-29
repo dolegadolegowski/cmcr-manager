@@ -378,3 +378,89 @@ struct SessionStartTests {
         #expect(await SSH.portAnswers(Machine(name: "d", address: "127.0.0.1", user: "x", port: listener.port), settings: routed) == nil)
     }
 }
+
+/// ssh-option-injection (AUDIT KON-01): an account or address from an imported or hand-edited hosts.json that
+/// ssh would read as an option (`-oProxyCommand=…`) never reaches ssh or scp – it would run a command on the
+/// teacher's Mac – and the destination always follows `--`.
+struct HostEntryGuardTests {
+    static var settings: SSHSettings {
+        var s = SSHSettings(connectTimeout: 2, askpassPath: "/tmp/askpass")
+        s.extraOptions = ["UserKnownHostsFile=/dev/null"]
+        s.reuseConnections = false
+        return s
+    }
+
+    /// Files created by a ProxyCommand `touch <marker>…` (ssh appends `@address` to the planted value).
+    static func planted(_ marker: URL) -> [String] {
+        let dir = marker.deletingLastPathComponent().path
+        return ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
+            .filter { $0.hasPrefix(marker.lastPathComponent) }
+    }
+
+    @Test func entriesThatSshWouldReadAsOptionsNeverStartSsh() async {
+        let marker = FileManager.default.temporaryDirectory.appendingPathComponent("cmcr-pwned-\(UUID().uuidString)")
+        defer { for f in Self.planted(marker) { try? FileManager.default.removeItem(atPath: marker.deletingLastPathComponent().appendingPathComponent(f).path) } }
+        let evil = "-oProxyCommand=touch \(marker.path)"
+        let hosts = [Machine(name: "imac01", address: "127.0.0.1", user: evil, port: 1),
+                     Machine(name: "imac02", address: evil, user: "imac02", port: 1)]
+        for host in hosts {
+            #expect(host.sshEntryProblem != nil)
+            let r = await SSH.run(RemoteScript("true"), on: host, password: nil, settings: Self.settings, timeout: 10)
+            #expect(!r.succeeded)
+            #expect(r.stderrText.contains("Niepoprawny wpis komputera"), "\(r.stderrText)")
+            #expect(SSH.diagnose(r).0 == .error)
+            #expect(SSH.diagnose(r).1.contains("Niepoprawny wpis komputera"))
+            let scan = await HostTrust.scan(host, settings: Self.settings)
+            #expect(scan.error?.contains("Niepoprawny wpis komputera") == true, "\(scan.error ?? "-")")
+            let up = await SSH.upload([marker], to: "/tmp", on: host, password: nil, settings: Self.settings)
+            #expect(up.stderrText.contains("Niepoprawny wpis komputera"), "\(up.stderrText)")
+            let cancel = await SSH.cancelRemote(jobID: RemoteJobs.newID(), on: host, password: nil, settings: Self.settings)
+            #expect(!cancel.message.isEmpty)
+            await SSH.closeMaster(host, settings: Self.settings)
+            #expect(SSH.terminalScript(for: host, settings: Self.settings).contains("Niepoprawny wpis komputera"))
+            #expect(!SSH.terminalScript(for: host, settings: Self.settings).contains("exec /usr/bin/ssh"))
+        }
+        #expect(Self.planted(marker).isEmpty, "ProxyCommand z listy komputerów został wykonany na tym Macu")
+    }
+
+    @Test func goodEntriesPass() {
+        #expect(Machine(name: "imac04", address: "imac04.local", user: "imac04").sshEntryProblem == nil)
+        #expect(Machine(name: "x", address: "10.0.0.4", user: "admin-lab").sshEntryProblem == nil)
+        #expect(Machine(name: "x", address: "imac 04.local", user: "imac04").sshEntryProblem != nil)
+        #expect(Machine(name: "x", address: "imac04.local", user: "a@b").sshEntryProblem != nil)
+        #expect(Machine(name: "x", address: "", user: "imac04").sshEntryProblem != nil)
+    }
+
+    @Test func theDestinationAlwaysFollowsDoubleDash() {
+        let host = Machine(name: "imac04", address: "imac04.local", user: "imac04")
+        let a = SSH.interactiveArguments(for: host, settings: Self.settings)
+        #expect(Array(a.suffix(2)) == ["--", "imac04@imac04.local"])
+    }
+}
+
+/// vnc-without-host-key (AUDIT DOD-02): Screen Sharing goes through an ssh tunnel with the strict host key check,
+/// so a device answering to imacNN.local never gets the administrator's name or password; the URL is built safely.
+struct ScreenSharingTunnelTests {
+    @Test func refusedEntriesAndUnreachableMacsGiveNoTunnel() async {
+        var s = SSHSettings(connectTimeout: 2, askpassPath: "/tmp/askpass")
+        s.extraOptions = ["UserKnownHostsFile=/dev/null"]
+        let bad = Machine(name: "imac01", address: "127.0.0.1", user: "-oProxyCommand=true", port: 1)
+        guard case .failure(let r1) = await SSH.screenSharingTunnel(to: bad, password: nil, settings: s) else {
+            Issue.record("tunel dla odrzuconego wpisu"); return
+        }
+        #expect(r1.stderrText.contains("Niepoprawny wpis komputera"))
+        let closed = Machine(name: "imac02", address: "127.0.0.1", user: "nikt", port: 1)
+        guard case .failure = await SSH.screenSharingTunnel(to: closed, password: nil, settings: s) else {
+            Issue.record("tunel do zamkniętego portu"); return
+        }
+    }
+
+    @Test func theScreenSharingURLPointsAtTheTunnel() throws {
+        let url = try #require(SSH.screenSharingURL(user: "imac05", localPort: 55900))
+        #expect(url.absoluteString == "vnc://imac05@127.0.0.1:55900")
+        // Characters that would move the host part are encoded, never interpreted.
+        let odd = try #require(SSH.screenSharingURL(user: "a#b/c?d", localPort: 55900))
+        #expect(odd.host == "127.0.0.1")
+        #expect(odd.port == 55900)
+    }
+}

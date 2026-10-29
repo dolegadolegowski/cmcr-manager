@@ -258,13 +258,13 @@ public enum RemotePaths {
                          icon: "folder.badge.person.crop"),
             RemoteFolder(id: "desktop", title: "Biurko ucznia", path: student + "/Desktop", icon: "menubar.dock.rectangle"),
             RemoteFolder(id: "documents", title: "Dokumenty ucznia", path: student + "/Documents", icon: "doc"),
-            RemoteFolder(id: "downloads", title: "Pobrane ucznia", path: student + "/Downloads", icon: "arrow.down.circle"),
+            RemoteFolder(id: "downloads", title: "Pobrane rzeczy ucznia", path: student + "/Downloads", icon: "arrow.down.circle"),
             RemoteFolder(id: "studentHome", title: "Katalog domowy ucznia", path: student, icon: "house"),
             RemoteFolder(id: "consoleDesktop", title: "Biurko zalogowanego użytkownika", path: console + "/Desktop",
                          icon: "person.crop.rectangle"),
             RemoteFolder(id: "usersShared", title: "Wspólny folder (Shared)", path: "/Users/Shared", icon: "person.2"),
-            RemoteFolder(id: "applications", title: "Programy", path: "/Applications", icon: "square.grid.2x2"),
-            RemoteFolder(id: "adminHome", title: "Katalog domowy administratora", path: adminHome, icon: "person.badge.key"),
+            RemoteFolder(id: "applications", title: "Aplikacje", path: "/Applications", icon: "square.grid.2x2"),
+            RemoteFolder(id: "adminHome", title: "Katalog domowy administratora", path: adminHome, icon: "person.badge.shield.checkmark"),
         ]
     }
 

@@ -52,8 +52,12 @@ for cmd in open-app quit-app; do
   out="$(mctl $cmd CMCRDummy </dev/null)"; code=$?
   expect_code "wybór: $cmd bez komputerów w skrypcie – kod 2" "$code" 2 "$out"
 done
-# At a terminal the cmcr-exec default (all Macs) stays, announced on stderr.
-out="$(CMCR_CONFIG_DIR="$MULTI" script -q /dev/null "$CTL" exec 'echo "wszystkie-$((40 + 2))"' </dev/null 2>&1)"; code=$?
+# At a terminal the cmcr-exec default (all Macs) stays, announced on stderr – after a question that only the person
+# at the keyboard can answer (AUDIT CLI-02: a script started from Terminal inherits the terminal; --yes is no answer).
+out="$(CMCR_CONFIG_DIR="$MULTI" script -q /dev/null "$CTL" exec 'echo "nie-powinno"' --yes </dev/null 2>&1)"; code=$?
+expect "wybór: exec bez komputerów w terminalu – pytanie" "$out" "Wykonać na wszystkich? [t/N]" "Przerwano"
+expect_not "wybór: exec bez komputerów – --yes nie odpowiada na pytanie" "$out" "nie-powinno"
+out="$( (sleep 1; printf 't\n'; sleep 2) | CMCR_CONFIG_DIR="$MULTI" script -q /dev/null "$CTL" exec 'echo "wszystkie-$((40 + 2))"' 2>&1)"; code=$?
 expect_code "wybór: exec bez komputerów w terminalu – kod 0" "$code" 0 "$out"
 expect "wybór: exec bez komputerów w terminalu – informacja i wszystkie komputery" "$out" \
   "Nie podano komputerów – exec na wszystkich: imac01, imac02, imac03 (3 komputery)" "wszystkie-42"
@@ -152,7 +156,15 @@ out="$(ctlpw updates install 1 --download --recommended)"
 expect "updates install --download --recommended" "$(fakelog)" "softwareupdate --download "
 expect_not "updates install --download: bez instalacji" "$(fakelog)" "--install"
 out="$(ctlpw updates history 1)"
-expect "updates history" "$out" "macOS Testowy  99.0"
+expect "updates history" "$out" "macOS Testowy  99.0" "Display Name"
+echo 45 > "$WORK/history.count"
+out="$(ctlpw updates history 1)"
+expect "updates history: najnowsze wpisy, nie najstarsze (APL-18)" "$out" "macOS Testowy  99.0" "Stara aktualizacja 44" \
+  "pominięto starsze wpisy: 5 (pokazano 40 najnowszych)"
+expect_not "updates history: najstarszy wpis ucięty" "$out" "Stara aktualizacja 1 "
+case "$out" in *"macOS Testowy  99.0"*"Stara aktualizacja 44"*) pass "updates history: najnowsze na górze" ;;
+  *) fail "updates history: najnowsze na górze" "$out" ;; esac
+rm -f "$WORK/history.count"
 out="$(ctl updates usun 1)"; code=$?
 expect_code "updates: nieznane podpolecenie – kod 2" "$code" 2 "$out"
 
@@ -235,9 +247,25 @@ expect_code "message: brak treści – kod 2" "$code" 2 "$out"
 clear_fakelog
 out="$(ctlpw logout 1 </dev/null)"; code=$?
 expect_code "logout: bez --yes – kod 2" "$code" 2 "$out"
-out="$(ctlpw logout 1 --yes)"
+out="$(ctlpw logout 1 --force --yes)"
 expect "logout: launchctl bootout sesji GUI" "$(fakelog)" "launchctl bootout gui/$(id -u)"
 expect "logout: komunikat" "$out" "Wylogowano $ME"
+# A student's session in the background after "Switch User" (AUDIT DOD-03, DOD-04).
+echo "502 uczen2" > "$WORK/ps.sessions"
+out="$(ctl exec 'cmcr_gui_sessions' 1)"
+expect "sesje GUI: także sesja w tle" "$out" "502 uczen2"
+out="$(ctl status 1 --json)"
+expect "status: sesje GUI w stanie komputera" "$out" "uczen2"
+clear_fakelog
+out="$(ctlpw logout 1 --force --yes)"
+expect "logout: wylogowana także sesja w tle" "$(fakelog)" "launchctl bootout gui/502"
+expect "logout: komunikat o sesji w tle" "$out" "Wylogowano uczen2 (sesja w tle)"
+: > "$WORK/fake-no-console"
+out="$(ctlpw _builder logout 1 --wait 1)"; code=$?
+rm -f "$WORK/fake-no-console"
+expect_code "logout z pytaniem: tylko sesja w tle – kod 1" "$code" 1 "$out"
+expect "logout z pytaniem: sesja w tle zgłoszona wprost" "$out" "w tle działa sesja:" "uczen2" "Wyloguj natychmiast"
+rm -f "$WORK/ps.sessions"
 
 # The power scripts detach `nohup /bin/sh -c '…'`: make sure that child also sees the fakes.
 pg="$(ctlpw exec 'nohup /bin/sh -c "type shutdown pmset" </dev/null 2>&1 | grep -c "is a function"' 1 --root 2>&1 | tail -1)"

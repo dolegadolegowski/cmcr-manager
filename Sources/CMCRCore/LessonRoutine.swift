@@ -15,26 +15,28 @@ public enum LessonStepKind: String, Codable, CaseIterable, Sendable {
         case .collect: return "Zbierz prace"
         case .quitApps: return "Zamknij aplikacje"
         case .cleanShared: return "Wyczyść folder ucznia"
-        case .cleanDownloads: return "Wyczyść Pobrane"
+        case .cleanDownloads: return "Wyczyść Pobrane rzeczy"
         case .logout: return "Wyloguj"
         case .sleep: return "Uśpij"
         case .shutdown: return "Wyłącz"
         }
     }
 
+    /// The symbol of the same action elsewhere in the app – Aplikacje › „Uruchom”, Zasilanie › „Wyślij wiadomość”,
+    /// Pliki › „Wyczyść folder…”… (AUDIT UI-08, UI-33).
     public var icon: String {
         switch self {
         case .wake: return "sunrise"
         case .materials: return "paperplane"
-        case .openApps: return "macwindow.badge.plus"
-        case .greet: return "hand.wave"
+        case .openApps: return "play.fill"
+        case .greet: return "text.bubble"
         case .warn: return "exclamationmark.bubble"
         case .collect: return "tray.and.arrow.down"
-        case .quitApps: return "xmark.app"
-        case .cleanShared: return "folder.badge.minus"
-        case .cleanDownloads: return "arrow.down.circle.dotted"
+        case .quitApps: return "xmark.circle"
+        case .cleanShared: return "trash"
+        case .cleanDownloads: return "trash"
         case .logout: return "rectangle.portrait.and.arrow.right"
-        case .sleep: return "moon.zzz"
+        case .sleep: return "powersleep"
         case .shutdown: return "power"
         }
     }
@@ -123,7 +125,7 @@ public struct LessonPlan: Sendable {
     /// Remote folder that receives the lesson materials.
     public var materialsDestination: String {
         switch start.destination {
-        case .sharedFolder: return settings.sharedFolder
+        case .sharedFolder: return settings.studentFolder
         case .studentDesktop: return settings.resolve("/Users/{student}/Desktop")
         }
     }
@@ -149,12 +151,16 @@ public enum LessonRunner {
     }
 
     /// Runs `plan.steps[range]` (all by default). `materials` is the payload archive made from the materials
-    /// folder (see `Payload.make`); `nil` skips the materials step. With a `limiter`, every step except waking
-    /// runs inside one of its slots, so Macs that are still waking up do not hold back the others.
+    /// folder (see `Payload.make`); `nil` skips the materials step (an empty folder), unless `materialsProblem`
+    /// says why there is no archive (missing or unreadable folder, packing failed) – then the step fails, so the
+    /// lesson does not end as „Gotowe” while the students got nothing (AUDIT ZAJ-03). With a `limiter`, every step
+    /// except waking runs inside one of its slots, so Macs that are still waking up do not hold back the others.
     public static func run(_ plan: LessonPlan, on host: Host, ssh: SSHSettings, materials: URL?,
+                           materialsProblem: String? = nil,
                            range: Range<Int>? = nil, limiter: ConcurrencyLimiter? = nil, handle: ProcessHandle? = nil,
                            onOutput: Operations.Output? = nil, onStep: StepUpdate? = nil) async -> CommandResult {
         let indices = range ?? 0..<plan.steps.count
+        let context = StepContext()
         var failures: [String] = []
         var collected = false
         var collectFailed = false
@@ -166,7 +172,7 @@ public enum LessonRunner {
             let step = plan.steps[i]
             if step != .wake, let limiter, !holdsSlot, !unreachable, handle?.isCancelled != true {
                 if await !limiter.tryAcquire() {
-                    say("Czekam na swoją kolej (najwyżej \(limiter.limit) komputerów naraz)…")
+                    say("Czekam na swoją kolej (najwyżej \(Polish.computers(limiter.limit)) naraz)…")
                     await limiter.acquire()
                 }
                 holdsSlot = true
@@ -193,6 +199,7 @@ public enum LessonRunner {
             onStep?(i, .running)
             say("▸ [\(i + 1)/\(plan.steps.count)] \(step.title)")
             let state = await perform(step, plan: plan, host: host, ssh: ssh, materials: materials,
+                                      materialsProblem: materialsProblem, context: context,
                                       handle: handle, onOutput: onOutput)
             onStep?(i, state)
             switch state {
@@ -216,7 +223,14 @@ public enum LessonRunner {
         return CommandResult(exitCode: 1, stderr: Data((failures.joined(separator: "\n") + "\n").utf8))
     }
 
+    /// What one Mac's steps hand on to the later ones.
+    final class StepContext: @unchecked Sendable {
+        /// The local copy made by "Zbierz prace" (nil: nothing was collected).
+        var collected: URL?
+    }
+
     static func perform(_ step: LessonStepKind, plan: LessonPlan, host: Host, ssh: SSHSettings, materials: URL?,
+                        materialsProblem: String? = nil, context: StepContext = StepContext(),
                         handle: ProcessHandle?, onOutput: Operations.Output?) async -> StepState {
         let m = host.machine
         let pw = host.password
@@ -234,7 +248,8 @@ public enum LessonRunner {
             return await wake(host, ssh: ssh, minutes: plan.start.wakeWaitMinutes, handle: handle, onOutput: onOutput)
 
         case .materials:
-            guard let materials else { return .skipped("brak materiałów do wysłania") }
+            if let materialsProblem { return .failed(materialsProblem) }
+            guard let materials else { return .skipped("folder z materiałami jest pusty") }
             let dest = plan.materialsDestination
             let owner = plan.settings.studentUser
             let mode = plan.start.destination == .sharedFolder ? "777" : ""
@@ -263,35 +278,50 @@ public enum LessonRunner {
 
         case .collect:
             guard let base = plan.collectFolder else { return .skipped("brak folderu docelowego") }
-            let dest = base.appendingPathComponent(m.name, isDirectory: true)
-            let r = await Operations.pull(source: plan.settings.sharedFolder, from: m, into: dest, asRoot: true,
-                                          password: pw, settings: ssh, handle: handle, onOutput: onOutput)
+            // As „Zbierz prace” in Pliki: a new folder per Mac (never merged into an earlier copy), and the list of
+            // collected files for the cleanup below.
+            let (r, folder) = await Operations.collect(source: plan.settings.studentFolder, from: m, into: base,
+                                                       name: m.name, asRoot: true, cleanAfter: false, password: pw,
+                                                       settings: ssh, handle: handle, onOutput: onOutput)
             guard r.succeeded else { return .failed(SSH.diagnose(r).1) }
-            let count = fileCount(dest)
-            return .done(count == 0 ? "folder ucznia był pusty" : "zebrano \(count) \(Plural.files(count))")
+            context.collected = folder
+            guard let folder else { return .done("folder ucznia był pusty") }
+            let count = fileCount(folder)
+            return .done("zebrano \(count) \(Plural.files(count))")
 
         case .quitApps:
             if plan.end.quitAllApps {
                 return outcome(await remote(Scripts.quitAllApps(), timeout: 60), ok: "aplikacje zamknięte")
             }
             var failed: [String] = []
+            var nobody = 0
             for app in plan.end.appList {
                 let r = await remote(Scripts.quitApp(app, force: false), timeout: 60)
+                // Nobody at the screen: nothing to quit – a skipped step, not „zamknięto” (AUDIT DOD-08).
+                if r.stdoutText.contains("CMCR:NOUSER") { nobody += 1; continue }
                 if !r.succeeded { failed.append(app) }
             }
+            if !plan.end.appList.isEmpty && nobody == plan.end.appList.count { return .skipped("nikt nie jest zalogowany") }
             return failed.isEmpty ? .done("zamknięto: \(plan.end.appList.joined(separator: ", "))")
                 : .failed("nie zamknięto: \(failed.joined(separator: ", "))")
 
         case .cleanShared:
-            let path = plan.settings.sharedFolder
-            return outcome(await remote(Scripts.cleanFolder(path), timeout: 120), ok: "wyczyszczono \(path)")
+            // Only the collected files that are unchanged since: work saved after the folder was packed (a quit app's
+            // "Save", the student still at the Mac) is not deleted without a copy.
+            let path = plan.settings.studentFolder
+            guard let folder = context.collected else { return .done("nic do usunięcia – folder ucznia był pusty") }
+            let r = await Operations.removeCollected(from: path, collectedIn: folder, on: m, password: pw, settings: ssh,
+                                                     handle: handle, onOutput: onOutput)
+            return r.succeeded ? .done("usunięto zebrane pliki z \(path)") : .failed(SSH.diagnose(r).1)
 
         case .cleanDownloads:
             let path = plan.settings.resolve("/Users/{student}/Downloads")
             return outcome(await remote(Scripts.cleanFolder(path), timeout: 120), ok: "wyczyszczono \(path)")
 
         case .logout:
-            return outcome(await remote(Scripts.logoutUser(), timeout: 60), ok: "użytkownik wylogowany")
+            let r = await remote(Scripts.logoutUser(), timeout: 60)
+            if r.succeeded, r.stdoutText.contains("CMCR:NOUSER") { return .skipped("nikt nie był zalogowany") }
+            return outcome(r, ok: "użytkownik wylogowany")
 
         case .sleep:
             return outcome(await remote(Scripts.power(.sleep), timeout: 60), ok: "usypianie")
@@ -391,4 +421,41 @@ public enum Plural {
     public static func computers(_ n: Int) -> String { form(n, one: "komputer", few: "komputery", many: "komputerów") }
     /// Locative: "na 1 komputerze", "na 5 komputerach".
     public static func computersLocative(_ n: Int) -> String { n == 1 ? "komputerze" : "komputerach" }
+}
+
+
+/// The lesson materials: the files and folders inside the chosen folder (the folder itself is not sent).
+public enum LessonMaterials {
+    public struct Problem: Error, Equatable, Sendable {
+        public let message: String
+    }
+
+    /// The items to send, sorted like the Finder, without `.DS_Store`. Never the current directory: an empty or
+    /// relative setting is an error, as is a missing or unreadable folder (e.g. Documents without the privacy
+    /// permission) – the teacher has to know that the students got nothing.
+    public static func items(in folder: String) -> Result<[URL], Problem> {
+        let setting = folder.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !setting.isEmpty else {
+            return .failure(Problem(message: "Nie wybrano folderu z materiałami (Zajęcia › Początek lekcji)."))
+        }
+        let path = expandTilde(setting)
+        guard path.hasPrefix("/") else {
+            return .failure(Problem(message: "Folder z materiałami musi być podany pełną ścieżką: \(setting)"))
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            return .failure(Problem(message: "Folder z materiałami nie istnieje: \(path)"))
+        }
+        guard isDirectory.boolValue else {
+            return .failure(Problem(message: "Materiały muszą być w folderze, a to jest plik: \(path)"))
+        }
+        do {
+            let items = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: path, isDirectory: true),
+                                                                     includingPropertiesForKeys: nil)
+            return .success(items.filter { $0.lastPathComponent != ".DS_Store" }
+                .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending })
+        } catch {
+            return .failure(Problem(message: "Nie można odczytać folderu z materiałami \(path): \(error.localizedDescription)"))
+        }
+    }
 }

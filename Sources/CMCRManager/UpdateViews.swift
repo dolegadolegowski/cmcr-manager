@@ -8,7 +8,23 @@ import SwiftUI
 struct UpdateCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .appInfo) {
-            Button("Sprawdź uaktualnienia…") { Updater.shared.checkNow() }
+            CheckForUpdatesButton()
+        }
+    }
+}
+
+/// The result of a check is a sheet on the main window: bring that window forward first, also when it was closed
+/// or the Settings window covers it – otherwise the check looked like it did nothing (AUDIT PRZ-18).
+struct CheckForUpdatesButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var title = "Sprawdź uaktualnienia…"
+
+    var body: some View {
+        Button {
+            MainWindow.bringToFront(openWindow)
+            Updater.shared.checkNow()
+        } label: {
+            Label(title, systemImage: "arrow.clockwise")
         }
     }
 }
@@ -17,11 +33,12 @@ struct UpdateCommands: Commands {
 
 /// Card at the bottom of the sidebar while a newer version is available.
 struct UpdateBanner: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var updater = Updater.shared
 
     var body: some View {
         VStack(spacing: 0) { card }
-            .animation(.easeInOut(duration: 0.25), value: updater.showsBanner)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: updater.showsBanner)
     }
 
     @ViewBuilder private var card: some View {
@@ -53,7 +70,7 @@ struct UpdateBanner: View {
             .padding(.vertical, 8)
             .help("Pokaż, co nowego, i zainstaluj uaktualnienie")
             .accessibilityLabel("Dostępna nowa wersja \(c.manifest.version). \(subtitle)")
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
         }
     }
 
@@ -339,7 +356,7 @@ struct UpdateSettingsSection: View {
                                  icon: "arrow.down.circle.fill", color: .accentColor)
                 }
             }
-            OptionToggle(title: "Sprawdzaj automatycznie", icon: "arrow.triangle.2.circlepath", color: .blue,
+            OptionToggle(title: "Sprawdzaj automatycznie", icon: "arrow.clockwise.circle", color: .blue,
                          detail: "Przy uruchomieniu aplikacji i raz dziennie (wydania na GitHubie)",
                          isOn: $updater.automaticChecks)
             OptionToggle(title: "Pobieraj uaktualnienia w tle", icon: "arrow.down.circle.fill", color: .green,
@@ -354,7 +371,7 @@ struct UpdateSettingsSection: View {
             SettingLabel(title: "Lokalizacja aplikacji", caption: locationText, icon: "folder.fill", color: .gray)
                 .textSelection(.enabled)
             HStack {
-                Button("Sprawdź teraz", systemImage: "arrow.clockwise") { updater.checkNow() }
+                CheckForUpdatesButton(title: "Sprawdź teraz")
                     .disabled(!updater.isConfigured)
                     .help("Sprawdź od razu, czy jest nowa wersja CMCR Manager (także menu CMCR Manager › Sprawdź uaktualnienia…)")
                 Button("Historia wersji", systemImage: "clock.arrow.circlepath") {
@@ -402,6 +419,7 @@ struct UpdateSettingsSection: View {
 
 /// Short-lived confirmation shown after a successful update; failures use an alert.
 struct UpdateToast: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var updater = Updater.shared
 
     var body: some View {
@@ -428,10 +446,10 @@ struct UpdateToast: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .shadow(radius: 8, y: 2)
             .padding(16)
-            .transition(.move(edge: .top).combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             .task(id: o.id) {
                 try? await Task.sleep(nanoseconds: 8 * 1_000_000_000)
-                withAnimation { if updater.outcome?.id == o.id { updater.outcome = nil } }
+                withAnimation(reduceMotion ? nil : .default) { if updater.outcome?.id == o.id { updater.outcome = nil } }
             }
         }
     }

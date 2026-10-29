@@ -97,6 +97,10 @@ struct SetupOptionsSheet: View {
         return machines.count > 8 ? "\(names) i \(machines.count - 8) innych" : names
     }
 
+    /// Options that cannot work, as `cmcrctl setup` refuses them: also a student folder outside /Users/<konto>,
+    /// which every iMac would reject with code 2 (AUDIT PRZ-14).
+    var blocked: Bool { o.validationError() != nil || SetupScript.sharedFolderProblem(model.settings) != nil }
+
     var footer: some View {
         HStack {
             if !isSave {
@@ -106,7 +110,7 @@ struct SetupOptionsSheet: View {
                     Label("Tylko sprawdź", systemImage: "checklist")
                 }
                 .help("Uruchamia skrypt w trybie sprawdzania: raport pokaże, co zostałoby zmienione, nic nie jest zmieniane.")
-                .disabled(o.validationError() != nil || reachable.isEmpty)
+                .disabled(blocked || reachable.isEmpty)
             }
             Spacer()
             Button("Anuluj", role: .cancel) { dismiss() }
@@ -115,11 +119,11 @@ struct SetupOptionsSheet: View {
                 if isSave { save() } else { run(.apply) }
             } label: {
                 Label(isSave ? "Zapisz…" : "Skonfiguruj \(Polish.computers(reachable.count))",
-                      systemImage: isSave ? "square.and.arrow.down" : "wrench.and.screwdriver")
+                      systemImage: isSave ? "square.and.arrow.up" : "wrench.and.screwdriver")
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
-            .disabled(o.validationError() != nil || (!isSave && reachable.isEmpty))
+            .disabled(blocked || (!isSave && reachable.isEmpty))
             .help(isSave ? "Wybierz, gdzie zapisać skrypt" : "Uruchamia skrypt \(Polish.onComputers(reachable.count)) i wprowadza zaznaczone ustawienia")
         }
         .padding(16)
@@ -189,7 +193,7 @@ struct SetupOptionsSheet: View {
     var folderSection: some View {
         Section("Folder ucznia") {
             LabeledContent {
-                Text(model.settings.resolve(model.settings.sharedFolder))
+                Text(model.settings.studentFolder)
                     .font(.callout.monospaced())
                     .textSelection(.enabled)
             } label: {
@@ -206,10 +210,10 @@ struct SetupOptionsSheet: View {
             OptionToggle(title: "Budzenie przez sieć", icon: "dot.radiowaves.left.and.right", color: .green,
                          detail: "Pozwala obudzić uśpionego iMaca z aplikacji, przez kabel Ethernet (Wake-on-LAN).",
                          isOn: $o.wakeOnLAN)
-            OptionToggle(title: "Nie usypiaj komputera", icon: "moon.zzz.fill", color: .indigo,
+            OptionToggle(title: "Nie usypiaj komputera", icon: "powersleep", color: .indigo,
                          detail: "iMac nie przechodzi w uśpienie, więc zawsze odpowiada; ekran nadal może się wyłączać.",
                          isOn: $o.noSleep)
-            OptionToggle(title: "Włączaj po zaniku zasilania", icon: "bolt.fill", color: .yellow,
+            OptionToggle(title: "Włączaj po zaniku zasilania", icon: "powerplug", color: .yellow,
                          detail: "Po powrocie prądu iMac uruchomi się sam (jeśli model to obsługuje).",
                          isOn: $o.autoRestart)
             Picker(selection: $o.scheduleMode) {
@@ -280,7 +284,7 @@ struct SetupOptionsSheet: View {
                              caption: "sudo bez hasła: każdy, kto ma klucz tej aplikacji, miałby pełne uprawnienia bez hasła.",
                              icon: "lock.open.fill", color: .red)
             }
-            OptionToggle(title: "Logowanie zdalne tylko kluczem", icon: "lock.fill", color: .blue,
+            OptionToggle(title: "Zdalne logowanie tylko kluczem", icon: "key.horizontal.fill", color: .blue,
                          detail: "Wyłącza logowanie hasłem przez SSH. Wymaga instalacji klucza tej aplikacji.",
                          isOn: $o.sshKeyOnly)
                 .disabled(!o.installKey)
@@ -418,7 +422,7 @@ struct SavedScriptSheet: View {
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
                     NumberedStep(n: 1, text: "Skopiuj plik na iMaca (pendrive lub AirDrop) do folderu Pobrane rzeczy konta administratora (imacNN).")
-                    NumberedStep(n: 2, text: "Zaloguj się na iMacu na konto administratora i otwórz Terminal (Programy › Narzędzia).")
+                    NumberedStep(n: 2, text: "Zaloguj się na iMacu na konto administratora i otwórz Terminal (Aplikacje › Narzędzia, /Applications/Utilities).")
                     NumberedStep(n: 3, text: "Wpisz poniższe polecenie, naciśnij Return i podaj hasło administratora:")
                     HStack {
                         Text(command)

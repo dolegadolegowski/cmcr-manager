@@ -377,4 +377,463 @@ struct AppLogicTests {
         #expect(review.chosenScans.map(\.host.id) == [a.id])
         _ = model
     }
+
+    /// A Mac with a student logged in (the status says so; connections are refused by the closed port).
+    func withStudent(_ m: Machine, _ model: AppModel) {
+        var st = HostStatus()
+        st.reachability = .online
+        st.info["console"] = "uczen"
+        model.statuses[m.id] = st
+    }
+
+    // power-retry-without-confirmation (AUDIT KOM-01): a restart confirmed in the power sheet is confirmed again
+    // before „Powtórz na nieudanych”, and Macs left out because a student is logged in are skipped jobs.
+    @Test func powerActionsRememberTheirConfirmationAndSkippedMacs() async throws {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        withStudent(a, model)
+        var online = HostStatus()
+        online.reachability = .online
+        model.statuses[b.id] = online
+        PowerRequest(kind: .restart, machines: [a, b]).start(model: model, classroom: classroom, skipLoggedIn: true)
+        let batch = try #require(model.batches.first)
+        #expect(batch.confirmation?.button == "Uruchom ponownie")
+        #expect(batch.confirmation?.destructive == true)
+        let skipped = try #require(batch.jobs.first { $0.machine.id == a.id })
+        #expect(skipped.state == .skipped && skipped.skipReason == .loggedInUser)
+        #expect(await AppTestEnvironment.wait { batch.finished })
+        let before = model.batches.count
+        model.retry(batch, on: [b])
+        #expect(model.retryConfirmation != nil, "powtórzenie restartu musi zapytać ponownie")
+        #expect(model.batches.count == before)
+        model.retryConfirmation = nil
+    }
+
+    // logout-without-confirmation (AUDIT UI-03): the gentle log out goes through the same sheet and is confirmed
+    // again on a retry, but is not destructive (the apps ask the students to save).
+    @Test func gentleLogoutIsConfirmedButNotDestructive() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        withStudent(a, model)
+        let request = PowerRequest(kind: .gentleLogout, machines: [a])
+        #expect(request.verb == "Wyloguj")
+        request.start(model: model, classroom: classroom, skipLoggedIn: false)
+        let batch = try #require(model.batches.first)
+        #expect(batch.confirmation?.button == "Wyloguj")
+        #expect(batch.confirmation?.destructive == false)
+        #expect(await AppTestEnvironment.wait { batch.finished })
+    }
+
+    // browser-confirm-targets (AUDIT UI-04): deleting or replacing in the file browser asks about the browsed Mac
+    // only – a plain alert, not the sheet with the checked Macs (whose „skip logged in” could drop the action).
+    @Test func browserConfirmationsAreAboutTheBrowsedMacOnly() throws {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        model.selection = [a.id, b.id]
+        let browser = model.files.browser
+        let entries = (1...7).map { RemoteEntry(name: "plik\($0).txt", kind: .file) }
+        let delete = try #require(browser.deleteConfirmation(entries))
+        #expect(delete.targets == [])
+        #expect(delete.message.contains("„plik5.txt” i 2 inne"), "\(delete.message)")
+        #expect(browser.deleteConfirmation([]) == nil)
+        #expect(RemoteBrowserModel.names(["a", "b", "c", "d", "e", "f"]) == "„a”, „b”, „c”, „d”, „e” i 1 inny")
+    }
+
+    // retry-stale-machine (AUDIT ZAD-01, KON-05): a repeat uses the host list as it is now, and the password of a
+    // Mac follows its current „own/shared” choice, not the copy a job or a sheet kept.
+    @Test func repeatsAndPasswordsUseTheCurrentHostEntry() async throws {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        let batch = try #require(model.runBatch("Test", on: [a, b]) { _, _ in .failure("x") })
+        #expect(await AppTestEnvironment.wait { batch.finished })
+        // Meanwhile imac01 got an own password and a new port; imac02 was removed from the list.
+        model.machines[0].usesSharedPassword = false
+        model.machines[0].port = 2
+        model.machines.removeLast()
+        #expect(model.current(a).usesSharedPassword == false)
+        model.retry(batch, on: batch.retryableMachines)
+        let again = try #require(model.batches.first { $0.title == "Test (ponowienie)" })
+        #expect(again.jobs.map(\.machine.id) == [a.id], "usunięty komputer nie może wrócić w powtórzeniu")
+        #expect(again.jobs.first?.machine.port == 2)
+        #expect(again.jobs.first?.machine.usesSharedPassword == false)
+        model.selectProblems(of: batch)
+        #expect(model.selection == [a.id])
+        #expect(await AppTestEnvironment.wait { again.finished })
+    }
+
+    // lesson-cancel-via-batch (AUDIT WSP-02): „Przerwij” on the warning batch (Zadania, Aktywność, the result box)
+    // stops the whole end of lesson – no countdown, no logging out afterwards.
+    @Test func cancellingTheWarningBatchStopsTheEndOfLesson() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        endPlan()
+        classroom.endLesson(model, targets: [a])
+        let run = try #require(classroom.run)
+        let warning = try #require(model.batches.first { $0.title == "Zakończenie zajęć – ostrzeżenie" })
+        warning.cancel()
+        #expect(await AppTestEnvironment.wait(5) { run.finished }, "zakończenie zajęć trwa dalej (\(run.phase))")
+        #expect(run.countdownEnd == nil)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(!model.batches.contains { $0.title == "Zakończenie zajęć" }, "po przerwaniu ruszyły kroki zakończenia")
+        #expect(!model.lessonInProgress)
+    }
+
+    // config-save-silent (AUDIT KON-03): a list that cannot be saved is reported once, not on every change.
+    @Test func aFailedSaveOfTheHostListIsShown() async throws {
+        let model = AppTestEnvironment.makeModel([AppTestEnvironment.closedHost("imac01")])
+        model.notice = nil
+        let dir = ConfigStore.directory.path
+        chmod(dir, 0o500)
+        defer { chmod(dir, 0o700) }
+        model.machines[0].port = 2
+        let notice = try #require(model.notice, "błąd zapisu hosts.json nie został pokazany")
+        #expect(notice.title == "Nie udało się zapisać konfiguracji")
+        #expect(notice.message.contains("hosts.json"))
+        model.notice = nil
+        model.machines[0].port = 3
+        #expect(model.notice == nil, "ten sam błąd nie powinien wracać przy każdej zmianie")
+        chmod(dir, 0o700)
+        model.machines[0].port = 4
+        #expect(model.notice == nil)
+        #expect(ConfigStore.lastSaveError == nil)
+    }
+
+    // config-overwrite (AUDIT KON-04): what cmcrctl wrote to hosts.json while the app was open is taken over
+    // on activation and not undone by the app's next save.
+    @Test func hostListChangesFromCmcrctlAreKept() async throws {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        let file = ConfigStore.directory.appendingPathComponent("hosts.json")
+        let added = AppTestEnvironment.closedHost("imac16")
+        try JSONEncoder().encode([a, b, added]).write(to: file)        // cmcrctl hosts add imac16
+        model.syncWithOtherPrograms()
+        #expect(model.machines.map(\.name) == ["imac01", "imac02", "imac16"])
+
+        try JSONEncoder().encode([b, added]).write(to: file)           // cmcrctl hosts remove 1
+        model.machines[1].port = 2                                     // edited in the app before it noticed
+        #expect(model.machines.map(\.name) == ["imac02", "imac16"])
+        #expect(model.machines.first?.port == 2)
+        let saved = try JSONDecoder().decode([Machine].self, from: Data(contentsOf: file))
+        #expect(saved == model.machines)
+    }
+
+    // browser-follows-click (AUDIT PLI-23): clicking another Mac in the list shows the same folder on it, also
+    // when many Macs are checked; outside the file browser a click does not start a listing.
+    @Test func clickingAMacInTheListSwitchesTheFileBrowser() async throws {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        model.selection = [a.id, b.id]
+        let browser = model.files.browser
+        browser.setHost(a.id)
+        model.section = .dashboard
+        model.highlightedMachines = [b.id]
+        #expect(browser.hostID == a.id)
+        model.section = .browser
+        model.highlightedMachines = [a.id, b.id]
+        #expect(browser.hostID == a.id, "kilka podświetlonych wierszy nie zmienia komputera")
+        model.highlightedMachines = [b.id]
+        #expect(browser.hostID == b.id)
+        model.machines.removeLast()
+        #expect(model.highlightedMachines.isEmpty)
+        model.section = .dashboard
+    }
+
+    // quit-waits-for-stop (AUDIT ZAD-02): „Przerwij zadania i zakończ” waits until the iMacs were told to stop
+    // and the stopped jobs are in the history, instead of quitting while the remote stop is still starting.
+    @Test func quittingWaitsForTheRemoteStopAndTheHistory() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        let remoteStop = StopRecorder()
+        let batch = try #require(model.runBatch("Długie zadanie", on: [a]) { _, job in
+            _ = job.handle.addCancelAction {
+                try? await Task.sleep(nanoseconds: 600_000_000)       // ssh to the iMac to stop the command
+                remoteStop.mark()
+            }
+            while !job.handle.isCancelled { try? await Task.sleep(nanoseconds: 20_000_000) }
+            return CommandResult(exitCode: 130, cancelled: true)
+        })
+        #expect(await AppTestEnvironment.wait(5) { batch.jobs.first?.state == .running })
+        await model.stopAllWorkBeforeQuitting(limit: 10)
+        #expect(remoteStop.done, "zakończenie nie poczekało na zatrzymanie polecenia na iMacu")
+        #expect(batch.finished)
+        let saved = JobHistory.load().filter { $0.batchID == batch.id }
+        #expect(saved.map(\.state) == ["cancelled"], "przerwane zadanie nie trafiło do historii")
+    }
+}
+
+extension AppLogicTests {
+    // stale-console-user (AUDIT KOM-04): a Mac that stops answering no longer shows the student logged in before,
+    // in any view (they all read the status); what else was known (MAC for Wake-on-LAN) stays. Only a Mac that is
+    // off: one that answers with an error keeps its students (AUDIT REV-11, RevG3appmodelTests).
+    @Test func aMacThatStopsAnsweringHasNoLoggedInStudent() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        // The Mac is off: ssh reports what it reports for a Mac gone from the network (a local ProxyCommand, no network;
+        // no shared connections, which would send its stderr to /dev/null).
+        model.settings.reuseConnections = false
+        model.settings.extraSSHOptions += "\nProxyCommand=/bin/sh -c "
+            + "'echo \"ssh: connect to host imac01 port 22: No route to host\" >&2; exit 255'"
+        var st = HostStatus()
+        st.reachability = .online
+        st.info = ["console": "jan", "sessions": "jan,ola", "mac": "aa:bb:cc:dd:ee:ff"]
+        model.statuses[a.id] = st
+        model.refreshStatus([a])
+        #expect(await AppTestEnvironment.wait(15) { ![.online, .checking].contains(model.status(a).reachability) })
+        #expect(model.status(a).reachability == .offline)
+        #expect(model.status(a).consoleUser == nil)
+        #expect(model.status(a).loggedInUsers.isEmpty)
+        #expect(model.status(a).mac == "aa:bb:cc:dd:ee:ff")
+    }
+}
+
+extension AppLogicTests {
+    // select-online-while-checking (AUDIT KOM-05): ⇧⌘O during a refresh uses the last known state.
+    @Test func selectingTheMacsThatAreOnWorksDuringARefresh() {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        var on = HostStatus(), off = HostStatus()
+        on.reachability = .online
+        off.reachability = .offline
+        model.statuses = [a.id: on, b.id: off]
+        var checking = HostStatus()
+        checking.reachability = .checking
+        model.statuses = [a.id: checking, b.id: checking]
+        model.selection = [b.id]
+        model.selectOnline()
+        #expect(model.selection == [a.id])
+    }
+}
+
+extension AppLogicTests {
+    // table-click-keeps-targets (AUDIT KOM-09): a clicked row is what the details panel shows; the checked Macs stay.
+    @Test func clickingARowShowsItsDetailsWithoutChangingTheTargets() {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        model.selection = [a.id, b.id]
+        model.highlightedMachines = [b.id]
+        #expect(model.inspectedMachine?.id == b.id)
+        #expect(model.selection == [a.id, b.id])
+        model.highlightedMachines = []
+        model.selection = [a.id]
+        #expect(model.inspectedMachine?.id == a.id)
+    }
+}
+
+extension AppLogicTests {
+    // rename-collision (AUDIT KOM-15): a new name that another Mac on the list already has is a conflict.
+    @Test func aNewNameUsedByAnotherMacIsAConflict() {
+        let a = Machine(name: "imac03", address: "imac03.local", user: "imac03")
+        let b = Machine(name: "imac04", address: "imac04.local", user: "imac04")
+        let c = Machine(name: "imac05", address: "10.0.0.5", user: "imac05")
+        let taken = RenameComputersSheet.namesTaken(by: [a, b, c], renaming: [a.id], readNames: [c.id: "Pracownia05"])
+        #expect(taken["imac04"] == "imac04")
+        #expect(taken["pracownia05"] == "imac05")
+        #expect(taken["imac03"] == nil)
+    }
+}
+
+extension AppLogicTests {
+    // check-errors-shown (AUDIT KOM-06): a failed FileVault or name check keeps its reason instead of staying
+    // „nie sprawdzono” / „sprawdzanie…” for good.
+    @Test func failedChecksOfFileVaultAndNamesKeepTheirReason() async {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        classroom.fileVaultErrors[a.id] = nil
+        classroom.nameErrors[a.id] = nil
+        classroom.checkFileVault(model, [a])
+        classroom.loadNames(model, [a])
+        #expect(await AppTestEnvironment.wait(30) { classroom.fileVaultErrors[a.id] != nil && classroom.nameErrors[a.id] != nil })
+        #expect(classroom.fileVault[a.id] == nil)
+    }
+}
+
+extension AppLogicTests {
+    // own-passwords (AUDIT KON-12, KON-15): an „own” password missing from the Keychain is noticed, and replacing
+    // the list removes the own passwords of the entries that are gone.
+    @Test func ownPasswordsFollowTheHostList() {
+        var a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        a.usesSharedPassword = false
+        b.usesSharedPassword = false
+        let model = AppTestEnvironment.makeModel([a, b])
+        Keychain.set(nil, for: Keychain.account(for: a))
+        #expect(model.ownPasswordMissing(a))
+        guard Keychain.set("haslo-imac02", for: Keychain.account(for: b)) else { return }   // no usable Keychain here
+        defer { Keychain.set(nil, for: Keychain.account(for: b)) }
+        #expect(!model.ownPasswordMissing(b))
+        model.replaceHostList(with: [a])
+        #expect(!Keychain.exists(Keychain.account(for: b)), "hasło usuniętego wpisu zostało w Pęku kluczy")
+    }
+}
+
+extension AppLogicTests {
+    // generator-validation (AUDIT KON-14): the list generator refuses what cmcrctl hosts generate refuses.
+    @Test func theListGeneratorRefusesBadPatterns() {
+        #expect(HostListGeneratorSheet.patternProblem(prefix: "imac", domain: "local") == nil)
+        #expect(HostListGeneratorSheet.patternProblem(prefix: "imac", domain: "") == nil)
+        for prefix in ["imac ", "-x", "imac;", "im,ac", ""] {
+            #expect(HostListGeneratorSheet.patternProblem(prefix: prefix, domain: "local") != nil, "\(prefix)")
+        }
+        #expect(HostListGeneratorSheet.patternProblem(prefix: "imac", domain: "lo cal") != nil)
+    }
+}
+
+extension AppLogicTests {
+    // key-without-pub (AUDIT KON-17): sending a key whose .pub is missing says so instead of only beeping.
+    @Test func sendingAKeyWithoutItsPublicHalfExplainsWhy() throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        let key = FileManager.default.temporaryDirectory.appendingPathComponent("cmcr-key-\(UUID().uuidString)")
+        try Data("prywatny".utf8).write(to: key)
+        defer { try? FileManager.default.removeItem(at: key) }
+        let before = model.settings.identityFile
+        model.settings.identityFile = key.path
+        defer { model.settings.identityFile = before }
+        model.notice = nil
+        #expect(model.managerPublicKey == nil)
+        model.distributeKey([a])
+        #expect(model.notice?.title == "Brak klucza publicznego")
+        #expect(!model.batches.contains { $0.title.hasPrefix("Dystrybucja klucza") })
+    }
+}
+
+extension AppLogicTests {
+    // invalid-name (AUDIT WSP-07, REV-28): a name that cannot be used is explained in the name prompt (which stays
+    // open), not just beeped at.
+    @Test func anInvalidNameIsExplained() {
+        #expect(NamePrompt.problem("Prace 2024/25")?.contains("„/”") == true)
+        #expect(NamePrompt.problem("..")?.contains("„..”") == true)
+    }
+}
+
+extension AppLogicTests {
+    // job-result (AUDIT ZAD-03, ZAD-10, ZAD-16): an interrupted job waits for the stop on the iMac and says when it
+    // failed; it has no exit code of its own; streamed error output is not added a second time.
+    @Test func jobResultsTellTheStopOnTheMacAndKeepTheirOutputOnce() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        let stopped = try #require(model.runBatch("Przerywane", on: [a]) { _, job in
+            let sink = OutputSink(job).callback
+            _ = job.handle.addCancelAction {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                sink(.stderr, Data("▸ \(RemoteCancelOutcome.failed("brak połączenia").message)\n".utf8))
+            }
+            while !job.handle.isCancelled { try? await Task.sleep(nanoseconds: 20_000_000) }
+            return CommandResult(exitCode: 255, cancelled: true)
+        })
+        #expect(await AppTestEnvironment.wait(5) { stopped.jobs.first?.state == .running })
+        stopped.cancel()
+        #expect(await AppTestEnvironment.wait(5) { stopped.finished })
+        let job = try #require(stopped.jobs.first)
+        #expect(job.summary == "Przerwano – polecenie może nadal działać na komputerze")
+        #expect(job.exitCode == nil)
+
+        let failed = try #require(model.runBatch("Błąd", on: [a]) { _, job in
+            let sink = OutputSink(job).callback
+            sink(.stdout, Data("krok 1\n".utf8))
+            sink(.stderr, Data("błąd A\n".utf8))
+            sink(.stdout, Data("krok 2\n".utf8))
+            return CommandResult(exitCode: 1, stderr: Data("błąd A\n".utf8))
+        })
+        #expect(await AppTestEnvironment.wait(5) { failed.finished })
+        let output = try #require(failed.jobs.first?.output)
+        #expect(output.components(separatedBy: "błąd A").count == 2, "\(output)")
+        #expect(failed.jobs.first?.exitCode == 1)
+
+        // ZAD-11: clearing finished batches keeps the one being looked at (it is in the history now).
+        model.focusedBatchID = failed.id
+        model.clearFinishedBatches()
+        #expect(model.focusedBatchID == failed.id)
+    }
+}
+
+extension AppLogicTests {
+    // install-and-open-input (AUDIT APL-12, APL-13): pasted addresses are trimmed, Homebrew names may be separated
+    // by commas as the field's example shows.
+    @Test func pastedAddressesAndPackageListsAreCleanedUp() throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        model.openURL("  https://example.com/zadanie \n", on: [a])
+        #expect(model.batches.contains { $0.title == "Otwórz: https://example.com/zadanie" })
+        #expect(InstallView.brewArguments("google-chrome, visual-studio-code") == "'google-chrome' 'visual-studio-code'")
+    }
+
+    // remind-later (AUDIT PRZ-02): „Przypomnij później” cancels installing after the download.
+    @Test func remindingLaterDoesNotInstallAfterTheDownload() throws {
+        let (updater, cleanup) = try isolatedUpdater()
+        defer { cleanup() }
+        updater.install(jobsConfirmed: true)
+        #expect(updater.confirmedWork != nil)
+        updater.remindLater()
+        #expect(updater.confirmedWork == nil)
+        #expect(!updater.installsWhenDownloaded)
+    }
+}
+
+extension AppLogicTests {
+    // readiness-recheck (AUDIT PRZ-12): a check asked for while one is running (after a fix) runs afterwards.
+    @Test func aReadinessCheckAskedDuringAnotherRunsAfterIt() async {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        let store = ReadinessStore.shared
+        store.check([a], model: model)
+        store.check([a], model: model)
+        #expect(store.isRecheckPending(a.id))
+        #expect(await AppTestEnvironment.wait(30) { !store.isRecheckPending(a.id) && !store.checking.contains(a.id) })
+        #expect(store.reports[a.id] != nil)
+    }
+}
+
+extension AppLogicTests {
+    // question-skipped (AUDIT ZAJ-11): Macs left out of a question are marked, not „czeka na odpowiedź” forever.
+    @Test func aQuestionMarksTheMacsItLeftOut() {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        var off = HostStatus()
+        off.reachability = .offline
+        model.statuses[a.id] = off
+        let skip = model.skipUnreachable
+        model.skipUnreachable = true
+        defer { model.skipUnreachable = skip }
+        let question = classroom.config.lastQuestion
+        classroom.config.lastQuestion = "Czy skończyliście?"
+        defer { classroom.config.lastQuestion = question }
+        classroom.ask(model, [a], buttons: ["Tak", "Nie"])
+        #expect(classroom.question?.errors[a.id] == "pominięto – komputer niedostępny")
+        classroom.question?.batch?.cancel()
+    }
+}
+
+extension AppLogicTests {
+    // app-lists (AUDIT WSP-06, UI-07): reading the app lists shows progress, and a failure keeps its reason.
+    @Test func appListsShowLoadingAndFailures() async {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        model.refreshInstalledApps([a])
+        model.refreshRunningApps([a])
+        #expect(model.installedAppsLoading.contains(a.id))
+        #expect(model.runningAppsLoading.contains(a.id))
+        #expect(await AppTestEnvironment.wait(30) { model.installedAppsErrors[a.id] != nil && model.runningApps[a.id] != nil })
+        #expect(model.installedAppsLoading.isEmpty)
+        #expect(!model.runningAppsLoading.contains(a.id))
+    }
+}
+
+extension AppLogicTests {
+    // explained-failures (AUDIT UI-14): a failure that only beeped now says what and why.
+    @Test func failuresAreExplainedInAnAlert() {
+        let model = AppTestEnvironment.makeModel([AppTestEnvironment.closedHost("imac01")])
+        model.notice = nil
+        struct Problem: LocalizedError { var errorDescription: String? { "Wolumin jest tylko do odczytu." } }
+        model.reportFailure("Nie udało się zapisać wyników", Problem(), hint: "Wybierz inny folder.")
+        #expect(model.notice?.title == "Nie udało się zapisać wyników")
+        #expect(model.notice?.message == "Wolumin jest tylko do odczytu.\n\nWybierz inny folder.")
+        model.notice = nil
+    }
+}
+
+private final class StopRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    func mark() { lock.withLock { flag = true } }
+    var done: Bool { lock.withLock { flag } }
 }

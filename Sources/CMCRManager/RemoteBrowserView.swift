@@ -102,15 +102,6 @@ private struct RemoteBrowserPage: View {
                 .disabled(browser.selection.isEmpty)
                 .help("Pobierz zaznaczone elementy na ten Mac")
                 .fixedSize()
-                Button(role: .destructive) {
-                    confirmDelete(browser.selectedEntries)
-                } label: {
-                    Label("Usuń…", systemImage: "trash")
-                        .destructiveLabel()
-                }
-                .disabled(browser.selection.isEmpty)
-                .help("Usuń zaznaczone elementy z komputera – nie trafią do Kosza (z potwierdzeniem; także klawisz Delete)")
-                .fixedSize()
                 Button {
                     uploadWithPanel()
                 } label: {
@@ -119,6 +110,17 @@ private struct RemoteBrowserPage: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(browser.listing == nil)
                 .help("Wyślij pliki z tego Maca do bieżącego folderu (możesz też przeciągnąć je z Findera)")
+                .fixedSize()
+                // The destructive action stands apart from the others (AUDIT UI-24).
+                Divider().frame(height: 18)
+                Button(role: .destructive) {
+                    confirmDelete(browser.selectedEntries)
+                } label: {
+                    Label("Usuń…", systemImage: "trash")
+                        .destructiveLabel()
+                }
+                .disabled(browser.selection.isEmpty)
+                .help("Usuń zaznaczone elementy z komputera – nie trafią do Kosza (z potwierdzeniem; także klawisz Delete)")
                 .fixedSize()
                 Spacer(minLength: 12)
                 ViewThatFits(in: .horizontal) {
@@ -136,7 +138,7 @@ private struct RemoteBrowserPage: View {
     var viewToggles: some View {
         HStack(spacing: 8) {
             Toggle(isOn: $browser.showHidden) {
-                Label("Ukryte pliki", systemImage: browser.showHidden ? "eye" : "eye.slash")
+                Label("Ukryte pliki", systemImage: "eye.slash")
             }
             .toggleStyle(.button)
             .help(hiddenHelp)
@@ -153,7 +155,7 @@ private struct RemoteBrowserPage: View {
     var viewMenu: some View {
         Menu {
             Toggle(isOn: $browser.showHidden) {
-                Label("Pokaż ukryte pliki", systemImage: "eye")
+                Label("Pokaż ukryte pliki", systemImage: "eye.slash")
             }
             .help(hiddenHelp)
             Toggle(isOn: asRoot) {
@@ -161,14 +163,14 @@ private struct RemoteBrowserPage: View {
             }
             .help(asRootHelp)
         } label: {
-            Label("Widok", systemImage: browser.showHidden || browser.asRoot ? "eye.fill" : "eye")
+            Label("Widok", systemImage: "slider.horizontal.3")
         }
         .fixedSize()
         .help("Pokazywanie ukrytych plików i przeglądanie z uprawnieniami administratora")
     }
 
     var asRoot: Binding<Bool> {
-        Binding(get: { browser.asRoot }, set: { browser.asRoot = $0; browser.reload() })
+        Binding(get: { browser.asRoot }, set: { browser.setAsRoot($0) })
     }
 
     var hiddenHelp: String {
@@ -216,9 +218,12 @@ private struct RemoteBrowserPage: View {
                     .accessibilityHidden(true)
                 Text(notice.text)
                     .truncationMode(.middle)
-                Button("Szczegóły") { model.section = .jobs }
-                    .buttonStyle(.link)
-                    .help("Pełny wynik w dziale Zadania")
+                // Only a result of a job has details; without one, Zadania would show an unrelated action (AUDIT UI-17).
+                if let batchID = notice.batchID {
+                    Button("Szczegóły") { model.showJobs(batchID) }
+                        .buttonStyle(.link)
+                        .help("Pełny wynik w dziale Zadania")
+                }
             } else {
                 Text(summary)
             }
@@ -320,7 +325,7 @@ private struct RemoteBrowserPage: View {
 
     func download(_ entries: [RemoteEntry]) {
         guard !entries.isEmpty else { return }
-        let source = browser.host.map { "z komputera \($0.name)" } ?? "z komputera"
+        let source = browser.host.map { "z komputera \(TerminalText.escape($0.name, keepBackslash: true))" } ?? "z komputera"
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -337,49 +342,87 @@ private struct RemoteBrowserPage: View {
 
     func uploadWithPanel(into folder: RemoteEntry? = nil) {
         let target = folder.map { "„\($0.displayName)”" } ?? "bieżącego folderu"
-        let host = browser.host.map { " na komputerze \($0.name)" } ?? ""
-        let urls = Pickers.files(message: "Wybierz pliki lub foldery do wysłania do \(target)\(host).")
+        let urls = Pickers.files(message: "Wybierz pliki lub foldery do wysłania do \(target)\(browser.onComputer).")
         guard !urls.isEmpty else { return }
-        if let folder { browser.upload(urls, into: folder) } else { startUpload(urls) }
+        if let folder {
+            confirm = browser.uploadConfirmation(urls, into: folder)
+        } else {
+            startUpload(urls)
+        }
     }
 
     func startUpload(_ urls: [URL]) {
-        let conflicts = browser.conflicts(for: urls)
-        guard !conflicts.isEmpty else {
+        guard let request = browser.replaceConfirmation(urls) else {
             browser.upload(urls)
             return
         }
-        let names = conflicts.prefix(5).map { "„\($0)”" }.joined(separator: ", ") + (conflicts.count > 5 ? "…" : "")
-        let host = browser.host.map { " na komputerze \($0.name)" } ?? ""
-        confirm = ConfirmRequest(
-            title: "Zastąpić istniejące elementy?",
-            message: "W tym folderze\(host) są już: \(names). Pliki o tych samych nazwach zostaną zastąpione, a do folderów zostanie dodana nowa zawartość.",
-            button: "Zastąp") {
-            browser.upload(urls)
-        }
+        confirm = request
     }
 
     func confirmDelete(_ entries: [RemoteEntry]) {
-        guard !entries.isEmpty else { return }
-        let title = entries.count == 1
-            ? "Usunąć „\(entries[0].displayName)”?"
-            : "Usunąć \(Polish.count(entries.count, "element", "elementy", "elementów"))?"
-        let place = "z komputera \(browser.host?.name ?? "") (\(browser.path))"
-        let message: String
-        if entries.count == 1 {
-            message = "Element zostanie trwale usunięty \(place). Nie trafi do Kosza – tej operacji nie można cofnąć."
-        } else {
-            let names = entries.prefix(5).map { "„\($0.displayName)”" }.joined(separator: ", ")
-                + (entries.count > 5 ? " i \(entries.count - 5) innych" : "")
-            message = "Zostaną trwale usunięte \(place): \(names). Nie trafią do Kosza – tej operacji nie można cofnąć."
-        }
-        confirm = ConfirmRequest(title: title, message: message, button: "Usuń") {
-            browser.delete(entries)
-        }
+        confirm = browser.deleteConfirmation(entries)
     }
 }
 
 extension RemoteBrowserModel {
+    /// "„a”, „b” i 3 inne" – at most five names, then how many more.
+    static func names(_ names: [String]) -> String {
+        let shown = names.prefix(5).map { "„\($0)”" }.joined(separator: ", ")
+        let more = names.count - 5
+        return more > 0 ? shown + " i " + Polish.count(more, "inny", "inne", "innych") : shown
+    }
+
+    /// The browsed Mac as its questions name it, „ na komputerze imac04” (empty before one is chosen). The name is from
+    /// the host list, which an imported or hand-edited hosts.json fills: a direction override in it is shown, not
+    /// applied to the rest of the question, as in the names read from the iMac (AUDIT UI-31, REV-19).
+    var onComputer: String { host.map { " na komputerze \(TerminalText.escape($0.name, keepBackslash: true))" } ?? "" }
+
+    /// Asks before uploading into a subfolder: files (and apps) with the same names there are replaced, folders are
+    /// merged (pushFinalize) – said as for the current folder (AUDIT PLI-18, REV-31), on the one Mac being browsed
+    /// (a plain alert, see `replaceConfirmation`) and named like there (AUDIT UI-31, UI-04).
+    func uploadConfirmation(_ urls: [URL], into folder: RemoteEntry) -> ConfirmRequest {
+        ConfirmRequest(
+            title: "Wysłać do folderu „\(folder.displayName)”?",
+            message: "Pliki o tych samych nazwach w folderze „\(folder.displayName)”\(onComputer) zostaną zastąpione, "
+                + "a do folderów o tych samych nazwach zostanie dodana nowa zawartość.",
+            button: "Wyślij", targets: []) { [weak self] in
+            self?.upload(urls, into: folder)
+        }
+    }
+
+    /// Asks before replacing items of the same name; nil when nothing would be replaced. The question is about the
+    /// one Mac being browsed (a plain alert): the checked Macs of the list have nothing to do with it.
+    func replaceConfirmation(_ urls: [URL]) -> ConfirmRequest? {
+        let conflicts = conflicts(for: urls)
+        guard !conflicts.isEmpty else { return nil }
+        let place = onComputer
+        // The names are those already on the iMac: direction overrides are shown, not applied (AUDIT DOD-13).
+        let existing = Self.names(conflicts.map { TerminalText.escape($0, keepBackslash: true) })
+        return ConfirmRequest(
+            title: "Zastąpić istniejące elementy?",
+            message: "W tym folderze\(place) są już: \(existing). Pliki o tych samych nazwach zostaną zastąpione, a do folderów zostanie dodana nowa zawartość.",
+            button: "Zastąp", targets: []) { [weak self] in
+            self?.upload(urls)
+        }
+    }
+
+    /// Asks before deleting on the browsed Mac (a plain alert, see `replaceConfirmation`).
+    func deleteConfirmation(_ entries: [RemoteEntry]) -> ConfirmRequest? {
+        guard !entries.isEmpty else { return nil }
+        let title = entries.count == 1
+            ? "Usunąć „\(entries[0].displayName)”?"
+            : "Usunąć \(Polish.count(entries.count, "element", "elementy", "elementów"))?"
+        // The folder and the names are read from the iMac: direction overrides are shown, not applied (AUDIT DOD-13).
+        let computer = TerminalText.escape(host?.name ?? "", keepBackslash: true)
+        let place = "z komputera \(computer) (\(TerminalText.escape(path, keepBackslash: true)))"
+        let message = entries.count == 1
+            ? "Element zostanie trwale usunięty \(place). Nie trafi do Kosza – tej operacji nie można cofnąć."
+            : "Zostaną trwale usunięte \(place): \(Self.names(entries.map(\.displayName))). Nie trafią do Kosza – tej operacji nie można cofnąć."
+        return ConfirmRequest(title: title, message: message, button: "Usuń", targets: []) { [weak self] in
+            self?.delete(entries)
+        }
+    }
+
     /// A subfolder of the current folder written with placeholders.
     func portablePathFor(_ entry: RemoteEntry) -> String {
         RemotePaths.tokenize(RemotePaths.join(path, entry.name), studentUser: app.settings.studentUser,

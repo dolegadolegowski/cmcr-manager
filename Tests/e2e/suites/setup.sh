@@ -55,7 +55,7 @@ expect_code "cmcrctl setup: błędne opcje odrzucone przed połączeniem" "$code
 clear_fakelog
 out="$(setup_run)"; code=$?
 expect_code "setup: pierwsze uruchomienie – kod 0" "$code" 0 "$out"
-expect "setup: zmiany w raporcie" "$out" "Włączono zdalne logowanie (SSH)" "Klucz SSH menedżera zainstalowany" \
+expect "setup: zmiany w raporcie" "$out" "Włączono zdalne logowanie (SSH)" "Klucz SSH aplikacji zainstalowany" \
   "050-cmcr-manager.conf" "Harmonogram ustawiony: pn wt śr cz pt: włączenie 07:30, wyłączenie 17:00" \
   "sudo bez hasła WŁĄCZONE" "Do zrobienia ręcznie" "→ imac01: Zmieniono"
 expect "setup: polecenia systemowe przez atrapy" "$(fakelog)" \
@@ -93,7 +93,7 @@ marker="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("p
 expect "setup: znacznik zapamiętuje faktyczne zdarzenia pmset" "$marker" "wakeorpoweron MTWRF 07:30:00 shutdown MTWRF 17:00:00"
 
 # The schedule changed later in the app (Zajęcia › Harmonogram zasilania): setup must notice it, not trust its marker.
-out="$(ctlpw schedule set 1 --on MTWRF@08:15 --off MTWRF@15:00 --no-autorestart --no-womp)"
+out="$(ctlpw schedule set 1 --on MTWRF@08:15 --off MTWRF@15:00 --no-autorestart)"
 expect "harmonogram zmieniony w aplikacji" "$(cat "$SS/sched" 2>&1)" "wakeorpoweron MTWRF 08:15:00 sleep MTWRF 15:00:00"
 out="$(setup_run --verify)"; code=$?
 expect "setup --verify po zmianie harmonogramu w aplikacji: do zmiany" "$out" \
@@ -110,7 +110,7 @@ expect "setup --verify po przywróceniu: nic do zmiany" "$out" "✔ Harmonogram:
 
 # pmset refuses the schedule while the app's schedule is in place: the step fails and the marker keeps no
 # fingerprint, so neither --verify nor the next run takes the app's events for the script's.
-out="$(ctlpw schedule set 1 --on MTWRF@08:15 --off MTWRF@15:00 --no-autorestart --no-womp)"
+out="$(ctlpw schedule set 1 --on MTWRF@08:15 --off MTWRF@15:00 --no-autorestart)"
 : > "$WORK/pmset-repeat.fail"
 clear_fakelog
 out="$(setup_run)"; code=$?
@@ -139,6 +139,18 @@ expect_code "setup: sshd -t odrzuca – kod 1" "$code" 1 "$out"
 expect "setup: sshd -t odrzuca – komunikat" "$out" "sshd -t odrzucił konfigurację – przywrócono poprzednią"
 cmp -s "$WORK/sshd-before.conf" "$SR/etc/ssh/sshd_config.d/050-cmcr-manager.conf" \
   && pass "setup: poprzedni drop-in sshd przywrócony" || fail "setup: drop-in sshd zmieniony mimo błędu"
+
+# --ssh-key-only after a key that could not be written: password logins stay on (AUDIT PRZ-04).
+ssh-keygen -q -t ed25519 -N "" -f "$WORK/prz04" -C prz04
+chmod 500 "$SHOME/.ssh"
+out="$(sctl setup 1 --no-ssh-acl --ssh-key-only --pubkey "$(cat "$WORK/prz04.pub")")"; code=$?
+chmod 700 "$SHOME/.ssh"
+expect_code "--ssh-key-only bez zapisanego klucza: kod 1" "$code" 1 "$out"
+expect "--ssh-key-only bez zapisanego klucza: komunikat" "$out" "klucza aplikacji nie udało się zainstalować"
+expect_not "--ssh-key-only bez zapisanego klucza: logowanie hasłem nie wyłączone" \
+  "$(cat "$SR/etc/ssh/sshd_config.d/050-cmcr-manager.conf" 2>/dev/null)" "PasswordAuthentication no"
+expect_not "--ssh-key-only bez zapisanego klucza: odcisk nie trafia do setup.json" \
+  "$(cat "$SR/Library/Application Support/CMCR/setup.json" 2>/dev/null)" "$(ssh-keygen -l -E sha256 -f "$WORK/prz04.pub" | awk '{print $2}')"
 
 out="$(sctl setup 1 --no-ssh-acl --no-sudo-nopasswd --verify)"
 expect "setup --verify: planowane usunięcie sudo bez hasła" "$out" "Wymaga zmiany: usunąć sudo bez hasła."
@@ -243,7 +255,7 @@ out="$(sctl readiness 1)"
 expect "readiness: brak folderu ucznia" "$out" "✘ Folder ucznia" "brak"
 
 out="$(ctlpw exec "/bin/bash $WORK/standalone.sh --verify --no-guide --no-ssh-acl" 1 --root)"; code=$?
-expect "skrypt zapisany z aplikacji: wbudowany klucz rozpoznany" "$out" "Klucz SSH menedżera jest już zainstalowany"
+expect "skrypt zapisany z aplikacji: wbudowany klucz rozpoznany" "$out" "Klucz SSH aplikacji jest już zainstalowany"
 expect "skrypt zapisany z aplikacji: folder z ustawień" "$out" "Wymaga zmiany" "$SHOME/Public/cmcr"
 
 section "Folder ucznia – brakujące foldery"
@@ -290,5 +302,46 @@ expect "Public jako dowiązanie: odmowa" "$out" "Public jest dowiązaniem utworz
 victim_intact "Public jako dowiązanie: folder cmcr innego konta nietknięty" "$VICTIM/cmcr"
 expect_not "Public jako dowiązanie: bez chown w folderze innego konta" "$(fakelog)" "setup-victim"
 rm -f "$SHOME/Public" && mv "$SHOME/Public.real" "$SHOME/Public"
+
+section "Szybka naprawa: Udostępnianie ekranu tylko dla administratorów (AUDIT PRZ-01)"
+mkdir -p "$SS/groups"
+rm -f "$SS/groups/com.apple.access_screensharing"*
+: > "$SS/off-com.apple.screensharing"
+clear_fakelog
+out="$(sctl _builder screen-sharing 1)"; code=$?
+expect_code "szybka naprawa VNC: kod 0" "$code" 0 "$out"
+expect "szybka naprawa VNC: lista dostępu z grupą Administratorzy" "$(fakelog)" \
+  "dseditgroup -o create" "com.apple.access_screensharing" "dseditgroup -o edit -a admin -t group com.apple.access_screensharing"
+if grep -q '^nested ' "$SS/groups/com.apple.access_screensharing" 2>/dev/null; then
+  pass "szybka naprawa VNC: dostęp tylko dla administratorów"
+else
+  fail "szybka naprawa VNC: usługa włączona bez listy dostępu (każde konto, także ucznia)" "$out"
+fi
+expect "szybka naprawa VNC: komunikat" "$out" "tylko administratorzy"
+# A list switched off in System Settings (…-disabled) is restored, not created next to it.
+rm -f "$SS/groups/com.apple.access_screensharing"
+echo "nested x" > "$SS/groups/com.apple.access_screensharing-disabled"
+clear_fakelog
+out="$(sctl _builder screen-sharing 1)"
+expect "szybka naprawa VNC: wyłączona lista przywrócona" "$(fakelog)" \
+  "dscl . -change /Groups/com.apple.access_screensharing-disabled RecordName com.apple.access_screensharing-disabled com.apple.access_screensharing"
+rm -rf "$SS/groups"
+
+section "cmcrctl setup/readiness/setup-script – nadmiarowe argumenty i obce opcje (AUDIT PRZ-03, PRZ-17)"
+clear_fakelog
+out="$(sctl setup --hostname imac07 1)"; code=$?
+expect_code "setup --hostname NAZWA nr: kod 2" "$code" 2 "$out"
+expect "setup: nadmiarowy argument nazwany" "$out" "Nadmiarowy argument „1”"
+expect_not "setup: przy błędzie nic nie uruchomiono" "$(fakelog)" "setup"
+out="$(sctl setup 1 1)"; code=$?
+expect_code "setup nr nr: kod 2" "$code" 2 "$out"
+out="$(sctl setup-script --verify)"; code=$?
+expect_code "setup-script --verify: kod 2" "$code" 2 "$out"
+expect "setup-script --verify: wskazówka" "$out" "dotyczy polecenia setup"
+expect_not "setup-script --verify: skrypt nie wypisany" "$out" "#!/bin/bash"
+out="$(sctl setup-script nadmiar)"; code=$?
+expect_code "setup-script z argumentem: kod 2" "$code" 2 "$out"
+out="$(sctl readiness 1 --ssh-key-only)"; code=$?
+expect_code "readiness z opcją konfiguracji: kod 2" "$code" 2 "$out"
 
 rm -rf "$SS"

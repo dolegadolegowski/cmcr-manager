@@ -57,6 +57,55 @@ public struct Machine: Identifiable, Codable, Hashable, Sendable {
         }
     }
 
+    /// The list with every repeated `id` replaced by a new one (the first entry keeps it). A copied hosts.json entry
+    /// keeps the original's id: two Macs with one id share a row, a status and an own password, and the lesson
+    /// routines (dictionaries by id) would stop the app. The copy falls back to the shared password, because the
+    /// Keychain item of an own password belongs to the old id. `renamed` lists the entries that got a new id.
+    public static func withUniqueIDs(_ hosts: [Machine]) -> (hosts: [Machine], renamed: [String]) {
+        var seen = Set<UUID>()
+        var renamed: [String] = []
+        let fixed = hosts.map { host -> Machine in
+            guard seen.insert(host.id).inserted else {
+                var copy = host
+                copy.id = UUID()
+                copy.usesSharedPassword = true
+                seen.insert(copy.id)
+                renamed.append(host.name)
+                return copy
+            }
+            return host
+        }
+        return (fixed, renamed)
+    }
+
+    /// Three-way merge of host lists by id (AUDIT KON-04). `base` is the list both sides started from: the app's
+    /// `mine` and `theirs` written meanwhile by cmcrctl (`hosts add/remove/set`, `rename-computer --update-list`).
+    /// An entry changed or removed on one side only takes that side's version; one changed on both sides keeps
+    /// `mine`; one removed on one side and changed on the other is kept (nothing is lost). Entries keep the order
+    /// of `mine`; those added in `theirs` follow the entry they follow there.
+    public static func merge(base: [Machine], mine: [Machine], theirs: [Machine]) -> [Machine] {
+        func index(_ list: [Machine]) -> [UUID: Machine] {
+            Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        }
+        let b = index(base), t = index(theirs), m = index(mine)
+        var result: [Machine] = []
+        for mineEntry in mine {
+            guard let old = b[mineEntry.id] else { result.append(mineEntry); continue }   // added here
+            if let theirEntry = t[mineEntry.id] {
+                result.append(mineEntry == old ? theirEntry : mineEntry)
+            } else if mineEntry != old {
+                result.append(mineEntry)                     // removed there, but changed here: keep
+            }
+        }
+        for (i, theirEntry) in theirs.enumerated() where m[theirEntry.id] == nil {
+            if let old = b[theirEntry.id], old == theirEntry { continue }   // removed here, unchanged there
+            let after = theirs[..<i].reversed().first { entry in result.contains { $0.id == entry.id } }
+            let at = after.flatMap { a in result.firstIndex { $0.id == a.id } }.map { $0 + 1 } ?? 0
+            result.insert(theirEntry, at: at)
+        }
+        return result
+    }
+
     /// Number embedded in the host name (`imac04` → 4); used by the CLI like `cmcr-exec cmd 4`.
     public var number: Int? {
         let digits = name.reversed().prefix { $0.isNumber }
@@ -93,7 +142,7 @@ public extension Snippet {
         Snippet(category: "Podstawowe", name: "Konta użytkowników", command: "dscl . list /Users UniqueID | awk '$2 >= 500'"),
         Snippet(category: "Podstawowe", name: "Zawartość folderu cmcr ucznia", command: "ls -la /Users/student/Public/cmcr"),
         Snippet(category: "Unity Hub (notes.md)", name: "Lista zainstalowanych edytorów",
-                command: "\(unityHub) -- --headless editors --all"),
+                command: "\(unityHub) -- --headless editors --installed"),
         Snippet(category: "Unity Hub (notes.md)", name: "Instalacja edytora 6000.3.7f1",
                 command: "\(unityHub) -- --headless install --version 6000.3.7f1 --architecture $(uname -m)"),
         Snippet(category: "Unity Hub (notes.md)", name: "Moduł Android dla 6000.3.7f1",
@@ -103,7 +152,7 @@ public extension Snippet {
         Snippet(category: "Android SDK (notes.md)", name: "sdkmanager – API 34",
                 command: "yes | /Applications/Unity/Hub/Editor/6000.3.7f1/PlaybackEngines/AndroidPlayer/SDK/cmdline-tools/16.0/bin/sdkmanager \"platform-tools\" \"platforms;android-34\""),
         Snippet(category: "Homebrew (notes.md)", name: "Instalacja Homebrew",
-                command: "with_askpass env NONINTERACTIVE=1 /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""),
+                command: "curl -fsSL -o \"$CMCR_TMP/brew-install.sh\" https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh && with_askpass env NONINTERACTIVE=1 /bin/bash \"$CMCR_TMP/brew-install.sh\" && brew --version"),
         Snippet(category: "Homebrew (notes.md)", name: "Oracle JDK", command: "with_askpass brew install oracle-jdk"),
         Snippet(category: "Homebrew (notes.md)", name: "Aktualizacja pakietów brew", command: "with_askpass brew update && with_askpass brew upgrade"),
         Snippet(category: "System (root)", name: "Historia aktualizacji", command: "softwareupdate --history", asRoot: true),
@@ -128,8 +177,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var screenshotInterval = 10
     public var screenshotMaxSize = 1280
     public var screenshotQuality = 60
-    /// Show a notification on the observed Mac when a preview starts.
-    public var notifyOnObserve = true
+    /// The observed student is always told that the preview started (README); there is no setting to turn it off
+    /// (AUDIT KON-06). An old settings file that still has `notifyOnObserve: false` is read, but changes nothing.
+    public var notifyOnObserve: Bool { true }
     /// Refuse to capture sessions of administrator accounts (preview only restricted/standard accounts).
     public var observeOnlyStandardAccounts = true
     /// Comma separated list of accounts that may be observed; empty means any (subject to the rule above).
@@ -153,7 +203,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
         screenshotInterval = try c.decodeIfPresent(Int.self, forKey: .screenshotInterval) ?? d.screenshotInterval
         screenshotMaxSize = try c.decodeIfPresent(Int.self, forKey: .screenshotMaxSize) ?? d.screenshotMaxSize
         screenshotQuality = try c.decodeIfPresent(Int.self, forKey: .screenshotQuality) ?? d.screenshotQuality
-        notifyOnObserve = try c.decodeIfPresent(Bool.self, forKey: .notifyOnObserve) ?? d.notifyOnObserve
         observeOnlyStandardAccounts = try c.decodeIfPresent(Bool.self, forKey: .observeOnlyStandardAccounts) ?? d.observeOnlyStandardAccounts
         observeAllowedUsers = try c.decodeIfPresent(String.self, forKey: .observeAllowedUsers) ?? d.observeAllowedUsers
         snippets = try c.decodeIfPresent([Snippet].self, forKey: .snippets) ?? d.snippets
@@ -176,10 +225,26 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public func resolve(_ path: String) -> String {
         path.replacingOccurrences(of: "{student}", with: studentUser)
     }
+
+    /// The student folder on the iMacs with `{student}` replaced (AUDIT PLI-03): what cmcr-push sends to, cmcr-pull
+    /// and „Zbierz prace” read and the end of the lesson cleans.
+    public var studentFolder: String { resolve(sharedFolder) }
 }
 
 public enum Reachability: String, Codable, Sendable {
     case unknown, checking, online, offline, authFailed, error
+
+    /// State in plain words for the window and the reports a teacher opens (the CLI keeps the short `label`).
+    public var displayName: String {
+        switch self {
+        case .online: return "Włączony"
+        case .offline: return "Niedostępny"
+        case .authFailed: return "Błąd logowania"
+        case .error: return "Błąd połączenia"
+        case .checking: return "Sprawdzanie…"
+        case .unknown: return "Nie sprawdzono"
+        }
+    }
 
     public var label: String {
         switch self {
@@ -203,6 +268,21 @@ public struct HostStatus: Sendable {
 
     public var osVersion: String? { info["os"].flatMap { $0.isEmpty ? nil : $0 } }
     public var consoleUser: String? { info["console"].flatMap { $0.isEmpty ? nil : $0 } }
+    /// Accounts with a GUI session, also the ones left running in the background after "Przełącz użytkownika"
+    /// (empty for a status from an older version, which knew only the console).
+    public var sessionUsers: [String] {
+        (info["sessions"] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+    /// Sessions running in the background, not at the screen.
+    public var backgroundUsers: [String] { sessionUsers.filter { $0 != consoleUser } }
+    /// Everyone whose unsaved work is at stake on this Mac: the account at the screen first, then the background ones.
+    public var loggedInUsers: [String] { (consoleUser.map { [$0] } ?? []) + backgroundUsers }
+    /// "uczen", "uczen2 (w tle)", "uczen, uczen2 (w tle)".
+    public var loggedInText: String? {
+        let background = backgroundUsers.isEmpty ? [] : [backgroundUsers.joined(separator: ", ") + " (w tle)"]
+        let parts = (consoleUser.map { [$0] } ?? []) + background
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
     public var model: String? { info["model"] }
     public var ip: String? { info["ip"].flatMap { $0.isEmpty ? nil : $0 } }
     /// MAC for Wake-on-LAN: the wired (Ethernet) port when there is one, otherwise the interface of the
@@ -288,9 +368,17 @@ public struct RunningApp: Identifiable, Hashable, Sendable {
     public var name: String
     public var bundlePath: String
     public var id: Int { pid }
-    /// Background agents and system UI services (anything outside the Applications folders).
+    /// Background agents and system UI services (Finder, Dock, menu extras, agents in Library folders). Everything else
+    /// is the student's app: Safari (since macOS 13 it runs from a cryptex), apps started from Downloads, a disk
+    /// image (Gatekeeper's App Translocation copy) or a USB stick.
     public var isSystem: Bool {
-        !(bundlePath.hasPrefix("/Applications/") || bundlePath.hasPrefix("/System/Applications/")
-          || (bundlePath.hasPrefix("/Users/") && bundlePath.contains("/Applications/")))
+        let p = bundlePath
+        if p.contains("/AppTranslocation/") { return false }
+        if p.hasPrefix("/System/Volumes/Preboot/Cryptexes/") { return !p.contains("/Applications/") }
+        if p.hasPrefix("/System/Applications/") { return false }
+        if ["/System/", "/Library/", "/usr/", "/private/", "/opt/", "/bin/", "/sbin/"].contains(where: { p.hasPrefix($0) }) {
+            return true
+        }
+        return p.hasPrefix("/Users/") && p.contains("/Library/")
     }
 }

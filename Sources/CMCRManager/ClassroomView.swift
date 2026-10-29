@@ -20,8 +20,8 @@ enum ClassroomTab: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .start: return "play.circle"
-        case .end: return "stop.circle"
-        case .attention: return "eye.slash"
+        case .end: return "flag.checkered"
+        case .attention: return "lock.display"
         case .questions: return "questionmark.bubble"
         }
     }
@@ -38,6 +38,7 @@ enum ClassroomTab: String, CaseIterable, Identifiable {
 
 /// "Zajęcia": one-click lesson routines, attention mode and questions to students.
 struct ClassroomView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject var model: AppModel
     @ObservedObject private var classroom = ClassroomModel.shared
     @AppStorage("classroom.tab") private var tab: ClassroomTab = .start
@@ -87,7 +88,7 @@ struct ClassroomView: View {
                 .onChange(of: classroom.run?.id) { _, id in
                     guard id != nil, let kind = classroom.run?.plan.kind else { return }
                     tab = kind == .start ? .start : .end
-                    withAnimation { proxy.scrollTo("progress", anchor: .top) }
+                    withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo("progress", anchor: .top) }
                 }
             }
         }
@@ -107,7 +108,7 @@ struct ClassroomView: View {
             Label {
                 Text("Tryb uwagi jest włączony – zablokowane ekrany: \(lockedCount)")
             } icon: {
-                Image(systemName: "lock.fill").foregroundStyle(.orange)
+                Image(systemName: "lock.display").foregroundStyle(.orange)
             }
             Button("Pokaż") { tab = .attention }
                 .buttonStyle(.link)
@@ -157,7 +158,7 @@ private struct StartLessonSection: View {
                 LabeledContent("Folder z materiałami") {
                     HStack {
                         Text(materialsText)
-                            .foregroundStyle(c.wrappedValue.materialsFolder.isEmpty ? .orange : .secondary)
+                            .foregroundStyle(materialsReadable ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange))
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Button("Wybierz…") {
@@ -229,7 +230,7 @@ private struct StartLessonSection: View {
                 .help(buttonHelp)
             }
         } header: {
-            Label("Rozpocznij zajęcia", systemImage: "play.circle")
+            Label("Rozpocznij zajęcia", systemImage: "play.fill")
         } footer: {
             Text("Kroki wykonują się po kolei na każdym komputerze; postęp zobaczysz poniżej i w dziale Zadania.")
                 .foregroundStyle(.secondary)
@@ -263,8 +264,19 @@ private struct StartLessonSection: View {
     var materialsText: String {
         let folder = c.wrappedValue.materialsFolder
         if folder.isEmpty { return "Nie wybrano folderu" }
-        let n = classroom.materialItems(folder).count
-        return "\((folder as NSString).abbreviatingWithTildeInPath) – \(Polish.count(n, "element", "elementy", "elementów"))"
+        switch classroom.materials(folder) {
+        case .success(let items):
+            let n = items.count
+            return "\((folder as NSString).abbreviatingWithTildeInPath) – \(Polish.count(n, "element", "elementy", "elementów"))"
+        case .failure(let problem):
+            return problem.message
+        }
+    }
+
+    /// A folder that is missing or cannot be read is shown in orange before the lesson starts.
+    var materialsReadable: Bool {
+        if case .success = classroom.materials(c.wrappedValue.materialsFolder) { return true }
+        return false
     }
 
     var summary: String {
@@ -351,14 +363,14 @@ private struct EndLessonSection: View {
             Toggle(isOn: Binding(get: { c.wrappedValue.collect && c.wrappedValue.cleanShared },
                                  set: { c.wrappedValue.cleanShared = $0 })) {
                 StepLabel(.cleanShared, "Wyczyść folder cmcr ucznia",
-                          caption: "Tylko po udanym zebraniu prac z tego komputera.")
+                          caption: "Usuwa tylko zebrane pliki, których od zebrania nikt nie zmienił.")
             }
             .disabled(!c.wrappedValue.collect)
             .help(c.wrappedValue.collect
-                  ? "Po zebraniu prac usuwa zawartość folderu cmcr ucznia"
+                  ? "Po zebraniu prac usuwa z folderu cmcr ucznia zebrane pliki; zapisane później zostają"
                   : "Włącz „Zbierz prace” – folder ucznia jest czyszczony dopiero po zebraniu z niego prac")
             Toggle(isOn: c.cleanDownloads) {
-                StepLabel(.cleanDownloads, "Wyczyść folder Pobrane ucznia",
+                StepLabel(.cleanDownloads, "Wyczyść folder Pobrane rzeczy ucznia",
                           caption: "Usuwa pliki pobrane z internetu.")
             }
             Toggle(isOn: c.logout) {
@@ -391,7 +403,7 @@ private struct EndLessonSection: View {
                 Button(role: disruptive ? .destructive : nil) {
                     askToEnd()
                 } label: {
-                    Label(disruptive ? "Zakończ zajęcia…" : "Zakończ zajęcia", systemImage: "stop.fill")
+                    Label(disruptive ? "Zakończ zajęcia…" : "Zakończ zajęcia", systemImage: "flag.checkered")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(disruptive ? .red : nil)
@@ -400,9 +412,9 @@ private struct EndLessonSection: View {
                 .help(buttonHelp)
             }
         } header: {
-            Label("Zakończ zajęcia", systemImage: "stop.circle")
+            Label("Zakończ zajęcia", systemImage: "flag.checkered")
         } footer: {
-            Text("Folder cmcr ucznia jest czyszczony tylko razem ze zbieraniem prac i tylko na komputerach, z których udało się je zebrać. Gdy zbieranie się nie uda, folder Pobrane też zostaje nietknięty. Aplikacje są zamykane przed zbieraniem prac.")
+            Text("Folder cmcr ucznia jest czyszczony tylko razem ze zbieraniem prac i tylko na komputerach, z których udało się je zebrać. Gdy zbieranie się nie uda, folder Pobrane rzeczy też zostaje nietknięty. Aplikacje są zamykane przed zbieraniem prac.")
                 .foregroundStyle(.secondary)
         }
     }
@@ -439,7 +451,7 @@ private struct EndLessonSection: View {
         }
         let reached = model.actionTargets
         let n = reached.count
-        let users = reached.compactMap { model.status($0).consoleUser }.count
+        let users = reached.filter { !model.status($0).loggedInUsers.isEmpty }.count
         var lines = plan.steps.map { "• \($0.title)" }
         if users > 0 { lines.append("\nZalogowani uczniowie: \(users). Niezapisane prace w otwartych aplikacjach przepadną.") }
         confirm = ConfirmRequest(
@@ -461,13 +473,13 @@ private struct LessonProgressSection: View {
         Section {
             HStack(spacing: 12) {
                 if run.finished {
-                    Image(systemName: run.failedHosts == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(run.failedHosts == 0 ? .green : .orange)
-                    Text(run.failedHosts == 0 ? "Gotowe na wszystkich komputerach."
-                         : "Problemy \(Polish.onComputers(run.failedHosts)) – szczegóły w dziale Zadania.")
-                } else if let end = run.countdownEnd {
+                    let outcome = run.outcome
+                    Image(systemName: outcome.clean ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(outcome.clean ? .green : .orange)
+                    Text(outcome.text)
+                } else if let left = run.countdownRange() {
                     Image(systemName: "timer")
-                    Text("Kolejne kroki za ") + Text(timerInterval: Date()...end, countsDown: true).monospacedDigit()
+                    Text("Kolejne kroki za ") + Text(timerInterval: left, countsDown: true).monospacedDigit()
                     Button {
                         run.skipCountdown = true
                     } label: {
@@ -490,23 +502,31 @@ private struct LessonProgressSection: View {
                     .help("Pokaż folder z zebranymi pracami w Finderze")
                 }
                 if !run.finished {
-                    Button(role: .cancel) {
+                    // The same role as „Przerwij” of jobs (AUDIT UI-24).
+                    Button(role: .destructive) {
                         run.cancel()
                     } label: {
-                        Label("Przerwij", systemImage: "xmark.circle")
+                        Label("Przerwij", systemImage: "stop.circle")
                     }
                     .help("Zatrzymaj scenariusz – kroki, które już się wykonały, nie zostaną cofnięte")
                 }
             }
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
-                GridRow {
+                GridRow(alignment: .firstTextBaseline) {
                     Text("Komputer").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     ForEach(Array(run.plan.steps.enumerated()), id: \.offset) { _, step in
-                        Image(systemName: step.icon)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22)
-                            .help(step.title)
-                            .accessibilityLabel(step.title)
+                        VStack(spacing: 2) {
+                            Image(systemName: step.icon)
+                            if let caption = step.gridCaption(in: run.plan.steps) {
+                                Text(caption).font(.caption2).lineLimit(1).fixedSize()
+                            }
+                        }
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 22)
+                        .gridColumnAlignment(.center)
+                        .help(step.title)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(step.title)
                     }
                 }
                 ForEach(run.machines) { m in
@@ -527,6 +547,21 @@ private struct LessonProgressSection: View {
     }
 }
 
+extension LessonStepKind {
+    /// A short caption under the symbol in the header of the lesson run grid, for a step whose symbol another step of
+    /// `steps` has too: both cleanups have `trash`, the symbol of Pliki › „Wyczyść folder…” (AUDIT UI-33), and two
+    /// identical columns did not say which folder was not cleaned (AUDIT UI-34). Nil for a symbol of its own – the
+    /// grid stays compact; the full title is in the tooltip.
+    func gridCaption(in steps: [LessonStepKind]) -> String? {
+        guard steps.contains(where: { $0 != self && $0.icon == icon }) else { return nil }
+        switch self {
+        case .cleanShared: return "folder ucznia"
+        case .cleanDownloads: return "Pobrane"
+        default: return title
+        }
+    }
+}
+
 struct StepStateIcon: View {
     let state: StepState
 
@@ -539,7 +574,7 @@ struct StepStateIcon: View {
         case .done:
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityLabel("wykonano")
         case .skipped:
-            Image(systemName: "minus.circle.fill").foregroundStyle(.secondary).accessibilityLabel("pominięto")
+            Image(systemName: "forward.end.circle").foregroundStyle(.secondary).accessibilityLabel("pominięto")
         case .failed:
             Image(systemName: "xmark.octagon.fill").foregroundStyle(.red).accessibilityLabel("błąd")
         }
@@ -588,7 +623,7 @@ private struct AttentionSection: View {
                 LabeledContent {
                     Text(lockedNames).foregroundStyle(.secondary).lineLimit(2)
                 } label: {
-                    Label("Zablokowane teraz", systemImage: "lock.fill")
+                    Label("Zablokowane teraz", systemImage: "lock.display")
                 }
             }
             HStack(spacing: 12) {
@@ -598,19 +633,19 @@ private struct AttentionSection: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                TargetButton(title: "Odblokuj ekrany", icon: "lock.open", prominent: false) {
+                TargetButton(title: "Odblokuj ekrany", icon: "lock.open.display", prominent: false) {
                     classroom.unlock(model, model.selectedMachines)
                 }
                 .keyboardShortcut("u", modifiers: [.command, .shift])
                 .help("Zdejmij blokadę z zaznaczonych komputerów (⇧⌘U)")
-                TargetButton(title: "Zablokuj ekrany", icon: "lock.fill") {
+                TargetButton(title: "Zablokuj ekrany", icon: "lock.display") {
                     classroom.lock(model, model.selectedMachines)
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
                 .help("Zakryj ekrany zaznaczonych komputerów komunikatem (⇧⌘L)")
             }
         } header: {
-            Label("Tryb uwagi", systemImage: "eye.slash")
+            Label("Tryb uwagi", systemImage: "lock.display")
         } footer: {
             Text("Blokada systemowa korzysta z narzędzia wbudowanego w macOS (LockScreen z Apple Remote Desktop): zakrywa wszystkie ekrany i blokuje klawiaturę. Apple go nie dokumentuje, więc gdy się nie uruchomi, tryb automatyczny pokaże komunikat na pełnym ekranie. Komunikat ukrywa Dock i pasek menu, ale nie jest zabezpieczeniem – nie powstrzyma np. wyłączenia komputera przyciskiem.")
                 .foregroundStyle(.secondary)
@@ -732,8 +767,7 @@ private struct AnswersView: View {
                 }
                 Button {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(rows.dropFirst().map { $0.joined(separator: "\t") }.joined(separator: "\n"),
-                                                   forType: .string)
+                    NSPasteboard.general.setString(CSV.tsv(Array(rows.dropFirst())), forType: .string)
                 } label: {
                     Label("Kopiuj", systemImage: "doc.on.doc")
                 }
@@ -856,7 +890,7 @@ struct AppNameMenu: View {
         Menu {
             let names = knownNames
             if names.isEmpty {
-                Text("Lista pojawi się po pobraniu zainstalowanych aplikacji (sekcja Aplikacje).")
+                Text("Lista pojawi się po pobraniu zainstalowanych aplikacji (dział Aplikacje).")
             }
             ForEach(names, id: \.self) { name in Button(name) { pick(name) } }
         } label: {

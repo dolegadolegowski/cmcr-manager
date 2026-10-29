@@ -20,9 +20,12 @@ public struct CommandResult: Sendable {
     /// The remote script had started on the Mac (its start marker or output arrived); set by `SSH.run`.
     /// A timeout after the start means a slow command on a Mac that answers, not a Mac that is off.
     public var started = false
+    /// The exit code the remote script reported when it ended (the wrapper's end marker); nil when that did not arrive.
+    /// Set by `SSH.run`. ssh's 255 for a started session without it is a session that broke off, not the command's code.
+    public var endCode: Int32?
 
     public init(exitCode: Int32, stdout: Data = Data(), stderr: Data = Data(), timedOut: Bool = false,
-                cancelled: Bool = false, truncated: Bool = false, started: Bool = false) {
+                cancelled: Bool = false, truncated: Bool = false, started: Bool = false, endCode: Int32? = nil) {
         self.exitCode = exitCode
         self.stdout = stdout
         self.stderr = stderr
@@ -30,6 +33,7 @@ public struct CommandResult: Sendable {
         self.cancelled = cancelled
         self.truncated = truncated
         self.started = started
+        self.endCode = endCode
     }
 
     public static func failure(_ message: String, code: Int32 = -1) -> CommandResult {

@@ -6,6 +6,7 @@
 #
 #   Tests/e2e/run.sh            – build (debug) and run all tests
 #   CMCR_E2E_NOBUILD=1 …        – reuse the existing build
+#   CMCR_E2E_SUITES=hostkeys …   – only these suites from Tests/e2e/suites (comma-separated names)
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PORT="${CMCR_E2E_PORT:-2299}"
@@ -241,10 +242,19 @@ if out="$("$CTL" selftest 2>&1)"; then pass "selftest: wszystkie skrypty przecho
 fi
 
 # Optional extra suites (added by feature work): Tests/e2e/suites/*.sh, sourced with the helpers above.
+# CMCR_E2E_SUITES=hostkeys,files runs only these suites (after the basic checks above) – handy while fixing one area.
 for suite in "$ROOT"/Tests/e2e/suites/*.sh; do
   [ -e "$suite" ] || continue
+  if [ -n "${CMCR_E2E_SUITES:-}" ]; then
+    case ",$CMCR_E2E_SUITES," in *",$(basename "$suite" .sh),"*) ;; *) continue ;; esac
+  fi
   # shellcheck disable=SC1090
   . "$suite"
+  # A suite's shared ssh connections (ControlPersist) must not outlive it: later suites count the test sshd's
+  # session processes (screens: "sesja zamknięta po zakończeniu podglądu").
+  for mux in "$CMCR_SSH_CONTROL_DIR"/*; do
+    [ -S "$mux" ] && ssh -o ControlPath="$mux" -O exit cmcr-e2e >/dev/null 2>&1
+  done
 done
 
 printf '\n\033[1mWynik: %d zaliczonych, %d niezaliczonych\033[0m\n' "$PASS" "$FAIL"

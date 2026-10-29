@@ -4,6 +4,16 @@
 
 CMCR_E2E_LOG="${CMCR_E2E_LOG:-/tmp/cmcr-e2e.log}"
 _e2e_log() { printf '%s\n' "$*" >> "$CMCR_E2E_LOG"; }
+# $CMCR_E2E_WORK/slow.NAME (seconds): the fake NAME first waits that long, logging „NAME: pauza” before and „NAME: po
+# pauzie” after, so a test can interrupt the command half-way (AUDIT REV-36). Used by installer, scutil --set,
+# launchctl bootout and the question dialog (ask-dialog).
+_e2e_slow() {
+  local f="${CMCR_E2E_WORK:-/nonexistent}/slow.$1"
+  [ -e "$f" ] || return 0
+  _e2e_log "$1: pauza"
+  sleep "$(cat "$f")"
+  _e2e_log "$1: po pauzie"
+}
 
 # sudo: accepts the test password from SUDO_ASKPASS (like real sudo -A) and runs the command as the
 # current user. CMCR_E2E_NOPASSWD=1 emulates a NOPASSWD sudoers rule.
@@ -25,6 +35,11 @@ sudo() {
   fi
   if [ $nonint = 1 ]; then echo "sudo: a password is required" >&2; return 1; fi
   if [ $askpass = 0 ]; then echo "sudo: a terminal is required to read the password" >&2; return 1; fi
+  # $CMCR_E2E_WORK/sudo.lecture: the warning macOS sudo prints before the first successful authentication of an
+  # account (on stderr when it has no terminal), ahead of "Sorry, try again" (AUDIT PRZ-08).
+  if [ -e "${CMCR_E2E_WORK:-/nonexistent}/sudo.lecture" ]; then
+    printf '\nWARNING: Improper use of the sudo command could lead to data loss\nor the deletion of important system files. Please double-check your\ntyping when using sudo. Type "man sudo" for more information.\n\nTo proceed, enter your password, or type Ctrl-C to abort.\n\n' >&2
+  fi
   local pw
   pw="$("$SUDO_ASKPASS" "Password:")" || { echo "sudo: no password was provided" >&2; return 1; }
   if [ "$pw" != "${CMCR_E2E_PASSWORD:-}" ]; then
@@ -78,7 +93,8 @@ screencapture() {
 
 # Observation notice of the screen preview (Scripts.observeNoticeJXA, tag CMCR_OBSERVE_NOTICE): answers like
 # the real panel. Control files in $CMCR_E2E_WORK: fake-notify-fail (osascript fails, e.g. no access to the
-# GUI session), fake-notify-hidden (the panel is not on screen), fake-notify-silent (no answer at all),
+# GUI session), fake-notify-hidden (the panel is not on screen), fake-notify-locked (the screen is locked or
+# asleep), fake-notify-silent (no answer at all),
 # fake-notify-hang (no answer from a real process that does not quit for a minute, like an osascript stuck in
 # the GUI session; its command line holds "cmcr-fake-osascript $CMCR_E2E_WORK/", so tests can look for leftovers).
 _e2e_notice() {
@@ -88,6 +104,8 @@ _e2e_notice() {
     echo "execution error: Error: Connection to the window server refused (-2700)" >&2; return 1
   fi
   if [ -e "$w/fake-notify-hidden" ]; then echo "CMCR:NOTICE:hidden"; return 0; fi
+  # fake-notify-locked: the student's screen is locked or the display sleeps (AUDIT ZAJ-05).
+  if [ -e "$w/fake-notify-locked" ]; then echo "CMCR:NOTICE:locked"; return 0; fi
   if [ -e "$w/fake-notify-silent" ]; then sleep 10; return 0; fi
   if [ -e "$w/fake-notify-hang" ]; then
     /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i + 1)); done' "cmcr-fake-osascript $w/"
@@ -126,7 +144,8 @@ launchctl() {
           return 0 ;;
       esac ;;
     print) _e2e_log "launchctl $*"; return 0 ;;
-    bootout|bootstrap|enable|disable|kickstart|load|unload) _e2e_log "launchctl $*"; return 0 ;;
+    bootout) _e2e_slow launchctl-bootout; _e2e_log "launchctl $*"; return 0 ;;
+    bootstrap|enable|disable|kickstart|load|unload) _e2e_log "launchctl $*"; return 0 ;;
     *) command launchctl "$@" ;;
   esac
 }
@@ -147,6 +166,12 @@ softwareupdate() {
   _e2e_log "softwareupdate $*"
   case " $* " in
     *" --list "*|*" -l "*)
+      # $CMCR_E2E_WORK/softwareupdate.list: printed instead of the list below, with the exit code from
+      # softwareupdate.list.rc (default 0) – no updates, or a server that cannot be reached (AUDIT APL-10).
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/softwareupdate.list" ]; then
+        cat "$CMCR_E2E_WORK/softwareupdate.list"
+        return "$(cat "$CMCR_E2E_WORK/softwareupdate.list.rc" 2>/dev/null || echo 0)"
+      fi
       cat <<'EOF'
 Software Update Tool
 
@@ -162,13 +187,28 @@ EOF
       local pw; IFS= read -r pw
       if [ "$pw" = "${CMCR_E2E_PASSWORD:-}" ]; then _e2e_log "softwareupdate stdinpass ok"; echo "Installing (fake)…"; echo "Done."
       else echo "Authentication failed" >&2; return 1; fi ;;
-    *" --history "*) echo "Display Name   Version   Date"; echo "macOS Testowy  99.0      01.01.2026" ;;
+    *" --history "*)
+      # Oldest first, as the real softwareupdate. Control file in $CMCR_E2E_WORK: history.count (number of entries).
+      local n i; n="$(cat "${CMCR_E2E_WORK:-/nonexistent}/history.count" 2>/dev/null || echo 1)"
+      echo "Display Name   Version   Date"; echo "------------   -------   ----"
+      for ((i = 1; i < n; i++)); do echo "Stara aktualizacja $i  1.$i      01.01.2020"; done
+      echo "macOS Testowy  99.0      01.01.2026" ;;
     *) echo "Done (fake)." ;;
   esac
 }
 
 installer() {
+  _e2e_slow installer
   _e2e_log "installer $*"
+  # $CMCR_E2E_WORK/installer.cancel: the job is cancelled while the package installs – SIGTERM to the shell of
+  # the job, as the remote cancel sends it (AUDIT APL-08). One time only.
+  if [ -e "${CMCR_E2E_WORK:-/nonexistent}/installer.cancel" ]; then
+    rm -f "$CMCR_E2E_WORK/installer.cancel"
+    _e2e_log "installer: anulowano"
+    builtin kill -TERM $$
+    sleep 2 & wait $!
+    return 143
+  fi
   local pkg=""
   while [ $# -gt 0 ]; do case "$1" in -pkg) pkg="$2"; shift 2 ;; *) shift ;; esac; done
   [ -e "$pkg" ] || { echo "installer: Error - the package path specified was invalid: '$pkg'." >&2; return 1; }
@@ -176,11 +216,20 @@ installer() {
 }
 
 # chown: logged only. The working directory is logged too: scripts change owners from inside a folder ("chown x .").
-chown() { _e2e_log "chown $* (cwd $PWD)"; return 0; }
+# With $CMCR_E2E_WORK/chown.fail it refuses, like chown for an account that does not exist (AUDIT PLI-08).
+chown() {
+  _e2e_log "chown $* (cwd $PWD)"
+  if [ -e "${CMCR_E2E_WORK:-/nonexistent}/chown.fail" ]; then echo "chown: odmowa (test)" >&2; return 1; fi
+  return 0
+}
 systemsetup() { _e2e_log "systemsetup $*"; echo "Remote Login: On"; }
+# scutil --set: logged only; with $CMCR_E2E_WORK/scutil-set.fail it fails (AUDIT PRZ-16).
 scutil() {
   case "${1:-}" in
-    --set) _e2e_log "scutil $*" ;;
+    --set)
+      _e2e_slow scutil
+      _e2e_log "scutil $*"
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/scutil-set.fail" ]; then echo "SCPreferencesSetComputerName() failed: test" >&2; return 1; fi ;;
     *) command scutil "$@" ;;
   esac
 }
@@ -206,9 +255,13 @@ spctl() {
     *) _e2e_log "spctl $*"; return 0 ;;
   esac
 }
+# defaults write/delete: logged only; with $CMCR_E2E_WORK/defaults-write.fail they fail (AUDIT PRZ-16).
 defaults() {
   case " $* " in
-    *" write "*|*" delete "*) _e2e_log "defaults $*"; return 0 ;;
+    *" write "*|*" delete "*)
+      _e2e_log "defaults $*"
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/defaults-write.fail" ]; then echo "Could not write domain (test)" >&2; return 1; fi
+      return 0 ;;
     *) command defaults "$@" ;;
   esac
 }
@@ -269,6 +322,21 @@ stat() {
   if [ "$*" = "-f%Su /dev/console" ] && [ -s "${CMCR_E2E_WORK:-/nonexistent}/console_user" ]; then
     cat "$CMCR_E2E_WORK/console_user"; return 0
   fi
+  # Paths listed in $CMCR_E2E_WORK/restricted.paths carry the SIP flag "restricted" (stat -f %Sf), like the
+  # system's own applications (AUDIT APL-07).
+  if [ "${1:-} ${2:-}" = "-f %Sf" ] && [ -s "${CMCR_E2E_WORK:-/nonexistent}/restricted.paths" ] \
+     && grep -qxF -- "${3:-}" "$CMCR_E2E_WORK/restricted.paths"; then
+    echo restricted; return 0
+  fi
+  # $CMCR_E2E_WORK/stat.uid ("uid folder" per line, the folder's physical path): `stat -f %u` of that folder answers
+  # with the uid, like a folder left by a deleted account (AUDIT REV-48).
+  if [ $# = 3 ] && [ "$1 $2" = "-f %u" ] && [ -s "${CMCR_E2E_WORK:-/nonexistent}/stat.uid" ]; then
+    local _e2e_p _e2e_u
+    _e2e_p="$(cd -P -- "$3" 2>/dev/null && /bin/pwd -P)"
+    _e2e_u="$(awk -v p="$_e2e_p" 'p != "" { u = $1; sub(/^[^ ]+ /, ""); if ($0 == p) { print u; exit } }' \
+      "$CMCR_E2E_WORK/stat.uid")"
+    if [ -n "$_e2e_u" ]; then echo "$_e2e_u"; return 0; fi
+  fi
   command stat "$@"
 }
 # fake-no-volume-owner: the current user is listed as a crypto user that is not a volume owner.
@@ -296,7 +364,32 @@ networksetup() {
     *) _e2e_log "networksetup $*"; return 0 ;;
   esac
 }
-export -f _e2e_log _e2e_fake_png _e2e_notice _e2e_is_notice sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer \
+# With $CMCR_E2E_WORK/tar.addfile: right after a folder was packed (tar -cf - .), a file appears in it – a student
+# saving work between collecting and cleaning at the end of a lesson (AUDIT ZAJ-01). One time only.
+tar() {
+  # $CMCR_E2E_WORK/tar.mode: log the mode of each unpacked archive (uploads wait in /tmp, AUDIT PLI-02).
+  if [ "${1:-}" = -xf ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/tar.mode" ]; then
+    command stat -f 'tar-mode %Lp %N' "$2" >> "$CMCR_E2E_WORK/tar.mode"
+  fi
+  command tar "$@"
+  local rc=$?
+  if [ "${1:-}" = -cf ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/tar.addfile" ]; then
+    rm -f "$CMCR_E2E_WORK/tar.addfile"
+    echo "zapisane po zebraniu" > ./nowy-po-zebraniu.txt
+  fi
+  return $rc
+}
+# With $CMCR_E2E_WORK/ps.sessions ("uid account" per line): more GUI sessions, as after "Switch User" (AUDIT DOD-03).
+ps() {
+  command ps "$@"
+  local rc=$?
+  if [ "$*" = "-axo uid=,user=,comm=" ] && [ -s "${CMCR_E2E_WORK:-/nonexistent}/ps.sessions" ]; then
+    awk '{printf "%5d %-16s /System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow\n", $1, $2}' \
+      "$CMCR_E2E_WORK/ps.sessions"
+  fi
+  return $rc
+}
+export -f _e2e_log _e2e_fake_png _e2e_notice _e2e_is_notice sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer tar ps \
   chown systemsetup scutil dseditgroup visudo spctl defaults brew mas osascript fdesetup stat diskutil dscl \
   createhomedir networksetup 2>/dev/null
 
@@ -333,6 +426,7 @@ launchctl() {
   case "$input" in
     *"CMCR:ANSWER:"*)
       _e2e_log "ask-dialog"
+      _e2e_slow ask-dialog
       if [ -e "$(_e2e_state ask.timeout)" ]; then echo "CMCR:TIMEOUT"; return 0; fi
       case "$input" in
         *"default answer"*) printf 'CMCR:ANSWER:Wyślij\t%s\n' "$(cat "$(_e2e_state ask.answer)" 2>/dev/null || echo odpowiedź)" ;;
@@ -347,12 +441,15 @@ _e2e_pattern() { local a p=""; for a in "$@"; do case "$a" in -*) ;; *) p="$a" ;
 
 # pgrep/pkill: LockScreen and the overlay are simulated; the tagged helper processes the scripts start
 # (timers) are real and may be stopped, but only this user's. Nothing else is ever killed.
+# `pgrep -u UID -f CMCR_ATTENTION` (only that account's processes) keeps its -u for the real helper processes.
 pgrep() {
+  local a prev="" eu=""
+  for a in "$@"; do [ "$prev" = -u ] && eu="$a"; prev="$a"; done
   case "$(_e2e_pattern "$@")" in
     LockScreen) [ -e "$(_e2e_state lockscreen.running)" ] && { echo 99901; return 0; }; return 1 ;;
     CMCR_ATTENTION)
       [ -e "$(_e2e_state attention.running)" ] && { echo 99902; return 0; }
-      command pgrep -U "$(id -u)" -f CMCR_ATTENTION ;;
+      command pgrep -U "$(id -u)" ${eu:+-u "$eu"} -f CMCR_ATTENTION ;;
     cmcr-delayed-power) command pgrep -U "$(id -u)" -f cmcr-delayed-power ;;
     *) command pgrep "$@" ;;
   esac
@@ -563,7 +660,12 @@ pmset() {
         echo "System-wide power settings:"; echo "Currently in use:"
         sed 's/^/ /' "$st/pmset" 2>/dev/null ;;
       "-a "*)
-        { grep -v "^${2:-} " "$st/pmset" 2>/dev/null; echo "${2:-} ${3:-}"; } > "$st/pmset.new"
+        # setup-sys/pmset-a.fail: pmset refuses the settings listed there, one name per line (AUDIT PRZ-16).
+        if grep -qxF -- "${2:-}" "$st/pmset-a.fail" 2>/dev/null; then echo "pmset: odmowa (test)" >&2; return 1; fi
+        # Like the real pmset, numbers are kept as numbers: „05” is stored and shown as 5 (AUDIT REV-41).
+        local v="${3:-}"
+        case "$v" in ''|*[!0-9]*) ;; *) v=$((10#$v)) ;; esac
+        { grep -v "^${2:-} " "$st/pmset" 2>/dev/null; echo "${2:-} $v"; } > "$st/pmset.new"
         mv "$st/pmset.new" "$st/pmset" ;;
       "repeat cancel") rm -f "$st/sched" ;;
       "repeat "*) shift; echo "$*" > "$st/sched" ;;

@@ -26,13 +26,27 @@ enum ScriptCommands {
         return command == "install" ? await install(a) : await installURL(a)
     }
 
+    nonisolated static let installerExtensions: Set<String> = ["pkg", "mpkg", "dmg", "zip", "app"]
+
     static func install(_ a: ModuleArguments) async -> Int32 {
         var files = a.positional
         var spec: String?
-        // The host list comes last; a last argument that is not a local file is taken as the host list.
-        if files.count >= 2, let last = files.last, !FileManager.default.fileExists(atPath: expandTilde(last)) {
-            spec = last
-            files.removeLast()
+        // The host list comes last. It is recognised by what it is – a selection of computers (all, 4, 1-5, @2, a name
+        // or address from the list) that is not a path or an installer – and never only because no local file has
+        // that name: ~/Public/cmcr holds the folders `all` and `<address>` (cmcr-helpers), and `install X.pkg all`
+        // there must not send the folder `all` to every Mac. Any other last argument that is not a local file is
+        // taken as the host list too (and reported if it selects nothing).
+        if files.count >= 2, let last = files.last {
+            let exists = FileManager.default.fileExists(atPath: expandTilde(last))
+            let selects = !last.contains("/") && !installerExtensions.contains((last as NSString).pathExtension.lowercased())
+                && (try? HostSpec.select(last, from: legacyCLI.hosts)) != nil
+            if selects || !exists {
+                spec = last
+                files.removeLast()
+            }
+            if selects && exists {
+                Console.err("Uwaga: „\(last)” to wybór komputerów – lokalny plik lub folder o tej nazwie podaj jako ./\(last).")
+            }
         }
         guard !files.isEmpty else { moduleUsageError(a.command, "Użycie: cmcrctl install plik… KOMP [--allow-unsigned]") }
         let urls = files.map { URL(fileURLWithPath: expandTilde($0)).standardizedFileURL }
@@ -40,17 +54,27 @@ enum ScriptCommands {
             moduleUsageError(a.command, "Brak pliku: \(u.path)")
         }
         let targets = ModuleHosts.changing(spec, a.command)
+        // A job of its own: Ctrl-C stops the packing and removes the archive, and nothing is installed (AUDIT REV-44).
         let payload: URL
-        switch await Payload.make(urls) {
+        switch await Interruption.shared.pack(urls) {
+        case .failure(let e) where Interruption.shared.isInterrupted:
+            Console.err("✘ \(e.localizedDescription) Na komputerach nic nie zostało zmienione.")
+            return ExitCode.failure
         case .failure(let e): fail(e.localizedDescription)
         case .success(let url): payload = url
         }
-        defer { try? FileManager.default.removeItem(at: payload) }
+        defer { Interruption.shared.discard(payload) }
+        // Logged once the files are packed, right before anything runs on the iMacs.
+        logAction(targets)
         let ssh = sshSettings
         let allowUnsigned = a.has("--allow-unsigned")
         return await eachHost(targets, a) { io in
-            let r = await Operations.install(payload: payload, on: io.host, allowUnsigned: allowUnsigned,
-                                             password: Keychain.password(for: io.host), settings: ssh, onOutput: io.stream)
+            // A registered job: Ctrl-C stops the upload or the installer on the iMac too (Interruption).
+            let r = await Interruption.shared.job(on: io.host) { handle in
+                await Operations.install(payload: payload, on: io.host, allowUnsigned: allowUnsigned,
+                                         password: Keychain.password(for: io.host), settings: ssh, handle: handle,
+                                         onOutput: io.stream)
+            }
             return io.report(r)
         }
     }

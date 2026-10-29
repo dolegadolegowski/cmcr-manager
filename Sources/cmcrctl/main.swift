@@ -19,8 +19,15 @@ if let first = argv.first, first.hasPrefix("__") {
                                   settings: cli.sshSettings()))
 }
 
-if let code = await ExtraCommands.run(argv) { exit(code) }
+// Problems with the configuration (e.g. a damaged settings.json, whose bad values fall back to the defaults) are
+// reported before any command runs – the module commands below end the process themselves. classroom.json is read,
+// and its problems reported, only by the commands that use it (ClassroomCLI.loadConfig, AUDIT REV-37).
+_ = legacyCLI.settings
+for issue in ConfigStore.loadIssues { Console.err("⚠ \(issue)") }
+
+// An interrupted command (Ctrl-C) has stopped its jobs on the iMacs and printed their results: it ends with
+// 128 + signal (Interruption, AUDIT REV-35).
+if let code = await ExtraCommands.run(argv) { exit(Interruption.shared.exitCode(code)) }
 
 let cli = CLI(args: Arguments(argv))
-for issue in ConfigStore.loadIssues { FileHandle.standardError.write(Data("⚠ \(issue)\n".utf8)) }
-exit(await cli.run())
+exit(Interruption.shared.exitCode(await cli.run()))

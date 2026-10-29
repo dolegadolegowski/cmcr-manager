@@ -132,6 +132,10 @@ public enum HostTrust {
     /// real sessions (ProxyJump, port, algorithms), with connection sharing off so the key is really exchanged.
     public static func scan(_ host: Machine, settings s: SSHSettings) async -> Scan {
         var result = Scan(host: host)
+        if let message = SSH.refusalMessage(for: host) {
+            result.error = message
+            return result
+        }
         result.trusted = await trustedKeys(for: host, settings: s)
         let fm = FileManager.default
         let dir = fm.temporaryDirectory.appendingPathComponent("cmcr-hostkey-\(UUID().uuidString)", isDirectory: true)
@@ -166,7 +170,7 @@ public enum HostTrust {
         let preferred = Self.algorithms(for: result.trusted.map(\.type))
         if !preferred.isEmpty { args += ["-o", "HostKeyAlgorithms=^" + preferred.joined(separator: ",")] }
         args += s.extraOptions.flatMap { ["-o", $0] }
-        args += ["-T", "-p", String(host.port), host.destination, "true"]
+        args += ["-T", "-p", String(host.port), "--", host.destination, "true"]
         let r = await ProcessRunner.run(SSH.sshPath, args, environment: ["SSH_ASKPASS_REQUIRE": "never"],
                                         stdin: Data(), timeout: TimeInterval(s.connectTimeout + 15))
         let lines = ((try? String(contentsOf: file, encoding: .utf8)) ?? "")
@@ -230,6 +234,46 @@ public enum HostTrust {
         ConfigStore.log("Zaufano kluczowi komputera \(host.name) (\(host.address)): "
                         + scan.keys.map { "\($0.type) \($0.fingerprint)" }.joined(separator: ", "))
         return CommandResult(exitCode: 0, stdout: Data("Zaufano kluczowi \(host.name).\n".utf8))
+    }
+
+    /// After a Mac got a new `.local` name, trusts under the new name exactly the keys already trusted for the old one
+    /// (AUDIT KOM-07): renaming does not change the host keys, so the Mac keeps working at once, while anything else
+    /// answering at the new name with another key is still refused. Nothing is changed when the new name already has
+    /// trusted keys or the old one has none. Returns whether keys were carried over.
+    @discardableResult
+    public static func carryTrust(from old: Machine, to new: Machine, settings s: SSHSettings) async -> Bool {
+        let oldName = knownHostsName(old, settings: s), newName = knownHostsName(new, settings: s)
+        guard oldName.lowercased() != newName.lowercased(),
+              await trustedKeys(for: new, settings: s).isEmpty else { return false }
+        var lines: [String] = []
+        for path in files(s) where FileManager.default.fileExists(atPath: path) {
+            let r = await ProcessRunner.run("/usr/bin/ssh-keygen", ["-F", oldName, "-f", path], timeout: 15)
+            for line in r.stdoutText.split(whereSeparator: \.isNewline) where !line.hasPrefix("#") {
+                let parts = line.split(separator: " ", maxSplits: 1)
+                guard parts.count == 2, !parts[0].hasPrefix("@") else { continue }   // no @revoked / @cert-authority
+                let carried = "\(newName) \(parts[1])"
+                if !lines.contains(carried) { lines.append(carried) }
+            }
+        }
+        guard !lines.isEmpty else { return false }
+        let target = URL(fileURLWithPath: files(s)[0])
+        do {
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !FileManager.default.fileExists(atPath: target.path) {
+                FileManager.default.createFile(atPath: target.path, contents: nil, attributes: [.posixPermissions: 0o600])
+            }
+            let existing = (try? Data(contentsOf: target)) ?? Data()
+            var text = lines.joined(separator: "\n") + "\n"
+            if let last = existing.last, last != 0x0A { text = "\n" + text }
+            let handle = try FileHandle(forWritingTo: target)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data(text.utf8))
+        } catch {
+            return false
+        }
+        ConfigStore.log("Klucz komputera \(old.name) zaufany także pod nową nazwą \(newName) (zmiana nazwy)")
+        return true
     }
 
     /// Removes the Mac's keys from every trusted file and closes its shared connection.

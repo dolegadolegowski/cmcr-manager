@@ -33,7 +33,7 @@ struct ScreensView: View {
                     Button {
                         model.selection = Set(model.machines.map(\.id))
                     } label: {
-                        Label("Zaznacz wszystkie komputery", systemImage: "checklist")
+                        Label("Zaznacz wszystkie komputery", systemImage: "checkmark.square")
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.machines.isEmpty)

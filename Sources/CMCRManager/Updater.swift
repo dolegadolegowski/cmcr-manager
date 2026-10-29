@@ -71,6 +71,8 @@ final class Updater: ObservableObject {
     private lazy var feed = UpdateFeed(configuration: configuration, userAgent: userAgent)
     private var preparedArchive: URL?
     private var installWhenReady = false
+    /// The running download ends in installing and relaunching (for tests).
+    var installsWhenDownloaded: Bool { installWhenReady }
     /// The app is quitting because "Zainstaluj i uruchom ponownie" started the installer. Running jobs were
     /// confirmed in the update sheet already, so the app delegate quits without asking a second time (a modal
     /// question would also outlast the installer, which waits only 60 s for the app to quit).
@@ -171,7 +173,7 @@ final class Updater: ObservableObject {
             defaults.removeObject(forKey: Keys.pendingFrom)
             if pending == currentVersion?.description {
                 ConfigStore.log("Uaktualnienie aplikacji: \(from) → \(pending) – uruchomiono nową wersję")
-                outcome = Outcome(success: true, title: "Zaktualizowano do wersji \(pending)",
+                outcome = Outcome(success: true, title: "Uaktualniono do wersji \(pending)",
                                   message: "CMCR Manager działa w nowej wersji (poprzednia: \(from)).")
             } else {
                 let status = (try? String(contentsOf: UpdateInstaller.statusFile, encoding: .utf8))?
@@ -466,6 +468,10 @@ final class Updater: ObservableObject {
     }
 
     func remindLater() {
+        // „Później” means no installation now: a download started by „Zainstaluj…” goes on, but no longer ends in
+        // quitting and installing (AUDIT PRZ-02).
+        installWhenReady = false
+        confirmedWork = nil
         defaults.set(Date().addingTimeInterval(24 * 3600), forKey: Keys.snoozedUntil)
         isSheetPresented = false
         objectWillChange.send()

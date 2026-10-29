@@ -148,6 +148,7 @@ extension SSH {
     /// A refused connection also counts (the Mac is on, Remote Login is off). nil when it cannot tell: the
     /// connection goes through ProxyJump/ProxyCommand, or nc could not run.
     public static func portAnswers(_ host: Machine, settings: SSHSettings, timeout: Int = 3) async -> Bool? {
+        guard host.sshEntryProblem == nil else { return nil }
         let routed = settings.extraOptions.contains { option in
             let name = option.lowercased().trimmingCharacters(in: .whitespaces)
             return name.hasPrefix("proxyjump") || name.hasPrefix("proxycommand")
@@ -174,19 +175,50 @@ final class OutputFlag: @unchecked Sendable {
 
 /// ssh's messages about shared connections ("mux_client_request_session: … refused", "ControlSocket … already
 /// exists", a failed hand-over of the session's descriptors: "mm_send_fd: sendmsg(2): Message too long") and the
-/// wrapper's start marker are not the command's output.
+/// wrapper's start and end markers are not the command's output.
 enum SSHNoise {
     static let markers = ["mux_client_", "muxclient: ", "ControlSocket ", "Control socket connect(", "mm_send_fd: ",
                           "mm_receive_fd: "].map { Data($0.utf8) }
     static let startLine = Data((RemoteScript.startMarker + "\n").utf8)
+    /// `CMCR:SESSION-ENDED ` – followed by the exit code (1–3 digits) and a newline.
+    static let endPrefix = Data((RemoteScript.endMarker + " ").utf8)
 
     static func containsStartMarker(_ data: Data) -> Bool {
         data.range(of: startLine) != nil
     }
 
+    /// The end markers in `data` with their exit codes. A marker may follow the command's own text on its line (output
+    /// that did not end with a newline).
+    static func endMarkers(in data: Data) -> [(range: Range<Data.Index>, code: Int32)] {
+        var found: [(range: Range<Data.Index>, code: Int32)] = []
+        var from = data.startIndex
+        while let prefix = data.range(of: endPrefix, in: from..<data.endIndex) {
+            var i = prefix.upperBound, code: Int32 = 0, digits = 0
+            while i < data.endIndex, digits < 3, (0x30...0x39).contains(data[i]) {
+                code = code * 10 + Int32(data[i] - 0x30)
+                i += 1
+                digits += 1
+            }
+            if digits > 0, i < data.endIndex, data[i] == 0x0A {
+                found.append((prefix.lowerBound..<(i + 1), code))
+                from = i + 1
+            } else {
+                from = prefix.lowerBound + 1
+            }
+        }
+        return found
+    }
+
+    /// The exit code in the last end marker in `data`.
+    static func endCode(in data: Data) -> Int32? {
+        endMarkers(in: data).last?.code
+    }
+
     static func filter(_ data: Data) -> Data {
-        guard !data.isEmpty,
-              markers.contains(where: { data.range(of: $0) != nil }) || data.range(of: startLine) != nil else { return data }
+        guard !data.isEmpty, markers.contains(where: { data.range(of: $0) != nil }) || data.range(of: startLine) != nil
+                || data.range(of: endPrefix) != nil else { return data }
+        var data = data
+        for marker in endMarkers(in: data).reversed() { data.removeSubrange(marker.range) }
         var out = Data()
         var start = data.startIndex
         while start < data.endIndex {
@@ -196,6 +228,54 @@ enum SSHNoise {
             start = end
         }
         return out
+    }
+}
+
+/// `SSHNoise.filter` for stderr as it streams in, noting the script's end. The end marker follows the command's last
+/// output and a read may end inside it, so a tail that could still become the marker is held back until more data
+/// arrives or `finish()` hands it over.
+final class SSHStderrFilter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var held = Data()
+    private var code: Int32?
+
+    /// The exit code of the last end marker seen.
+    var endCode: Int32? { lock.lock(); defer { lock.unlock() }; return code }
+
+    func feed(_ data: Data) -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        var all = held
+        all.append(data)
+        let hold = Self.possibleMarkerStart(in: all)
+        held = Data(all[hold...])
+        let ready = Data(all[..<hold])
+        if let c = SSHNoise.endCode(in: ready) { code = c }
+        return SSHNoise.filter(ready)
+    }
+
+    /// What is still held back (output that only looked like the beginning of the marker).
+    func finish() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        let rest = held
+        held = Data()
+        return SSHNoise.filter(rest)
+    }
+
+    /// Where the tail of `data` that could still become an end marker begins (`endIndex`: nothing to hold back).
+    static func possibleMarkerStart(in data: Data) -> Data.Index {
+        let prefix = SSHNoise.endPrefix
+        let lineStart = data.lastIndex(of: 0x0A).map { $0 + 1 } ?? data.startIndex
+        var i = max(lineStart, data.endIndex - (prefix.count + 3))
+        while i < data.endIndex {
+            let tail = data[i...]
+            let viable = tail.count <= prefix.count ? prefix.starts(with: tail)
+                : tail.starts(with: prefix) && tail.dropFirst(prefix.count).allSatisfy { (0x30...0x39).contains($0) }
+            if viable { return i }
+            i += 1
+        }
+        return data.endIndex
     }
 }
 
@@ -289,6 +369,13 @@ public enum RemoteJobs {
 public enum RemoteCancelOutcome: Sendable, Equatable {
     case stopped, notRunning, stillRunning, unsupported
     case failed(String)
+
+    /// Whether a job log reports a stop on the Mac that may have left the command running (its message is written
+    /// to the job's output by `SSH.run`).
+    public static func mayStillRun(in log: String) -> Bool {
+        log.contains(RemoteCancelOutcome.stillRunning.message) || log.contains(RemoteCancelOutcome.unsupported.message)
+            || log.contains("Nie udało się połączyć, aby zatrzymać polecenie")
+    }
 
     init(_ r: CommandResult) {
         let out = r.stdoutText

@@ -22,7 +22,7 @@ struct CommandsView: View {
                     Section {
                         BatchResultsView(batch: batch)
                     } header: {
-                        Label("Wynik ostatniej operacji", systemImage: "list.bullet.rectangle")
+                        Label("Wynik ostatniego działania", systemImage: "list.bullet.rectangle")
                     }
                     .id(batch.id)
                 }
@@ -65,7 +65,7 @@ struct CommandsView: View {
                 Button {
                     model.selectedMachines.prefix(4).forEach(model.openTerminal)
                 } label: {
-                    Label("Otwórz w Terminalu", systemImage: "terminal")
+                    Label("Sesja SSH w Terminalu", systemImage: "terminal")
                 }
                 .disabled(model.selection.isEmpty)
                 .help("Otwiera okno Terminala z połączeniem (SSH) do zaznaczonych komputerów – najwyżej 4 naraz (jak cmcr-go)")
@@ -108,11 +108,7 @@ struct CommandsView: View {
                 Section(category) {
                     ForEach(all.filter { $0.category == category }) { s in
                         Button { use(s) } label: {
-                            if s.asRoot {
-                                Label(s.name, systemImage: "lock.fill")
-                            } else {
-                                Text(s.name)
-                            }
+                            Label(s.name, systemImage: s.asRoot ? "lock.shield" : "text.alignleft")
                         }
                     }
                 }
@@ -121,7 +117,7 @@ struct CommandsView: View {
             Label("Wstaw polecenie", systemImage: "text.badge.plus")
         }
         .fixedSize()
-        .help("Wstaw do edytora gotowe polecenie (z kłódką – wymaga uprawnień administratora)")
+        .help("Wstaw do edytora gotowe polecenie (z tarczą – wymaga uprawnień administratora)")
     }
 
     var helpText: some View {
@@ -157,7 +153,7 @@ struct CommandsView: View {
         Section {
             ForEach(model.settings.snippets) { s in
                 HStack(spacing: 10) {
-                    Image(systemName: s.asRoot ? "lock.fill" : "text.alignleft")
+                    Image(systemName: s.asRoot ? "lock.shield" : "text.alignleft")
                         .foregroundStyle(.secondary)
                         .frame(width: 18)
                         .help(s.asRoot ? "Wymaga uprawnień administratora" : "Zwykłe polecenie")
@@ -231,7 +227,7 @@ struct SnippetSaveSheet: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if model.commandAsRoot {
-                        Label("Z uprawnieniami administratora", systemImage: "lock.fill")
+                        Label("Z uprawnieniami administratora", systemImage: "lock.shield")
                             .foregroundStyle(.secondary)
                     }
                 }

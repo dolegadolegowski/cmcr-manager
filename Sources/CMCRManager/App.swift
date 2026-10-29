@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         Updater.shared.applicationDidLaunch()
+        // Also notifications from an earlier run lead to their results (AUDIT WSP-05).
+        JobNotifier.installDelegate()
         SnapshotRenderer.runIfRequested()
     }
 
@@ -51,37 +53,35 @@ struct CMCRManagerApp: App {
             // Widok: refresh (like Reload in Safari) and Show/Hide Sidebar (⌃⌘S), which replaces the toolbar button.
             SidebarCommands()
             CommandGroup(before: .sidebar) {
-                Button("Odśwież stan komputerów") { model.refreshStatus() }
+                Button { model.refreshStatus() } label: { Label("Odśwież stan komputerów", systemImage: "arrow.clockwise") }
                     .keyboardShortcut("r", modifiers: [.command])
                 Divider()
             }
             // Edycja, next to "Zaznacz wszystko" (which keeps selecting text).
             CommandGroup(after: .pasteboard) {
                 Divider()
-                Button("Zaznacz wszystkie komputery") { model.selection = Set(model.machines.map(\.id)) }
-                    .keyboardShortcut("a", modifiers: [.command, .shift])
-                Button("Zaznacz włączone komputery") { model.selectOnline() }
+                Button { model.selection = Set(model.machines.map(\.id)) } label: {
+                    Label("Zaznacz wszystkie komputery", systemImage: "checkmark.square")
+                }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                Button { model.selectOnline() } label: { Label("Zaznacz włączone komputery", systemImage: "checkmark.circle") }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
-                Button("Odznacz wszystkie komputery") { model.selection = [] }
+                Button { model.selection = [] } label: { Label("Odznacz wszystkie komputery", systemImage: "square") }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
             }
-            CommandGroup(replacing: .appSettings) {
-                Button("Konfiguracja…") { model.section = .setup }
-                    .keyboardShortcut(AppSection.setup.keyboardShortcut)
-            }
+            // The application menu keeps the system's „Ustawienia…” (⌘,), which opens the Settings window
+            // (AUDIT UI-01); the Konfiguracja section is in Przejdź (⇧⌘,).
             CommandMenu("Przejdź") {
                 ForEach(AppSection.sidebar, id: \.title) { group in
                     Section(group.title) {
                         ForEach(group.sections) { section in
-                            Button {
-                                model.section = section
-                            } label: {
-                                Label(section.title, systemImage: section.icon)
-                            }
-                            .keyboardShortcut(section.keyboardShortcut)
+                            GoToSectionButton(model: model, section: section)
                         }
                     }
                 }
+            }
+            CommandGroup(replacing: .help) {
+                HelpLinks()
             }
             ScreenCommands(center: model.screens)
         }
@@ -112,15 +112,30 @@ struct CMCRManagerApp: App {
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+    @ViewState private var columns = NavigationSplitViewVisibility.all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
                 .safeAreaInset(edge: .bottom, spacing: 0) { UpdateBanner() }
                 .navigationSplitViewColumnWidth(min: 190, ideal: 210)
         } content: {
             MachineListView()
                 .navigationSplitViewColumnWidth(min: 250, ideal: 290)
+                .toolbar {
+                    // The sidebar button with a short title, at the start of the computer list's toolbar: the
+                    // system one („Ukryj pasek boczny”) does not fit above the sidebar with titles under the icons
+                    // and always ended up in the overflow menu (AUDIT UI-06). Widok › ⌃⌘S does the same.
+                    ToolbarItem(placement: .navigation) {
+                        Button {
+                            columns = columns == .all ? .doubleColumn : .all
+                        } label: {
+                            Label("Pasek boczny", systemImage: "sidebar.left")
+                        }
+                        .help(columns == .all ? "Ukryj pasek boczny (⌃⌘S)" : "Pokaż pasek boczny (⌃⌘S)")
+                    }
+                }
         } detail: {
             DetailView()
         }
@@ -128,13 +143,8 @@ struct ContentView: View {
         .background(ToolbarTitlesShown())
         .updaterUI(model: model)
         .task {
-            ClassroomModel.shared.attach(model)
-            model.refreshStatus()
-            // Keep the overview fresh in the background.
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 120 * 1_000_000_000)
-                model.refreshStatus(quietly: true)
-            }
+            model.openWindowAction = openWindow
+            model.startBackgroundRefresh()
         }
         .modifier(ConfigIssuesAlert())
         .hostTrustUI()
@@ -153,8 +163,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        // With titles under every toolbar icon, the sidebar button's long title does not fit above the sidebar
-        // and would end up in the overflow menu; Widok › Ukryj pasek boczny (⌃⌘S) does the same.
+        // Replaced by the „Pasek boczny” button in ContentView (AUDIT UI-06).
         .toolbar(removing: .sidebarToggle)
     }
 
@@ -224,11 +233,11 @@ extension AppSection {
     }
 
     /// Every section has a shortcut, numbered in sidebar order: ⌘1…⌘9 and ⌘0 for the first ten, then ⇧⌘P for
-    /// Polecenia (like a command palette) and ⌘, for Konfiguracja (like Settings in every Mac app; also in the
-    /// application menu).
+    /// Polecenia (like a command palette) and ⇧⌘, for Konfiguracja (⌘, opens the Settings window, as in every
+    /// Mac app).
     var keyboardShortcut: KeyboardShortcut {
         switch self {
-        case .setup: return KeyboardShortcut(",", modifiers: .command)
+        case .setup: return KeyboardShortcut(",", modifiers: [.command, .shift])
         case .commands: return KeyboardShortcut("p", modifiers: [.command, .shift])
         default:
             let numbered = Self.sidebarOrder.filter { $0 != .setup && $0 != .commands }
@@ -249,9 +258,9 @@ extension AppSection {
 /// transient and only picks rows for the context menu, so clicking a row never replaces the checked targets.
 struct MachineListView: View {
     @EnvironmentObject var model: AppModel
-    @ViewState private var highlighted: Set<UUID> = []
     @ViewState private var query = HostQuery()
     @ViewState private var naming: GroupNaming?
+    @ViewState private var confirmGroupRemoval: ConfirmRequest?
     @AppStorage("hostListSortByStatus") private var sortByStatus = false
     @AppStorage("hostListDetailed") private var detailed = false
 
@@ -282,7 +291,7 @@ struct MachineListView: View {
 
     var body: some View {
         let visible = self.visible
-        List(selection: $highlighted) {
+        List(selection: $model.highlightedMachines) {
             ForEach(visible) { m in
                 MachineRow(machine: m, status: model.status(m), detailed: detailed, isTarget: isTarget(m.id))
                     .tag(m.id)
@@ -294,8 +303,8 @@ struct MachineListView: View {
             toggleTargets(ids)
         }
         .onKeyPress(.space) {
-            guard !highlighted.isEmpty else { return .ignored }
-            toggleTargets(highlighted)
+            guard !model.highlightedMachines.isEmpty else { return .ignored }
+            toggleTargets(model.highlightedMachines)
             return .handled
         }
         .overlay {
@@ -306,7 +315,7 @@ struct MachineListView: View {
                     } description: {
                         Text("Dodaj iMaki w Konfiguracji › Komputery.")
                     } actions: {
-                        Button("Otwórz konfigurację") { model.section = .setup }
+                        Button("Otwórz Konfigurację") { model.section = .setup }
                     }
                 } else {
                     ContentUnavailableView {
@@ -321,6 +330,7 @@ struct MachineListView: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) { header(visible) }
         .safeAreaInset(edge: .bottom, spacing: 0) { footer(visible) }
+        .confirmation($confirmGroupRemoval)
         .sheet(item: $naming) { n in
             GroupNameSheet(title: n.renaming == nil ? "Nowa grupa (\(Polish.computers(n.ids.count)))" : "Zmień nazwę grupy",
                            initial: n.renaming ?? "") { name in
@@ -430,13 +440,25 @@ struct MachineListView: View {
                         query.group = query.group == g ? nil : g
                     }
                     .contextMenu {
-                        Button("Zaznacz komputery z grupy") { model.selectGroup(g) }
-                        Button("Dodaj grupę do zaznaczenia") { model.selectGroup(g, adding: true) }
+                        Button { model.selectGroup(g) } label: { Label("Zaznacz komputery z grupy", systemImage: "checkmark.square") }
+                        Button { model.selectGroup(g, adding: true) } label: {
+                            Label("Dodaj grupę do zaznaczenia", systemImage: "plus.square")
+                        }
                         Divider()
-                        Button("Zmień nazwę…") { naming = GroupNaming(renaming: g) }
-                        Button("Usuń grupę", role: .destructive) {
-                            HostGroups.remove(g, from: Set(model.machines.map(\.id)), in: &model.machines)
-                            if query.group == g { query.group = nil }
+                        Button { naming = GroupNaming(renaming: g) } label: { Label("Zmień nazwę…", systemImage: "pencil") }
+                        Divider()
+                        // Removes the group from every Mac: asked first (AUDIT UI-24).
+                        Button(role: .destructive) {
+                            let members = HostGroups.members(of: g, in: model.machines).count
+                            confirmGroupRemoval = ConfirmRequest(
+                                title: "Usunąć grupę „\(g)”?",
+                                message: "Grupa zniknie z \(Polish.ofComputers(members)). Same komputery zostają na liście.",
+                                button: "Usuń grupę", targets: []) {
+                                HostGroups.remove(g, from: Set(model.machines.map(\.id)), in: &model.machines)
+                                if query.group == g { query.group = nil }
+                            }
+                        } label: {
+                            Label("Usuń grupę…", systemImage: "trash")
                         }
                     }
                 }
@@ -510,18 +532,20 @@ struct SelectionMenuItems: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        Button("Wszystkie") { model.selection = Set(model.machines.map(\.id)) }
-        Button("Włączone") { model.selectOnline() }
-        Button("Odwróć zaznaczenie") { model.invertSelection() }
+        Button { model.selection = Set(model.machines.map(\.id)) } label: { Label("Wszystkie", systemImage: "checkmark.square") }
+        Button { model.selectOnline() } label: { Label("Włączone", systemImage: "checkmark.circle") }
+        Button { model.invertSelection() } label: { Label("Odwróć zaznaczenie", systemImage: "arrow.left.arrow.right.square") }
         if !model.groups.isEmpty {
-            Menu("Grupa") {
+            Menu {
                 ForEach(model.groups, id: \.self) { g in
                     Button(g) { model.selectGroup(g) }
                 }
+            } label: {
+                Label("Grupa", systemImage: "tag")
             }
         }
         Divider()
-        Button("Żadne") { model.selection = [] }
+        Button { model.selection = [] } label: { Label("Żadne", systemImage: "square") }
     }
 }
 
@@ -643,7 +667,7 @@ struct MachineContextMenu: View {
                 Button {
                     model.selection = ids
                 } label: {
-                    Label(targets.count == 1 ? "Zaznacz tylko ten" : "Zaznacz tylko te", systemImage: "checklist")
+                    Label(targets.count == 1 ? "Zaznacz tylko ten" : "Zaznacz tylko te", systemImage: "checkmark.square")
                 }
             }
             Divider()
@@ -665,7 +689,7 @@ struct MachineContextMenu: View {
             Button {
                 targets.prefix(4).forEach(model.openTerminal)
             } label: {
-                Label(targets.count > 4 ? "Otwórz w Terminalu (pierwsze 4)" : "Otwórz w Terminalu (SSH)",
+                Label(targets.count > 4 ? "Sesja SSH w Terminalu (pierwsze 4)" : "Sesja SSH w Terminalu",
                       systemImage: "terminal")
             }
             Divider()
@@ -738,6 +762,44 @@ struct Page<Content: View>: View {
             VStack(alignment: .leading, spacing: 16) { content }
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// A Przejdź menu item: shows the section in the main window, bringing the window forward (or opening it again
+/// when it was closed while jobs kept running) – otherwise the change would be invisible (AUDIT KON-10).
+struct GoToSectionButton: View {
+    @Environment(\.openWindow) private var openWindow
+    let model: AppModel
+    let section: AppSection
+
+    var body: some View {
+        Button {
+            model.section = section
+            MainWindow.bringToFront(openWindow)
+        } label: {
+            Label(section.title, systemImage: section.icon)
+        }
+        .keyboardShortcut(section.keyboardShortcut)
+    }
+}
+
+/// Pomoc: the manual is the README of the project (AUDIT UI-23, WŁ-01); the app has no Help Book.
+struct HelpLinks: View {
+    static let manual = URL(string: "https://github.com/\(UpdateKeys.repository)#readme")!
+    static let releases = URL(string: "https://github.com/\(UpdateKeys.repository)/releases")!
+
+    var body: some View {
+        Button {
+            NSWorkspace.shared.open(Self.manual)
+        } label: {
+            Label("Instrukcja CMCR Manager", systemImage: "book")
+        }
+        .keyboardShortcut("?", modifiers: .command)
+        Button {
+            NSWorkspace.shared.open(Self.releases)
+        } label: {
+            Label("Historia wersji", systemImage: "clock.arrow.circlepath")
         }
     }
 }

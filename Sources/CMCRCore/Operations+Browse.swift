@@ -76,8 +76,7 @@ public extension Operations {
         } catch {
             return (.failure("Nie można utworzyć \(folder.path): \(error.localizedDescription)"), nil)
         }
-        let x = await ProcessRunner.run("/usr/bin/tar", ["-xf", tmp.path, "-C", staging.path])
-        guard x.succeeded else {
+        if let x = await unpackUntrusted(tmp, into: staging) {
             try? fm.removeItem(at: staging)
             return (x, nil)
         }
@@ -88,7 +87,7 @@ public extension Operations {
             onOutput?(.stdout, Data("Folder \(source) jest pusty – nic do zebrania.\n".utf8))
             return (CommandResult(exitCode: 0), nil)
         }
-        let dest = uniqueURL(folder.appendingPathComponent(name, isDirectory: true))
+        let dest = uniqueURL(folder.appendingPathComponent(collectFolderName(name), isDirectory: true))
         do {
             try fm.moveItem(at: staging, to: dest)
             // The archive's "./" entry carries the remote folder's mode (e.g. 0700); make the copy browsable.
@@ -101,6 +100,15 @@ public extension Operations {
         onOutput?(.stdout, Data("✔ Zebrano \(files) \(plural(files, "plik", "pliki", "plików")) (\(bytes.formatted(.byteCount(style: .file)))) → \(dest.path)\n".utf8))
 
         guard cleanAfter else { return (CommandResult(exitCode: 0), dest) }
+        return (await removeCollected(from: source, collectedIn: dest, on: host, password: password, settings: settings,
+                                      handle: handle, onOutput: onOutput), dest)
+    }
+
+    /// Deletes on the Mac the files that were collected into `dest` and have not changed there since
+    /// (`Scripts.removeCollected`): work saved after the folder was packed stays with the student.
+    static func removeCollected(from source: String, collectedIn dest: URL, on host: Machine, password: String?,
+                                settings: SSHSettings, handle: ProcessHandle? = nil,
+                                onOutput: Output? = nil) async -> CommandResult {
         onOutput?(.stdout, Data("→ Czyszczenie: usuwanie zebranych plików z \(source)…\n".utf8))
         let (collected, folders) = collectedContents(dest)
         // The script travels on the ssh command line, so very large collections are cleaned in parts.
@@ -112,9 +120,9 @@ public extension Operations {
             let c = await SSH.run(Scripts.removeCollected(in: source, files: chunk, folders: last ? folders : [],
                                                           asRoot: true),
                                   on: host, password: password, settings: settings, handle: handle, onOutput: onOutput)
-            if !c.succeeded { return (c, dest) }
+            if !c.succeeded { return c }
         }
-        return (CommandResult(exitCode: 0), dest)
+        return CommandResult(exitCode: 0)
     }
 
     /// Files (with the size and time they were collected with) and folders below `root`, folders deepest first.
@@ -164,8 +172,7 @@ public extension Operations {
             return (.failure("Nie można utworzyć \(directory.path): \(error.localizedDescription)"), [])
         }
         defer { try? fm.removeItem(at: staging) }
-        let x = await ProcessRunner.run("/usr/bin/tar", ["-xf", archive.path, "-C", staging.path])
-        guard x.succeeded else { return (x, []) }
+        if let x = await unpackUntrusted(archive, into: staging) { return (x, []) }
         var saved: [URL] = []
         for name in ((try? fm.contentsOfDirectory(atPath: staging.path)) ?? []).sorted() {
             let dest = uniqueURL(directory.appendingPathComponent(name))
@@ -179,7 +186,31 @@ public extension Operations {
         return (nil, saved)
     }
 
+    /// Unpacks a tar archive that came from an iMac into `directory` (created when missing), every item marked with
+    /// the quarantine attribute (see `Quarantine`). Returns the failure, or nil. Nothing is unpacked without the mark.
+    static func unpackUntrusted(_ archive: URL, into directory: URL) async -> CommandResult? {
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            return .failure("Nie można utworzyć \(directory.path): \(error.localizedDescription)")
+        }
+        guard Quarantine.mark(archive) else {
+            return .failure("Nie udało się oznaczyć pobranych plików kwarantanną (com.apple.quarantine) – nie zapisano ich.")
+        }
+        let x = await ProcessRunner.run("/usr/bin/tar", ["-xf", archive.path, "-C", directory.path])
+        return x.succeeded ? nil : x
+    }
+
     /// `url` itself, or the first free `name (2).ext`, `name (3).ext`… next to it.
+    /// Folder name for the work collected from one Mac: its name as one path component – "/" and ":" replaced,
+    /// never hidden or empty. A name such as "Sala 3/iMac" pointed into a folder that does not exist, so the
+    /// collected work from that Mac was dropped (AUDIT PLI-06).
+    static func collectFolderName(_ name: String) -> String {
+        var s = String(name.map { $0 == "/" || $0 == ":" ? "-" : $0 }).trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix(".") { s = "_" + s.dropFirst() }
+        return s.isEmpty ? "komputer" : s
+    }
+
     static func uniqueURL(_ url: URL) -> URL {
         let fm = FileManager.default
         func taken(_ u: URL) -> Bool { (try? fm.attributesOfItem(atPath: u.path)) != nil }

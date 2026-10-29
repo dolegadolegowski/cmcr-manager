@@ -46,6 +46,16 @@ public struct RemoteScript: Sendable {
     case "$CONSOLE_USER" in root|_mbsetupuser|loginwindow) CONSOLE_USER="" ;; esac
     CONSOLE_UID=""
     if [ -n "$CONSOLE_USER" ]; then CONSOLE_UID="$(id -u "$CONSOLE_USER" 2>/dev/null)"; fi
+    # Every GUI session – the one at the screen and the ones left running in the background after "Switch User"
+    # (the screen then shows the login window): "uid account" per line. Each logged-in account runs its own
+    # loginwindow; at the login window only root's is left.
+    # ps with names as people see them: the scripts run with LC_ALL=C, where ps escapes every byte outside ASCII
+    # ("Zółw" → "ZM-CM-3…"), so a search by name never matched. Raw UTF-8, precomposed (names typed in the app are
+    # NFC, names from the disk may be decomposed).
+    cmcr_ps() { LC_ALL=en_US.UTF-8 ps "$@" | iconv -c -f UTF-8-MAC -t UTF-8; }
+    cmcr_gui_sessions() {
+      ps -axo uid=,user=,comm= 2>/dev/null | awk '$1 >= 501 && $3 ~ /\/loginwindow$/ {print $1, $2}' | sort -u
+    }
     asroot() {
       if [ "$(id -u)" -eq 0 ]; then "$@"; return; fi
       if [ -z "$CMCR_PW" ]; then
@@ -217,8 +227,16 @@ public struct RemoteScript: Sendable {
     """#
 
     /// First line the wrapper writes to stderr. Until it arrives nothing has run on the Mac, so a failure is
-    /// safe to retry and a cancel needs no remote stop; SSH.run removes it from the output.
+    /// safe to retry; a cancel still asks the Mac to stop the job, as the line may be on its way (AUDIT ZAD-06).
+    /// SSH.run removes it from the output.
     public static let startMarker = "CMCR:SESSION-STARTED"
+
+    /// Last line the wrapper writes to stderr, `CMCR:SESSION-ENDED <code>` with the script's exit code, once the
+    /// script and its cleanup are done (it follows the command's last output, possibly on the same line). ssh's 255 is
+    /// the command's own only when this marker says 255 too (AUDIT REV-53); otherwise the session broke off under the
+    /// command (AUDIT REV-57). Its code never replaces ssh's: it travels on stderr, apart from stdout, and can arrive
+    /// while the end of the output is still on its way (AUDIT REV-60). SSH.run removes it from the output.
+    public static let endMarker = "CMCR:SESSION-ENDED"
 
     /// Full script text that is executed by `/bin/bash` on the remote side.
     public func render() -> String {
@@ -232,9 +250,11 @@ public struct RemoteScript: Sendable {
         export CMCR_TMP
         CMCR_JOB_FILE=""
         cmcr_cleanup() {
+          local code=$?
           if [ -n "$CMCR_JOB_FILE" ]; then rm -f "$CMCR_JOB_FILE" "$CMCR_JOB_FILE.root" 2>/dev/null; fi
           if [ -n "$(find "$CMCR_TMP" ! -user "$UID" -print -quit 2>/dev/null)" ]; then asroot rm -rf "$CMCR_TMP" 2>/dev/null; fi
           rm -rf "$CMCR_TMP" 2>/dev/null
+          echo "\#(Self.endMarker) $code" >&2 2>/dev/null
         }
         trap cmcr_cleanup EXIT
         trap 'exit 143' TERM INT
@@ -407,6 +427,7 @@ public enum SSH {
         maxCapture: Int = ProcessRunner.defaultMaxCapture,
         onOutput: (@Sendable (OutputChannel, Data) -> Void)? = nil
     ) async -> CommandResult {
+        if let refused = refusal(for: host) { return refused }
         var script = script
         if script.jobID == nil, handle != nil { script.jobID = RemoteJobs.newID() }
         let key = HostGate.key(for: host)
@@ -417,16 +438,38 @@ public enum SSH {
         if handle?.isCancelled == true || Task.isCancelled { return .cancelledResult }
 
         let started = OutputFlag()
+        // nil until ssh is started; then whether that attempt went through a shared connection.
+        let attempt = Locked<Bool?>(nil)
         var cancelToken: UUID?
         if let handle, let id = script.jobID {
             cancelToken = handle.addCancelAction {
-                // Before the wrapper starts there is nothing to stop, and the Mac may not even be reachable.
-                guard started.isSet else {
-                    onOutput?(.stderr, Data("▸ Polecenie nie zostało uruchomione na komputerze.\n".utf8))
+                let notStarted = Data("▸ Polecenie nie zostało uruchomione na komputerze.\n".utf8)
+                // Before ssh was started there is nothing to stop, and the Mac may not even be reachable.
+                guard let shared = attempt.withValue({ $0 }) else {
+                    onOutput?(.stderr, notStarted)
                     return
                 }
-                let outcome = await cancelRemote(jobID: id, on: host, password: password, settings: settings)
-                onOutput?(.stderr, Data("▸ \(outcome.message)\n".utf8))
+                var stop = settings
+                var retry = SSHRetryPolicy.transient
+                if !started.isSet {
+                    // The wrapper prints its start marker before it registers the job, and the marker may still be
+                    // on its way (AUDIT ZAD-06): the Mac is asked to stop the job anyway – one that registers later
+                    // finds the cancel marker and stops at once. A shared connection exists only after a login, so
+                    // without one nothing can have started; without sharing a silent Mac gets only a short try.
+                    if shared {
+                        guard await sharedConnectionIsUp(to: host, settings: settings) else {
+                            onOutput?(.stderr, notStarted)
+                            return
+                        }
+                    } else {
+                        stop.connectTimeout = min(settings.connectTimeout, 3)
+                        retry = .none
+                    }
+                }
+                let outcome = await cancelRemote(jobID: id, on: host, password: password, settings: stop, retry: retry)
+                var nothingThere = outcome == .notRunning
+                if case .failed = outcome { nothingThere = true }
+                onOutput?(.stderr, nothingThere && !started.isSet ? notStarted : Data("▸ \(outcome.message)\n".utf8))
             }
             if cancelToken == nil { return .cancelledResult }
         }
@@ -436,8 +479,10 @@ public enum SSH {
         let command = script.remoteCommand()
         var r = await runWithRetry(on: host, settings: settings, retry: retry, handle: handle, stdoutFile: stdoutFile,
                                    started: started, onOutput: onOutput) { mux, output in
-            await ProcessRunner.run(sshPath, options(settings, password: password, mux: mux)
-                                        + ["-T", "-p", String(host.port), host.destination, command],
+            let shared = mux && settings.reuseConnections && controlDirectory() != nil
+            attempt.withValue { $0 = shared }
+            return await ProcessRunner.run(sshPath, options(settings, password: password, mux: mux)
+                                        + ["-T", "-p", String(host.port), "--", host.destination, command],
                                     environment: environment(settings, password: password), stdin: stdin,
                                     stdoutFile: stdoutFile, timeout: timeout, maxCapture: maxCapture,
                                     handle: handle, onOutput: output)
@@ -453,8 +498,8 @@ public enum SSH {
     }
 
     /// Runs `attempt` (with connection sharing first) and repeats it after failures that happened before
-    /// the remote command could start. ssh noise about shared connections and the wrapper's start marker
-    /// are removed from the output.
+    /// the remote command could start. ssh noise about shared connections and the wrapper's start and end
+    /// markers are removed from the output; the code in the end marker becomes the result's `endCode`.
     ///
     /// A remote script has started once its start marker (or any stdout) arrived; from then on nothing is
     /// retried, whatever ssh reports. `started` is set at that moment.
@@ -475,15 +520,22 @@ public enum SSH {
         var round = 0
         while true {
             let seen = OutputFlag()
+            let errors = SSHStderrFilter()
             let output: @Sendable (OutputChannel, Data) -> Void = { channel, data in
                 if channel == .stdout || SSHNoise.containsStartMarker(data) {
                     seen.set()
                     started?.set()
                 }
-                let clean = channel == .stderr ? SSHNoise.filter(data) : data
+                let clean = channel == .stderr ? errors.feed(data) : data
                 if !clean.isEmpty { onOutput?(channel, clean) }
             }
             var r = await attempt(mux, output)
+            let rest = errors.finish()
+            if !rest.isEmpty { onOutput?(.stderr, rest) }
+            // ssh's own code stays even after the end marker: the marker comes on stderr, which sshd sends ahead of
+            // the stdout it still holds (up to a window, about 2 MB), so a connection lost after it may have cut off
+            // the output. `diagnose` reads 255 as the command's own only when the marker says 255 (AUDIT REV-60).
+            r.endCode = errors.endCode ?? SSHNoise.endCode(in: r.stderr)
             let began = seen.isSet || !r.stdout.isEmpty || r.truncated || SSHNoise.containsStartMarker(r.stderr)
                 || stdoutFile.map { Payload.size(of: $0) > 0 } ?? false
             if began { started?.set() }
@@ -560,6 +612,7 @@ public enum SSH {
         handle: ProcessHandle? = nil,
         retry: SSHRetryPolicy = .transient
     ) async -> CommandResult {
+        if let refused = refusal(for: host) { return refused }
         let key = HostGate.key(for: host)
         guard await HostGate.shared.acquire(key, handle: handle) else { return .cancelledResult }
         defer { HostGate.shared.release(key) }
@@ -567,7 +620,7 @@ public enum SSH {
         return await runWithRetry(on: host, settings: settings, retry: retry, handle: handle, stdoutFile: nil,
                                   isCopy: true, onOutput: nil) { mux, output in
             let args = ["-r", "-p", "-P", String(host.port)] + options(settings, password: password, mux: mux)
-                + files.map(\.path) + ["\(host.destination):\(remotePath)"]
+                + ["--"] + files.map(\.path) + ["\(host.destination):\(remotePath)"]
             return await ProcessRunner.run(scpPath, args, environment: environment(settings, password: password),
                                            handle: handle, onOutput: output)
         }
@@ -581,13 +634,20 @@ public enum SSH {
         a += ["-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"]
         a += muxOptions(settings)
         if !settings.identityFile.isEmpty { a += ["-i", expandTilde(settings.identityFile)] }
-        return a + [host.destination]
+        return a + ["--", host.destination]
     }
 
     /// The `.command` file Terminal runs for cmcr-go. Host fields come from the host list (possibly an imported
     /// file), so every one of them is quoted: the banner is printed with printf '%s' (zsh's echo would also
     /// interpret backslashes) and nothing in the script is expanded by the shell.
     public static func terminalScript(for host: Machine, settings: SSHSettings) -> String {
+        if let message = refusalMessage(for: host) {
+            return """
+            #!/bin/zsh
+            printf '%s\\n' \(shQuote("✘ " + message))
+
+            """
+        }
         let args = interactiveArguments(for: host, settings: settings).map(shQuote).joined(separator: " ")
         return """
         #!/bin/zsh
@@ -614,12 +674,20 @@ public enum SSH {
     /// sessions already running on it (jobs, screen captures, Terminal windows) finish normally. The next
     /// operation opens a fresh connection.
     public static func closeMaster(_ host: Machine, settings: SSHSettings) async {
-        guard let dir = controlDirectory(),
+        guard refusal(for: host) == nil, let dir = controlDirectory(),
               let sockets = try? FileManager.default.contentsOfDirectory(atPath: dir), !sockets.isEmpty else { return }
         var s = settings
         s.reuseConnections = true
-        let args = options(s, password: nil) + ["-O", "stop", "-p", String(host.port), host.destination]
+        let args = options(s, password: nil) + ["-O", "stop", "-p", String(host.port), "--", host.destination]
         _ = await ProcessRunner.run(sshPath, args, environment: ["SSH_ASKPASS_REQUIRE": "never"], timeout: 5)
+    }
+
+    /// Whether a shared connection (ControlMaster) to the Mac is up; ssh creates it only once a login succeeded.
+    /// Asks the local control socket only, so it answers at once.
+    static func sharedConnectionIsUp(to host: Machine, settings: SSHSettings) async -> Bool {
+        guard refusal(for: host) == nil else { return false }
+        let args = options(settings, password: nil) + ["-O", "check", "-p", String(host.port), "--", host.destination]
+        return await ProcessRunner.run(sshPath, args, environment: ["SSH_ASKPASS_REQUIRE": "never"], timeout: 5).succeeded
     }
 
     public static func closeMasters(_ hosts: [Machine], settings: SSHSettings) async {
@@ -640,26 +708,50 @@ public enum SSH {
 
     /// Stops a remote job started by `run` with a handle (kills its process group, as root if needed).
     public static func cancelRemote(jobID: String, on host: Machine, password: String?,
-                                    settings: SSHSettings) async -> RemoteCancelOutcome {
+                                    settings: SSHSettings, retry: SSHRetryPolicy = .transient) async -> RemoteCancelOutcome {
         guard RemoteJobs.isValidID(jobID) else { return .failed("nieprawidłowy identyfikator zadania") }
+        if let message = refusalMessage(for: host) { return .failed(message) }
         let stdin = Data(((password ?? "") + "\n").utf8)
         // Not gated: it must get through while the job it stops still holds a session slot.
         let command = RemoteJobs.cancelScript(jobID: jobID).remoteCommand()
-        let r = await runWithRetry(on: host, settings: settings, retry: .transient, handle: nil, stdoutFile: nil,
+        let r = await runWithRetry(on: host, settings: settings, retry: retry, handle: nil, stdoutFile: nil,
                                    onOutput: nil) { mux, output in
             await ProcessRunner.run(sshPath, options(settings, password: password, mux: mux)
-                                        + ["-T", "-p", String(host.port), host.destination, command],
+                                        + ["-T", "-p", String(host.port), "--", host.destination, command],
                                     environment: environment(settings, password: password), stdin: stdin,
                                     timeout: OperationTimeout.cancel, onOutput: output)
         }
         return RemoteCancelOutcome(r)
     }
 
+    static let refusalPrefix = "Niepoprawny wpis komputera"
+
+    /// Why the entry must not be passed to ssh/scp (`Machine.sshEntryProblem`), as shown to the user.
+    public static func refusalMessage(for host: Machine) -> String? {
+        host.sshEntryProblem.map { "\(refusalPrefix) „\(host.name)”: \($0). Popraw go w Konfiguracji › Komputery." }
+    }
+
+    /// The failure returned instead of starting ssh/scp for an entry ssh could misread (see `refusalMessage`).
+    static func refusal(for host: Machine) -> CommandResult? {
+        refusalMessage(for: host).map { CommandResult.failure($0, code: 255) }
+    }
+
+    static let sessionLost = "Połączenie zerwane – komputer przestał odpowiadać (uśpiony, wyłączony lub poza siecią)."
+    static let sessionClosed = "Połączenie zostało przerwane – polecenie mogło nadal działać na komputerze."
+    /// macOS 15+ gives ssh and nc started by an app without the local network permission exactly these errors
+    /// ("No route to host", unresolvable .local names), as does this Mac being off the network – then every iMac
+    /// fails the same way (AUDIT DOD-05).
+    static let localNetworkHint = " Jeśli dotyczy to wszystkich iMaców, sprawdź na tym Macu połączenie z siecią i zgodę na "
+        + "dostęp do sieci lokalnej (Ustawienia systemowe › Prywatność i ochrona › Sieć lokalna)."
+
     /// Turns an ssh failure into a status and a human readable (Polish) explanation.
     public static func diagnose(_ r: CommandResult) -> (Reachability, String) {
         let err = r.stderrText
         let lower = err.lowercased()
         if r.cancelled { return (.error, "Anulowano.") }
+        if err.hasPrefix(refusalPrefix) {
+            return (.error, err.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
         if r.timedOut {
             // Once the script ran on the Mac, the Mac answered: the command was just too slow.
             return r.started ? (.online, "Przekroczono limit czasu – polecenie działało na komputerze zbyt długo.")
@@ -678,17 +770,41 @@ public enum SSH {
                         + "podszywać się pod ten komputer.")
             }
         }
-        if r.exitCode == 255 || lower.contains("ssh:") {
+        if r.started {
+            // The script ran on the Mac, so the Mac answered: ssh messages in the output come from the command
+            // itself (git, scp or another ssh without network) – only the session breaking off is a connection
+            // problem, and the Mac is not marked as off or skipped because of its command (AUDIT ZAD-07).
+            // 255 is the command's own code only when the wrapper reported the script's end with 255 (its end marker,
+            // see RemoteScript.endMarker; AUDIT REV-53). Otherwise the session broke off under the command: a reset or
+            // closed connection ("Read from remote host …: Connection reset by peer", "client_loop: send disconnect:
+            // …"), or – through a shared connection, the default – a connection that died without a word from ssh,
+            // also after the command's own text on stderr (AUDIT REV-02, REV-57). The same after a marker with another
+            // code: it travels on stderr and can arrive before the end of stdout, which the lost connection then cut
+            // off – or the command printed a line like it itself (AUDIT REV-60).
+            if r.exitCode == 255, r.endCode != 255 {
+                if lower.contains("timeout, server") || lower.contains("not responding") { return (.offline, sessionLost) }
+                return (.error, sessionClosed)
+            }
+        } else if r.exitCode == 255 || lower.contains("ssh:") {
             if lower.contains("permission denied") || lower.contains("too many authentication failures") {
                 return (.authFailed, "Odmowa dostępu – brak klucza SSH na komputerze lub błędne hasło administratora.")
             }
             if lower.contains("could not resolve hostname") || lower.contains("nodename nor servname") {
-                return (.offline, "Nie można odnaleźć nazwy hosta w sieci (Bonjour/.local).")
+                return (.offline, "Nie można odnaleźć nazwy hosta w sieci (Bonjour/.local)." + localNetworkHint)
             }
             if lower.contains("connection refused") {
-                return (.error, "Połączenie odrzucone – włącz „Logowanie zdalne” (Remote Login) na tym Macu.")
+                return (.error, "Połączenie odrzucone – na tym iMacu włącz „Zdalne logowanie” (Ustawienia systemowe › Ogólne › "
+                        + "Udostępnianie) albo uruchom przy nim skrypt konfiguracyjny.")
             }
-            if lower.contains("timed out") || lower.contains("no route to host") || lower.contains("host is down") {
+            if lower.contains("network is unreachable") {
+                // ENETUNREACH: this Mac has no network at all (Wi‑Fi off, cable out) – not a fault of the iMac
+                // (AUDIT DOD-06).
+                return (.error, "Ten Mac nie jest połączony z siecią – sprawdź Wi‑Fi lub kabel.")
+            }
+            if lower.contains("no route to host") {
+                return (.offline, "Komputer nie odpowiada (wyłączony lub poza siecią)." + localNetworkHint)
+            }
+            if lower.contains("timed out") || lower.contains("host is down") {
                 return (.offline, "Komputer nie odpowiada (wyłączony lub poza siecią).")
             }
             if lower.contains("kex_exchange_identification") || lower.contains("banner exchange") {
@@ -700,12 +816,8 @@ public enum SSH {
             if lower.contains("session open refused by peer") || lower.contains("mux_client_request_session") {
                 return (.error, "Przekroczono limit jednoczesnych sesji SSH na komputerze – spróbuj ponownie lub zmniejsz liczbę równoległych operacji.")
             }
-            if lower.contains("timeout, server") || lower.contains("not responding") {
-                return (.offline, "Połączenie zerwane – komputer przestał odpowiadać (uśpiony, wyłączony lub poza siecią).")
-            }
-            if lower.contains("closed by remote host") || lower.contains("broken pipe") {
-                return (.error, "Połączenie zostało przerwane – polecenie mogło nadal działać na komputerze.")
-            }
+            if lower.contains("timeout, server") || lower.contains("not responding") { return (.offline, sessionLost) }
+            if lower.contains("closed by remote host") || lower.contains("broken pipe") { return (.error, sessionClosed) }
             return (.error, err.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? "Błąd połączenia SSH (kod 255)." : err.trimmingCharacters(in: .whitespacesAndNewlines))
         }
@@ -722,7 +834,8 @@ public enum SSH {
 
 /// Packs local files/folders into one tar archive (preserves app bundles, symlinks and permissions).
 public enum Payload {
-    public static func make(_ items: [URL]) async -> Result<URL, Error> {
+    /// `handle` stops the packing (a large folder can take minutes) when the job is interrupted.
+    public static func make(_ items: [URL], handle: ProcessHandle? = nil) async -> Result<URL, Error> {
         struct PayloadError: LocalizedError {
             let message: String
             var errorDescription: String? { message }
@@ -732,11 +845,16 @@ public enum Payload {
             .appendingPathComponent("cmcr-payload-\(UUID().uuidString).tar")
         var args = ["-cf", out.path]
         for item in items {
-            args += ["-C", item.deletingLastPathComponent().path, item.lastPathComponent]
+            // "./" keeps a name such as "-szkic.txt" or "-Cdane" from being read as tar options (AUDIT PLI-07);
+            // the archive entry then extracts to the same name.
+            args += ["-C", item.deletingLastPathComponent().path, "./" + item.lastPathComponent]
         }
-        let r = await ProcessRunner.run("/usr/bin/tar", args)
-        if r.succeeded { return .success(out) }
+        let r = await ProcessRunner.run("/usr/bin/tar", args, handle: handle)
+        // scp -p keeps this mode on the iMac: the archive waits in its /tmp, readable by the logged-in student
+        // with the default 0644 (AUDIT PLI-02).
+        if r.succeeded, chmod(out.path, 0o600) == 0 { return .success(out) }
         try? FileManager.default.removeItem(at: out)
+        if r.cancelled || handle?.isCancelled == true { return .failure(PayloadError(message: "Przerwano pakowanie plików.")) }
         return .failure(PayloadError(message: "Nie udało się spakować plików: \(r.stderrText)"))
     }
 

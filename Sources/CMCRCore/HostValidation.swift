@@ -24,10 +24,10 @@ public enum HostIssue: Hashable, Sendable {
 public enum HostValidation {
     public static let portRange = 1...65_535
 
+    /// Every spelling Wake-on-LAN and `cmcrctl hosts set --mac` accept: `a4:83:e7:12:34:56`, `A4-83-…`,
+    /// `a483e7123456`, `a483.e712.3456` (AUDIT KON-07).
     public static func isValidMAC(_ s: String) -> Bool {
-        let parts = s.trimmingCharacters(in: .whitespaces).split(whereSeparator: { $0 == ":" || $0 == "-" })
-        guard parts.count == 6 else { return false }
-        return parts.allSatisfy { p in (1...2).contains(p.count) && p.allSatisfy(\.isHexDigit) }
+        HostEntry.normalizedMAC(s) != nil
     }
 
     /// Issues per host id (hosts without problems are absent).

@@ -27,7 +27,8 @@ enum SetupTab: String, CaseIterable, Identifiable {
 }
 
 struct SetupView: View {
-    @ViewState private var tab = SetupTab.hosts
+    /// Remembered when leaving Konfiguracja (AUDIT UI-16).
+    @AppStorage("setupTab") private var tab = SetupTab.hosts
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,7 +55,7 @@ struct SetupView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onSnapshotSubpage { sub in
-            if let t = SetupTab(rawValue: String(sub.split(separator: "+").first ?? "")) { tab = t }
+            tab = SetupTab(rawValue: String(sub.split(separator: "+").first ?? "")) ?? .hosts
         }
     }
 }
@@ -69,8 +70,18 @@ struct HostsEditor: View {
     @ViewState private var newGroupFor: Set<UUID>?
     @ViewState private var importError: String?
     @ViewState private var showGenerator = false
-    /// Columns shown in the table (right-click the header to change); Port is hidden by default.
-    @ViewState private var columns = TableColumnCustomization<Machine>()
+    /// Columns shown in the table (right-click the header to change); Port is hidden by default. Remembered like
+    /// the Komputery table's columns (AUDIT KON-11).
+    @ViewState private var columns = Self.savedColumns
+    @AppStorage("hostsTableColumns") private var columnsState = ""
+
+    static var savedColumns: TableColumnCustomization<Machine> {
+        guard let state = UserDefaults.standard.string(forKey: "hostsTableColumns"), let data = Data(base64Encoded: state),
+              let saved = try? JSONDecoder().decode(TableColumnCustomization<Machine>.self, from: data) else {
+            return TableColumnCustomization<Machine>()
+        }
+        return saved
+    }
 
     var body: some View {
         let issues = HostValidation.issues(in: model.machines)
@@ -178,14 +189,21 @@ struct HostsEditor: View {
             .width(min: 64, ideal: 80)
             .customizationID("user")
             TableColumn("Hasło") { m in
+                let missing = model.ownPasswordMissing(m)
                 Button {
                     passwordFor = m
                 } label: {
-                    Label(m.usesSharedPassword ? "Wspólne" : "Własne", systemImage: m.usesSharedPassword ? "key" : "key.fill")
+                    if missing {
+                        Label("Brak hasła", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    } else {
+                        Label(m.usesSharedPassword ? "Wspólne" : "Własne", systemImage: m.usesSharedPassword ? "key" : "key.fill")
+                    }
                 }
                 .controlSize(.small)
                 .help(m.usesSharedPassword ? "Używa wspólnego hasła administratora. Kliknij, aby ustawić własne hasło tego komputera."
-                                           : "Ma własne hasło zapisane w Pęku kluczy. Kliknij, aby je zmienić.")
+                      : missing ? "Ma ustawione własne hasło, ale nie ma go w Pęku kluczy tego Maca – połączenia użyją wspólnego hasła. Kliknij, aby je wpisać."
+                      : "Ma własne hasło zapisane w Pęku kluczy. Kliknij, aby je zmienić.")
             }
             .width(min: 72, ideal: 76)
             .customizationID("password")
@@ -230,7 +248,7 @@ struct HostsEditor: View {
                     Button {
                         passwordFor = m
                     } label: {
-                        Label("Hasło tego komputera…", systemImage: "key")
+                        Label("Hasło tego komputera…", systemImage: "key.fill")
                     }
                 }
                 Divider()
@@ -242,6 +260,9 @@ struct HostsEditor: View {
             }
         }
         .onDeleteCommand { askDelete(rows) }
+        .onChange(of: columns) { _, new in
+            if let data = try? JSONEncoder().encode(new) { columnsState = data.base64EncodedString() }
+        }
     }
 
     var listButtons: some View {
@@ -269,14 +290,6 @@ struct HostsEditor: View {
         .buttonStyle(.borderedProminent)
         .keyboardShortcut("n", modifiers: [.command, .option])
         .help("Dodaje kolejny komputer z pierwszym wolnym numerem, np. imac16 (⌥⌘N)")
-        Button(role: .destructive) {
-            askDelete(rows)
-        } label: {
-            DestructiveLabel(title: "Usuń z listy…", icon: "trash", enabled: !rows.isEmpty)
-        }
-        .disabled(rows.isEmpty)
-        .help(rows.isEmpty ? "Najpierw kliknij wiersz w tabeli (z ⌘ – kilka wierszy)."
-                           : "Usuwa wybrane wiersze z listy – na samych iMacach nic się nie zmienia (klawisz Delete)")
         Menu {
             GroupMembershipMenu(ids: rows) { newGroupFor = rows }
         } label: {
@@ -286,6 +299,16 @@ struct HostsEditor: View {
         .disabled(rows.isEmpty)
         .help(rows.isEmpty ? "Najpierw kliknij wiersz w tabeli (z ⌘ – kilka wierszy)."
                            : "Dodaje wybrane wiersze do grupy lub usuwa je z grupy")
+        // The destructive action stands apart from the others, after the separator (AUDIT UI-24, UI-32).
+        Divider().frame(height: 18)
+        Button(role: .destructive) {
+            askDelete(rows)
+        } label: {
+            DestructiveLabel(title: "Usuń z listy…", icon: "trash", enabled: !rows.isEmpty)
+        }
+        .disabled(rows.isEmpty)
+        .help(rows.isEmpty ? "Najpierw kliknij wiersz w tabeli (z ⌘ – kilka wierszy)."
+                           : "Usuwa wybrane wiersze z listy – na samych iMacach nic się nie zmienia (klawisz Delete)")
     }
 
     @ViewBuilder var fileButtons: some View {
@@ -299,11 +322,15 @@ struct HostsEditor: View {
             Button {
                 importHosts()
             } label: {
-                Label("Wczytaj listę z pliku…", systemImage: "square.and.arrow.down")
+                Label("Zastąp listę z pliku…", systemImage: "square.and.arrow.down")
             }
             Button {
                 if let url = Pickers.save(name: "cmcr-komputery.json") {
-                    try? ConfigStore.exportHosts(model.machines, to: url)
+                    do {
+                        try ConfigStore.exportHosts(model.machines, to: url)
+                    } catch {
+                        model.reportFailure("Nie udało się zapisać listy komputerów", error)
+                    }
                 }
             } label: {
                 Label("Zapisz listę do pliku…", systemImage: "square.and.arrow.up")
@@ -375,9 +402,16 @@ struct HostsEditor: View {
                 importError = "Plik nie zawiera żadnego komputera."
                 return
             }
-            model.machines = hosts
-            rows = []
-            model.refreshStatus()
+            // The whole list, with groups, notes, MACs and passwords, is replaced: ask first (AUDIT UI-05).
+            confirm = ConfirmRequest(
+                title: "Zastąpić listę komputerów listą z pliku?",
+                message: "Obecna lista (\(Polish.computers(model.machines.count))) zostanie zastąpiona listą z pliku "
+                    + "\(url.lastPathComponent) (\(Polish.computers(hosts.count))). Grupy, notatki i własne hasła wpisów, "
+                    + "których nie ma w pliku, przepadną.",
+                button: "Zastąp listę", targets: []) {
+                model.replaceHostList(with: hosts)
+                rows = []
+            }
         } catch {
             importError = "\(url.lastPathComponent): \(error.localizedDescription)"
         }
@@ -464,9 +498,10 @@ struct HostListGeneratorSheet: View {
                 Button(role: .destructive) {
                     askReplace()
                 } label: {
-                    DestructiveLabel(title: "Zastąp całą listę…", icon: "arrow.triangle.2.circlepath", enabled: !preview.isEmpty)
+                    DestructiveLabel(title: "Zastąp całą listę…", icon: "arrow.2.squarepath",
+                                     enabled: !preview.isEmpty && patternProblem == nil)
                 }
-                .disabled(preview.isEmpty)
+                .disabled(preview.isEmpty || patternProblem != nil)
                 .help("Usuwa obecną listę i wstawia wygenerowaną (grupy i własne hasła obecnych wpisów przepadną)")
                 Spacer()
                 Button("Anuluj", role: .cancel) { dismiss() }
@@ -480,7 +515,7 @@ struct HostListGeneratorSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(missing.isEmpty)
+                .disabled(missing.isEmpty || patternProblem != nil)
                 .help("Dodaje tylko komputery, których adresu jeszcze nie ma na liście")
             }
             .padding(16)
@@ -495,7 +530,21 @@ struct HostListGeneratorSheet: View {
         return Array(all.prefix(3)) + ["…", last]
     }
 
+    /// The pattern becomes names, accounts and addresses: refused like in `cmcrctl hosts generate` (AUDIT KON-14).
+    /// The fields are named by their labels, with a colon before the problem as in cmcrctl (AUDIT REV-25).
+    static func patternProblem(prefix: String, domain: String) -> String? {
+        if prefix.isEmpty { return "Wpisz początek nazwy, zanim utworzysz listę." }
+        if let p = HostEntry.problem(prefix, as: .name) ?? HostEntry.problem(prefix, as: .sshPart) {
+            return "Początek nazwy: \(p) – popraw go, zanim utworzysz listę."
+        }
+        if let p = HostEntry.problem(domain, as: .domain) { return "Domena sieci: \(p) – popraw ją, zanim utworzysz listę." }
+        return nil
+    }
+
+    private var patternProblem: String? { Self.patternProblem(prefix: prefix, domain: domain) }
+
     private var footerText: String {
+        if let patternProblem { return patternProblem }
         if preview.isEmpty { return "Wzór nie daje żadnego komputera." }
         if missing.isEmpty { return "Wszystkie te komputery już są na liście." }
         let present = preview.count - missing.count
@@ -508,9 +557,7 @@ struct HostListGeneratorSheet: View {
         confirm = ConfirmRequest(title: "Zastąpić listę komputerów?",
                                  message: "Obecna lista (\(Polish.computers(model.machines.count))) zostanie zastąpiona wygenerowaną (\(Polish.computers(generated.count))). Grupy i własne hasła obecnych wpisów przepadną.",
                                  button: "Zastąp listę", targets: []) {
-            model.machines = generated
-            model.selection = []
-            model.refreshStatus()
+            model.replaceHostList(with: generated)
             dismiss()
         }
     }
@@ -534,7 +581,7 @@ struct HostPasswordSheet: View {
                 }
                 .pickerStyle(.radioGroup)
                 if !useShared {
-                    SecureField(text: $password, prompt: Text(machine.usesSharedPassword ? "Wpisz hasło" : "Bez zmian")) {
+                    SecureField(text: $password, prompt: Text(hasOwnPassword ? "Bez zmian" : "Wpisz hasło")) {
                         Text("Hasło konta \(machine.user)")
                     }
                     .onSubmit(save)
@@ -560,16 +607,21 @@ struct HostPasswordSheet: View {
         }
     }
 
+    /// The own password is in the Keychain (an imported list may say „own” without one, AUDIT KON-12).
+    private var hasOwnPassword: Bool { !model.ownPasswordMissing(machine) && !machine.usesSharedPassword }
+
     /// Switching to an own password needs one; an existing own password stays when the field is left empty.
-    private var canSave: Bool { useShared || !password.isEmpty || !machine.usesSharedPassword }
+    private var canSave: Bool { useShared || !password.isEmpty || hasOwnPassword }
 
     private func save() {
         guard canSave else { return }
         if let i = model.machines.firstIndex(where: { $0.id == machine.id }) {
             model.machines[i].usesSharedPassword = useShared
         }
-        if !useShared && !password.isEmpty { model.setPassword(password, for: machine) }
-        if useShared { model.setPassword("", for: machine) }
+        // The entry as saved just now: the re-check after a new password must use it, not the shared one.
+        let updated = model.current(machine)
+        if !useShared && !password.isEmpty { model.setPassword(password, for: updated) }
+        if useShared { model.setPassword("", for: updated) }
         dismiss()
     }
 }
@@ -589,7 +641,7 @@ struct AccessSettings: View {
             keySection
             targetSection
             if let batch = model.lastBatch[.setup] {
-                Section("Wynik ostatniej operacji") {
+                Section("Wynik ostatniego działania") {
                     BatchResultsView(batch: batch)
                         .id(batch.id)
                 }
@@ -658,12 +710,16 @@ struct AccessSettings: View {
             LabeledContent {
                 if key != nil {
                     StatusText(text: "Gotowy", symbol: "checkmark.circle.fill", color: .green)
+                } else if configuredKey != nil {
+                    StatusText(text: "Brak pliku klucza", symbol: "exclamationmark.triangle.fill", color: .orange)
                 } else {
                     StatusText(text: "Brak klucza", symbol: "exclamationmark.triangle.fill", color: .orange)
                 }
             } label: {
                 SettingLabel(title: "Klucz logowania tego Maca",
-                             caption: key.map(\.path) ?? "Utwórz go, aby łączyć się z iMacami bez wpisywania hasła",
+                             caption: key.map(\.path)
+                                ?? configuredKey.map { "W Ustawieniach › Połączenie wybrano \($0), ale takiego pliku nie ma" }
+                                ?? "Utwórz go, aby łączyć się z iMacami bez wpisywania hasła",
                              icon: "key.horizontal.fill", color: .blue)
             }
             if let key {
@@ -677,7 +733,20 @@ struct AccessSettings: View {
                 }
                 .help("Ta część klucza nie jest tajna – trafia na iMaki przy rozsyłaniu")
             }
-            if key == nil || !defaultKeyExists {
+            if configuredKey != nil {
+                // A key chosen in Ustawienia › Połączenie is used instead of ~/.ssh: a new default key would be
+                // neither used nor sent to the iMacs (AUDIT KON-16).
+                HStack {
+                    Spacer()
+                    Button {
+                        model.settings.identityFile = ""
+                        keyRevision += 1
+                    } label: {
+                        Label("Użyj domyślnego klucza z ~/.ssh", systemImage: "arrow.uturn.backward")
+                    }
+                    .help("Przestań używać klucza wybranego w Ustawieniach › Połączenie")
+                }
+            } else if key == nil || !defaultKeyExists {
                 HStack {
                     Spacer()
                     Button {
@@ -708,6 +777,12 @@ struct AccessSettings: View {
 
     private var currentKey: URL? { SSHKeys.currentPrivateKey(settings: model.settings) }
 
+    /// The key file chosen in Ustawienia › Połączenie (nil: the first key in ~/.ssh is used).
+    private var configuredKey: String? {
+        let file = model.settings.identityFile.trimmingCharacters(in: .whitespaces)
+        return file.isEmpty ? nil : file
+    }
+
     /// `SSHKeys.generate` creates ~/.ssh/id_ed25519 and refuses when it already exists.
     private var defaultKeyExists: Bool {
         FileManager.default.fileExists(atPath: SSHKeys.sshDir.appendingPathComponent("id_ed25519").path)
@@ -729,7 +804,7 @@ struct AccessSettings: View {
                              caption: selected.isEmpty ? "Zaznacz komputery na liście obok"
                                  : offline.isEmpty ? nil
                                  : "W tym niedostępne przy ostatnim sprawdzeniu: \(offline.count) – te operacje i tak spróbują się z nimi połączyć",
-                             icon: "checklist", color: .blue)
+                             icon: "checkmark.square", color: .blue)
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { Spacer(minLength: 0); targetButtons }
@@ -759,7 +834,8 @@ struct AccessSettings: View {
         TargetButton(title: "Roześlij klucz", icon: "paperplane", prominent: true, includeUnreachable: true) {
             model.distributeKey(model.selectedMachines)
         }
-        .disabled(currentKey == nil)
+        // The iMacs get the public half (.pub); without it there is nothing to send (AUDIT KON-17).
+        .disabled(model.managerPublicKey == nil)
     }
 }
 
@@ -827,7 +903,7 @@ struct StudentFolderSettings: View {
                 }
             } label: {
                 SettingLabel(title: "Folder na tym Macu", caption: "Zebrane prace i pliki do rozesłania",
-                             icon: "macbook", color: .gray)
+                             icon: "laptopcomputer", color: .gray)
             }
         } header: {
             Text("Uczniowie i foldery")
@@ -882,7 +958,7 @@ struct ConnectionSettings: View {
                              caption: "Na ilu komputerach jednocześnie wykonywać polecenia i kopiować pliki",
                              icon: "square.stack.3d.up.fill", color: .indigo)
             }
-            OptionToggle(title: "Szybsze połączenia", icon: "bolt.fill", color: .green,
+            OptionToggle(title: "Szybsze połączenia", icon: "hare", color: .green,
                          detail: "Kolejne operacje na tym samym iMacu korzystają z jednego połączenia, więc podgląd ekranów i polecenia startują szybciej",
                          isOn: $model.settings.reuseConnections)
             DisclosureGroup {
@@ -912,9 +988,14 @@ struct ScreenPreviewSettings: View {
 
     var body: some View {
         Section {
-            OptionToggle(title: "Powiadamiaj o podglądzie", icon: "bell.badge.fill", color: .red,
-                         detail: "Osoba przy komputerze dostaje powiadomienie, gdy zaczyna się podgląd jej ekranu",
-                         isOn: $model.settings.notifyOnObserve)
+            // Not a setting: the student is always told (README, AUDIT KON-06).
+            LabeledContent {
+                Text("zawsze").foregroundStyle(.secondary)
+            } label: {
+                SettingLabel(title: "Powiadomienie ucznia o podglądzie",
+                             caption: "Osoba przy komputerze zawsze widzi komunikat „Administrator rozpoczął podgląd Twojego ekranu” – raz na sesję podglądu i ponownie po każdym zalogowaniu",
+                             icon: "bell.badge.fill", color: .red)
+            }
             OptionToggle(title: "Tylko konta standardowe", icon: "person.badge.shield.checkmark.fill", color: .blue,
                          detail: "Ekrany kont administratorów nie są pokazywane",
                          isOn: $model.settings.observeOnlyStandardAccounts)
@@ -1004,7 +1085,7 @@ struct ConfigurationLinkSection: View {
                     model.section = .setup
                     MainWindow.bringToFront(openWindow)
                 } label: {
-                    Label("Otwórz Konfigurację", systemImage: "arrow.up.forward.app")
+                    Label("Otwórz Konfigurację", systemImage: "gearshape")
                 }
                 .help("Pokazuje dział Konfiguracja w głównym oknie")
             } label: {
@@ -1018,11 +1099,14 @@ struct ConfigurationLinkSection: View {
 
 enum SettingsTab: String, CaseIterable {
     case general, connection, screens, updates
+
+    static let storageKey = "settingsTab"
 }
 
 /// The standard Settings window; the same settings are also in Konfiguracja › Ustawienia.
 struct AppSettingsWindow: View {
-    @ViewState private var tab = SettingsTab.general
+    /// Remembered, and set by links that open a given tab (e.g. „Zmień ograniczenia…” of the screen preview).
+    @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.general
 
     var body: some View {
         TabView(selection: $tab) {
@@ -1040,8 +1124,10 @@ struct AppSettingsWindow: View {
                 .tag(SettingsTab.updates)
         }
         .frame(width: 620)
+        .noticeAlert()
         .onSnapshotSubpage { sub in
-            if let t = SettingsTab(rawValue: sub) { tab = t }
+            // An empty sub-page is the default tab (AUDIT UI-25: the dark snapshot kept the previous tab).
+            tab = SettingsTab(rawValue: sub) ?? .general
         }
     }
 
