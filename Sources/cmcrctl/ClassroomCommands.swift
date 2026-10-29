@@ -327,6 +327,9 @@ enum ClassroomCLI {
         var planned: [(host: Machine, name: String, localHostName: String)] = []
         var invalid = false
         let taken = Self.namesTaken(by: legacyCLI.hosts, renaming: Set(targets.map(\.id)))
+        let stillHeld = RenamePlan.namesStillHeld(targets.map {
+            RenamePlan.Rename(machine: $0, localHostName: ComputerNames.localHostName(from: a.value("--name") ?? $0.name))
+        })
         var seen: Set<String> = []
         for h in targets {
             let name = a.value("--name") ?? h.name
@@ -341,6 +344,18 @@ enum ClassroomCLI {
             if let owner = taken[lhn.lowercased()] {
                 Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma już \(owner) z listy komputerów "
                             + "(dwa komputery nie mogą mieć tego samego adresu w sieci).")
+                invalid = true
+                continue
+            }
+            // The address of another Mac renamed here, which gives it up only with its own rename – a renumbering or a
+            // swap: the same Bonjour conflict (AUDIT REV-52).
+            if let other = stillHeld[h.id] {
+                let swap = stillHeld[other.id]?.id == h.id
+                Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma teraz \(other.name) (\(other.address)), którego "
+                            + "nazwa też jest zmieniana (macOS nadałby wtedy jednemu z nich inny adres). "
+                            + (swap ? "Przy zamianie nazw nadaj najpierw jednemu z nich nazwę tymczasową (--name), potem zmień "
+                               + "nazwy po kolei."
+                               : "Zmień nazwy w dwóch krokach: najpierw \(other.name), potem \(h.name)."))
                 invalid = true
                 continue
             }

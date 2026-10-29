@@ -169,3 +169,48 @@ expect_code "exec, kod 255 samego polecenia: przekazany" "$code" 255 "$out"
 out="$(r3 exec 'exit 7' 1,9)"; code=$?
 expect_code "exec, kod polecenia i niedostępny komputer: kod polecenia" "$code" 7 "$out"
 
+section "REV R3 cmcrctl – rename: nowa nazwa, którą ma jeszcze inny zmieniany komputer (AUDIT REV-52)"
+RN="$WORK/cfg-rev-r3-rename"
+mkdir -p "$RN"
+cp "$WORK/config/settings.json" "$RN/"
+# A swap (imac01 ↔ imac02 on the list), an upward renumbering (imac05 → imac06 → imac07) and a Mac that keeps its name.
+cat > "$RN/hosts.json" <<EOF
+[
+ {"id":"c1111111-1111-1111-1111-111111111111","name":"imac02","address":"imac01.local","user":"$ME","port":$PORT},
+ {"id":"c2222222-2222-2222-2222-222222222222","name":"imac01","address":"imac02.local","user":"$ME","port":$PORT},
+ {"id":"c4444444-4444-4444-4444-444444444444","name":"imac04","address":"imac04.local","user":"$ME","port":$PORT},
+ {"id":"c5555555-5555-5555-5555-555555555555","name":"imac06","address":"imac05.local","user":"$ME","port":$PORT},
+ {"id":"c6666666-6666-6666-6666-666666666666","name":"imac07","address":"imac06.local","user":"$ME","port":$PORT},
+ {"id":"c9999999-9999-9999-9999-999999999999","name":"imac09","address":"imac09.cmcr-e2e.invalid","user":"imac09","port":22}
+]
+EOF
+rn() { CMCR_CONFIG_DIR="$RN" "$CTL" "$@" 2>&1; }
+out="$(rn rename @1,@2 --dry-run)"; code=$?
+expect_code "rename, zamiana nazw: kod 2" "$code" 2 "$out"
+expect "rename, zamiana nazw: oba komputery wskazane" "$out" \
+  "imac02: „imac02” → imac02.local – ten adres ma teraz imac01 (imac02.local)" \
+  "imac01: „imac01” → imac01.local – ten adres ma teraz imac02 (imac01.local)" "nazwę tymczasową (--name)" \
+  "nic nie zostało zmienione"
+out="$(rn rename imac06,imac07 --dry-run)"; code=$?
+expect_code "rename, przenumerowanie: kod 2" "$code" 2 "$out"
+expect "rename, przenumerowanie: komputer, który zająłby zajęty adres" "$out" \
+  "imac06: „imac06” → imac06.local – ten adres ma teraz imac07 (imac06.local)" "najpierw imac07, potem imac06"
+expect "rename, przenumerowanie: drugi komputer bez błędu" "$out" "imac07: „imac07” → imac07.local"
+# Only --dry-run here: the addresses are .local names, and no test may connect to one. The check runs before the
+# dry-run ends, the same for a real rename.
+# Two steps work: first the Mac that gives its address up, then – with the list updated (--update-list) – the other.
+out="$(rn rename imac07 --dry-run)"; code=$?
+expect_code "rename, pierwszy krok: kod 0" "$code" 0 "$out"
+python3 - "$RN/hosts.json" <<'PY'
+import json, sys
+p = sys.argv[1]; hosts = json.load(open(p))
+for h in hosts:
+    if h["name"] == "imac07": h["address"] = "imac07.local"
+json.dump(hosts, open(p, "w"))
+PY
+out="$(rn rename imac06 --dry-run)"; code=$?
+expect_code "rename, drugi krok: kod 0" "$code" 0 "$out"
+# Renamed Macs without a chain, and a Mac whose new name is its own current address.
+out="$(rn rename 4,imac07 --dry-run)"; code=$?
+expect_code "rename, dwa komputery bez łańcucha: kod 0" "$code" 0 "$out"
+expect "rename, własny adres: bez błędu" "$out" "imac04: „imac04” → imac04.local"

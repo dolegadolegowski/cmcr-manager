@@ -255,6 +255,10 @@ struct RenameComputersSheet: View {
                         Label("\(e.localHostName).local powtarza się", systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red)
                             .help("Dwa komputery nie mogą mieć tego samego adresu w sieci")
+                    } else if let other = stillHeld[e.id] {
+                        Label("\(e.localHostName).local ma jeszcze \(other.name)", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                            .help("Ten adres ma teraz \(other.name), którego nazwa też jest zmieniana – macOS nadałby jednemu z nich inny adres. Zmień nazwy w dwóch krokach: najpierw tylko \(other.name), potem ten komputer. Przy zamianie nazw nadaj najpierw jednemu z nich nazwę tymczasową.")
                     } else {
                         Text("\(e.localHostName).local").font(.body.monospaced())
                             .foregroundStyle(isUnchanged(e) ? .secondary : .primary)
@@ -283,7 +287,7 @@ struct RenameComputersSheet: View {
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(changes.isEmpty || !duplicates.isEmpty
+                .disabled(changes.isEmpty || !duplicates.isEmpty || !stillHeld.isEmpty
                           || entries.contains { !ComputerNames.isValidLocalHostName($0.localHostName) })
             }
         }
@@ -314,6 +318,13 @@ struct RenameComputersSheet: View {
     var takenBy: [String: String] {
         Self.namesTaken(by: model.machines, renaming: Set(entries.map(\.id)),
                         readNames: classroom.names.mapValues(\.localHostName))
+    }
+
+    /// Renamed Macs whose new `.local` name another Mac renamed here still has now (its address or the name read from
+    /// it), with that Mac: a renumbering or a swap, renamed in two steps (AUDIT REV-52). The renames run at once.
+    var stillHeld: [UUID: Machine] {
+        RenamePlan.namesStillHeld(changes.map { RenamePlan.Rename(machine: $0.machine, localHostName: $0.localHostName) },
+                                  currentNames: classroom.names.mapValues(\.localHostName))
     }
 
     static func namesTaken(by machines: [Machine], renaming: Set<UUID>, readNames: [UUID: String]) -> [String: String] {
