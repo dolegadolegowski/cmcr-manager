@@ -47,3 +47,35 @@ extension RevG3appmodelTests {
         #expect(model.status(a).mac == "aa:bb:cc:dd:ee:ff")
     }
 }
+
+extension RevG3appmodelTests {
+    // REV-12: „Zbierz prace” and cmcr-pull stream the remote „ls -l” to stderr; a later local failure (a full or
+    // read-only disk) is a result never streamed – it goes into the log and the summary, not the last listing line.
+    @Test func aLocalFailureAfterStreamedErrorOutputIsInTheLogAndTheSummary() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        let listing = "remote: ls -l /Users/Shared/Prace\n-rw-r--r--  1 student  staff  2048 29 paź 10:01 projekt.key\n"
+        let reason = "Nie można zapisać w /Volumes/Pendrive/Prace/imac01: No space left on device"
+        let batch = try #require(model.runBatch("Zbierz prace", on: [a]) { _, job in
+            OutputSink(job).callback(.stderr, Data(listing.utf8))
+            return .failure(reason)
+        })
+        #expect(await AppTestEnvironment.wait(5) { batch.finished })
+        let job = try #require(batch.jobs.first)
+        #expect(job.output.contains(reason), "\(job.output)")
+        #expect(job.summary.contains(reason), "podsumowanie: \(job.summary)")
+        #expect(!job.summary.contains("projekt.key"))
+        #expect(job.output.components(separatedBy: "projekt.key").count == 2, "\(job.output)")
+
+        // The result repeats what was streamed and adds its own line: only that line is added.
+        let both = try #require(model.runBatch("Pobieranie", on: [a]) { _, job in
+            OutputSink(job).callback(.stderr, Data(listing.utf8))
+            return CommandResult(exitCode: 1, stderr: Data((listing + "tar: Error exit delayed from previous errors\n").utf8))
+        })
+        #expect(await AppTestEnvironment.wait(5) { both.finished })
+        let other = try #require(both.jobs.first)
+        #expect(other.output.components(separatedBy: "projekt.key").count == 2, "\(other.output)")
+        #expect(other.output.contains("tar: Error exit delayed"), "\(other.output)")
+        #expect(other.summary.hasPrefix("tar: Error exit delayed"), "podsumowanie: \(other.summary)")
+    }
+}
