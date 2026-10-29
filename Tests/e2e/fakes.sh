@@ -4,6 +4,16 @@
 
 CMCR_E2E_LOG="${CMCR_E2E_LOG:-/tmp/cmcr-e2e.log}"
 _e2e_log() { printf '%s\n' "$*" >> "$CMCR_E2E_LOG"; }
+# $CMCR_E2E_WORK/slow.NAME (seconds): the fake NAME first waits that long, logging „NAME: pauza” before and „NAME: po
+# pauzie” after, so a test can interrupt the command half-way (AUDIT REV-36). Used by installer, scutil --set,
+# launchctl bootout and the question dialog (ask-dialog).
+_e2e_slow() {
+  local f="${CMCR_E2E_WORK:-/nonexistent}/slow.$1"
+  [ -e "$f" ] || return 0
+  _e2e_log "$1: pauza"
+  sleep "$(cat "$f")"
+  _e2e_log "$1: po pauzie"
+}
 
 # sudo: accepts the test password from SUDO_ASKPASS (like real sudo -A) and runs the command as the
 # current user. CMCR_E2E_NOPASSWD=1 emulates a NOPASSWD sudoers rule.
@@ -134,7 +144,8 @@ launchctl() {
           return 0 ;;
       esac ;;
     print) _e2e_log "launchctl $*"; return 0 ;;
-    bootout|bootstrap|enable|disable|kickstart|load|unload) _e2e_log "launchctl $*"; return 0 ;;
+    bootout) _e2e_slow launchctl-bootout; _e2e_log "launchctl $*"; return 0 ;;
+    bootstrap|enable|disable|kickstart|load|unload) _e2e_log "launchctl $*"; return 0 ;;
     *) command launchctl "$@" ;;
   esac
 }
@@ -187,6 +198,7 @@ EOF
 }
 
 installer() {
+  _e2e_slow installer
   _e2e_log "installer $*"
   # $CMCR_E2E_WORK/installer.cancel: the job is cancelled while the package installs – SIGTERM to the shell of
   # the job, as the remote cancel sends it (AUDIT APL-08). One time only.
@@ -215,6 +227,7 @@ systemsetup() { _e2e_log "systemsetup $*"; echo "Remote Login: On"; }
 scutil() {
   case "${1:-}" in
     --set)
+      _e2e_slow scutil
       _e2e_log "scutil $*"
       if [ -e "${CMCR_E2E_WORK:-/nonexistent}/scutil-set.fail" ]; then echo "SCPreferencesSetComputerName() failed: test" >&2; return 1; fi ;;
     *) command scutil "$@" ;;
@@ -404,6 +417,7 @@ launchctl() {
   case "$input" in
     *"CMCR:ANSWER:"*)
       _e2e_log "ask-dialog"
+      _e2e_slow ask-dialog
       if [ -e "$(_e2e_state ask.timeout)" ]; then echo "CMCR:TIMEOUT"; return 0; fi
       case "$input" in
         *"default answer"*) printf 'CMCR:ANSWER:Wyślij\t%s\n' "$(cat "$(_e2e_state ask.answer)" 2>/dev/null || echo odpowiedź)" ;;

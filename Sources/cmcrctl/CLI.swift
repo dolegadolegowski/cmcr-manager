@@ -85,7 +85,8 @@ Opcje
 Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie (także opcja,
 której polecenie nie używa, lub nadmiarowy argument – wtedy nic nie jest wykonywane);
 exec zwraca kod zdalnego polecenia (najwyższy z kilku komputerów), screen-watch – także 3–6;
-130 – przerwano (Ctrl-C zatrzymuje polecenie także na iMacach, ponowne Ctrl-C kończy od razu).
+130 – przerwano: Ctrl-C zatrzymuje także na iMacach każde polecenie, które coś na nich zmienia, i nie uruchamia go
+już na kolejnych; ponowne Ctrl-C kończy od razu.
 
 W terminalu znaki sterujące w wynikach z iMaców (np. sekwencje ESC w nazwach plików) są pokazywane
 jako ^[, ^M…; wynik przekierowany do pliku lub potoku (… | cat) pozostaje dosłowny.
@@ -261,7 +262,8 @@ struct CLI: Sendable {
     func header(_ host: Machine) -> String { "== \(host.name) (\(host.destination)) ==" }
 
     /// Streams one remote script per host under a header; the common shape of most commands. `note` may add a
-    /// hint for the terminal after a host's output (e.g. the cmcrctl option for what the script skipped).
+    /// hint for the terminal under a host's result – below the reason of a failure (AUDIT REV-38) – e.g. the
+    /// cmcrctl option for what the script skipped.
     func runScript(on list: [Machine], jobs: Int? = nil, passThrough: Bool = false,
                    header makeHeader: (@Sendable (Machine) -> String)? = nil,
                    note: (@Sendable (Machine, CommandResult) -> String?)? = nil,
@@ -273,8 +275,9 @@ struct CLI: Sendable {
             // A registered job: Ctrl-C stops it on the iMac too (Interruption).
             let r = await Interruption.shared.run(script(io.host), on: io.host, password: Keychain.password(for: io.host),
                                                   settings: ssh, onOutput: io.stream)
+            let code = io.report(r, passThrough: passThrough)
             if let text = note?(io.host, r) { io.err(text) }
-            return io.report(r, passThrough: passThrough)
+            return code
         }
         return combine(codes, passThrough: passThrough)
     }
@@ -438,16 +441,20 @@ struct CLI: Sendable {
             let items = Operations.conventionItems(base: s.localFolder, host: h)
             io.out("Pushing to \(h.destination) ... (\(plural(items.count, "element", "elementy", "elementów")))")
             if items.isEmpty { return ExitCode.success }
-            switch await Payload.make(items) {
-            case .failure(let e):
-                io.err("✘ \(h.name): \(e.localizedDescription)")
-                return ExitCode.failure
-            case .success(let payload):
-                defer { try? FileManager.default.removeItem(at: payload) }
-                let r = await Operations.push(payload: payload, to: h, destination: s.studentFolder,
-                                              owner: asRoot ? s.studentUser : "", mode: "777", asRoot: asRoot,
-                                              password: Keychain.password(for: h), settings: ssh, onOutput: io.stream)
-                return io.report(r)
+            // A registered job: Ctrl-C stops the packing, the upload or the unpacking on the iMac (Interruption).
+            return await Interruption.shared.job(on: h) { handle in
+                switch await Payload.make(items, handle: handle) {
+                case .failure(let e):
+                    io.err("✘ \(h.name): \(e.localizedDescription)")
+                    return ExitCode.failure
+                case .success(let payload):
+                    defer { try? FileManager.default.removeItem(at: payload) }
+                    let r = await Operations.push(payload: payload, to: h, destination: s.studentFolder,
+                                                  owner: asRoot ? s.studentUser : "", mode: "777", asRoot: asRoot,
+                                                  password: Keychain.password(for: h), settings: ssh, handle: handle,
+                                                  onOutput: io.stream)
+                    return io.report(r)
+                }
             }
         }
         return combine(codes)
@@ -464,8 +471,11 @@ struct CLI: Sendable {
             let h = io.host
             io.out("Pulling from \(h.destination) ...")
             let dest = URL(fileURLWithPath: expandTilde(s.localFolder)).appendingPathComponent(h.folderKey)
-            let r = await Operations.pull(source: s.studentFolder, from: h, into: dest, asRoot: asRoot,
-                                          password: Keychain.password(for: h), settings: ssh, onOutput: io.stream)
+            let r = await Interruption.shared.job(on: h) { handle in
+                await Operations.pull(source: s.studentFolder, from: h, into: dest, asRoot: asRoot,
+                                      password: Keychain.password(for: h), settings: ssh, handle: handle,
+                                      onOutput: io.stream)
+            }
             return io.report(r)
         }
         return combine(codes)
@@ -673,9 +683,15 @@ struct CLI: Sendable {
             confirm("Poprosić o wylogowanie użytkowników na: \(names(list))? Aplikacje mogą zapytać o zapisanie zmian "
                     + "(albo wstrzymać wylogowanie).")
         }
-        // The script points to the app's „Wyloguj natychmiast”; at the terminal that is --force.
+        // When the request was refused or did not end every session, the script itself points to the app's „Wyloguj
+        // natychmiast”; at the terminal that is --force. Not for a Mac that was not reached (off, asleep, unknown key,
+        // wrong password, timeout): --force would fail the same way (AUDIT REV-38). The name is quoted for the shell.
         let hint: @Sendable (Machine, CommandResult) -> String? = { h, r in
-            r.succeeded ? nil : "  (cmcrctl logout \(h.name) --force – wylogowanie natychmiastowe, niezapisane dane przepadną)"
+            guard r.started, !r.cancelled, !r.timedOut, r.exitCode == 1, r.stderrText.contains("Wyloguj natychmiast") else {
+                return nil
+            }
+            return "  (cmcrctl \(CommandLineLog.describe(["logout", h.name, "--force"])) – wylogowanie natychmiastowe, "
+                + "niezapisane dane przepadną)"
         }
         logAction(list)
         return await runScript(on: list, note: now ? nil : hint) { _ in Scripts.logoutUser(force: now) }

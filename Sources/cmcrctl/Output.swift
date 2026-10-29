@@ -192,14 +192,23 @@ final class HostIO: @unchecked Sendable {
 }
 
 /// Runs `body` for every host with at most `jobs` hosts at a time; returns the per-host codes in host order.
+/// After Ctrl-C (Interruption) no further host is started: the running ones finish with their output, and the hosts
+/// left out are listed below it (AUDIT REV-35).
 func runHosts(_ targets: [Machine], jobs: Int, prefixLines: Bool,
               _ body: @escaping @Sendable (HostIO) async -> Int32) async -> [Int32] {
     let sink = OrderedOutput(count: targets.count)
     let limit = max(1, jobs)
-    return await withTaskGroup(of: (Int, Int32).self) { group in
+    let (codes, notStarted) = await withTaskGroup(of: (Int, Int32).self) { group in
         var codes = Array(repeating: ExitCode.success, count: targets.count)
+        var notStarted: [Machine] = []
         for (i, host) in targets.enumerated() {
             if i >= limit, let (done, code) = await group.next() { codes[done] = code }
+            if Interruption.shared.isInterrupted {
+                notStarted.append(host)
+                codes[i] = ExitCode.failure
+                sink.finish(i)
+                continue
+            }
             let io = HostIO(host: host, index: i, sink: sink, prefixLines: prefixLines)
             group.addTask {
                 let code = await body(io)
@@ -209,8 +218,10 @@ func runHosts(_ targets: [Machine], jobs: Int, prefixLines: Bool,
             }
         }
         for await (done, code) in group { codes[done] = code }
-        return codes
+        return (codes, notStarted)
     }
+    Interruption.shared.reportNotStarted(notStarted)
+    return codes
 }
 
 /// Pads to a column width counted in characters (`%-12@` ignores the width for objects).
