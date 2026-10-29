@@ -2926,7 +2926,7 @@ Zgłoszenia, które niezależny recenzent sprawdził w kodzie i uznał za niepop
 
 ## Stan końcowy
 
-Sprawdzenia uruchomione po ostatniej zmianie kodu (gałąź `audit/fixes-and-ui` @ `ece4dc3`; późniejsze commity zmieniają tylko ten plik):
+Sprawdzenia uruchomione po ostatniej zmianie kodu aplikacji (gałąź `audit/fixes-and-ui` @ `ece4dc3`). Późniejsze commity zmieniają tylko ten plik i próg czasu w jednym teście (REV-77, `8e0e9af`); po nim testy jednostkowe przeszły ponownie: 103 + 415, 0 nieudanych.
 
 | Sprawdzenie | Wynik |
 |---|---|
