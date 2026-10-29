@@ -24,10 +24,7 @@ public enum RenamePlan {
                                   readNames: [UUID: String] = [:]) -> [String: String] {
         var taken: [String: String] = [:]
         for m in machines where !renaming.contains(m.id) {
-            var names = current(m, read: readNames[m.id])
-            let listed = ComputerNames.localHostName(from: m.name).lowercased()
-            if !listed.isEmpty { names.insert(listed) }
-            for name in names { taken[name] = m.name }
+            for name in names(of: m, read: readNames[m.id]) { taken[name] = m.name }
         }
         return taken
     }
@@ -90,24 +87,36 @@ public enum RenamePlan {
     /// from Bonjour (imac06-2) and the updated list would point at no Mac. Such Macs are renamed one per run, in the
     /// order `advice(for:stillHeld:newNames:in:)` gives.
     ///
-    /// A Mac's current names: its `.local` address on the list and, in the app, the LocalHostName read from it
-    /// (`currentNames`). A Mac that keeps its name gives nothing up – another Mac with the same new name is a
-    /// duplicate, which the callers report as such (`repeatedNames`), before this.
+    /// A Mac's current names are the names `namesTaken` counts for a Mac that is not renamed: its `.local` address
+    /// on the list, its name on the list (the name a rename gives it by default) and, in the app, the LocalHostName
+    /// read from it (`currentNames`). Each step of the order checks its new name against all of them – also against
+    /// the name on the list of a Mac renamed in a later step (AUDIT REV-69): the app's advice gave „najpierw imac03 na
+    /// imac02, potem imac02 na imac03” while „imac02” at imac06.local was still on the list, and refused its first step.
+    /// In cmcrctl the name on the list is the new name, which a Mac keeps. A Mac that keeps its name gives nothing
+    /// up – another Mac with the same new name is a duplicate, which the callers report as such (`repeatedNames`),
+    /// before this. The first of the Macs that still have the name (`holders`).
     public static func namesStillHeld(_ renames: [Rename], currentNames: [UUID: String] = [:]) -> [UUID: Machine] {
-        var givenUp: [String: Machine] = [:]
+        holders(renames, currentNames: currentNames).compactMapValues(\.first)
+    }
+
+    /// Every Mac of the same run that still has the new name of each renamed Mac now and gives it up
+    /// (`namesStillHeld`), in the order of `renames`. One Mac's name on the list is often another Mac's `.local`
+    /// address, and a step is refused while any of them has the name, so the order waits for all of them (AUDIT
+    /// REV-69): imac05 → imac02 after „imac02” at imac06.local and after „imac04” at imac02.local, not only the first.
+    public static func holders(_ renames: [Rename], currentNames: [UUID: String] = [:]) -> [UUID: [Machine]] {
+        var givenUp: [String: [Machine]] = [:]
         for r in renames {
             let new = r.localHostName.lowercased()
-            for name in current(r.machine, read: currentNames[r.machine.id]) where name != new && givenUp[name] == nil {
-                givenUp[name] = r.machine
+            for name in names(of: r.machine, read: currentNames[r.machine.id]) where name != new {
+                givenUp[name, default: []].append(r.machine)
             }
         }
-        var held: [UUID: Machine] = [:]
+        var holders: [UUID: [Machine]] = [:]
         for r in renames {
-            if let holder = givenUp[r.localHostName.lowercased()], holder.id != r.machine.id {
-                held[r.machine.id] = holder
-            }
+            let others = givenUp[r.localHostName.lowercased(), default: []].filter { $0.id != r.machine.id }
+            if !others.isEmpty { holders[r.machine.id] = others }
         }
-        return held
+        return holders
     }
 
     /// How the Macs `namesStillHeld` reported can be renamed after all: one Mac per run, with the list updated after
@@ -122,7 +131,8 @@ public enum RenamePlan {
     }
 
     /// The order for `machine`: along the Macs that still have the name the previous one gets (`stillHeld`, from
-    /// `namesStillHeld`) to a Mac whose new name is free, or back to a Mac met before.
+    /// `namesStillHeld`) to a Mac whose new name is free, or back to a Mac met before. One Mac per name;
+    /// `steps(for:holders:)` waits for every Mac that still has it.
     public static func order(of machine: Machine, stillHeld: [UUID: Machine]) -> Order {
         var chain = [machine]
         while let holder = stillHeld[chain[chain.count - 1].id] {
@@ -132,7 +142,7 @@ public enum RenamePlan {
         return .steps(chain.reversed())
     }
 
-    /// One run of the order `steps(for:stillHeld:)` gives: one Mac renamed, with the list updated after it.
+    /// One run of the order `steps(for:holders:)` gives: one Mac renamed, with the list updated after it.
     public enum Step: Equatable, Sendable {
         /// The Mac gets its new name.
         case rename(Machine)
@@ -153,21 +163,41 @@ public enum RenamePlan {
     /// go round start with a temporary name for the first Mac of the loop (the Mac asked about when it is one of
     /// them); that frees the name of the Mac before it in the loop, so the others follow backwards round the loop and
     /// the first Mac gets its new name last. A Mac whose chain runs into a loop it is not part of comes after the
-    /// loop, with the Macs between them.
+    /// loop, with the Macs between them. `stillHeld`: one Mac per name, as in cmcrctl, where a renamed Mac gives up
+    /// only its `.local` address.
     public static func steps(for machine: Machine, stillHeld: [UUID: Machine]) -> [Step] {
-        switch order(of: machine, stillHeld: stillHeld) {
-        case .steps(let chain):
-            return chain.map(Step.rename)
-        case .loop(let loop):
-            var before: [Machine] = []
-            var m = machine
-            while !loop.contains(where: { $0.id == m.id }), let holder = stillHeld[m.id] {
-                before.append(m)
-                m = holder
+        steps(for: machine, holders: stillHeld.mapValues { [$0] })
+    }
+
+    /// The whole order for `machine` when a new name may still be held by several Macs (`holders`, AUDIT REV-69): each
+    /// Mac comes after every Mac that still has its new name, as in `steps(for:stillHeld:)`. A Mac met again on the
+    /// way gets a temporary name there – the names go round – and its new name after the Macs it waits for; where
+    /// names go round in two loops, two Macs may get temporary names.
+    public static func steps(for machine: Machine, holders: [UUID: [Machine]]) -> [Step] {
+        walk(from: machine, holders: holders).steps
+    }
+
+    /// The steps for `machine` and the loops met on the way, each from the Mac that gets the temporary name.
+    private static func walk(from machine: Machine, holders: [UUID: [Machine]]) -> (steps: [Step], loops: [[Machine]]) {
+        var steps: [Step] = [], loops: [[Machine]] = [], path: [Machine] = []
+        var done: Set<UUID> = [], temporary: Set<UUID> = []
+        func visit(_ m: Machine) {
+            if done.contains(m.id) { return }
+            if let start = path.firstIndex(where: { $0.id == m.id }) {
+                // The Macs on the way from m wait for one another back to m – the names go round: a temporary name
+                // frees m's names now, its new name comes after the Macs it waits for.
+                loops.append(Array(path[start...]))
+                if temporary.insert(m.id).inserted { steps.append(.temporary(m)) }
+                return
             }
-            return [.temporary(loop[0])] + loop.dropFirst().reversed().map(Step.rename) + [.target(loop[0])]
-                + before.reversed().map(Step.rename)
+            path.append(m)
+            for holder in holders[m.id] ?? [] { visit(holder) }
+            path.removeLast()
+            done.insert(m.id)
+            steps.append(temporary.contains(m.id) ? .target(m) : .rename(m))
         }
+        visit(machine)
+        return (steps, loops)
     }
 
     /// Where the advice is read: each step is a run of `cmcrctl rename KOMP`, or the app's „Zmień nazwy komputerów”
@@ -177,7 +207,7 @@ public enum RenamePlan {
     }
 
     /// How to rename `machine`, whose new name another Mac renamed in the same run still has – advice that works when
-    /// followed (AUDIT REV-54, REV-61): the whole order of `steps(for:stillHeld:)`, one Mac per run, with the list
+    /// followed (AUDIT REV-54, REV-61): the whole order of `steps(for:holders:)`, one Mac per run, with the list
     /// updated after each – otherwise the list keeps the old address of the Mac renamed before, and the next step is
     /// refused as taken (AUDIT REV-55). cmcrctl names --update-list, and --name for the temporary name and, at the end,
     /// for the new name (the list has the temporary name by then); the app selects one Mac at a time and updates the
@@ -189,11 +219,20 @@ public enum RenamePlan {
     /// `newNames`: the name each Mac gets (default: its name on the list, as in cmcrctl). `rejected`: the Macs of the
     /// same run whose new names are wrong whatever the order (`rejections`) – an order through one of them would stop
     /// at it, or leave a Mac of a swap with the temporary name, so the advice names them instead (AUDIT REV-64).
+    /// `stillHeld`: one Mac per name, as in cmcrctl (`steps(for:stillHeld:)`).
     public static func advice(for machine: Machine, stillHeld: [UUID: Machine], newNames: [UUID: String] = [:],
                               rejected: [UUID: Rejection] = [:], in tool: Tool) -> String {
+        advice(for: machine, holders: stillHeld.mapValues { [$0] }, newNames: newNames, rejected: rejected, in: tool)
+    }
+
+    /// The advice for `machine` when a new name may still be held by several Macs (`holders`, AUDIT REV-69) – the app,
+    /// where the name on the list and the name read count too. Where two Macs get temporary names, the second gets
+    /// „inną nazwę tymczasową” and each new name says which Mac had the temporary name („(wcześniej imac03)”).
+    public static func advice(for machine: Machine, holders: [UUID: [Machine]], newNames: [UUID: String] = [:],
+                              rejected: [UUID: Rejection] = [:], in tool: Tool) -> String {
+        let (steps, loops) = walk(from: machine, holders: holders)
         var seen: Set<UUID> = []
-        let wrong = steps(for: machine, stillHeld: stillHeld).map(\.machine)
-            .filter { rejected[$0.id] != nil && seen.insert($0.id).inserted }
+        let wrong = steps.map(\.machine).filter { rejected[$0.id] != nil && seen.insert($0.id).inserted }
         if !wrong.isEmpty {
             let names = wrong.map { "\($0.name) (\(rejected[$0.id]?.reason ?? ""))" }
             return "Najpierw popraw \(wrong.count == 1 ? "nazwę" : "nazwy") \(andList(names)) – dopiero wtedy da się podać "
@@ -207,34 +246,36 @@ public enum RenamePlan {
             guard tool == .app, let new = newNames[m.id] else { return m.name }
             return "\(m.name) na \(new)"
         }
-        let loop: [Machine]
-        switch order(of: machine, stillHeld: stillHeld) {
-        case .steps(let chain):
-            return (chain.count > 2 ? "Zmień nazwy po kolei" : "Zmień nazwy w dwóch krokach")
-                + ", \(eachRun): najpierw " + chain.map(renamed).joined(separator: ", potem ") + "."
-        case .loop(let l) where tool == .cmcrctl && l.count == 2 && l[0].id == machine.id:
+        if loops.isEmpty {
+            return (steps.count > 2 ? "Zmień nazwy po kolei" : "Zmień nazwy w dwóch krokach")
+                + ", \(eachRun): najpierw " + steps.map { renamed($0.machine) }.joined(separator: ", potem ") + "."
+        }
+        if tool == .cmcrctl, steps.count == 3, steps[0] == .temporary(machine) {
             // A swap: either Mac can go first. The app gives the steps with the names typed in the sheet, as below.
             return "Przy zamianie nazw nadaj najpierw jednemu z nich nazwę tymczasową\(byName), potem zmień nazwę drugiego, "
                 + "a na końcu nadaj pierwszemu docelową nazwę\(byName), \(eachRun)."
-        case .loop(let l):
-            loop = l
         }
-        let names = loop.map(\.name)
+        // The Macs of the loops, each once, in the order met.
+        var inLoops: [Machine] = []
+        for m in loops.joined() where !inLoops.contains(where: { $0.id == m.id }) { inLoops.append(m) }
+        let severalTemporary = steps.filter { if case .temporary = $0 { true } else { false } }.count > 1
         var phrases: [String] = []
-        var afterRename = false
-        for step in steps(for: machine, stillHeld: stillHeld) {
+        var afterRename = false, temporaryGiven = false
+        for step in steps {
             switch step {
             case .temporary(let m):
-                phrases.append("nadaj \(m.name) nazwę tymczasową\(byName)")
+                phrases.append("nadaj \(m.name) \(temporaryGiven ? "inną " : "")nazwę tymczasową\(byName)")
+                temporaryGiven = true
             case .rename(let m):
                 phrases.append(afterRename ? renamed(m) : "zmień nazwę \(renamed(m))")
             case .target(let m):
-                phrases.append("nadaj komputerowi z nazwą tymczasową docelową nazwę \(newNames[m.id] ?? m.name)\(byName)")
+                phrases.append("nadaj komputerowi z nazwą tymczasową\(severalTemporary ? " (wcześniej \(m.name))" : "") "
+                               + "docelową nazwę \(newNames[m.id] ?? m.name)\(byName)")
             }
             if case .rename = step { afterRename = true } else { afterRename = false }
         }
-        return "Komputery \(andList(names)) zamieniają się nazwami"
-            + (loop.count > 2 ? " w kółko" : "") + ". Zmień nazwy po kolei, \(eachRun): najpierw "
+        return "Komputery \(andList(inLoops.map(\.name))) zamieniają się nazwami"
+            + (loops.contains { $0.count > 2 } ? " w kółko" : "") + ". Zmień nazwy po kolei, \(eachRun): najpierw "
             + phrases.dropLast().joined(separator: ", potem ") + ", a na końcu \(phrases[phrases.count - 1])."
     }
 
@@ -243,11 +284,14 @@ public enum RenamePlan {
         items.count < 2 ? items.joined() : items.dropLast().joined(separator: ", ") + " i " + items[items.count - 1]
     }
 
-    /// The `.local` names (lowercased) a Mac has now: from its `.local` address and the LocalHostName read from it.
-    static func current(_ machine: Machine, read: String?) -> Set<String> {
+    /// The `.local` names (lowercased) a Mac has now: from its `.local` address, from its name on the list and from the
+    /// LocalHostName read from it.
+    static func names(of machine: Machine, read: String?) -> Set<String> {
         var names: Set<String> = []
         let address = machine.address.lowercased()
         if address.hasSuffix(".local") { names.insert(String(address.dropLast(".local".count))) }
+        let listed = ComputerNames.localHostName(from: machine.name).lowercased()
+        if !listed.isEmpty { names.insert(listed) }
         if let read = read?.lowercased(), !read.isEmpty { names.insert(read) }
         return names
     }
