@@ -477,6 +477,11 @@ struct ScreenTile: View {
 
     private var actions: ScreenActions { ScreenActions(model: model, center: center, openWindow: openWindow) }
 
+    /// The selection mark sits in the corner of the hover action bar and would cover (and take the clicks of) its first
+    /// button, „Powiększ”: while the pointer is on the tile the bar has the corner and the accent border still marks
+    /// the selection (AUDIT REV-29).
+    static func showsSelectionMark(isSelected: Bool, hovering: Bool) -> Bool { isSelected && !hovering }
+
     var body: some View {
         ScreenPicture(feed: feed)
             .overlay(alignment: .bottom) { if showLabels { labels } }
@@ -500,12 +505,14 @@ struct ScreenTile: View {
             }
             .overlay(alignment: .topLeading) {
                 // Selected tiles carry a mark, not only a coloured border (AUDIT UI-19).
-                if isSelected {
+                if Self.showsSelectionMark(isSelected: isSelected, hovering: hovering) {
                     Image(systemName: "checkmark.circle.fill")
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, Color.accentColor)
                         .font(.title3)
                         .padding(6)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
                         .accessibilityHidden(true)
                 }
             }

@@ -130,4 +130,12 @@ import Testing
         // With „Tylko zalecane” an empty run may have skipped optional ones: they stay.
         #expect(Self.checked.remaining(afterInstall: empty, recommendedOnly: true)?.titles == Self.checked.titles)
     }
+
+    // REV-29: the selection mark of a tile sits where the hover action bar shows its first button („Powiększ”): while
+    // the pointer is on the tile the bar has the corner (the accent border still marks the selection).
+    @Test func theSelectionMarkGivesWayToTheHoverButtons() {
+        #expect(ScreenTile.showsSelectionMark(isSelected: true, hovering: false))
+        #expect(!ScreenTile.showsSelectionMark(isSelected: true, hovering: true))
+        #expect(!ScreenTile.showsSelectionMark(isSelected: false, hovering: false))
+    }
 }
