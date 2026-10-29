@@ -64,7 +64,10 @@ enum ClassroomCLI {
             guard let kind = a[0], kind == "start" || kind == "end" else {
                 use("Użycie: cmcrctl lesson start|end KOMP [--no-wait]")
             }
-            return await lesson(start: kind == "start", hosts: ModuleHosts.changing(a[1], "lesson \(kind)"),
+            // Read before the hosts: a damaged file is reported before „Wykonać na wszystkich?” (AUDIT REV-46), as
+            // in lock, ask and schedule set.
+            let config = loadConfig()
+            return await lesson(start: kind == "start", config: config, hosts: ModuleHosts.changing(a[1], "lesson \(kind)"),
                                 wait: !a.has("--no-wait"), yes: a.yes, settings: settings, ssh: ssh)
 
         case "lock":
@@ -324,6 +327,9 @@ enum ClassroomCLI {
         var planned: [(host: Machine, name: String, localHostName: String)] = []
         var invalid = false
         let taken = Self.namesTaken(by: legacyCLI.hosts, renaming: Set(targets.map(\.id)))
+        let stillHeld = RenamePlan.namesStillHeld(targets.map {
+            RenamePlan.Rename(machine: $0, localHostName: ComputerNames.localHostName(from: a.value("--name") ?? $0.name))
+        })
         var seen: Set<String> = []
         for h in targets {
             let name = a.value("--name") ?? h.name
@@ -338,6 +344,18 @@ enum ClassroomCLI {
             if let owner = taken[lhn.lowercased()] {
                 Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma już \(owner) z listy komputerów "
                             + "(dwa komputery nie mogą mieć tego samego adresu w sieci).")
+                invalid = true
+                continue
+            }
+            // The address of another Mac renamed here, which gives it up only with its own rename – a renumbering or a
+            // swap: the same Bonjour conflict (AUDIT REV-52).
+            if let other = stillHeld[h.id] {
+                let swap = stillHeld[other.id]?.id == h.id
+                Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma teraz \(other.name) (\(other.address)), którego "
+                            + "nazwa też jest zmieniana (macOS nadałby wtedy jednemu z nich inny adres). "
+                            + (swap ? "Przy zamianie nazw nadaj najpierw jednemu z nich nazwę tymczasową (--name), potem zmień "
+                               + "nazwy po kolei."
+                               : "Zmień nazwy w dwóch krokach: najpierw \(other.name), potem \(h.name)."))
                 invalid = true
                 continue
             }
@@ -391,9 +409,8 @@ enum ClassroomCLI {
         return status
     }
 
-    static func lesson(start: Bool, hosts: [Machine], wait: Bool, yes: Bool, settings: AppSettings,
-                       ssh: SSHSettings) async -> Int32 {
-        let config = loadConfig()
+    static func lesson(start: Bool, config: ClassroomConfig, hosts: [Machine], wait: Bool, yes: Bool,
+                       settings: AppSettings, ssh: SSHSettings) async -> Int32 {
         let plan = start ? LessonPlan.start(config.start, settings: settings) : LessonPlan.end(config.end, settings: settings)
         guard !plan.steps.isEmpty else {
             moduleUsageError("lesson", "Scenariusz nie ma żadnych kroków (ustaw je w aplikacji: Zajęcia).")
@@ -415,15 +432,19 @@ enum ClassroomCLI {
             case .failure(let problem):
                 fail("✘ Materiały: \(problem.message) Nic nie zostało uruchomione.")
             case .success(let items) where !items.isEmpty:
-                switch await Payload.make(items) {
+                // A job of its own: Ctrl-C stops the packing and removes the archive (AUDIT REV-44).
+                switch await Interruption.shared.pack(items) {
                 case .success(let url): payload = url
+                case .failure where Interruption.shared.isInterrupted:
+                    Console.err("✘ Materiały: przerwano pakowanie plików. Nic nie zostało uruchomione.")
+                    return ExitCode.failure
                 case .failure(let error): fail("✘ Materiały: nie udało się ich spakować (\(error.localizedDescription)). Nic nie zostało uruchomione.")
                 }
             case .success:
                 Console.out("Folder z materiałami jest pusty – krok „Wyślij materiały” zostanie pominięty.")
             }
         }
-        defer { if let payload { try? FileManager.default.removeItem(at: payload) } }
+        defer { if let payload { Interruption.shared.discard(payload) } }
         logAction(hosts)
 
         // As in the app: Wake-on-LAN for the same MACs (status-cache.json), every Mac at once – packets go out to all

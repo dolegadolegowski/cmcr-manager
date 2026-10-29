@@ -22,16 +22,20 @@ import Foundation
 /// The handlers are installed with the first job: before that (questions, read-only commands) Ctrl-C works as
 /// it always did, and so it does while no job runs (e.g. the pause between the steps of a lesson). A second Ctrl-C
 /// ends cmcrctl at once.
+///
+/// `install` and `lesson start` pack their files before anything runs on the iMacs: that packing is a job without a
+/// Mac (`pack`, AUDIT REV-44), so Ctrl-C stops tar and its archive is removed, and nothing is started afterwards.
 final class Interruption: @unchecked Sendable {
     static let shared = Interruption()
 
     /// One running job: everything it starts for its Mac takes `handle`.
     private final class Job: @unchecked Sendable {
         let handle = ProcessHandle()
-        let host: Machine
+        /// nil: local work before anything runs on the iMacs (`pack`).
+        let host: Machine?
         let order: Int
 
-        init(host: Machine, order: Int) {
+        init(host: Machine?, order: Int) {
             self.host = host
             self.order = order
         }
@@ -43,6 +47,8 @@ final class Interruption: @unchecked Sendable {
     private var active: [ObjectIdentifier: Job] = [:]
     private var started = 0
     private var signalNumber: Int32?
+    /// Archives made by `pack` and not yet discarded: removed also when cmcrctl ends at once.
+    private var archives: Set<URL> = []
 
     /// The signal that interrupted cmcrctl; nil while it was not interrupted.
     var interruptedBy: Int32? { lock.withLock { signalNumber } }
@@ -62,6 +68,35 @@ final class Interruption: @unchecked Sendable {
         await job.handle.cancellationFinished()
         lock.withLock { _ = active.removeValue(forKey: ObjectIdentifier(job)) }
         return value
+    }
+
+    /// Packs `items` (Payload.make) as a job without a Mac (AUDIT REV-44). A large app or materials folder takes
+    /// minutes, and Ctrl-C used to end cmcrctl at once while tar – in a process group of its own, out of the terminal's
+    /// reach – went on writing an archive nobody removed. Now Ctrl-C stops tar and Payload.make removes the unfinished
+    /// archive; an archive finished just as Ctrl-C came is removed here. After an interruption the result is a failure
+    /// and the caller starts nothing on the iMacs (it returns, main.swift ends with 130). The archive stays registered
+    /// until `discard`, so a later immediate end (a second Ctrl-C, Ctrl-C between jobs) removes it too.
+    func pack(_ items: [URL]) async -> Result<URL, Error> {
+        let job = begin(nil)
+        let result = await Payload.make(items, handle: job.handle)
+        let interrupted: Bool = lock.withLock {
+            active.removeValue(forKey: ObjectIdentifier(job))
+            if signalNumber == nil, case .success(let url) = result { archives.insert(url) }
+            return signalNumber != nil
+        }
+        guard interrupted else { return result }
+        if case .success(let url) = result { try? FileManager.default.removeItem(at: url) }
+        return .failure(PackingInterrupted())
+    }
+
+    /// Removes an archive made by `pack`.
+    func discard(_ archive: URL) {
+        lock.withLock { _ = archives.remove(archive) }
+        try? FileManager.default.removeItem(at: archive)
+    }
+
+    struct PackingInterrupted: LocalizedError {
+        var errorDescription: String? { "Przerwano pakowanie plików." }
     }
 
     /// Runs `script` on `host` as a job (see `job`).
@@ -98,7 +133,7 @@ final class Interruption: @unchecked Sendable {
 
     /// Registers a job – in the same lock as `received` reads the jobs, so none is missed – and installs the handlers
     /// with the first one. Interrupted already: the job is not registered and its handle starts cancelled.
-    private func begin(_ host: Machine) -> Job {
+    private func begin(_ host: Machine?) -> Job {
         let (job, interrupted): (Job, Bool) = lock.withLock {
             if !installed {
                 installed = true
@@ -120,15 +155,22 @@ final class Interruption: @unchecked Sendable {
     }
 
     private func received(_ sig: Int32) {
-        let jobs: [Job]? = lock.withLock {
-            if signalNumber != nil { return nil }
+        let (jobs, packed): ([Job]?, Set<URL>) = lock.withLock {
+            if signalNumber != nil { return (nil, self.archives) }
             signalNumber = sig
-            return active.values.sorted { $0.order < $1.order }
+            return (active.values.sorted { $0.order < $1.order }, self.archives)
         }
-        guard let jobs else { exit(128 + sig) }   // the second Ctrl-C
-        guard !jobs.isEmpty else { exit(128 + sig) }   // nothing runs on the iMacs: ends at once, as before
-        Console.err("\n▸ Przerywanie – zatrzymywanie polecenia na komputerach (\(jobs.map(\.host.name).joined(separator: ", ")))… "
-                    + "Ponowne Ctrl-C kończy od razu.")
+        // The second Ctrl-C, or nothing runs: ends at once, as before – without leaving the packed files behind.
+        guard let jobs, !jobs.isEmpty else {
+            packed.forEach { unlink($0.path) }
+            exit(128 + sig)
+        }
+        let hosts = jobs.compactMap(\.host?.name)
+        Console.err(hosts.isEmpty
+                    ? "\n▸ Przerywanie – zatrzymywanie pakowania plików (na komputerach nic jeszcze nie uruchomiono)… "
+                        + "Ponowne Ctrl-C kończy od razu."
+                    : "\n▸ Przerywanie – zatrzymywanie polecenia na komputerach (\(hosts.joined(separator: ", ")))… "
+                        + "Ponowne Ctrl-C kończy od razu.")
         jobs.forEach { $0.handle.cancel() }
     }
 }
