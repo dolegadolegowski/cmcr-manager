@@ -80,4 +80,54 @@ import Testing
         #expect(some.contains("Na 1 komputerze aplikacja uzbroi jednorazowe odblokowanie dysku"), "\(some)")
         #expect(some.contains("Na 2 komputerach po ponownym uruchomieniu pojawi się ekran odblokowania dysku"), "\(some)")
     }
+
+    // REV-27: after a successful install only what Scripts.installUpdates installed („→ label”) leaves the list – a
+    // skipped new major macOS or optional update stays offered (and keeps the sidebar badge).
+    static let listed = """
+    Software Update Tool
+
+    Finding available software
+    Software Update found the following new or updated software:
+    * Label: macOS Tahoe 27.1-27B12
+    \tTitle: macOS Tahoe 27.1, Version: 27.1, Size: 1234567KiB, Recommended: YES, Action: restart,
+    * Label: Safari20.0-20.0
+    \tTitle: Safari, Version: 20.0, Size: 123456KiB, Recommended: YES,
+    * Label: Narzędzie-1.0
+    \tTitle: Narzędzie dodatkowe, Version: 1.0, Size: 12KiB,
+    """
+    static let checked = UpdateInfo(check: .available(Parsers.softwareUpdates(listed)), raw: listed)
+    static let skippedMajor = "↷ Pominięto przejście na nową wersję systemu: macOS Tahoe 27.1 (wymaga zaznaczenia „Pozwól na nową wersję macOS”)."
+
+    @Test func aSkippedMajorUpgradeStaysOfferedAfterTheInstall() throws {
+        let output = "→ softwareupdate --list\n\(Self.skippedMajor)\n→ Safari20.0-20.0\n→ Narzędzie-1.0\nInstalling…\nDone.\n"
+        let left = try #require(Self.checked.remaining(afterInstall: output, recommendedOnly: false))
+        #expect(left.titles == ["macOS Tahoe 27.1 (wymaga restartu)"])
+        #expect(left.checkedAt == Self.checked.checkedAt)
+        // The next install (with „Pozwól na nową wersję macOS”) takes the rest; Safari does not come back.
+        #expect(left.remaining(afterInstall: "→ softwareupdate --list\n→ macOS Tahoe 27.1-27B12\nDone.\n",
+                               recommendedOnly: false) == nil)
+    }
+
+    @Test func nothingInstalledLeavesTheListAsItWas() throws {
+        let raw = "* Label: macOS Tahoe 27.1-27B12\n\tTitle: macOS Tahoe 27.1, Version: 27.1, Size: 1KiB, Recommended: YES,\n"
+        let info = UpdateInfo(check: .available(Parsers.softwareUpdates(raw)), raw: raw)
+        let output = "→ softwareupdate --list\n\(Self.skippedMajor)\n✔ Brak aktualizacji do zainstalowania.\n"
+        #expect(try #require(info.remaining(afterInstall: output, recommendedOnly: false)).titles == ["macOS Tahoe 27.1"])
+    }
+
+    @Test func recommendedOnlyKeepsTheOptionalUpdates() throws {
+        let output = "→ softwareupdate --list\n→ macOS Tahoe 27.1-27B12\n→ Safari20.0-20.0\nDone.\n"
+        let left = try #require(Self.checked.remaining(afterInstall: output, recommendedOnly: true))
+        #expect(left.titles == ["Narzędzie dodatkowe"])
+    }
+
+    @Test func everythingInstalledOrNothingPendingClearsTheList() {
+        let all = "→ softwareupdate --list\n→ macOS Tahoe 27.1-27B12\n→ Safari20.0-20.0\n→ Narzędzie-1.0\nDone.\n"
+        #expect(Self.checked.remaining(afterInstall: all, recommendedOnly: false) == nil)
+        // Installed in the meantime by the Mac itself: the list at install time was empty and nothing was skipped.
+        let empty = "→ softwareupdate --list\n✔ Brak aktualizacji do zainstalowania.\n"
+        #expect(Self.checked.remaining(afterInstall: empty, recommendedOnly: false) == nil)
+        // With „Tylko zalecane” an empty run may have skipped optional ones: they stay.
+        #expect(Self.checked.remaining(afterInstall: empty, recommendedOnly: true)?.titles == Self.checked.titles)
+    }
 }
