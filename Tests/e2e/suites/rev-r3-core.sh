@@ -52,4 +52,45 @@ expect "logout =imac3: podpowiedź wklejona do zsh daje te same słowa" "$pasted
 expect_not "logout =imac3: zsh nie szuka polecenia imac3" "$pasted" "imac3 not found"
 rm -f "$WORK/fake-ae-denied"
 
+section "REV-48: właściciel podany numerem – konto o tym numerze albo właściciel folderu docelowego"
+RV3_UID=59999
+while id -u "$RV3_UID" >/dev/null 2>&1; do RV3_UID=$((RV3_UID + 1)); done
+RV3_DEST="$WORK/remote/rev-r3-push"
+mkdir -p "$RV3/send" "$RV3_DEST"
+echo rev-r3 > "$RV3/send/rev-r3-plik.txt"
+# A typo in „Inny…” (5011 instead of 501): no account has the number and the folder is not that uid's.
+clear_fakelog
+out="$(ctlpw _builder push 1 "$RV3_DEST" "$RV3_UID:staff" "" "$RV3/send/rev-r3-plik.txt" --root)"; code=$?
+expect_code "push: numer bez konta, folder innego konta – kod 2" "$code" 2 "$out"
+expect "push: numer bez konta – komunikat" "$out" "✘ Konto „$RV3_UID” nie istnieje na tym komputerze – nic nie wysłano"
+[ ! -e "$RV3_DEST/rev-r3-plik.txt" ] && pass "push: numer bez konta – nic nie zapisano" \
+  || fail "push: numer bez konta – plik zapisany" "$(ls -la "$RV3_DEST")"
+expect_not "push: numer bez konta – bez chown na ten numer" "$(fakelog)" "$RV3_UID:staff"
+# Above the largest uid chown takes: refused before a missing folder on the way is created.
+for n in 99999999999 2147483648; do
+  out="$(ctlpw _builder push 1 "$RV3_DEST/nowy/glebiej" "$n:staff" "" "$RV3/send/rev-r3-plik.txt" --root)"; code=$?
+  expect_code "push: właściciel $n – kod 2" "$code" 2 "$out"
+  expect "push: właściciel $n – komunikat" "$out" "✘ Konto „$n” nie istnieje na tym komputerze"
+  [ ! -e "$RV3_DEST/nowy" ] && pass "push: właściciel $n – nie utworzono folderu" \
+    || { fail "push: właściciel $n – utworzono folder" "$(ls -laR "$RV3_DEST")"; rm -rf "$RV3_DEST/nowy"; }
+done
+# The folder of a deleted account (the remote browser sends its owner as `stat %Su` shows it, a bare uid): accepted
+# for the folder itself and for a new folder inside it (fakes.sh: stat.uid), also with leading zeros.
+printf '%s %s\n' "$RV3_UID" "$(cd "$RV3_DEST" && pwd -P)" > "$WORK/stat.uid"
+clear_fakelog
+out="$(ctlpw _builder push 1 "$RV3_DEST" "$RV3_UID:staff" "" "$RV3/send/rev-r3-plik.txt" --root)"; code=$?
+expect_code "push: folder usuniętego konta, jego numer – kod 0" "$code" 0 "$out"
+[ -f "$RV3_DEST/rev-r3-plik.txt" ] && pass "push: folder usuniętego konta – plik zapisany" \
+  || fail "push: folder usuniętego konta – brak pliku" "$out"
+expect "push: folder usuniętego konta – chown dostał numer" "$(fakelog)" "chown -R $RV3_UID:staff"
+out="$(ctlpw _builder push 1 "$RV3_DEST/nowy" "0$RV3_UID:staff" "" "$RV3/send/rev-r3-plik.txt" --root)"; code=$?
+expect_code "push: nowy folder w folderze usuniętego konta (numer z zerem na początku) – kod 0" "$code" 0 "$out"
+[ -f "$RV3_DEST/nowy/rev-r3-plik.txt" ] && pass "push: nowy folder w folderze usuniętego konta – plik zapisany" \
+  || fail "push: nowy folder w folderze usuniętego konta – brak pliku" "$out"
+rm -f "$WORK/stat.uid"
+# A number of an existing account works for any folder, as before.
+out="$(ctlpw _builder push 1 "$RV3_DEST" "$(id -u):staff" "" "$RV3/send/rev-r3-plik.txt" --root)"; code=$?
+expect_code "push: numer istniejącego konta – kod 0" "$code" 0 "$out"
+rm -rf "$RV3_DEST"
+
 rm -rf "$RV3"

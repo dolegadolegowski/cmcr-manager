@@ -328,6 +328,15 @@ stat() {
      && grep -qxF -- "${3:-}" "$CMCR_E2E_WORK/restricted.paths"; then
     echo restricted; return 0
   fi
+  # $CMCR_E2E_WORK/stat.uid ("uid folder" per line, the folder's physical path): `stat -f %u` of that folder answers
+  # with the uid, like a folder left by a deleted account (AUDIT REV-48).
+  if [ $# = 3 ] && [ "$1 $2" = "-f %u" ] && [ -s "${CMCR_E2E_WORK:-/nonexistent}/stat.uid" ]; then
+    local _e2e_p _e2e_u
+    _e2e_p="$(cd -P -- "$3" 2>/dev/null && /bin/pwd -P)"
+    _e2e_u="$(awk -v p="$_e2e_p" 'p != "" { u = $1; sub(/^[^ ]+ /, ""); if ($0 == p) { print u; exit } }' \
+      "$CMCR_E2E_WORK/stat.uid")"
+    if [ -n "$_e2e_u" ]; then echo "$_e2e_u"; return 0; fi
+  fi
   command stat "$@"
 }
 # fake-no-volume-owner: the current user is listed as a crypto user that is not a volume owner.

@@ -12,8 +12,11 @@ RV2_UID=59999
 while id -u "$RV2_UID" >/dev/null 2>&1; do RV2_UID=$((RV2_UID + 1)); done
 mkdir -p "$RV2/send" "$WORK/remote/rev-r2-push"
 echo rev-r2 > "$RV2/send/rev-r2-plik.txt"
+# The folder belongs to that uid (fakes.sh: stat.uid): only then is a uid without an account accepted (AUDIT REV-48).
+printf '%s %s\n' "$RV2_UID" "$(cd "$WORK/remote/rev-r2-push" && pwd -P)" > "$WORK/stat.uid"
 clear_fakelog
 out="$(ctlpw _builder push 1 "$WORK/remote/rev-r2-push" "$RV2_UID:staff" "" "$RV2/send/rev-r2-plik.txt" --root)"; code=$?
+rm -f "$WORK/stat.uid"
 expect_code "push: właściciel $RV2_UID:staff – kod 0" "$code" 0 "$out"
 expect_not "push: numer konta nie jest odrzucany jako nieistniejące konto" "$out" "nie istnieje"
 [ -f "$WORK/remote/rev-r2-push/rev-r2-plik.txt" ] && pass "push: numer konta – plik zapisany" \
