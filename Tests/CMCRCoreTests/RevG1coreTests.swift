@@ -181,3 +181,93 @@ struct RevG1HostsFirstStartTests {
         #expect(ConfigStore.hostsChangedOutside(keeping: mine, at: url) == [first, added])
     }
 }
+
+// MARK: - REV-05: hosts.json damaged outside the app while it runs
+
+/// A host list as text: the JSON array of `hosts`, then `tail` in place of its closing bracket.
+private func g1HostsText(_ hosts: [Machine], tail: String) throws -> Data {
+    let text = try #require(String(data: JSONEncoder().encode(hosts), encoding: .utf8))
+    return Data((String(text.dropLast()) + tail).utf8)
+}
+
+struct RevG1HostsDamagedOutsideTests {
+    /// AUDIT REV-05: a hosts.json edited by hand while the app runs and left invalid (a missing comma; Foundation
+    /// accepts a trailing one) was replaced by the app's next save with no word – the teacher's edit survived only in a
+    /// .bak nothing pointed to.
+    @Test func aDamagedListWrittenOutsideIsReplacedOnlyWithACopyAndAWarning() throws {
+        let dir = try g1TemporaryDirectory("hosts")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("hosts.json")
+        let start = Array(Machine.generate().prefix(3))
+        #expect(ConfigStore.syncHosts(start, at: url).problem == nil)
+        let broken = try g1HostsText(start, tail: #" {"name":"imac16","address":"imac16.local","user":"imac16"}]"#)
+        try broken.write(to: url)
+        #expect(ConfigStore.hostsChangedOutside(keeping: start, at: url) == nil)
+
+        var mine = start
+        mine[0].macAddress = "aa:bb:cc:dd:ee:01"                    // learned in the background
+        let saved = ConfigStore.syncHosts(mine, at: url)
+        #expect(saved.problem == nil)
+        #expect(saved.hosts == mine)
+        let backups = g1Backups(in: dir, of: "hosts.json")
+        #expect(backups.count == 1)
+        let backup = try #require(backups.first)
+        #expect(try Data(contentsOf: backup) == broken)
+        let issue = try #require(saved.issue, "zastąpienie uszkodzonej listy bez ostrzeżenia")
+        #expect(issue.contains(backup.lastPathComponent), "\(issue)")
+        #expect(issue.contains("zmieniona poza aplikacją"), "\(issue)")
+        #expect(try JSONDecoder().decode([Machine].self, from: Data(contentsOf: url)) == mine)
+        // Reported once: the next save finds the list it wrote.
+        #expect(ConfigStore.syncHosts(mine, at: url).issue == nil)
+    }
+
+    /// The valid entries of a partly damaged list are taken over; a damaged entry looks the same as a removed one, so
+    /// the entries missing from it stay.
+    @Test func validEntriesOfAPartlyDamagedListAreTakenOverButNothingIsRemoved() throws {
+        let dir = try g1TemporaryDirectory("hosts")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("hosts.json")
+        let start = Array(Machine.generate().prefix(3))
+        #expect(ConfigStore.syncHosts(start, at: url).problem == nil)
+        var changed = start[0]
+        changed.notes = "przy oknie"
+        let added = Machine(name: "imac16", address: "imac16.local", user: "imac16")
+        // imac02 gets a port that is not a number, imac03 is gone.
+        let damaged = try g1HostsText([changed, added],
+                                      tail: #",{"id":"\#(start[1].id.uuidString)","address":"imac02.local","port":"22x"}]"#)
+        try damaged.write(to: url)
+        let saved = ConfigStore.syncHosts(start, at: url)
+        #expect(saved.problem == nil)
+        #expect(saved.hosts == [changed, added, start[1], start[2]])
+        let issue = try #require(saved.issue)
+        #expect(issue.contains("częściowo"), "\(issue)")
+        #expect(g1Backups(in: dir, of: "hosts.json").count == 1)
+        #expect(try JSONDecoder().decode([Machine].self, from: Data(contentsOf: url)) == saved.hosts)
+    }
+
+    /// Without a copy of the damaged list it is not replaced, and the save says why.
+    @Test func withoutACopyADamagedListWrittenOutsideIsNotReplaced() throws {
+        let dir = try g1TemporaryDirectory("hosts")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("hosts.json")
+        let start = Array(Machine.generate().prefix(3))
+        #expect(ConfigStore.syncHosts(start, at: url).problem == nil)
+        let broken = try g1HostsText(start, tail: #" {"address":"imac16.local"}]"#)
+        try broken.write(to: url)
+        // Every name a copy could get in the next seconds is taken.
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        let now = Date()
+        for second in -1...10 {
+            let stamp = f.string(from: now.addingTimeInterval(TimeInterval(second)))
+            for n in 0..<100 {
+                let name = "hosts.json.\(stamp)\(n == 0 ? "" : "-\(n)").bak"
+                FileManager.default.createFile(atPath: dir.appendingPathComponent(name).path, contents: Data())
+            }
+        }
+        let saved = ConfigStore.syncHosts(start, at: url)
+        #expect(saved.problem?.contains("kopii") == true, "\(saved.problem ?? "-")")
+        #expect(try Data(contentsOf: url) == broken)
+    }
+}

@@ -61,13 +61,15 @@ public enum ConfigStore {
     }
 
     /// Saves the host list without undoing what another program (cmcrctl) wrote since this one last read or saved
-    /// it (AUDIT KON-04): such changes are merged in (`Machine.merge`). Returns the list as saved.
-    public static func syncHosts(_ hosts: [Machine]) -> (hosts: [Machine], problem: String?) {
+    /// it (AUDIT KON-04): such changes are merged in (`Machine.merge`). Returns the list as saved, why it could not be
+    /// saved (`problem`) and what the user must be told although it was saved (`issue`, see `syncHosts(_:at:)`).
+    public static func syncHosts(_ hosts: [Machine]) -> (hosts: [Machine], problem: String?, issue: String?) {
         syncHosts(hosts, at: hostsURL)
     }
 
     /// The list as written by another program since it was last read or saved here, merged with `current`;
-    /// nil when the file did not change (or cannot be read – a damaged file is never taken over).
+    /// nil when the file did not change (or cannot be read – a damaged file is dealt with by the next save, which keeps
+    /// it as .bak and reports it, see `syncHosts(_:at:)`).
     public static func hostsChangedOutside(keeping current: [Machine]) -> [Machine]? {
         hostsChangedOutside(keeping: current, at: hostsURL)
     }
@@ -88,8 +90,8 @@ public enum ConfigStore {
 
     private enum OutsideChange {
         case none
-        /// Changed, but not readable as a host list.
-        case unreadable(Data)
+        /// Changed, but not readable as a host list: the list it was based on and the file's bytes.
+        case unreadable(base: [Machine], data: Data)
         /// The other program's list, the list it was based on and the file's bytes.
         case changed(base: [Machine], theirs: [Machine], data: Data)
     }
@@ -97,28 +99,48 @@ public enum ConfigStore {
     private static func outsideChange(at url: URL) -> OutsideChange {
         guard let last = syncedHosts.withValue({ $0[url.path] }),
               let disk = try? Data(contentsOf: url), disk != last.data else { return .none }
-        guard let theirs = try? JSONDecoder().decode([Machine].self, from: disk) else { return .unreadable(disk) }
+        guard let theirs = try? JSONDecoder().decode([Machine].self, from: disk) else {
+            return .unreadable(base: last.hosts, data: disk)
+        }
         return .changed(base: last.hosts, theirs: Machine.withUniqueIDs(theirs).hosts, data: disk)
     }
 
-    static func syncHosts(_ mine: [Machine], at url: URL) -> (hosts: [Machine], problem: String?) {
-        if loadState.withValue({ $0.protected.contains(url.path) }) { return (mine, nil) }
+    static func syncHosts(_ mine: [Machine], at url: URL) -> (hosts: [Machine], problem: String?, issue: String?) {
+        if loadState.withValue({ $0.protected.contains(url.path) }) { return (mine, nil, nil) }
+        var issue: String?
         var hosts = mine
         switch outsideChange(at: url) {
         case .changed(let base, let theirs, _):
             hosts = Machine.merge(base: base, mine: mine, theirs: theirs)
-        case .unreadable(let disk):
-            // Changed outside and not readable as a list: keep that version next to the list before replacing it.
-            _ = backupCopy(of: url, data: disk)
+        case .unreadable(let base, let disk):
+            // Changed outside and not readable as a list (a hand edit with a mistake): it is replaced only once its
+            // original is kept next to it, and the user is told where (AUDIT REV-05). Its valid entries are taken over;
+            // a damaged entry looks the same as a removed one, so nothing missing from it is removed.
+            let name = url.lastPathComponent
+            guard let backup = backupCopy(of: url, data: disk) else {
+                return (mine, "Lista komputerów (\(name)) została zmieniona poza aplikacją i jest uszkodzona, a nie udało się "
+                        + "zachować jej kopii, więc nie została zastąpiona. Popraw plik \(url.path).", nil)
+            }
+            let readable = Machine.withUniqueIDs(
+                (try? JSONDecoder().decode([Lossy<Machine>].self, from: disk))?.compactMap(\.value) ?? []).hosts
+            if readable.isEmpty {
+                issue = "Lista komputerów (\(name)) zmieniona poza aplikacją była uszkodzona i nie dało się jej wczytać – "
+                    + "zastąpiono ją listą z aplikacji. \(backupNote(backup))"
+            } else {
+                let ids = Set(readable.map(\.id))
+                hosts = Machine.merge(base: base, mine: mine, theirs: readable + base.filter { !ids.contains($0.id) })
+                issue = "Lista komputerów (\(name)) zmieniona poza aplikacją była częściowo uszkodzona – przejęto z niej "
+                    + "poprawne wpisy, a wpisy uszkodzone lub usunięte w pliku zostały na liście bez zmian. \(backupNote(backup))"
+            }
         case .none:
             break
         }
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? enc.encode(hosts) else { return (hosts, "Nie można zapisać \(url.path)") }
-        if let problem = write(data, to: url) { return (hosts, problem) }
+        guard let data = try? enc.encode(hosts) else { return (hosts, "Nie można zapisać \(url.path)", nil) }
+        if let problem = write(data, to: url) { return (hosts, problem, nil) }
         remember(hosts, data: data, at: url)
-        return (hosts, nil)
+        return (hosts, nil, issue)
     }
 
     static func hostsChangedOutside(keeping current: [Machine], at url: URL) -> [Machine]? {
