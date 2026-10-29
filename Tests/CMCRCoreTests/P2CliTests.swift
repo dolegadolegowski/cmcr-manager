@@ -34,6 +34,25 @@ struct P2CliTests {
     }
 }
 
+struct P2CliActionLogTests {
+    /// AUDIT ZAD-14: one line per command in actions.log, in the app's format.
+    @Test func commandLineOnOneReadableLine() {
+        #expect(CommandLineLog.describe(["power", "restart", "all", "--yes"]) == "power restart all --yes")
+        #expect(CommandLineLog.describe(["exec", "shutdown -r now", "1-5", "--root"]) == "exec 'shutdown -r now' 1-5 --root")
+        #expect(CommandLineLog.describe(["exec", "echo 'a'\nrm -rf /tmp/x"]) == #"exec 'echo '\''a'\''\nrm -rf /tmp/x'"#)
+        #expect(CommandLineLog.describe(["message", ""]) == "message ''")
+        #expect(CommandLineLog.describe([String(repeating: "x", count: 200)], limit: 10) == "xxxxxxxxx…")
+        #expect(CommandLineLog.line("cmcrctl logout all", hosts: ["imac01", "imac02"]) == "cmcrctl logout all → imac01, imac02")
+    }
+
+    @Test func passwordsInURLsAreHidden() {
+        #expect(CommandLineLog.describe(["install-url", "https://jan:tajne@example.com/a.pkg", "all"])
+                == "install-url 'https://***@example.com/a.pkg' all")
+        #expect(CommandLineLog.describe(["install-url", "https://example.com/a@b.pkg"])
+                == "install-url https://example.com/a@b.pkg")
+    }
+}
+
 struct P2CliCollectTests {
     /// AUDIT PLI-19: cmcrctl collect reads private folders as root by itself, like the app's „Zbierz prace”.
     @Test func privateFoldersOfAnAccountNeedRoot() {

@@ -91,6 +91,7 @@ enum ClassroomCLI {
                 ?? min(3600, max(1, ClassroomStore.loadConfig().questionTimeoutMinutes) * 60)
             let list = ModuleHosts.changing(a[1], command)
             Console.err("Czas na odpowiedź: " + (seconds % 60 == 0 ? "\(seconds / 60) min" : "\(seconds) s"))
+            logAction(list)
             return await ask(question, buttons: buttons, seconds: seconds, hosts: list, ssh: ssh)
 
         case "schedule":
@@ -307,6 +308,7 @@ enum ClassroomCLI {
         var hosts = a.has("--update-list") ? legacyCLI.editableHosts() : []
         CLI.confirm("Zmienić nazwę komputera (ComputerName, LocalHostName, HostName) na: \(ModuleHosts.names(targets))? "
                     + "Adres .local każdego z nich zmieni się według nowej nazwy.", yes: a.yes)
+        logAction(targets)
         var status = ExitCode.success
         for p in planned {
             Console.out("\(p.host.name):")
@@ -359,6 +361,7 @@ enum ClassroomCLI {
             }
         }
         defer { if let payload { try? FileManager.default.removeItem(at: payload) } }
+        logAction(hosts)
 
         func host(_ h: Machine) -> LessonRunner.Host {
             LessonRunner.Host(machine: h, password: Keychain.password(for: h), macs: h.macAddress.isEmpty ? [] : [h.macAddress])

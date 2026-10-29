@@ -64,9 +64,11 @@ func eachHost(_ list: [Machine], _ a: ModuleArguments, header: Bool = true,
 }
 
 /// One remote script per host (see `eachHost`).
+/// Every caller changes something on the Macs: the run is recorded in the actions log first.
 func runEach(_ list: [Machine], _ a: ModuleArguments, ssh: SSHSettings, timeout: TimeInterval? = nil,
              _ script: @escaping @Sendable (Machine) -> RemoteScript) async -> Int32 {
-    await eachHost(list, a) { io in
+    logAction(list)
+    return await eachHost(list, a) { io in
         let r = await SSH.run(script(io.host), on: io.host, password: Keychain.password(for: io.host), settings: ssh,
                               timeout: timeout, onOutput: io.stream)
         return io.report(r)

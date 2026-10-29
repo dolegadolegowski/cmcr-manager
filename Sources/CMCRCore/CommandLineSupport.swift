@@ -13,6 +13,31 @@ public extension ConfigStore {
     }
 }
 
+/// actions.log entries of cmcrctl, in the app's format „<co> → imac01, imac02” (AppModel.runBatch).
+public enum CommandLineLog {
+    /// The command line as typed, on one line: control characters escaped, arguments with spaces or shell characters
+    /// quoted, long ones shortened, passwords in URLs (`https://konto:hasło@…`) hidden.
+    public static func describe(_ arguments: [String], limit: Int = 120) -> String {
+        arguments.map { argument in
+            var text = TerminalText.escape(hidingURLPassword(argument), keepBackslash: true)
+            if text.count > limit { text = String(text.prefix(max(1, limit - 1))) + "…" }
+            let plain = !text.isEmpty && !text.contains { " \t'\"\\$`;&|<>(){}*?[]#~".contains($0) }
+            return plain ? text : shQuote(text)
+        }.joined(separator: " ")
+    }
+
+    /// „cmcrctl exec … → imac01, imac02”.
+    public static func line(_ what: String, hosts: [String]) -> String {
+        "\(what) → \(hosts.joined(separator: ", "))"
+    }
+
+    static func hidingURLPassword(_ text: String) -> String {
+        guard let scheme = text.range(of: "://"),
+              let at = text[scheme.upperBound...].prefix(while: { $0 != "/" }).lastIndex(of: "@") else { return text }
+        return text[..<scheme.upperBound] + "***" + text[at...]
+    }
+}
+
 public extension RemotePaths {
     /// Whether collecting students' work from `path` needs root, as for the app's „Zbierz prace” sources
     /// (FilesState.useCollectSource): an account's private folders (Desktop, Documents…) cannot be read by the

@@ -54,6 +54,7 @@ enum ScriptCommands {
             moduleUsageError(a.command, "Brak pliku: \(u.path)")
         }
         let targets = ModuleHosts.changing(spec, a.command)
+        logAction(targets)
         let payload: URL
         switch await Payload.make(urls) {
         case .failure(let e): fail(e.localizedDescription)

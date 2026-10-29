@@ -406,6 +406,7 @@ struct CLI: Sendable {
                 Console.err("Uwaga: p" + what.dropFirst() + " Wykonywane jako root na: \(names(list)).")
             }
         }
+        logAction(list)
         return await runScript(on: list, passThrough: true, header: { "Running command on \($0.destination) ..." }) { _ in
             RemoteScript(command, asRoot: asRoot)
         }
@@ -429,6 +430,7 @@ struct CLI: Sendable {
         let list = targets(args[1])
         let ssh = sshSettings()
         let s = settings, asRoot = root
+        logAction(list)
         let codes = await runHosts(list, jobs: args.jobs ?? 1, prefixLines: prefixLines) { io in
             let h = io.host
             let items = Operations.conventionItems(base: s.localFolder, host: h)
@@ -455,6 +457,7 @@ struct CLI: Sendable {
         let list = targets(args[1])
         let ssh = sshSettings()
         let s = settings, asRoot = root
+        logAction(list)
         let codes = await runHosts(list, jobs: args.jobs ?? 1, prefixLines: prefixLines) { io in
             let h = io.host
             io.out("Pulling from \(h.destination) ...")
@@ -480,6 +483,7 @@ struct CLI: Sendable {
         guard let path = args[1].map(settings.resolve) else { usageError("Użycie: cmcrctl clean ŚCIEŻKA KOMP") }
         let list = targets(args[2])
         confirm("Usunąć całą zawartość folderu \(path) na: \(names(list))?")
+        logAction(list)
         return await runScript(on: list) { _ in Scripts.cleanFolder(path) }
     }
 
@@ -512,6 +516,7 @@ struct CLI: Sendable {
             confirm("Wymusić zamknięcie „\(app)” na: \(names(list))? Aplikacja zostanie natychmiast zakończona – "
                     + "niezapisana praca uczniów przepadnie.")
         }
+        logAction(list)
         return await runScript(on: list, header: { "\($0.name):" }) { _ in
             open ? Scripts.launchApp(app) : Scripts.quitApp(app, force: hard)
         }
@@ -521,6 +526,7 @@ struct CLI: Sendable {
         args.expect("open-url", options: Self.parallel, positional: 3)
         guard let url = args[1] else { usageError("Użycie: cmcrctl open-url ADRES KOMP") }
         let list = targets(args[2])
+        logAction(list)
         return await runScript(on: list) { _ in Scripts.openURL(url) }
     }
 
@@ -532,6 +538,7 @@ struct CLI: Sendable {
         guard let raw = args[1], let pid = Int(raw), pid > 1 else { usageError(use) }
         let h = single(args[2], usage: use)
         let hard = force
+        logAction([h])
         return await runScript(on: [h]) { _ in Scripts.killProcess(pid, force: hard) }
     }
 
@@ -540,6 +547,7 @@ struct CLI: Sendable {
         guard let path = args[1] else { usageError("Użycie: cmcrctl uninstall /Applications/Nazwa.app KOMP") }
         let list = targets(args[2])
         confirm("Usunąć \(path) na: \(names(list))?")
+        logAction(list)
         return await runScript(on: list) { _ in Scripts.uninstallApp(path) }
     }
 
@@ -549,6 +557,7 @@ struct CLI: Sendable {
             usageError("Użycie: cmcrctl brew \"argumenty\" KOMP, np. cmcrctl brew \"install --cask firefox\" all")
         }
         let list = targets(args[2])
+        logAction(list)
         return await runScript(on: list) { _ in Scripts.brew(arguments) }
     }
 
@@ -623,6 +632,7 @@ struct CLI: Sendable {
                 r.stdoutText.contains("Pominięto przejście na nową wersję systemu")
                     ? "  (cmcrctl: dodaj --major, aby zainstalować także nową wersję macOS)" : nil
             }
+            logAction(list)
             return await runScript(on: list, note: major ? nil : hint) { _ in
                 Scripts.installUpdates(restart: restart, recommendedOnly: recommended, downloadOnly: download,
                                        allowMajorUpgrade: major)
@@ -645,6 +655,7 @@ struct CLI: Sendable {
         }
         let list = targets(args[3])
         let dialog = !args.has("--notification")
+        logAction(list)
         return await runScript(on: list) { _ in Scripts.message(title: title, text: text, asDialog: dialog) }
     }
 
@@ -664,6 +675,7 @@ struct CLI: Sendable {
         let hint: @Sendable (Machine, CommandResult) -> String? = { h, r in
             r.succeeded ? nil : "  (cmcrctl logout \(h.name) --force – wylogowanie natychmiastowe, niezapisane dane przepadną)"
         }
+        logAction(list)
         return await runScript(on: list, note: now ? nil : hint) { _ in Scripts.logoutUser(force: now) }
     }
 
@@ -680,6 +692,7 @@ struct CLI: Sendable {
         if action != .displaySleep {
             confirm("\(action.label): \(names(list))? Zalogowani użytkownicy mogą stracić niezapisane dane.")
         }
+        logAction(list)
         return await runScript(on: list) { _ in Scripts.power(action) }
     }
 
@@ -691,6 +704,7 @@ struct CLI: Sendable {
         let list = targets(args[1])
         let dryRun = args.has("--dry-run"), wait = args.has("--wait")
         if dryRun && wait { usageError("Opcja --wait nie działa z --dry-run (próba niczego nie wysyła).") }
+        if !dryRun { logAction(list) }
         let snapshots = ClassroomStore.loadSnapshots()
         func target(_ h: Machine) -> LessonRunner.Host {
             let info = snapshots[h.id]?.info ?? [:]

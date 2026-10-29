@@ -73,6 +73,15 @@ func fail(_ message: String, code: Int32 = ExitCode.failure) -> Never {
     exit(code)
 }
 
+/// Records a command that changes something on the Macs (or reads the students' files) in the actions log shared
+/// with the app, in its format „cmcrctl <polecenie> → imac01, imac02” (AUDIT ZAD-14). Called after the
+/// confirmation, before anything runs; commands that only read are not logged.
+func logAction(_ hosts: [Machine]) {
+    guard !hosts.isEmpty else { return }
+    let what = "cmcrctl " + CommandLineLog.describe(Array(CommandLine.arguments.dropFirst()))
+    ConfigStore.log(CommandLineLog.line(what, hosts: hosts.map(\.name)))
+}
+
 /// Saves the host list; a failed write ends the command with the reason instead of a success message (AUDIT KON-03).
 func saveHostsOrFail(_ hosts: [Machine]) {
     if let problem = ConfigStore.saveHosts(hosts) {

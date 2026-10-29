@@ -436,3 +436,28 @@ out="$(p2pw screen-watch 1 "$WORK/p2-watch-log2" --frames 1 --interval 2)"; code
 rm -f "$WORK/fake-notify-fail" "$WORK/console_user"
 expect "screen-watch: nieudane powiadomienie w dzienniku" "$(cat "$P2LOG" 2>/dev/null)" \
   "Podgląd ekranu (cmcrctl screen-watch) → imac01: nie udało się powiadomić użytkownika daemon"
+
+section "P2 cmcrctl – polecenia zmieniające stan w dzienniku działań (AUDIT ZAD-14)"
+rm -f "$P2LOG"
+out="$(p2pw exec 'echo "z-dziennika"' 1,2 --root)"
+out="$(p2pw exec 'echo "linia 1"
+echo "linia 2"' 1)"
+out="$(p2 power display-sleep 2)"
+out="$(p2pw clean "/Users/{student}/cmcr-e2e-brak-$$" 1 --yes)"
+out="$(p2pw lock 1 --message "Patrzymy na tablicę" --minutes 1)"
+out="$(p2pw unlock 1)"
+out="$(p2pw uninstall /Applications/P2Nieistniejaca.app 1 </dev/null)"
+out="$(p2 status 1)"
+out="$(p2 updates list 1)"
+log="$(cat "$P2LOG" 2>/dev/null)"
+expect "actions.log: exec --root z listą komputerów" "$log" "cmcrctl exec 'echo \"z-dziennika\"' 1,2 --root → imac01, imac02"
+expect "actions.log: polecenie wielowierszowe w jednym wierszu" "$log" "cmcrctl exec 'echo \"linia 1\"\\necho \"linia 2\"' 1 → imac01"
+expect "actions.log: zasilanie" "$log" "cmcrctl power display-sleep 2 → imac02"
+expect "actions.log: czyszczenie folderu" "$log" "cmcrctl clean '/Users/{student}/cmcr-e2e-brak-$$' 1 --yes → imac01"
+expect "actions.log: polecenie modułu (lock, unlock)" "$log" "cmcrctl lock 1 --message 'Patrzymy na tablicę' --minutes 1 → imac01" \
+  "cmcrctl unlock 1 → imac01"
+expect_not "actions.log: odrzucone potwierdzenie – bez wpisu" "$log" "uninstall"
+expect_not "actions.log: polecenia tylko odczytujące – bez wpisu" "$log" "status"
+expect_not "actions.log: updates list – bez wpisu" "$log" "updates list"
+[ "$(printf '%s\n' "$log" | grep -c '^[0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T.* cmcrctl ')" = "$(printf '%s\n' "$log" | grep -c .)" ] \
+  && pass "actions.log: każdy wpis w jednym wierszu z datą (format aplikacji)" || fail "actions.log: format wpisów" "$log"
