@@ -461,3 +461,24 @@ expect_not "actions.log: polecenia tylko odczytujące – bez wpisu" "$log" "sta
 expect_not "actions.log: updates list – bez wpisu" "$log" "updates list"
 [ "$(printf '%s\n' "$log" | grep -c '^[0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T.* cmcrctl ')" = "$(printf '%s\n' "$log" | grep -c .)" ] \
   && pass "actions.log: każdy wpis w jednym wierszu z datą (format aplikacji)" || fail "actions.log: format wpisów" "$log"
+
+section "P2 cmcrctl – screen-watch --notified-user tylko w testach (AUDIT CLI-11)"
+printf daemon > "$WORK/console_user"
+clear_fakelog
+# Outside the e2e harness (another Keychain service): the option that skips the student's notice is refused.
+out="$(CMCR_CONFIG_DIR="$P2" CMCR_KEYCHAIN_SERVICE="pl.cmcr.manager.p2-zwykle-$$" CMCR_PASSWORD="$PASSWORD" \
+  "$CTL" screen-watch 1 "$WORK/p2-watch-notified" --frames 1 --interval 2 --notified-user daemon 2>&1)"; code=$?
+expect_code "screen-watch --notified-user poza testami: kod 2" "$code" 2 "$out"
+expect "screen-watch --notified-user poza testami: komunikat" "$out" "--notified-user" "tylko w testach"
+expect_not "screen-watch --notified-user poza testami: nic nie przechwycono" "$(fakelog)" "screencapture"
+out="$(p2 screen-watch --help)"
+expect_not "screen-watch --help: bez opcji testowej" "$out" "--notified-user"
+# In the harness (screens.sh relies on it): the notice is skipped, the session is still in the actions log.
+rm -f "$P2LOG"
+clear_fakelog
+out="$(p2pw screen-watch 1 "$WORK/p2-watch-notified" --frames 1 --interval 2 --notified-user daemon)"; code=$?
+expect_code "screen-watch --notified-user w testach: kod 0" "$code" 0 "$out"
+expect_not "screen-watch --notified-user w testach: bez ponownego powiadomienia" "$(fakelog)" "observe-notice:"
+expect "screen-watch --notified-user w testach: sesja w dzienniku działań" "$(cat "$P2LOG" 2>/dev/null)" \
+  "Podgląd ekranu (cmcrctl screen-watch) → imac01 (użytkownik daemon)"
+rm -f "$WORK/console_user"

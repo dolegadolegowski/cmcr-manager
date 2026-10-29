@@ -6,6 +6,14 @@ import Foundation
 // arguments are usage errors, a missing host list selects every Mac only at a terminal, disruptive commands
 // ask for confirmation (`--yes` without a terminal), and the exit code is 0, 1 or 2.
 
+/// Test hooks that weaken a safeguard (`screen-watch --notified-user` skips the student's notice) work only in the
+/// e2e harness (Tests/e2e/run.sh): an isolated configuration, as `_builder` requires (CMCR_CONFIG_DIR), and the
+/// harness's throw-away Keychain service – a teacher's own CMCR_CONFIG_DIR is not enough.
+var inTestHarness: Bool {
+    let env = ProcessInfo.processInfo.environment
+    return !(env["CMCR_CONFIG_DIR"] ?? "").isEmpty && (env["CMCR_KEYCHAIN_SERVICE"] ?? "").hasPrefix("pl.cmcr.manager.e2e-")
+}
+
 /// `--root`/`--force` of `_builder`, the e2e test hook, which reads them from the raw command line.
 let rawArguments = Array(CommandLine.arguments.dropFirst())
 var root: Bool { rawArguments.contains("--root") }

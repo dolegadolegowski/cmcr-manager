@@ -4,12 +4,17 @@ import Foundation
 let screenWatchSpec = ModuleSpec(values: ["--frames", "--interval", "--size", "--display", "--notified-user"],
                                  maxPositional: 2)
 
-/// `cmcrctl screen-watch nr katalog [--frames N] [--interval S] [--size PX] [--display main|all|N]
-/// [--notified-user U]` – the app's live preview session on the terminal: one ssh connection (one sudo)
-/// streaming frames into a folder.
+/// `cmcrctl screen-watch nr katalog [--frames N] [--interval S] [--size PX] [--display main|all|N]` – the app's
+/// live preview session on the terminal: one ssh connection (one sudo) streaming frames into a folder.
+/// `--notified-user U` (U was told about the preview already, so the notice is not shown again) is a test hook:
+/// outside the e2e harness it would let anyone watch a student's screen without the student being told.
 func screenWatchCommand(_ arguments: [String]) async -> Int32 {
     let a = ModuleArguments.parse("screen-watch", arguments, screenWatchSpec)
-    let use = "Użycie: cmcrctl screen-watch nr katalog [--frames N] [--interval S] [--size PX] [--display main|all|N] [--notified-user konto]"
+    let use = "Użycie: cmcrctl screen-watch nr katalog [--frames N] [--interval S] [--size PX] [--display main|all|N]"
+    if a.value("--notified-user") != nil, !inTestHarness {
+        moduleUsageError(a.command, "Opcja --notified-user działa tylko w testach (Tests/e2e) – uczeń zawsze dostaje "
+                         + "powiadomienie o podglądzie.")
+    }
     guard a.positional.count == 2 else { moduleUsageError(a.command, use) }
     let frames = a.int("--frames", in: 0...100_000) ?? 3
     let interval = a.int("--interval", in: 1...86_400) ?? settings.screenshotInterval
