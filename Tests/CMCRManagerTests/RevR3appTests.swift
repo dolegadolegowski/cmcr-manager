@@ -48,10 +48,11 @@ extension RevR3appTests {
         #expect(!exported.contains("kod 255"), "\(exported)")
     }
 
-    // The command's own exit code – also 255, from an ssh or git the command ran, which says why – stays in the
-    // history and the exports.
+    // The command's own exit code – also 255, from an ssh or git the command ran (the wrapper reported the script's
+    // end, AUDIT REV-53) – stays in the history and the exports.
     @Test(arguments: [
-        (CommandResult(exitCode: 255, stderr: Data("git@github.com: Permission denied (publickey).\n".utf8), started: true),
+        (CommandResult(exitCode: 255, stderr: Data("git@github.com: Permission denied (publickey).\n".utf8), started: true,
+                       endCode: 255),
          Int32(255)),
         (CommandResult(exitCode: 1, stderr: Data("ls: /Users/Shared/Prace: No such file or directory\n".utf8), started: true),
          Int32(1)),

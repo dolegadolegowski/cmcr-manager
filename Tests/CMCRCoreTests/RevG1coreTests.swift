@@ -39,9 +39,12 @@ struct RevG1DiagnoseTests {
 
     /// The command's own failures stay its own (AUDIT ZAD-07): the Mac answered.
     @Test func theCommandsOwnCode255StaysOnline() {
-        let nested = g1Result(255, "ssh: connect to host inny.local port 22: Operation timed out\n", started: true)
+        // The wrapper reported the script's end with this code (AUDIT REV-53: without it 255 is a broken session).
+        var nested = g1Result(255, "ssh: connect to host inny.local port 22: Operation timed out\n", started: true)
+        nested.endCode = 255
         #expect(SSH.diagnose(nested) == (.online, "Polecenie zakończone kodem 255."))
-        let key = g1Result(255, "git@github.com: Permission denied (publickey).\n", started: true)
+        var key = g1Result(255, "git@github.com: Permission denied (publickey).\n", started: true)
+        key.endCode = 255
         #expect(SSH.diagnose(key).0 == .online)
         // Other codes with nothing on stderr are the command's result as before.
         #expect(SSH.diagnose(g1Result(1, "", started: true)) == (.online, "Polecenie zakończone kodem 1."))

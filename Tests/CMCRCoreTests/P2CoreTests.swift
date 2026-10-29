@@ -277,10 +277,13 @@ struct P2DiagnoseTests {
                            + "fatal: Could not read from remote repository.\n", started: true)
         #expect(SSH.diagnose(git).0 == .online)
         #expect(SSH.diagnose(git).1 == "Polecenie zakończone kodem 128.")
-        let nested = p2Result(255, "ssh: connect to host inny.local port 22: Operation timed out\n", started: true)
+        // The wrapper reported the script's end with this code (AUDIT REV-53: without it 255 is a broken session).
+        var nested = p2Result(255, "ssh: connect to host inny.local port 22: Operation timed out\n", started: true)
+        nested.endCode = 255
         #expect(SSH.diagnose(nested).0 == .online)
         #expect(SSH.diagnose(nested).1 == "Polecenie zakończone kodem 255.")
-        let key = p2Result(255, "git@github.com: Permission denied (publickey).\n", started: true)
+        var key = p2Result(255, "git@github.com: Permission denied (publickey).\n", started: true)
+        key.endCode = 255
         #expect(SSH.diagnose(key).0 == .online)
         // The session itself breaking off is still a connection problem.
         #expect(SSH.diagnose(p2Result(255, "Timeout, server 10.0.0.5 not responding.\n", started: true)).0 == .offline)

@@ -921,6 +921,7 @@ public final class ScreenStream: @unchecked Sendable {
         defer { lock.unlock() }
         try? stdinHandle?.close()
         stdinHandle = nil
-        return stderrTail
+        // The wrapper's start and end markers (and ssh's noise about shared connections) are not the script's message.
+        return SSHNoise.filter(stderrTail)
     }
 }

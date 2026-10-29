@@ -23,7 +23,8 @@ public enum CommandLineLog {
         arguments.map { argument in
             var text = TerminalText.escape(hidingURLPassword(argument), keepBackslash: true)
             if text.count > limit { text = String(text.prefix(max(1, limit - 1))) + "…" }
-            let plain = !text.isEmpty && !text.hasPrefix("=") && text.unicodeScalars.allSatisfy(isPlainInShell)
+            // The first scalar, not Character: a mark after the `=` joins it into one Character (AUDIT REV-56).
+            let plain = !text.isEmpty && text.unicodeScalars.first != "=" && text.unicodeScalars.allSatisfy(isPlainInShell)
             return plain ? text : shQuote(text)
         }.joined(separator: " ")
     }
