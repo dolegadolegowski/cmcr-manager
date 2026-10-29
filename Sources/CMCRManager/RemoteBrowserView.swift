@@ -325,7 +325,7 @@ private struct RemoteBrowserPage: View {
 
     func download(_ entries: [RemoteEntry]) {
         guard !entries.isEmpty else { return }
-        let source = browser.host.map { "z komputera \($0.name)" } ?? "z komputera"
+        let source = browser.host.map { "z komputera \(TerminalText.escape($0.name, keepBackslash: true))" } ?? "z komputera"
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -342,17 +342,10 @@ private struct RemoteBrowserPage: View {
 
     func uploadWithPanel(into folder: RemoteEntry? = nil) {
         let target = folder.map { "„\($0.displayName)”" } ?? "bieżącego folderu"
-        let host = browser.host.map { " na komputerze \($0.name)" } ?? ""
-        let urls = Pickers.files(message: "Wybierz pliki lub foldery do wysłania do \(target)\(host).")
+        let urls = Pickers.files(message: "Wybierz pliki lub foldery do wysłania do \(target)\(browser.onComputer).")
         guard !urls.isEmpty else { return }
         if let folder {
-            // Files (and apps) with the same names in the subfolder are replaced, folders are merged (pushFinalize):
-            // ask first, as for the current folder, and say it the same way (AUDIT PLI-18, REV-31).
-            confirm = ConfirmRequest(
-                title: "Wysłać do folderu „\(folder.displayName)”?",
-                message: "Pliki o tych samych nazwach w folderze „\(folder.displayName)” zostaną zastąpione, "
-                    + "a do folderów o tych samych nazwach zostanie dodana nowa zawartość.",
-                button: "Wyślij", targets: []) { browser.upload(urls, into: folder) }
+            confirm = browser.uploadConfirmation(urls, into: folder)
         } else {
             startUpload(urls)
         }
@@ -379,12 +372,30 @@ extension RemoteBrowserModel {
         return more > 0 ? shown + " i " + Polish.count(more, "inny", "inne", "innych") : shown
     }
 
+    /// The browsed Mac as its questions name it, „ na komputerze imac04” (empty before one is chosen). The name is from
+    /// the host list, which an imported or hand-edited hosts.json fills: a direction override in it is shown, not
+    /// applied to the rest of the question, as in the names read from the iMac (AUDIT UI-31, REV-19).
+    var onComputer: String { host.map { " na komputerze \(TerminalText.escape($0.name, keepBackslash: true))" } ?? "" }
+
+    /// Asks before uploading into a subfolder: files (and apps) with the same names there are replaced, folders are
+    /// merged (pushFinalize) – said as for the current folder (AUDIT PLI-18, REV-31), on the one Mac being browsed
+    /// (a plain alert, see `replaceConfirmation`) and named like there (AUDIT UI-31, UI-04).
+    func uploadConfirmation(_ urls: [URL], into folder: RemoteEntry) -> ConfirmRequest {
+        ConfirmRequest(
+            title: "Wysłać do folderu „\(folder.displayName)”?",
+            message: "Pliki o tych samych nazwach w folderze „\(folder.displayName)”\(onComputer) zostaną zastąpione, "
+                + "a do folderów o tych samych nazwach zostanie dodana nowa zawartość.",
+            button: "Wyślij", targets: []) { [weak self] in
+            self?.upload(urls, into: folder)
+        }
+    }
+
     /// Asks before replacing items of the same name; nil when nothing would be replaced. The question is about the
     /// one Mac being browsed (a plain alert): the checked Macs of the list have nothing to do with it.
     func replaceConfirmation(_ urls: [URL]) -> ConfirmRequest? {
         let conflicts = conflicts(for: urls)
         guard !conflicts.isEmpty else { return nil }
-        let place = host.map { " na komputerze \($0.name)" } ?? ""
+        let place = onComputer
         // The names are those already on the iMac: direction overrides are shown, not applied (AUDIT DOD-13).
         let existing = Self.names(conflicts.map { TerminalText.escape($0, keepBackslash: true) })
         return ConfirmRequest(
@@ -402,7 +413,8 @@ extension RemoteBrowserModel {
             ? "Usunąć „\(entries[0].displayName)”?"
             : "Usunąć \(Polish.count(entries.count, "element", "elementy", "elementów"))?"
         // The folder and the names are read from the iMac: direction overrides are shown, not applied (AUDIT DOD-13).
-        let place = "z komputera \(host?.name ?? "") (\(TerminalText.escape(path, keepBackslash: true)))"
+        let computer = TerminalText.escape(host?.name ?? "", keepBackslash: true)
+        let place = "z komputera \(computer) (\(TerminalText.escape(path, keepBackslash: true)))"
         let message = entries.count == 1
             ? "Element zostanie trwale usunięty \(place). Nie trafi do Kosza – tej operacji nie można cofnąć."
             : "Zostaną trwale usunięte \(place): \(Self.names(entries.map(\.displayName))). Nie trafią do Kosza – tej operacji nie można cofnąć."

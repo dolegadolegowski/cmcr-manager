@@ -211,7 +211,10 @@ struct ScreenWallView: View {
             Menu {
                 ScreenLayoutPicker(layout: $layout, inline: true)
                 Divider()
-                Toggle("Pokaż podpisy na ekranach", isOn: $showLabels)
+                // The layouts above have icons: so has the switch, not a menu with and without icons (AUDIT UI-30).
+                Toggle(isOn: $showLabels) {
+                    Label("Pokaż podpisy na ekranach", systemImage: "text.below.photo")
+                }
             } label: {
                 Label("Widok", systemImage: layout.symbol)
                     .labelStyle(.titleAndIcon)

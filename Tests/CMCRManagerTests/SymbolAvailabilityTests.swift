@@ -160,6 +160,26 @@ import Testing
         }
     }
 
+    /// Saving to a file and exporting are one action with one symbol everywhere, square.and.arrow.up (AUDIT UI-27,
+    /// UI-29: „Zapisz raport o komputerach (CSV)…” had tablecells while both „Eksportuj CSV…” had the save symbol).
+    /// Two „Zapisz” titles keep something in the app instead of writing a file: the password (in the Keychain) and
+    /// a snippet of the command editor.
+    @Test func everySaveToAFileHasTheSaveSymbol() throws {
+        let keptInTheApp: Set<String> = ["Zapisz hasło", "Zapisz jako fragment…"]
+        var saves: [(title: String, symbol: String, place: String)] = []
+        for file in Self.appSources {
+            for use in Self.labels(in: try String(contentsOf: file, encoding: .utf8), file: file.lastPathComponent)
+            where !keptInTheApp.contains(use.title)
+                && (use.title.hasPrefix("Zapisz") || use.title.hasPrefix("Eksportuj") || use.title.contains("do pliku")) {
+                saves.append(use)
+            }
+        }
+        #expect(saves.count >= 8, "sprawdzono podejrzanie mało akcji zapisu (\(saves.count))")
+        for use in saves where use.symbol != "square.and.arrow.up" && use.symbol != "square.and.arrow.up.fill" {
+            Issue.record("„\(use.title)” (\(use.place)) zapisuje plik, a ma symbol \(use.symbol) zamiast square.and.arrow.up")
+        }
+    }
+
     @Test func noSymbolReservedByAppleIsUsed() throws {
         let data = try Data(contentsOf: Self.table)
         let plist = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
