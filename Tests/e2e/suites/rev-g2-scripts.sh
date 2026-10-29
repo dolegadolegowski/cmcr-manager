@@ -39,4 +39,31 @@ expect "VNC, tylko administratorzy: komunikat" "$out" "tylko administratorzy"
 expect_not "VNC, tylko administratorzy: bez ostrzeżenia" "$out" "⚠︎"
 rm -rf "$WORK/setup-sys"
 
+section "REV-07: „Wyloguj (z pytaniem o zapis)” pomija sesję w tle konta administratora"
+# Real GUI sessions of other accounts on this Mac would count as students' sessions in the background.
+others="$(ctl exec 'cmcr_gui_sessions | awk -v a="$CMCR_ADMIN_USER" "\$2 != a" | wc -l' 1 | tail -1 | tr -d ' ')"
+if [ "$others" = 0 ]; then
+  # The administrator (the SSH account) left its session in the background after „Przełącz użytkownika”.
+  echo "$(id -u) $ME" > "$WORK/ps.sessions"
+  printf '%s' daemon > "$WORK/console_user"        # a student at the screen (uid 1: no GUI session listed)
+  out="$(ctlpw _builder logout 1 --wait 1)"; code=$?
+  expect "logout z pytaniem: uczeń wylogowany" "$out" "Wylogowano daemon"
+  expect_not "logout z pytaniem: sesja administratora nie jest zgłaszana jako sesja w tle" "$out" "W tle działa jeszcze sesja"
+  expect_code "logout z pytaniem: sesja administratora w tle – kod 0" "$code" 0 "$out"
+  rm -f "$WORK/console_user"
+  : > "$WORK/fake-no-console"                       # nobody at the screen, only the administrator in the background
+  out="$(ctlpw _builder logout 1 --wait 1)"; code=$?
+  expect_code "logout z pytaniem, ekran logowania + sesja administratora: kod 0" "$code" 0 "$out"
+  expect_not "logout z pytaniem, ekran logowania + sesja administratora: bez błędu" "$out" "w tle działa sesja"
+  expect "logout z pytaniem, ekran logowania + sesja administratora: nikt nie jest zalogowany" "$out" "CMCR:NOUSER"
+  # A student's session in the background is still reported (AUDIT DOD-03), without the administrator's.
+  printf '%s %s\n502 cmcr-rev-uczen\n' "$(id -u)" "$ME" > "$WORK/ps.sessions"
+  out="$(ctlpw _builder logout 1 --wait 1)"; code=$?
+  expect_code "logout z pytaniem, sesja ucznia w tle: kod 1" "$code" 1 "$out"
+  expect "logout z pytaniem, sesja ucznia w tle: zgłoszona" "$out" "w tle działa sesja: cmcr-rev-uczen."
+  rm -f "$WORK/ps.sessions" "$WORK/fake-no-console"
+else
+  pass "logout z pytaniem i sesja administratora: pominięto (na tym Macu są sesje innych kont)"
+fi
+
 rm -rf "$RV"

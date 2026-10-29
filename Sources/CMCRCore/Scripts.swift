@@ -1152,8 +1152,10 @@ public enum Scripts {
             exit $RC
             """#, asRoot: true)
         }
+        // Sessions in the background other than the administrator's own, which is not the students' and which
+        // „Wyloguj natychmiast” leaves alone as well (AUDIT REV-07).
         return RemoteScript(#"""
-        BG="$(cmcr_gui_sessions | awk -v c="$CONSOLE_USER" 'NF && $2 != c {print $2}' | paste -sd, -)"
+        BG="$(cmcr_gui_sessions | awk -v c="$CONSOLE_USER" -v a="$CMCR_ADMIN_USER" 'NF && $2 != c && $2 != a {print $2}' | paste -sd, -)"
         if [ -z "$CONSOLE_USER" ]; then
           if [ -n "$BG" ]; then
             echo "✘ Na ekranie jest okno logowania, a w tle działa sesja: $BG. Prośba o wylogowanie działa tylko dla osoby przy ekranie – użyj „Wyloguj natychmiast”." >&2
