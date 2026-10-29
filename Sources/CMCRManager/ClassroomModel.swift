@@ -485,6 +485,11 @@ final class ClassroomModel: ObservableObject {
         question = round
         round.batch = model.runBatch("Pytanie: \(text.prefix(50))", on: targets, section: .classroom,
                                      maxParallel: targets.count) { m, job in
+            // „Powtórz na nieudanych” asks again on the same round: until this Mac answers, it waits for the answer
+            // instead of showing the earlier skip, error or answer (AUDIT REV-20).
+            round.errors[m.id] = nil
+            round.answers[m.id] = nil
+            round.answeredAt[m.id] = nil
             let r = await model.ssh(Scripts.ask(title: "Pytanie od nauczyciela", prompt: text, buttons: buttons,
                                                  timeoutSeconds: seconds),
                                     on: m, job: job, timeout: TimeInterval(seconds + 60))

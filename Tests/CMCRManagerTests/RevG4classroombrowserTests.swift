@@ -1,7 +1,14 @@
+import Combine
 import Foundation
 import Testing
 @testable import CMCRCore
 @testable import CMCRManager
+
+/// Values seen by a subscriber, in order.
+@MainActor
+private final class Recorder<Value> {
+    var values: [Value] = []
+}
 
 /// Review fixes (AUDIT REV-xx) in the lesson routines and the file browser that need no AppModel.
 @MainActor
@@ -84,5 +91,36 @@ struct RevG4ClassroomBrowserModelTests {
         classroom.renamed(.init(machine: c, computerName: "imac33", localHostName: "imac33"), model: model,
                           updateList: true)
         #expect(model.machines.map(\.address) == ["imac33.local"])
+    }
+
+    // question-retry-stale (AUDIT REV-20): „Powtórz na nieudanych” shows the question again on a Mac that was left
+    // out; until it answers, the row waits for the answer instead of keeping „pominięto – komputer niedostępny”.
+    @Test func aRepeatedQuestionWaitsForTheAnswerAgain() async throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        var off = HostStatus()
+        off.reachability = .offline
+        model.statuses[a.id] = off
+        let question = classroom.config.lastQuestion
+        classroom.config.lastQuestion = "Czy skończyliście?"
+        defer { classroom.config.lastQuestion = question }
+        let skip = model.skipUnreachable
+        model.skipUnreachable = true
+        classroom.ask(model, [a], buttons: ["Tak", "Nie"])
+        model.skipUnreachable = skip
+        let round = try #require(classroom.question)
+        let batch = try #require(round.batch)
+        #expect(round.errors[a.id] == "pominięto – komputer niedostępny")
+        #expect(await AppTestEnvironment.wait(5) { batch.finished })
+
+        let shown = Recorder<String?>()
+        let watch = round.$errors.sink { shown.values.append($0[a.id]) }
+        defer { watch.cancel() }
+        model.retry(batch, on: batch.retryableMachines)
+        let again = try #require(model.batches.first { $0.title == "Pytanie: Czy skończyliście? (ponowienie)" })
+        #expect(await AppTestEnvironment.wait(30) { again.finished })
+        #expect(shown.values.contains { $0 == nil },
+                "powtórzone pytanie nadal pokazywało „pominięto” zamiast czekać na odpowiedź: \(shown.values)")
+        #expect(round.errors[a.id] != "pominięto – komputer niedostępny")
     }
 }
