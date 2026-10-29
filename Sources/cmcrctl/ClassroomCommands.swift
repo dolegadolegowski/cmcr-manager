@@ -351,7 +351,7 @@ enum ClassroomCLI {
             if let other = stillHeld[h.id] {
                 Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma teraz \(other.name) (\(other.address)), którego "
                             + "nazwa też jest zmieniana (macOS nadałby wtedy jednemu z nich inny adres). "
-                            + RenamePlan.advice(for: h, stillHeld: stillHeld))
+                            + RenamePlan.advice(for: h, stillHeld: stillHeld, in: .cmcrctl))
                 invalid = true
                 continue
             }

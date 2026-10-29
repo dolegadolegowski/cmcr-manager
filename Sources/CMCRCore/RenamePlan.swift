@@ -48,7 +48,7 @@ public enum RenamePlan {
     /// (imac05 → imac06 while imac06 → imac07) or a swap – with that other Mac. Nothing makes the other Mac release the
     /// name first (cmcrctl renames in list order, the app all at once): the Mac claiming it would get a numbered name
     /// from Bonjour (imac06-2) and the updated list would point at no Mac. Such Macs are renamed one per run, in the
-    /// order `advice(for:stillHeld:newNames:)` gives.
+    /// order `advice(for:stillHeld:newNames:in:)` gives.
     ///
     /// A Mac's current names: its `.local` address on the list and, in the app, the LocalHostName read from it
     /// (`currentNames`). A Mac that keeps its name gives nothing up – another Mac with the same new name is a
@@ -123,14 +123,24 @@ public enum RenamePlan {
         }
     }
 
+    /// Where the advice is read: each step is a run of `cmcrctl rename KOMP`, or the app's „Zmień nazwy komputerów”
+    /// with one Mac selected.
+    public enum Tool: Sendable {
+        case cmcrctl, app
+    }
+
     /// How to rename `machine`, whose new name another Mac renamed in the same run still has – advice that works when
-    /// followed (AUDIT REV-54, REV-61): the whole order of `steps(for:stillHeld:)`, one Mac per run of
-    /// `cmcrctl rename KOMP`, each with --update-list – otherwise the list keeps the old address of the Mac renamed
-    /// before, and the next step is refused as taken (AUDIT REV-55). With it the temporary name goes to the list too,
-    /// so the new name is given with --name at the end. `newNames`: the name each Mac gets (default: its name on the
-    /// list, as in cmcrctl).
-    public static func advice(for machine: Machine, stillHeld: [UUID: Machine], newNames: [UUID: String] = [:]) -> String {
-        let eachRun = "za każdym razem z --update-list"
+    /// followed (AUDIT REV-54, REV-61): the whole order of `steps(for:stillHeld:)`, one Mac per run, with the list
+    /// updated after each – otherwise the list keeps the old address of the Mac renamed before, and the next step is
+    /// refused as taken (AUDIT REV-55). cmcrctl names --update-list, and --name for the temporary name and, at the end,
+    /// for the new name (the list has the temporary name by then); the app selects one Mac at a time and updates the
+    /// list itself when its „Zaktualizuj nazwy i adresy na liście” is on – one order in both (AUDIT REV-63).
+    /// `newNames`: the name each Mac gets (default: its name on the list, as in cmcrctl).
+    public static func advice(for machine: Machine, stillHeld: [UUID: Machine], newNames: [UUID: String] = [:],
+                              in tool: Tool) -> String {
+        let eachRun = tool == .cmcrctl ? "za każdym razem z --update-list"
+            : "zaznaczając za każdym razem tylko jeden komputer, z włączoną aktualizacją listy komputerów"
+        let byName = tool == .cmcrctl ? " (--name)" : ""
         let loop: [Machine]
         switch order(of: machine, stillHeld: stillHeld) {
         case .steps(let chain):
@@ -138,8 +148,8 @@ public enum RenamePlan {
                 + ", \(eachRun): najpierw " + chain.map(\.name).joined(separator: ", potem ") + "."
         case .loop(let l) where l.count == 2 && l[0].id == machine.id:
             // A swap: either Mac can go first.
-            return "Przy zamianie nazw nadaj najpierw jednemu z nich nazwę tymczasową (--name), potem zmień nazwę drugiego, "
-                + "a na końcu nadaj pierwszemu docelową nazwę (--name), \(eachRun)."
+            return "Przy zamianie nazw nadaj najpierw jednemu z nich nazwę tymczasową\(byName), potem zmień nazwę drugiego, "
+                + "a na końcu nadaj pierwszemu docelową nazwę\(byName), \(eachRun)."
         case .loop(let l):
             loop = l
         }
@@ -149,11 +159,11 @@ public enum RenamePlan {
         for step in steps(for: machine, stillHeld: stillHeld) {
             switch step {
             case .temporary(let m):
-                phrases.append("nadaj \(m.name) nazwę tymczasową (--name)")
+                phrases.append("nadaj \(m.name) nazwę tymczasową\(byName)")
             case .rename(let m):
                 phrases.append(afterRename ? m.name : "zmień nazwę \(m.name)")
             case .target(let m):
-                phrases.append("nadaj komputerowi z nazwą tymczasową docelową nazwę \(newNames[m.id] ?? m.name) (--name)")
+                phrases.append("nadaj komputerowi z nazwą tymczasową docelową nazwę \(newNames[m.id] ?? m.name)\(byName)")
             }
             if case .rename = step { afterRename = true } else { afterRename = false }
         }

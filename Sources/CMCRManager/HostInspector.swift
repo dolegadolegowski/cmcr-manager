@@ -256,9 +256,11 @@ struct RenameComputersSheet: View {
                             .foregroundStyle(.red)
                             .help("Dwa komputery nie mogą mieć tego samego adresu w sieci")
                     } else if let other = stillHeld[e.id] {
+                        // The whole order, the same as cmcrctl gives (AUDIT REV-63).
                         Label("\(e.localHostName).local ma jeszcze \(other.name)", systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red)
-                            .help("Ten adres ma teraz \(other.name), którego nazwa też jest zmieniana – macOS nadałby jednemu z nich inny adres. Zmień nazwy w dwóch krokach: najpierw tylko \(other.name), potem ten komputer. Przy zamianie nazw nadaj najpierw jednemu z nich nazwę tymczasową.")
+                            .help("Ten adres ma teraz \(other.name), którego nazwa też jest zmieniana – macOS nadałby jednemu z nich inny adres. "
+                                  + RenamePlan.advice(for: e.machine, stillHeld: stillHeld, newNames: newNames, in: .app))
                     } else {
                         Text("\(e.localHostName).local").font(.body.monospaced())
                             .foregroundStyle(isUnchanged(e) ? .secondary : .primary)
@@ -318,10 +320,16 @@ struct RenameComputersSheet: View {
     }
 
     /// Renamed Macs whose new `.local` name another Mac renamed here still has now (its address or the name read from
-    /// it), with that Mac: a renumbering or a swap, renamed in two steps (AUDIT REV-52). The renames run at once.
+    /// it), with that Mac: a renumbering or a swap, renamed one Mac at a time (AUDIT REV-52, REV-63). The renames run
+    /// at once.
     var stillHeld: [UUID: Machine] {
         RenamePlan.namesStillHeld(changes.map { RenamePlan.Rename(machine: $0.machine, localHostName: $0.localHostName) },
                                   currentNames: classroom.names.mapValues(\.localHostName))
+    }
+
+    /// The name typed for each Mac, for the advice on the order.
+    var newNames: [UUID: String] {
+        Dictionary(entries.map { ($0.id, $0.newName.trimmingCharacters(in: .whitespaces)) }, uniquingKeysWith: { first, _ in first })
     }
 
     /// The same rule as `cmcrctl rename KOMP` (AUDIT REV-58); the app also knows the names read from the iMacs.
