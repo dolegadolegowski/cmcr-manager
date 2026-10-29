@@ -232,9 +232,10 @@ public struct RemoteScript: Sendable {
     public static let startMarker = "CMCR:SESSION-STARTED"
 
     /// Last line the wrapper writes to stderr, `CMCR:SESSION-ENDED <code>` with the script's exit code, once the
-    /// script and its cleanup are done (it follows the command's last output, possibly on the same line). ssh's 255
-    /// without it means the session broke off under the command; with it 255 is the command's own (AUDIT REV-53,
-    /// REV-57). SSH.run removes it from the output.
+    /// script and its cleanup are done (it follows the command's last output, possibly on the same line). ssh's 255 is
+    /// the command's own only when this marker says 255 too (AUDIT REV-53); otherwise the session broke off under the
+    /// command (AUDIT REV-57). Its code never replaces ssh's: it travels on stderr, apart from stdout, and can arrive
+    /// while the end of the output is still on its way (AUDIT REV-60). SSH.run removes it from the output.
     public static let endMarker = "CMCR:SESSION-ENDED"
 
     /// Full script text that is executed by `/bin/bash` on the remote side.
@@ -531,10 +532,10 @@ public enum SSH {
             var r = await attempt(mux, output)
             let rest = errors.finish()
             if !rest.isEmpty { onOutput?(.stderr, rest) }
+            // ssh's own code stays even after the end marker: the marker comes on stderr, which sshd sends ahead of
+            // the stdout it still holds (up to a window, about 2 MB), so a connection lost after it may have cut off
+            // the output. `diagnose` reads 255 as the command's own only when the marker says 255 (AUDIT REV-60).
             r.endCode = errors.endCode ?? SSHNoise.endCode(in: r.stderr)
-            // The script reported its end, so ssh's 255 can only be the connection lost while the session closed:
-            // the script's own code counts.
-            if let code = r.endCode, r.exitCode == 255, !r.cancelled, !r.timedOut { r.exitCode = code }
             let began = seen.isSet || !r.stdout.isEmpty || r.truncated || SSHNoise.containsStartMarker(r.stderr)
                 || stdoutFile.map { Payload.size(of: $0) > 0 } ?? false
             if began { started?.set() }
@@ -773,12 +774,14 @@ public enum SSH {
             // The script ran on the Mac, so the Mac answered: ssh messages in the output come from the command
             // itself (git, scp or another ssh without network) – only the session breaking off is a connection
             // problem, and the Mac is not marked as off or skipped because of its command (AUDIT ZAD-07).
-            // 255 is the command's own code only when the wrapper reported the script's end (its end marker, see
-            // RemoteScript.endMarker; AUDIT REV-53). Without it the session broke off under the command: a reset or
+            // 255 is the command's own code only when the wrapper reported the script's end with 255 (its end marker,
+            // see RemoteScript.endMarker; AUDIT REV-53). Otherwise the session broke off under the command: a reset or
             // closed connection ("Read from remote host …: Connection reset by peer", "client_loop: send disconnect:
             // …"), or – through a shared connection, the default – a connection that died without a word from ssh,
-            // also after the command's own text on stderr (AUDIT REV-02, REV-57).
-            if r.exitCode == 255, r.endCode == nil {
+            // also after the command's own text on stderr (AUDIT REV-02, REV-57). The same after a marker with another
+            // code: it travels on stderr and can arrive before the end of stdout, which the lost connection then cut
+            // off – or the command printed a line like it itself (AUDIT REV-60).
+            if r.exitCode == 255, r.endCode != 255 {
                 if lower.contains("timeout, server") || lower.contains("not responding") { return (.offline, sessionLost) }
                 return (.error, sessionClosed)
             }
