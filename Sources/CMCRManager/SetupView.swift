@@ -290,15 +290,6 @@ struct HostsEditor: View {
         .buttonStyle(.borderedProminent)
         .keyboardShortcut("n", modifiers: [.command, .option])
         .help("Dodaje kolejny komputer z pierwszym wolnym numerem, np. imac16 (⌥⌘N)")
-        Divider().frame(height: 18)
-        Button(role: .destructive) {
-            askDelete(rows)
-        } label: {
-            DestructiveLabel(title: "Usuń z listy…", icon: "trash", enabled: !rows.isEmpty)
-        }
-        .disabled(rows.isEmpty)
-        .help(rows.isEmpty ? "Najpierw kliknij wiersz w tabeli (z ⌘ – kilka wierszy)."
-                           : "Usuwa wybrane wiersze z listy – na samych iMacach nic się nie zmienia (klawisz Delete)")
         Menu {
             GroupMembershipMenu(ids: rows) { newGroupFor = rows }
         } label: {
@@ -308,6 +299,16 @@ struct HostsEditor: View {
         .disabled(rows.isEmpty)
         .help(rows.isEmpty ? "Najpierw kliknij wiersz w tabeli (z ⌘ – kilka wierszy)."
                            : "Dodaje wybrane wiersze do grupy lub usuwa je z grupy")
+        // The destructive action stands apart from the others, after the separator (AUDIT UI-24, UI-32).
+        Divider().frame(height: 18)
+        Button(role: .destructive) {
+            askDelete(rows)
+        } label: {
+            DestructiveLabel(title: "Usuń z listy…", icon: "trash", enabled: !rows.isEmpty)
+        }
+        .disabled(rows.isEmpty)
+        .help(rows.isEmpty ? "Najpierw kliknij wiersz w tabeli (z ⌘ – kilka wierszy)."
+                           : "Usuwa wybrane wiersze z listy – na samych iMacach nic się nie zmienia (klawisz Delete)")
     }
 
     @ViewBuilder var fileButtons: some View {
