@@ -163,7 +163,7 @@ public struct ReadinessReport: Sendable {
         switch v["key"] {
         case "ok": items[.ssh] = ReadinessItem(.ok, "klucz", "Połączenie działa, klucz SSH aplikacji jest zainstalowany.")
         case "missing": items[.ssh] = ReadinessItem(.warning, "hasło",
-            "Połączenie działa, ale klucz SSH tej aplikacji nie jest zainstalowany – logowanie hasłem. Napraw: „Zainstaluj klucz logowania” (niżej), „Skonfiguruj zaznaczone” albo „Roześlij klucz” (Konfiguracja › Dostęp i hasła).")
+            "Połączenie działa, ale klucz SSH tej aplikacji nie jest zainstalowany – logowanie hasłem. Napraw: „Zainstaluj klucz logowania”, „Skonfiguruj zaznaczone” albo „Roześlij klucz” (Konfiguracja › Dostęp i hasła).")
         default: items[.ssh] = ReadinessItem(.ok, "połączono",
             "Połączenie działa. Na tym Macu nie ma jeszcze klucza SSH aplikacji (Konfiguracja › Dostęp i hasła › Utwórz klucz), więc nie sprawdzono, czy jest zainstalowany.")
         }
