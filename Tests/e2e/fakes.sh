@@ -418,12 +418,15 @@ _e2e_pattern() { local a p=""; for a in "$@"; do case "$a" in -*) ;; *) p="$a" ;
 
 # pgrep/pkill: LockScreen and the overlay are simulated; the tagged helper processes the scripts start
 # (timers) are real and may be stopped, but only this user's. Nothing else is ever killed.
+# `pgrep -u UID -f CMCR_ATTENTION` (only that account's processes) keeps its -u for the real helper processes.
 pgrep() {
+  local a prev="" eu=""
+  for a in "$@"; do [ "$prev" = -u ] && eu="$a"; prev="$a"; done
   case "$(_e2e_pattern "$@")" in
     LockScreen) [ -e "$(_e2e_state lockscreen.running)" ] && { echo 99901; return 0; }; return 1 ;;
     CMCR_ATTENTION)
       [ -e "$(_e2e_state attention.running)" ] && { echo 99902; return 0; }
-      command pgrep -U "$(id -u)" -f CMCR_ATTENTION ;;
+      command pgrep -U "$(id -u)" ${eu:+-u "$eu"} -f CMCR_ATTENTION ;;
     cmcr-delayed-power) command pgrep -U "$(id -u)" -f cmcr-delayed-power ;;
     *) command pgrep "$@" ;;
   esac

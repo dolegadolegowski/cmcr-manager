@@ -400,7 +400,8 @@ public struct SetupCommandLine: Sendable {
       --no-ssh-acl              nie ograniczaj SSH do administratorów
       --no-ssh-tuning           bez ustawień sshd (keepalive)
       --ssh-key-only            SSH wyłącznie kluczem (wyłącza logowanie hasłem); bez tej opcji jak
-                                w aplikacji, --no-ssh-key-only włącza logowanie hasłem z powrotem
+                                „Zdalne logowanie tylko kluczem” w aplikacji, --no-ssh-key-only
+                                włącza logowanie hasłem z powrotem
       --no-shared-acl           folder ucznia bez dziedziczonych uprawnień ACL
       --enable-vnc              włącz Udostępnianie ekranu dla administratorów
       --sudo-nopasswd           sudo bez hasła (niezalecane); --no-sudo-nopasswd usuwa
@@ -486,8 +487,9 @@ public struct SetupCommandLine: Sendable {
             i += 1
         }
         if options.sshKeyOnly && !keyOnlyGiven && !options.installKey {
-            throw ParseError(message: "W aplikacji (Przygotowanie iMaców) wybrano SSH wyłącznie z kluczem, a to wymaga "
-                             + "instalacji klucza – usuń --no-key albo dodaj --no-ssh-key-only (logowanie hasłem "
+            // The toggle's name as the app shows it (SetupOptionsSheet), so the teacher can find it (AUDIT REV-10).
+            throw ParseError(message: "W aplikacji (Przygotowanie iMaców) włączono „Zdalne logowanie tylko kluczem”, a to "
+                             + "wymaga instalacji klucza – usuń --no-key albo dodaj --no-ssh-key-only (logowanie hasłem "
                              + "zostanie wtedy włączone ponownie).")
         }
         if let problem = options.validationError() { throw ParseError(message: problem) }

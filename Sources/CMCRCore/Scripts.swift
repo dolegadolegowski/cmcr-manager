@@ -338,7 +338,11 @@ public enum Scripts {
         esac
         FDA="  macOS chroni aplikacje: włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)."
         NAME="$(basename "$APP" .app)"
-        PIDS="$(cmcr_ps -axww -o pid=,comm= | awk -v n="/$NAME.app/Contents/MacOS/" 'index($0, n) > 0 {print $1}')"
+        # cmcr_ps lists precomposed names; the name on disk may be decomposed (e.g. copied from an HFS+ image), so
+        # the search uses it converted the same way (AUDIT REV-09). File operations keep the name as it is.
+        PSNAME="$(printf '%s' "$NAME" | iconv -c -f UTF-8-MAC -t UTF-8)"
+        [ -n "$PSNAME" ] || PSNAME="$NAME"
+        PIDS="$(cmcr_ps -axww -o pid=,comm= | awk -v n="/$PSNAME.app/Contents/MacOS/" 'index($0, n) > 0 {print $1}')"
         # Moved aside first (a rename needs the same permission as deleting): an app macOS protects stays where it is
         # and keeps running, instead of being quit for every user and then not removed.
         GONE="$(mktemp -d "$PARENT/.cmcr-uninstall.XXXXXX" 2>"$CMCR_TMP/rm.err")" \
@@ -1152,8 +1156,10 @@ public enum Scripts {
             exit $RC
             """#, asRoot: true)
         }
+        // Sessions in the background other than the administrator's own, which is not the students' and which
+        // „Wyloguj natychmiast” leaves alone as well (AUDIT REV-07).
         return RemoteScript(#"""
-        BG="$(cmcr_gui_sessions | awk -v c="$CONSOLE_USER" 'NF && $2 != c {print $2}' | paste -sd, -)"
+        BG="$(cmcr_gui_sessions | awk -v c="$CONSOLE_USER" -v a="$CMCR_ADMIN_USER" 'NF && $2 != c && $2 != a {print $2}' | paste -sd, -)"
         if [ -z "$CONSOLE_USER" ]; then
           if [ -n "$BG" ]; then
             echo "✘ Na ekranie jest okno logowania, a w tle działa sesja: $BG. Prośba o wylogowanie działa tylko dla osoby przy ekranie – użyj „Wyloguj natychmiast”." >&2
@@ -1289,7 +1295,17 @@ public enum Scripts {
           dseditgroup -o edit -a admin -t group "$G" \
             || { echo "✘ Nie udało się dodać grupy Administratorzy do listy dostępu – usługi nie włączono." >&2; exit 1; }
         fi
-        echo "Dostęp do Udostępniania ekranu: tylko administratorzy."
+        # Accounts on the list itself (an earlier „Tylko ci użytkownicy”, a restored …-disabled list) keep their
+        # access: they are named, as the setup script does, instead of promising administrators only (AUDIT REV-06).
+        OTHERS=""
+        for m in $(dscl . -read "/Groups/$G" GroupMembership 2>/dev/null | sed 's/^GroupMembership://'); do
+          is_admin_user "$m" || OTHERS="$OTHERS $m"
+        done
+        if [ -z "$OTHERS" ]; then
+          echo "Dostęp do Udostępniania ekranu: tylko administratorzy."
+        else
+          echo "⚠︎ Dostęp do Udostępniania ekranu mają nie tylko administratorzy – na liście dostępu są też konta bez uprawnień administratora:$OTHERS. Usuń je, jeśli nie powinny się łączyć: Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Udostępnianie ekranu”." >&2
+        fi
         launchctl enable system/com.apple.screensharing 2>/dev/null
         launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null
         if launchctl print system/com.apple.screensharing >/dev/null 2>&1; then
