@@ -863,7 +863,10 @@ public enum Scripts {
         cmcr_require_console "$DEST" "$OWNER"
         DEST="${DEST//\{console\}/$CONSOLE_USER}"; OWNER="${OWNER//\{console\}/$CONSOLE_USER}"
         # Before anything is written: an account that does not exist (a typo in „Inny…”) would leave the files root's.
+        # A bare number goes to chown as it is: a folder of a deleted account shows its uid as the owner (`stat %Su`),
+        # and `id` knows no uid without an account.
         OWNER_USER="${OWNER%%:*}"
+        case "$OWNER_USER" in *[!0-9]*) ;; *) OWNER_USER="" ;; esac
         if [ -n "$OWNER_USER" ] && ! id -u "$OWNER_USER" >/dev/null 2>&1; then
           echo "✘ Konto „${OWNER_USER}” nie istnieje na tym komputerze – nic nie wysłano (właściciel: ${OWNER})." >&2; exit 2
         fi
