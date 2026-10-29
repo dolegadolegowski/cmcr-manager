@@ -114,4 +114,25 @@ out="$(CMCR_CONFIG_DIR="$TT" "$CTL" trust 1 --dry-run </dev/null 2>&1)"; code=$?
 expect "trust z numerem: bez pytania o wszystkie" "$out" "imac01" "zaufany"
 expect_not "trust z numerem: bez pytania o wszystkie (treść)" "$out" "Wykonać na wszystkich"
 
+section "REV cmcrctl – readiness odrzuca --no-key, --verify i --dry-run (AUDIT REV-34)"
+RD="$WORK/cfg-rev-g6-readiness"
+mkdir -p "$RD"
+cp "$WORK/config/settings.json" "$WORK/config/hosts.json" "$RD/"
+# „SSH wyłącznie z kluczem” chosen in the app: readiness must not ask for setup options because of it.
+echo '{"sshKeyOnly": true, "installKey": true}' > "$RD/setup-options.json"
+rd() { CMCR_CONFIG_DIR="$RD" CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }
+clear_fakelog
+for opt in --verify --dry-run --no-key; do
+  out="$(rd readiness 1 $opt </dev/null)"; code=$?
+  expect_code "readiness $opt: kod 2" "$code" 2 "$out"
+  expect "readiness $opt: opcja polecenia setup" "$out" "opcja $opt dotyczy polecenia setup" "Nic nie zostało wykonane"
+  expect_not "readiness $opt: nic nie sprawdzono" "$out" "imac01"
+  expect_not "readiness $opt: bez rady o opcji setup" "$out" "--no-ssh-key-only"
+done
+out="$(rd readiness all --verify </dev/null)"; code=$?
+expect_code "readiness all --verify: kod 2" "$code" 2 "$out"
+out="$(rd readiness 1 --pubkey "$(cat "$WORK/client.pub")" </dev/null)"
+expect "readiness --pubkey: nadal sprawdza" "$out" "imac01"
+expect_not "readiness --pubkey: nie odrzucone" "$out" "dotyczy polecenia setup"
+
 rm -f "$WORK/rev-g6-hosts.orig"
