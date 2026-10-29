@@ -94,14 +94,18 @@ struct RevR4coreSessionEndTests {
         #expect(r2.endCode == nil)
     }
 
-    /// ssh's 255 after the script reported its end (the connection was lost while the session closed): the script's
-    /// own code counts, not a broken session.
-    @Test func theReportedCodeWinsOverSshs255() async {
+    /// ssh's 255 after the script reported its end: the script's own code counts only when it is 255 too. The marker
+    /// travels on stderr and can arrive ahead of the last stdout, so with any other code the session broke off and the
+    /// output may be cut off (AUDIT REV-60, RevR5coreTests).
+    @Test func theReportedCodeCountsOverSshs255OnlyWhenItIs255() async {
         let (r, _) = await r4Stream([start, "gotowe\n", "CMCR:SESSION-ENDED 0\n"], code: 255)
-        #expect(r.exitCode == 0)
-        #expect(r.succeeded)
+        #expect(r.exitCode == 255)
+        #expect(!r.succeeded)
+        #expect(SSH.diagnose(r) == (.error, SSH.sessionClosed))
         let (r1, _) = await r4Stream([start, "CMCR:SESSION-ENDED 2\n"], code: 255)
-        #expect(SSH.diagnose(r1) == (.online, "Polecenie zakończone kodem 2."))
+        #expect(SSH.diagnose(r1) == (.error, SSH.sessionClosed))
+        let (r2, _) = await r4Stream([start, "CMCR:SESSION-ENDED 255\n"], code: 255)
+        #expect(SSH.diagnose(r2) == (.online, "Polecenie zakończone kodem 255."))
     }
 }
 
