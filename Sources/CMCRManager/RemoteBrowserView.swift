@@ -346,12 +346,12 @@ private struct RemoteBrowserPage: View {
         let urls = Pickers.files(message: "Wybierz pliki lub foldery do wysłania do \(target)\(host).")
         guard !urls.isEmpty else { return }
         if let folder {
-            // Items with the same names in the subfolder are replaced (and the old ones removed): ask first, as for
-            // the current folder (AUDIT PLI-18).
+            // Files (and apps) with the same names in the subfolder are replaced, folders are merged (pushFinalize):
+            // ask first, as for the current folder, and say it the same way (AUDIT PLI-18, REV-31).
             confirm = ConfirmRequest(
                 title: "Wysłać do folderu „\(folder.displayName)”?",
-                message: "Elementy o tych samych nazwach w folderze „\(folder.displayName)” zostaną zastąpione, "
-                    + "a poprzednie wersje usunięte.",
+                message: "Pliki o tych samych nazwach w folderze „\(folder.displayName)” zostaną zastąpione, "
+                    + "a do folderów o tych samych nazwach zostanie dodana nowa zawartość.",
                 button: "Wyślij", targets: []) { browser.upload(urls, into: folder) }
         } else {
             startUpload(urls)
