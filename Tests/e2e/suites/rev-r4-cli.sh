@@ -99,11 +99,12 @@ expect "rename, nazwy w kółko: każdy komputer wskazany" "$out" \
   "imac02: „imac02” → imac02.local – ten adres ma teraz imac03 (imac02.local)" \
   "imac03: „imac03” → imac03.local – ten adres ma teraz imac01 (imac03.local)" \
   "imac01: „imac01” → imac01.local – ten adres ma teraz imac02 (imac01.local)" "nic nie zostało zmienione"
+# The whole order in the advice (AUDIT REV-61): followed literally in Tests/e2e/suites/rev-r5-rename.sh.
 expect "rename, nazwy w kółko: rada z nazwą tymczasową" "$out" \
-  "Komputery imac02, imac03 i imac01 zamieniają się nazwami w kółko: nadaj najpierw jednemu z nich nazwę tymczasową (--name)" \
+  "Komputery imac02, imac03 i imac01 zamieniają się nazwami w kółko. Zmień nazwy po kolei, za każdym razem z --update-list: najpierw nadaj imac02 nazwę tymczasową (--name)" \
   "Komputery imac03, imac01 i imac02 zamieniają się nazwami w kółko" \
   "Komputery imac01, imac02 i imac03 zamieniają się nazwami w kółko" \
-  "potem zmień nazwy pozostałych po kolei, a na końcu nadaj mu docelową nazwę (--name), za każdym razem z --update-list."
+  "a na końcu nadaj komputerowi z nazwą tymczasową docelową nazwę imac02 (--name)."
 expect_not "rename, nazwy w kółko: bez rady „w dwóch krokach”, której nie da się wykonać" "$out" "w dwóch krokach"
 # The advice works: a temporary name first, then the others in the order cmcrctl gives, the target name last.
 out="$(r4 rename @1 --name tymczasowa --dry-run)"; code=$?
