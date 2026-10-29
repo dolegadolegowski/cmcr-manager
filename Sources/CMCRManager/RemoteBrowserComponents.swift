@@ -441,36 +441,90 @@ struct NamePrompt: Identifiable {
     let id = UUID()
     let kind: Kind
     var text: String
+
+    var isNewFolder: Bool { if case .newFolder = kind { return true } else { return false } }
+
+    /// Why `name` cannot be used for a file or folder on the iMac; nil when it can (`RemotePaths.isValidName`).
+    static func problem(_ name: String) -> String? {
+        guard !RemotePaths.isValidName(name) else { return nil }
+        if name.isEmpty { return "Wpisz nazwę." }
+        if name == "." || name == ".." { return "„.” i „..” nie mogą być nazwą." }
+        if name.utf8.count > 255 { return "Nazwa jest za długa – najwyżej 255 bajtów (litery z ogonkami liczą się podwójnie)." }
+        if name.contains("/") { return "Nazwa nie może zawierać „/”." }
+        return "Nazwa nie może zawierać znaku NUL."
+    }
 }
 
 extension View {
-    /// Alert with a text field used for "Nowy folder" and "Zmień nazwę".
-    func namePrompt(_ prompt: Binding<NamePrompt?>, folder: String, onInvalid: ((String) -> Void)? = nil,
+    /// Sheet with a text field used for "Nowy folder" and "Zmień nazwę" (the file browser and the folder picker). A
+    /// name that cannot be used is explained in the sheet, which stays open with the typed name – an alert closes
+    /// with any of its buttons, so the name was lost and nothing said why (AUDIT WSP-07, REV-28, REV-30).
+    func namePrompt(_ prompt: Binding<NamePrompt?>, folder: String,
                     onCommit: @escaping (NamePrompt, String) -> Void) -> some View {
-        let isNew: Bool = { if case .newFolder = prompt.wrappedValue?.kind { return true } else { return false } }()
-        return alert(isNew ? "Nowy folder" : "Zmień nazwę",
-                     isPresented: Binding(get: { prompt.wrappedValue != nil },
-                                          set: { if !$0 { prompt.wrappedValue = nil } }),
-                     presenting: prompt.wrappedValue) { p in
-            TextField("Nazwa", text: Binding(get: { prompt.wrappedValue?.text ?? p.text },
-                                             set: { prompt.wrappedValue?.text = $0 }))
-            Button(isNew ? "Utwórz" : "Zmień nazwę") {
-                let name = (prompt.wrappedValue?.text ?? p.text).trimmingCharacters(in: .whitespaces)
-                if RemotePaths.isValidName(name) {
-                    onCommit(p, name)
-                } else if let onInvalid {
-                    onInvalid(name)
-                } else {
-                    NSSound.beep()
+        sheet(item: prompt) { p in
+            NamePromptSheet(prompt: p, folder: folder, onCommit: onCommit)
+        }
+    }
+}
+
+private struct NamePromptSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let prompt: NamePrompt
+    let folder: String
+    let onCommit: (NamePrompt, String) -> Void
+    @ViewState private var text: String
+
+    init(prompt: NamePrompt, folder: String, onCommit: @escaping (NamePrompt, String) -> Void) {
+        self.prompt = prompt
+        self.folder = folder
+        self.onCommit = onCommit
+        _text = ViewState(initialValue: prompt.text)
+    }
+
+    var name: String { text.trimmingCharacters(in: .whitespaces) }
+    var problem: String? { NamePrompt.problem(name) }
+
+    var body: some View {
+        Form {
+            Section {
+                // Return is the default button's (enabled only for a usable name): no second commit from onSubmit.
+                TextField("Nazwa", text: $text)
+                if let problem {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
                 }
-            }
-            Button("Anuluj", role: .cancel) {}
-        } message: { p in
-            if case .rename(let e) = p.kind {
-                Text("Nowa nazwa dla „\(e.displayName)”.")
-            } else {
-                Text("Folder zostanie utworzony w: \(folder)")
+            } header: {
+                Text(prompt.isNewFolder ? "Nowy folder" : "Zmień nazwę")
+            } footer: {
+                Text(place)
+                    .foregroundStyle(.secondary)
             }
         }
+        .formStyle(.grouped)
+        .frame(width: 420)
+        .fixedSize(horizontal: false, vertical: true)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Anuluj") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(prompt.isNewFolder ? "Utwórz" : "Zmień nazwę", action: commit)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(problem != nil)
+            }
+        }
+    }
+
+    /// Where the change is made; the folder and the old name are read from the iMac (AUDIT DOD-13).
+    var place: String {
+        if case .rename(let e) = prompt.kind { return "Nowa nazwa dla „\(e.displayName)”." }
+        return "Folder zostanie utworzony w: \(TerminalText.escape(folder, keepBackslash: true))"
+    }
+
+    func commit() {
+        guard problem == nil else { return }
+        onCommit(prompt, name)
+        dismiss()
     }
 }

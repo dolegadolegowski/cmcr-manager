@@ -22,7 +22,9 @@ final class RemoteBrowserModel: ObservableObject {
 
     unowned let app: AppModel
 
-    @Published private(set) var hostID: UUID?
+    @Published private(set) var hostID: UUID? {
+        didSet { if hostID != oldValue { showActivity() } }
+    }
     /// Folder shown (placeholders resolved once loaded).
     @Published private(set) var path = ""
     @Published private(set) var listing: RemoteListing? { didSet { refilter() } }
@@ -38,12 +40,13 @@ final class RemoteBrowserModel: ObservableObject {
     /// Entries after the hidden/search filters, sorted, folders first (like Finder's "Keep folders on top").
     @Published private(set) var visibleEntries: [RemoteEntry] = []
     @Published var selection = Set<RemoteEntry.ID>()
-    /// A change that is running right now ("Wysyłanie…").
+    /// A change that is running right now ("Wysyłanie…"); one on another Mac than the shown one names that Mac.
     @Published private(set) var activity: String?
-    /// Result of the last change.
+    /// Result of the last change; one made on another Mac than the shown one names that Mac.
     @Published var notice: Notice?
-    /// Changes still running (several may run at once), oldest first; `activity` shows the latest one.
-    private var runningChanges: [(id: UUID, text: String)] = []
+    /// Changes still running (several may run at once, also on a Mac shown before), oldest first; `activity` shows
+    /// the latest one.
+    private var runningChanges: [(id: UUID, host: Machine, text: String)] = []
     /// The user switched „Jako administrator” off in this folder: no automatic sudo until another folder or Mac
     /// is opened (AUDIT PLI-14).
     private var rootTurnedOff = false
@@ -248,12 +251,13 @@ final class RemoteBrowserModel: ObservableObject {
         asRoot || l.asRoot || !l.writable || l.owner != l.adminUser || entries.contains { $0.owner != l.adminUser }
     }
 
-    private func runChange(_ title: String, on m: Machine, activity text: String,
-                           operation: @escaping @MainActor (Job) async -> CommandResult,
-                           done: (@MainActor (Bool) -> Void)? = nil) {
+    /// Runs a change of the shown folder on `m` as a job; the status bar shows `text` while it runs, then its result.
+    func runChange(_ title: String, on m: Machine, activity text: String,
+                   operation: @escaping @MainActor (Job) async -> CommandResult,
+                   done: (@MainActor (Bool) -> Void)? = nil) {
         let token = UUID()
-        runningChanges.append((token, text))
-        activity = text
+        runningChanges.append((token, m, text))
+        showActivity()
         notice = nil
         // The Mac shown here just answered the listing: a stale „offline” must not skip the change (AUDIT PLI-15).
         app.runBatch(title, on: [m], section: .browser, includeUnreachable: true, operation: { _, job in
@@ -261,16 +265,29 @@ final class RemoteBrowserModel: ObservableObject {
         }, completion: { batch in
             // Another change may still be running (AUDIT PLI-16): keep showing it.
             self.runningChanges.removeAll { $0.id == token }
-            self.activity = self.runningChanges.last?.text
+            self.showActivity()
             let job = batch.jobs.first
             let ok = job?.state == .succeeded
             let summary = job?.summary ?? ""
-            self.notice = Notice(text: ok ? (summary.isEmpty || summary == "OK" ? "Gotowe." : summary)
-                                          : (summary.isEmpty ? "Operacja nie powiodła się." : summary),
-                                 isError: !ok, batchID: batch.id)
+            let result = ok ? (summary.isEmpty || summary == "OK" ? "Gotowe." : summary)
+                : (summary.isEmpty ? "Operacja nie powiodła się." : summary)
+            self.notice = Notice(text: self.naming(m, result), isError: !ok, batchID: batch.id)
             done?(ok)
             if m.id == self.hostID { self.reload() }
         })
+    }
+
+    /// The latest change on the shown Mac, otherwise the latest one on a Mac shown before (AUDIT PLI-16).
+    private func showActivity() {
+        let change = runningChanges.last { $0.host.id == hostID } ?? runningChanges.last
+        activity = change.map { naming($0.host, $0.text) }
+    }
+
+    /// `text` about a change on `m` as the status bar says it: after switching to another Mac (a click in the host
+    /// list), a change still running or finishing on the Mac shown before names that Mac, so it is not taken for
+    /// the new one's (AUDIT REV-15).
+    private func naming(_ m: Machine, _ text: String) -> String {
+        m.id == hostID ? text : "\(app.current(m).name): \(text)"
     }
 
     func makeFolder(named name: String) {
@@ -299,8 +316,9 @@ final class RemoteBrowserModel: ObservableObject {
         guard let m = host, let l = listing, !entries.isEmpty else { return }
         let paths = entries.map { RemotePaths.join(l.path, $0.name) }
         let root = needsRoot(l, entries: entries)
-        let what = entries.count == 1 ? "„\(entries[0].displayName)”" : Polish.count(entries.count, "element", "elementy", "elementów")
-        runChange("Usuń \(what) z \(TerminalText.escape(l.path, keepBackslash: true))", on: m, activity: "Usuwanie \(what)…") { job in
+        let what = Self.subject(entries.map(\.displayName))
+        runChange("Usuń \(what.title) z \(TerminalText.escape(l.path, keepBackslash: true))", on: m,
+                  activity: "Usuwanie \(what.activity)…") { job in
             await self.app.ssh(Scripts.deleteItems(paths, asRoot: root), on: m, job: job)
         }
     }
@@ -310,10 +328,10 @@ final class RemoteBrowserModel: ObservableObject {
         guard let m = host, let l = listing, !entries.isEmpty else { return }
         let names = entries.map(\.name)
         let root = asRoot || l.asRoot
-        let what = entries.count == 1 ? "„\(entries[0].displayName)”" : Polish.count(entries.count, "element", "elementy", "elementów")
+        let what = Self.subject(entries.map(\.displayName))
         // Each download keeps its own list: two at once must not show each other's files (AUDIT PLI-16).
         let saved = SavedFiles()
-        runChange("Pobierz \(what) z \(m.name)", on: m, activity: "Pobieranie \(what)…", operation: { job in
+        runChange("Pobierz \(what.title) z \(m.name)", on: m, activity: "Pobieranie \(what.activity)…", operation: { job in
             let (r, files) = await Operations.download(names, in: l.path, from: m, into: directory, asRoot: root,
                                                        password: self.app.password(for: m),
                                                        settings: self.app.sshSettings, handle: job.handle,
@@ -333,8 +351,8 @@ final class RemoteBrowserModel: ObservableObject {
         let groupName = subfolder?.group ?? l.group
         let owner = ownerName == l.adminUser || ownerName.isEmpty ? "" : "\(ownerName):\(groupName)"
         let root = asRoot || !owner.isEmpty || !l.writable
-        let what = urls.count == 1 ? "„\(urls[0].lastPathComponent)”" : Polish.count(urls.count, "element", "elementy", "elementów")
-        runChange("Wyślij \(what) → \(m.name):\(destination)", on: m, activity: "Wysyłanie \(what)…") { job in
+        let what = Self.subject(urls.map { TerminalText.escape($0.lastPathComponent, keepBackslash: true) })
+        runChange(Self.uploadTitle(urls, to: destination, on: m.name), on: m, activity: "Wysyłanie \(what.activity)…") { job in
             switch await Payload.make(urls, handle: job.handle) {
             case .failure(let e):
                 return .failure(e.localizedDescription)
@@ -348,14 +366,21 @@ final class RemoteBrowserModel: ObservableObject {
         }
     }
 
-    /// A name typed for a new folder or a rename that cannot be used: said in the status bar instead of a beep, which
-    /// left the teacher guessing why nothing happened (AUDIT WSP-07).
-    func reportInvalidName(_ name: String) {
-        let why = name.isEmpty ? "nazwa nie może być pusta"
-            : name == "." || name == ".." ? "„.” i „..” nie mogą być nazwą"
-            : name.utf8.count > 255 ? "nazwa jest za długa"
-            : "nazwa nie może zawierać „/”"
-        notice = Notice(text: "Nie utworzono ani nie zmieniono nazwy – \(why).", isError: true)
+    /// Title of an upload (Zadania, the toast, the result box). The destination is read from the iMac and a file may
+    /// come from one (collected work): a direction override in their names is shown, not applied to the rest of the
+    /// title, as in the other changes' titles (AUDIT DOD-13, REV-19).
+    static func uploadTitle(_ urls: [URL], to destination: String, on host: String) -> String {
+        let what = subject(urls.map { TerminalText.escape($0.lastPathComponent, keepBackslash: true) }).title
+        return "Wyślij \(what) → \(host):\(TerminalText.escape(destination, keepBackslash: true))"
+    }
+
+    /// What a change acts on: one name in quotes, or how many items. `title` follows a verb („Usuń 3 elementy”),
+    /// `activity` a verbal noun („Usuwanie 3 elementów…”), which takes the genitive (AUDIT REV-16).
+    static func subject(_ shownNames: [String]) -> (title: String, activity: String) {
+        let n = shownNames.count
+        if n == 1 { return ("„\(shownNames[0])”", "„\(shownNames[0])”") }
+        // After a numeral in the genitive every number from 2 on takes „elementów” (trzech, dwudziestu dwóch…).
+        return (Polish.count(n, "element", "elementy", "elementów"), "\(n) elementów")
     }
 
     /// Names of `urls` that already exist in the current folder (would be replaced by an upload).

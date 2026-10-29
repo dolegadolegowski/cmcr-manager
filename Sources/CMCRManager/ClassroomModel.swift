@@ -72,10 +72,21 @@ final class LessonRun: ObservableObject, Identifiable, @unchecked Sendable {
         states.values.filter { $0.contains { if case .failed = $0 { return true } else { return false } } }.count
     }
 
-    /// Macs where the routine did not run at all (left out as unreachable or with a logged-in student).
+    /// The state of the steps that a phase of the routine left a Mac out of (unreachable, or with a logged-in
+    /// student and „Pomiń komputery z zalogowanym użytkownikiem”); shown in the lesson table.
+    static func leftOut(loggedIn: Bool) -> StepState {
+        .skipped(leftOutPrefix + (loggedIn ? "zalogowany użytkownik" : "komputer niedostępny"))
+    }
+
+    private static let leftOutPrefix = "pominięto – "
+
+    /// Macs that a phase of the routine left out (`leftOut`) and where nothing failed (those count as problems).
+    /// A step that ran and had nothing to do („nikt nie jest zalogowany”, an empty materials folder) is not a skip
+    /// of the Mac (AUDIT REV-14).
     var skippedHosts: Int {
         states.values.filter { row in
-            !row.isEmpty && row.allSatisfy { if case .skipped = $0 { return true } else { return false } }
+            !row.contains { if case .failed = $0 { return true } else { return false } }
+                && row.contains { if case .skipped(let why) = $0 { return why.hasPrefix(Self.leftOutPrefix) } else { return false } }
         }.count
     }
 
@@ -416,8 +427,8 @@ final class ClassroomModel: ObservableObject {
         batch.onCancel = { [weak run] in run?.cancel() }
         // Macs left out on purpose or known to be off never run their steps: say why in the lesson table.
         for job in batch.jobs where job.state == .skipped {
-            let why = job.skipReason == .loggedInUser ? "pominięto – zalogowany użytkownik" : "pominięto – komputer niedostępny"
-            for i in range ?? 0..<plan.steps.count { run.update(job.machine.id, i, .skipped(why)) }
+            let state = LessonRun.leftOut(loggedIn: job.skipReason == .loggedInUser)
+            for i in range ?? 0..<plan.steps.count { run.update(job.machine.id, i, state) }
         }
     }
 
@@ -474,6 +485,11 @@ final class ClassroomModel: ObservableObject {
         question = round
         round.batch = model.runBatch("Pytanie: \(text.prefix(50))", on: targets, section: .classroom,
                                      maxParallel: targets.count) { m, job in
+            // „Powtórz na nieudanych” asks again on the same round: until this Mac answers, it waits for the answer
+            // instead of showing the earlier skip, error or answer (AUDIT REV-20).
+            round.errors[m.id] = nil
+            round.answers[m.id] = nil
+            round.answeredAt[m.id] = nil
             let r = await model.ssh(Scripts.ask(title: "Pytanie od nauczyciela", prompt: text, buttons: buttons,
                                                  timeoutSeconds: seconds),
                                     on: m, job: job, timeout: TimeInterval(seconds + 60))
@@ -602,20 +618,30 @@ final class ClassroomModel: ObservableObject {
                             return Scripts.renameComputer(computerName: e.computerName, localHostName: e.localHostName)
                         }) { m, r in
             guard r.succeeded, let e = byID[m.id] else { return }
-            self.names[m.id] = ComputerNameInfo(computerName: e.computerName, localHostName: e.localHostName,
-                                                hostName: e.localHostName)
-            guard updateList, let i = model.machines.firstIndex(where: { $0.id == m.id }) else { return }
-            let before = model.machines[i]
-            if model.machines[i].name != e.computerName { model.machines[i].name = e.computerName }
-            if let address = ComputerNames.addressAfterRename(model.machines[i].address, localHostName: e.localHostName),
-               address != model.machines[i].address {
-                model.machines[i].address = address
-                // The Mac keeps its host keys: trust them under the new address too, so the next connection is not
-                // refused as an unknown Mac (AUDIT KOM-07).
-                let after = model.machines[i], ss = model.sshSettings
-                Task { await HostTrust.carryTrust(from: before, to: after, settings: ss) }
-            }
+            self.renamed(e, model: model, updateList: updateList)
         }
+    }
+
+    /// A Mac was renamed: shows its new names and, with `updateList`, updates its host list entry.
+    func renamed(_ e: RenameEntry, model: AppModel, updateList: Bool) {
+        let id = e.machine.id
+        names[id] = ComputerNameInfo(computerName: e.computerName, localHostName: e.localHostName, hostName: e.localHostName)
+        guard updateList, let before = model.machine(id) else { return }
+        var updated = before
+        updated.name = e.computerName
+        if let address = ComputerNames.addressAfterRename(before.address, localHostName: e.localHostName) {
+            updated.address = address
+        }
+        guard updated != before else { return }
+        // One write, by id: saving the list takes over what cmcrctl changed in hosts.json meanwhile and may replace
+        // the whole array (AUDIT KON-04), so an index taken before a write can point at another Mac after it
+        // (AUDIT REV-18).
+        if let i = model.machines.firstIndex(where: { $0.id == id }) { model.machines[i] = updated }
+        guard updated.address != before.address else { return }
+        // The Mac keeps its host keys: trust them under the new address too, so the next connection is not
+        // refused as an unknown Mac (AUDIT KOM-07).
+        let after = model.machine(id) ?? updated, ss = model.sshSettings
+        Task { await HostTrust.carryTrust(from: before, to: after, settings: ss) }
     }
 
     // MARK: - App versions
