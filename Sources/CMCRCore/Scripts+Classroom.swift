@@ -40,7 +40,7 @@ public extension Scripts {
           fi
           if [ -z "$USED" ]; then
             if [ "$MODE" = lockScreen ]; then
-              echo "✘ Blokada systemowa (LockScreen) nie uruchomiła się na tym Macu – wybierz tryb „Komunikat na pełnym ekranie”." >&2; exit 1
+              echo "✘ Blokada systemowa (LockScreen) nie uruchomiła się na tym iMacu – wybierz tryb „Komunikat na pełnym ekranie”." >&2; exit 1
             fi
             echo "⚠︎ LockScreen niedostępny – używam komunikatu na pełnym ekranie."
           fi
@@ -71,9 +71,9 @@ public extension Scripts {
         if [ "$USED" = overlay ] && [ "$OVERLAY_STATE" != active ]; then
           echo "CMCR:LOCKWARN:inactive"
           if [ "$OVERLAY_STATE" = inactive ]; then
-            echo "⚠︎ Komunikat zakrywa ekran, ale macOS nie oddał mu klawiatury – do pierwszego kliknięcia w komunikat uczeń może przełączać aplikacje (⌘⇥) i pisać w aplikacji pod spodem. Pełną blokadę daje tryb „Blokada systemowa (LockScreen)”, jeśli działa na tym Macu."
+            echo "⚠︎ Komunikat zakrywa ekran, ale macOS nie oddał mu klawiatury – do pierwszego kliknięcia w komunikat uczeń może przełączać aplikacje (⌘⇥) i pisać w aplikacji pod spodem. Pełną blokadę daje tryb „Blokada systemowa (LockScreen)”, jeśli działa na tym iMacu."
           else
-            echo "⚠︎ Komunikat zakrywa ekran, ale nie udało się potwierdzić, że przejął klawiaturę – uczeń może przełączać aplikacje (⌘⇥). Pełną blokadę daje tryb „Blokada systemowa (LockScreen)”, jeśli działa na tym Macu."
+            echo "⚠︎ Komunikat zakrywa ekran, ale nie udało się potwierdzić, że przejął klawiaturę – uczeń może przełączać aplikacje (⌘⇥). Pełną blokadę daje tryb „Blokada systemowa (LockScreen)”, jeśli działa na tym iMacu."
           fi
         fi
         if [ "$USED" = lockscreen ]; then KIND="blokada systemowa"; else KIND="komunikat na pełnym ekranie"; fi

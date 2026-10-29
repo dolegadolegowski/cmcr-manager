@@ -876,7 +876,7 @@ public enum Scripts {
           # On-disk spelling: /users, /USERS or /Volumes/Macintosh HD/Users are /Users too.
           case "$(cmcr_realdir "$P")" in
             ""|/|/Users|/Volumes|/private|/private/var|/System|/System/Volumes|/System/Volumes/Data)
-              echo "✘ Folder $(dirname "$DEST") nie istnieje na tym Macu (np. konto bez katalogu domowego) – nie tworzę go." >&2; exit 2 ;;
+              echo "✘ Folder $(dirname "$DEST") nie istnieje na tym iMacu (np. konto bez katalogu domowego) – nie tworzę go." >&2; exit 2 ;;
           esac
         fi
         # From here on: relative paths inside the checked folder only.
@@ -1075,7 +1075,7 @@ public enum Scripts {
         while [ "${DIR%/}" != "$DIR" ]; do DIR="${DIR%/}"; done
         case "$DIR" in /?*) ;; *) echo "✘ Podaj pełną ścieżkę folderu (podano: $DIR)" >&2; exit 2 ;; esac
         case "$DIR/" in */../*|*/./*|*//*) echo "✘ Niepoprawna ścieżka: $DIR" >&2; exit 2 ;; esac
-        id "$U" >/dev/null 2>&1 || { echo "✘ Konto $U nie istnieje na tym Macu." >&2; exit 2; }
+        id "$U" >/dev/null 2>&1 || { echo "✘ Konto $U nie istnieje na tym iMacu." >&2; exit 2; }
         H="$(dscl . -read "/Users/$U" NFSHomeDirectory 2>/dev/null | awk 'NR == 1 {print $2}')"
         CDIR="$(cmcr_canonpath "$DIR")" || { echo "✘ Niepoprawna ścieżka: $DIR" >&2; exit 2; }
         if [ -n "$H" ] && [ ! -d "$H" ]; then
@@ -1228,7 +1228,7 @@ public enum Scripts {
       elif ! fdesetup list 2>/dev/null | grep -q "^$CMCR_ADMIN_USER,"; then
         echo "  Konto $CMCR_ADMIN_USER nie może odblokować FileVault (brak na liście fdesetup list)." >&2
       elif [ "$(fdesetup supportsauthrestart 2>/dev/null)" != "true" ]; then
-        echo "  Ten Mac nie obsługuje restartu z odblokowaniem (fdesetup supportsauthrestart)." >&2
+        echo "  Ten iMac nie obsługuje restartu z odblokowaniem (fdesetup supportsauthrestart)." >&2
       fi
       return 1
     }
