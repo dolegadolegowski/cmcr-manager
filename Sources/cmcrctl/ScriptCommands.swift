@@ -54,13 +54,18 @@ enum ScriptCommands {
             moduleUsageError(a.command, "Brak pliku: \(u.path)")
         }
         let targets = ModuleHosts.changing(spec, a.command)
-        logAction(targets)
+        // A job of its own: Ctrl-C stops the packing and removes the archive, and nothing is installed (AUDIT REV-44).
         let payload: URL
-        switch await Payload.make(urls) {
+        switch await Interruption.shared.pack(urls) {
+        case .failure(let e) where Interruption.shared.isInterrupted:
+            Console.err("✘ \(e.localizedDescription) Na komputerach nic nie zostało zmienione.")
+            return ExitCode.failure
         case .failure(let e): fail(e.localizedDescription)
         case .success(let url): payload = url
         }
-        defer { try? FileManager.default.removeItem(at: payload) }
+        defer { Interruption.shared.discard(payload) }
+        // Logged once the files are packed, right before anything runs on the iMacs.
+        logAction(targets)
         let ssh = sshSettings
         let allowUnsigned = a.has("--allow-unsigned")
         return await eachHost(targets, a) { io in

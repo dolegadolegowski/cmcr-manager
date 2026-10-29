@@ -1,0 +1,124 @@
+# shellcheck shell=bash
+# Review fixes of cmcrctl (AUDIT REV, group R3-cli): Ctrl-C while install or lesson start packs its files, the order of
+# the classroom.json warning and the „Wykonać na wszystkich?” question in `lesson`, the exit code of `exec` after a
+# broken connection, and renames whose new .local name another renamed Mac still has (a renumbering chain or a swap).
+# Sourced by Tests/e2e/run.sh (helpers and $WORK $CTL $PASSWORD $ME $PORT come from there). Own config folder, so later
+# suites see the original configuration.
+
+R3="$WORK/cfg-rev-r3"
+mkdir -p "$R3"
+cp "$WORK/config/settings.json" "$R3/"
+cat > "$R3/hosts.json" <<EOF
+[
+ {"id":"b1111111-1111-1111-1111-111111111111","name":"imac01","address":"127.0.0.1","user":"$ME","port":$PORT},
+ {"id":"b2222222-2222-2222-2222-222222222222","name":"imac02","address":"127.0.0.1","user":"$ME","port":$PORT},
+ {"id":"b9999999-9999-9999-9999-999999999999","name":"imac09","address":"imac09.cmcr-e2e.invalid","user":"imac09","port":22}
+]
+EOF
+r3() { CMCR_CONFIG_DIR="$R3" CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }
+# r3_before NAME OUTPUT FIRST SECOND – both lines are there, FIRST above SECOND.
+r3_before() {
+  local a b
+  a="$(printf '%s\n' "$2" | grep -nF -- "$3" | head -n 1 | cut -d: -f1)"
+  b="$(printf '%s\n' "$2" | grep -nF -- "$4" | head -n 1 | cut -d: -f1)"
+  if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; then pass "$1"; else fail "$1 („$3” przed „$4”)" "$2"; fi
+}
+# r3_close_masters – ends the shared ssh connections, so the next command opens its own.
+r3_close_masters() {
+  local mux
+  for mux in "$CMCR_SSH_CONTROL_DIR"/*; do
+    [ -S "$mux" ] && ssh -o ControlPath="$mux" -O exit cmcr-e2e >/dev/null 2>&1
+  done
+}
+
+section "REV R3 cmcrctl – przygotowanie"
+out="$(r3 list)"
+expect "r3: lista komputerów" "$out" "imac01" "imac02" "imac09"
+
+section "REV R3 cmcrctl – Ctrl-C w czasie pakowania plików (install, lesson start) (AUDIT REV-44)"
+# A big folder: 8 clones of one 256 MB file (APFS clones take no extra disk space, but tar reads and writes every one).
+r3_big() { # r3_big DIR
+  mkdir -p "$1"
+  dd if=/dev/zero of="$1/dane-0" bs=1048576 count=256 2>/dev/null
+  local i
+  for i in 1 2 3 4 5 6 7; do cp -c "$1/dane-0" "$1/dane-$i" 2>/dev/null || cp "$1/dane-0" "$1/dane-$i"; done
+}
+# r3_pack_interrupt FOLDER ARGS… – runs cmcrctl ARGS in its own process group and waits (at most 20 s) until its tar
+# packs from $WORK/FOLDER (matched by name: cmcrctl may pass /private/tmp for /tmp). tar is then frozen (SIGSTOP – a
+# fast disk must not finish it first), the group gets SIGINT, as Ctrl-C in a terminal sends it, and tar goes on half a
+# second later. tar has a process group of its own, so the SIGINT does not reach it. (Frozen, it does not outlive a
+# cmcrctl killed by SIGINT either: a stopped process whose process group is orphaned gets SIGHUP from the system – the
+# archive written so far stays.) Sets R3_CODE, R3_OUT, R3_TAR (tar's pid) and R3_ARCHIVE (the archive tar writes).
+r3_pack_interrupt() {
+  local folder="$1" pid _
+  shift
+  R3_TAR=""
+  R3_ARCHIVE=""
+  set -m
+  CMCR_CONFIG_DIR="$R3" CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" > "$WORK/rev-r3-int.out" 2>&1 </dev/null &
+  pid=$!
+  set +m
+  for _ in $(seq 1 400); do
+    R3_TAR="$(pgrep -f -- "^/usr/bin/tar -cf .*cmcr-payload-.* -C .*/$(basename "$WORK")/$folder " | head -n 1)"
+    [ -n "$R3_TAR" ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.05
+  done
+  if [ -n "$R3_TAR" ]; then
+    kill -STOP "$R3_TAR"
+    R3_ARCHIVE="$(ps -o args= -p "$R3_TAR" | sed -n 's|^/usr/bin/tar -cf \([^ ]*\) .*|\1|p')"
+    kill -INT -- "-$pid"
+    sleep 0.5
+    kill -CONT "$R3_TAR" 2>/dev/null
+  else
+    kill -INT -- "-$pid" 2>/dev/null
+  fi
+  wait "$pid"
+  R3_CODE=$?
+  R3_OUT="$(cat "$WORK/rev-r3-int.out")"
+}
+# r3_pack_checks LABEL MESSAGE – after r3_pack_interrupt: cmcrctl ended with 130 and MESSAGE only after tar, and no
+# archive is left.
+r3_pack_checks() {
+  local label="$1" message="$2"
+  if [ -z "$R3_TAR" ]; then
+    fail "$label: tar nie wystartował (lub skończył przed Ctrl-C)" "$R3_OUT"
+    return
+  fi
+  expect_code "$label, Ctrl-C: kod 130" "$R3_CODE" 130 "$R3_OUT"
+  expect "$label, Ctrl-C: przerwano pakowanie" "$R3_OUT" "▸ Przerywanie – zatrzymywanie pakowania plików" "$message"
+  if kill -0 "$R3_TAR" 2>/dev/null; then
+    fail "$label, Ctrl-C: tar działa dalej po zakończeniu cmcrctl" "$(ps -o pid,ppid,args= -p "$R3_TAR")"
+    kill -KILL "$R3_TAR" 2>/dev/null
+  else
+    pass "$label, Ctrl-C: tar zatrzymany razem z cmcrctl"
+  fi
+  if [ -n "$R3_ARCHIVE" ] && [ -e "$R3_ARCHIVE" ]; then
+    fail "$label, Ctrl-C: archiwum zostało w katalogu tymczasowym" "$(ls -la "$R3_ARCHIVE")"
+  else
+    pass "$label, Ctrl-C: archiwum usunięte"
+  fi
+  [ -n "$R3_ARCHIVE" ] && rm -f "$R3_ARCHIVE"
+}
+r3_big "$WORK/rev-r3-pack/rev-r3-big.app"
+clear_fakelog
+r3_pack_interrupt rev-r3-pack install "$WORK/rev-r3-pack/rev-r3-big.app" 1 --allow-unsigned
+r3_pack_checks "install" "✘ Przerwano pakowanie plików. Na komputerach nic nie zostało zmienione."
+expect_not "install, Ctrl-C: nic nie uruchomiono na komputerze" "$R3_OUT" "imac01:"
+[ ! -e "$WORK/Applications/rev-r3-big.app" ] && pass "install, Ctrl-C: aplikacja nie zainstalowana" \
+  || fail "install, Ctrl-C: aplikacja zainstalowana mimo przerwania" "$(ls -la "$WORK/Applications")"
+rm -rf "$WORK/Applications/rev-r3-big.app"
+mv "$WORK/rev-r3-pack/rev-r3-big.app" "$WORK/rev-r3-materials-big"
+mkdir -p "$WORK/rev-r3-materials"
+mv "$WORK/rev-r3-materials-big" "$WORK/rev-r3-materials/duze"
+python3 - "$R3/classroom.json" "$WORK/rev-r3-materials" <<'PY'
+import json, sys
+json.dump({"start": {"wake": False, "sendMaterials": True, "materialsFolder": sys.argv[2], "openApps": False,
+                     "greet": False}}, open(sys.argv[1], "w"))
+PY
+r3_pack_interrupt rev-r3-materials lesson start 1
+r3_pack_checks "lesson start" "✘ Materiały: przerwano pakowanie plików. Nic nie zostało uruchomione."
+expect_not "lesson start, Ctrl-C: nic nie uruchomiono na komputerze" "$R3_OUT" "== imac01"
+[ ! -e "$WORK/remote/Public/cmcr/duze" ] && pass "lesson start, Ctrl-C: materiały nie wysłane" \
+  || fail "lesson start, Ctrl-C: materiały wysłane mimo przerwania" "$(ls -la "$WORK/remote/Public/cmcr")"
+rm -rf "$WORK/remote/Public/cmcr/duze" "$WORK/rev-r3-materials" "$WORK/rev-r3-pack" "$R3/classroom.json"

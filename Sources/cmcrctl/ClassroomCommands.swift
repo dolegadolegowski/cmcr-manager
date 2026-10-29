@@ -415,15 +415,19 @@ enum ClassroomCLI {
             case .failure(let problem):
                 fail("✘ Materiały: \(problem.message) Nic nie zostało uruchomione.")
             case .success(let items) where !items.isEmpty:
-                switch await Payload.make(items) {
+                // A job of its own: Ctrl-C stops the packing and removes the archive (AUDIT REV-44).
+                switch await Interruption.shared.pack(items) {
                 case .success(let url): payload = url
+                case .failure where Interruption.shared.isInterrupted:
+                    Console.err("✘ Materiały: przerwano pakowanie plików. Nic nie zostało uruchomione.")
+                    return ExitCode.failure
                 case .failure(let error): fail("✘ Materiały: nie udało się ich spakować (\(error.localizedDescription)). Nic nie zostało uruchomione.")
                 }
             case .success:
                 Console.out("Folder z materiałami jest pusty – krok „Wyślij materiały” zostanie pominięty.")
             }
         }
-        defer { if let payload { try? FileManager.default.removeItem(at: payload) } }
+        defer { if let payload { Interruption.shared.discard(payload) } }
         logAction(hosts)
 
         // As in the app: Wake-on-LAN for the same MACs (status-cache.json), every Mac at once – packets go out to all
