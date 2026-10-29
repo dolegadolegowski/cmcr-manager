@@ -853,7 +853,9 @@ public enum Scripts {
     /// - The destination usually belongs to the student, who could swap it (or a folder on the way) for a link to
     ///   another account: a link not owned by root is refused, and everything after the check runs inside the
     ///   checked folder with relative paths (`cmcr_pin_dir`), so a later swap cannot redirect root.
-    /// - An empty `owner` as root means "like the destination folder", so pushed files never stay root-owned.
+    /// - An empty `owner` as root means "like the destination folder", so pushed files never stay root-owned. An
+    ///   account that does not exist is refused before anything is written; a bare uid without an account only
+    ///   counts for a folder of that uid (a deleted account's folder, as the remote browser passes its owner).
     /// - `{console}` with nobody logged in stops with code 3; a missing home folder is never created.
     public static func pushFinalize(remoteTar: String, destination: String, owner: String, mode: String,
                                     asRoot: Bool) -> RemoteScript {
@@ -862,14 +864,21 @@ public enum Scripts {
         cmcr_on_exit 'rm -f "$TAR"'
         cmcr_require_console "$DEST" "$OWNER"
         DEST="${DEST//\{console\}/$CONSOLE_USER}"; OWNER="${OWNER//\{console\}/$CONSOLE_USER}"
-        # Before anything is written: an account that does not exist (a typo in „Inny…”) would leave the files root's.
-        # A bare number goes to chown as it is: a folder of a deleted account shows its uid as the owner (`stat %Su`),
-        # and `id` knows no uid without an account.
-        OWNER_USER="${OWNER%%:*}"
-        case "$OWNER_USER" in *[!0-9]*) ;; *) OWNER_USER="" ;; esac
-        if [ -n "$OWNER_USER" ] && ! id -u "$OWNER_USER" >/dev/null 2>&1; then
-          echo "✘ Konto „${OWNER_USER}” nie istnieje na tym komputerze – nic nie wysłano (właściciel: ${OWNER})." >&2; exit 2
-        fi
+        # Before anything is written: an account that does not exist (a typo in „Inny…”) would leave the files root's,
+        # or hand them to a uid nobody has.
+        OWNER_USER="${OWNER%%:*}"; OWNER_UID=""
+        cmcr_no_owner() { echo "✘ Konto „${OWNER_USER}” nie istnieje na tym komputerze – nic nie wysłano (właściciel: ${OWNER})." >&2; exit 2; }
+        case "$OWNER_USER" in
+          "") ;;
+          *[!0-9]*) id -u "$OWNER_USER" >/dev/null 2>&1 || cmcr_no_owner ;;
+          *)
+            # A bare number: a folder of a deleted account shows its uid as the owner (`stat %Su`), and `id` knows no
+            # uid without an account. Such a uid is accepted only for the folder it owns (checked below, once that
+            # folder is known); chown takes nothing above 2147483647.
+            OWNER_NUM="${OWNER_USER#"${OWNER_USER%%[!0]*}"}"; OWNER_NUM="${OWNER_NUM:-0}"
+            if [ "${#OWNER_NUM}" -gt 10 ] || [ "$OWNER_NUM" -gt 2147483647 ]; then cmcr_no_owner; fi
+            id -u "$OWNER_NUM" >/dev/null 2>&1 || OWNER_UID="$OWNER_NUM" ;;
+        esac
         DEST="${DEST/#\~/$HOME}"
         while [ "${DEST%/}" != "$DEST" ]; do DEST="${DEST%/}"; done
         case "$DEST" in /?*) ;; *) echo "✘ Folder docelowy musi być pełną ścieżką (np. /Users/student/Desktop): „${DEST}”" >&2; exit 2 ;; esac
@@ -893,6 +902,9 @@ public enum Scripts {
           2) exit 2 ;;
           *) echo "✘ Nie można otworzyć folderu $P – brak uprawnień." >&2; exit 2 ;;
         esac
+        # A uid without an account only for a folder of that uid: the destination or, when it does not exist yet, the
+        # deepest folder on the way to it.
+        if [ -n "$OWNER_UID" ] && [ "$(stat -f %u .)" != "$OWNER_UID" ]; then cmcr_no_owner; fi
         if [ -z "$OWNER" ] && [ "$EUID" -eq 0 ]; then
           OWNER="$(stat -f '%Su:%Sg' .)"
           echo "→ Właściciel jak w folderze docelowym: $OWNER"

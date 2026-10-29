@@ -81,7 +81,7 @@ Nazwa i zasilanie:
   --hostname NAZWA|auto    ustaw ComputerName i LocalHostName (auto = nazwa konta admin.)
   --no-wol                 nie zmieniaj „Budź przy dostępie do sieci”
   --no-sleep               komputer nie usypia się (ekran nadal może)
-  --display-sleep MIN      uśpienie ekranu po MIN minutach
+  --display-sleep MIN      uśpienie ekranu po MIN minutach (0 – nigdy)
   --autorestart            włącz po zaniku zasilania
   --power-schedule "MTWRF 07:30 17:00 [shutdown|sleep]" | off
                            harmonogram włączania/wyłączania (dni: M T W R F S U)
@@ -579,11 +579,13 @@ step_sshd_tuning() {
     } > "$want"
   fi
   if [ "$OPT_SSH_KEY_ONLY" = 1 ] && [ "$KEY_OK" != 1 ]; then
-    if [ -z "$OPT_PUBKEYS" ]; then
-      record sshd_conf fail "--ssh-key-only wymaga podania klucza (--pubkey) – inaczej utracisz dostęp. Pominięto."
-    else
-      record sshd_conf fail "--ssh-key-only: klucza aplikacji nie udało się zainstalować, więc logowanie hasłem zostaje włączone (inaczej utracisz dostęp). Pominięto."
-    fi
+    # Plik sshd zostaje, jaki był – a wcześniejsze uruchomienie z --ssh-key-only mogło już wyłączyć logowanie hasłem.
+    local why state
+    if [ -z "$OPT_PUBKEYS" ]; then why="--ssh-key-only wymaga podania klucza (--pubkey)."
+    else why="--ssh-key-only: klucza aplikacji nie udało się zainstalować."; fi
+    if [ "$cur_ko" = 1 ]; then state="ustawienia sshd bez zmian, logowanie hasłem pozostaje wyłączone ($(key_only_text 1))"
+    else state="logowanie hasłem zostaje włączone, inaczej utracisz dostęp ($(key_only_text 0))"; fi
+    record sshd_conf fail "$why Pominięto – $state."
     return
   fi
   if [ -f "$SSHD_DROPIN" ] && cmp -s "$want" "$SSHD_DROPIN"; then
@@ -778,7 +780,11 @@ step_power() {
   [ "$OPT_WOL" = 1 ] && pm_set womp 1 "budzenie przy dostępie do sieci"
   [ "$OPT_WOL" = 1 ] && pm_set tcpkeepalive 1 "podtrzymanie sieci w uśpieniu"
   [ "$OPT_NO_SLEEP" = 1 ] && pm_set sleep 0 "bez usypiania komputera"
-  [ -n "$OPT_DISPLAY_SLEEP" ] && pm_set displaysleep "$OPT_DISPLAY_SLEEP" "uśpienie ekranu po $OPT_DISPLAY_SLEEP min"
+  if [ -n "$OPT_DISPLAY_SLEEP" ]; then
+    # displaysleep 0 w pmset to ekran, który nigdy nie usypia (nie „po 0 min”).
+    if [ "$OPT_DISPLAY_SLEEP" = 0 ]; then pm_set displaysleep 0 "bez usypiania ekranu"
+    else pm_set displaysleep "$OPT_DISPLAY_SLEEP" "uśpienie ekranu po $OPT_DISPLAY_SLEEP min"; fi
+  fi
   [ "$OPT_AUTORESTART" = 1 ] && pm_set autorestart 1 "start po zaniku zasilania"
   if [ -n "$PM_FAIL" ]; then record power fail "pmset nie zmienił ustawień zasilania: $PM_FAIL${PM_DID:+ (zmieniono: $PM_DID)}."
   elif [ -n "$PM_DID" ]; then changed_or_planned power "Zasilanie: $PM_DID."

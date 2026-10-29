@@ -16,14 +16,24 @@ public extension ConfigStore {
 /// actions.log entries of cmcrctl, in the app's format „<co> → imac01, imac02” (AppModel.runBatch).
 public enum CommandLineLog {
     /// The command line as typed, on one line: control characters escaped, arguments with spaces or shell characters
-    /// quoted, long ones shortened, passwords in URLs (`https://konto:hasło@…`) hidden.
+    /// quoted, long ones shortened, passwords in URLs (`https://konto:hasło@…`) hidden. It can be pasted into a
+    /// terminal (the `logout --force` hint): only words of plain characters stay unquoted – not `!` (history
+    /// expansion in interactive zsh and bash, even outside quotes) and not a leading `=` (zsh: a command's path).
     public static func describe(_ arguments: [String], limit: Int = 120) -> String {
         arguments.map { argument in
             var text = TerminalText.escape(hidingURLPassword(argument), keepBackslash: true)
             if text.count > limit { text = String(text.prefix(max(1, limit - 1))) + "…" }
-            let plain = !text.isEmpty && !text.contains { " \t'\"\\$`;&|<>(){}*?[]#~".contains($0) }
+            let plain = !text.isEmpty && !text.hasPrefix("=") && text.unicodeScalars.allSatisfy(isPlainInShell)
             return plain ? text : shQuote(text)
         }.joined(separator: " ")
+    }
+
+    /// Letters, digits, `._,:/@%+=-` and every non-ASCII character (Polish letters, „…”): nothing a shell expands.
+    static func isPlainInShell(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar {
+        case "a"..."z", "A"..."Z", "0"..."9", ".", "_", ",", ":", "/", "@", "%", "+", "=", "-": return true
+        default: return !scalar.isASCII
+        }
     }
 
     /// „cmcrctl exec … → imac01, imac02”.

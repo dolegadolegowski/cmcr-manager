@@ -12,8 +12,11 @@ RV2_UID=59999
 while id -u "$RV2_UID" >/dev/null 2>&1; do RV2_UID=$((RV2_UID + 1)); done
 mkdir -p "$RV2/send" "$WORK/remote/rev-r2-push"
 echo rev-r2 > "$RV2/send/rev-r2-plik.txt"
+# The folder belongs to that uid (fakes.sh: stat.uid): only then is a uid without an account accepted (AUDIT REV-48).
+printf '%s %s\n' "$RV2_UID" "$(cd "$WORK/remote/rev-r2-push" && pwd -P)" > "$WORK/stat.uid"
 clear_fakelog
 out="$(ctlpw _builder push 1 "$WORK/remote/rev-r2-push" "$RV2_UID:staff" "" "$RV2/send/rev-r2-plik.txt" --root)"; code=$?
+rm -f "$WORK/stat.uid"
 expect_code "push: właściciel $RV2_UID:staff – kod 0" "$code" 0 "$out"
 expect_not "push: numer konta nie jest odrzucany jako nieistniejące konto" "$out" "nie istnieje"
 [ -f "$WORK/remote/rev-r2-push/rev-r2-plik.txt" ] && pass "push: numer konta – plik zapisany" \
@@ -108,7 +111,8 @@ if rv2_setup_begin; then
   expect_not "--display-sleep 005 drugi raz: nie zmienia ponownie" "$out" "✚ Zasilanie: "
   out="$(ctlpw exec "/bin/bash $RV2/standalone.sh --no-guide --no-ssh-acl --display-sleep 00" 1 --root)"; code=$?
   expect_code "--display-sleep 00: kod 0" "$code" 0 "$out"
-  expect "--display-sleep 00: 0 minut" "$out" "uśpienie ekranu po 0 min."
+  # pmset: displaysleep 0 – the display never sleeps (AUDIT REV-50).
+  expect "--display-sleep 00: bez usypiania ekranu" "$out" "bez usypiania ekranu."
   grep -qx 'displaysleep 0' "$RV2_SS/pmset" && pass "--display-sleep 00: pmset displaysleep 0" \
     || fail "--display-sleep 00: stan pmset" "$(cat "$RV2_SS/pmset")"
 fi
