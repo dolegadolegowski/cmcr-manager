@@ -550,7 +550,9 @@ struct P2CancelBeforeTheMarkerTests {
         #expect(r.cancelled)
         #expect(text.contains("Polecenie nie zostało uruchomione"), "\(text)")
         #expect(!text.contains("zatrzymać"))
-        #expect(Date().timeIntervalSince(start) < 3, "bez próby łączenia się, by zatrzymać polecenie")
+        // A remote stop would log in to the silent listener and wait for ConnectTimeout (30 s here) and
+        // OperationTimeout.cancel (30 s); 15 s leaves room for a busy CI runner (3.6 s seen on GitHub Actions).
+        #expect(Date().timeIntervalSince(start) < 15, "bez próby łączenia się, by zatrzymać polecenie")
     }
 }
 
