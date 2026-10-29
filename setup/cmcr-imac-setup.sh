@@ -146,6 +146,8 @@ valid_account "$OPT_STUDENT" || die_usage "niepoprawna nazwa konta ucznia: $OPT_
 case "$OPT_SHARED_MODE" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) ;; *) die_usage "niepoprawne uprawnienia: $OPT_SHARED_MODE" ;; esac
 case "$OPT_UPDATES" in ''|check|download|auto) ;; *) die_usage "--updates: check, download lub auto" ;; esac
 case "$OPT_DISPLAY_SLEEP" in '') ;; *[!0-9]*) die_usage "--display-sleep: liczba minut" ;; esac
+# pmset podaje minuty bez zer na początku („05” → 5); inaczej porównanie z odczytem nigdy by się nie zgadzało.
+while [ "${#OPT_DISPLAY_SLEEP}" -gt 1 ] && [ "${OPT_DISPLAY_SLEEP#0}" != "$OPT_DISPLAY_SLEEP" ]; do OPT_DISPLAY_SLEEP="${OPT_DISPLAY_SLEEP#0}"; done
 case "$OPT_KEY_FROM" in *[!A-Za-z0-9.:/*?,!-]*) die_usage "--key-from: dozwolone adresy, maski i wzorce (np. 10.0.0.0/8,*.local)" ;; esac
 case "$OPT_SHARED" in
   '') ;;

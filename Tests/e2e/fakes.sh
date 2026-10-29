@@ -639,7 +639,10 @@ pmset() {
       "-a "*)
         # setup-sys/pmset-a.fail: pmset refuses the settings listed there, one name per line (AUDIT PRZ-16).
         if grep -qxF -- "${2:-}" "$st/pmset-a.fail" 2>/dev/null; then echo "pmset: odmowa (test)" >&2; return 1; fi
-        { grep -v "^${2:-} " "$st/pmset" 2>/dev/null; echo "${2:-} ${3:-}"; } > "$st/pmset.new"
+        # Like the real pmset, numbers are kept as numbers: „05” is stored and shown as 5 (AUDIT REV-41).
+        local v="${3:-}"
+        case "$v" in ''|*[!0-9]*) ;; *) v=$((10#$v)) ;; esac
+        { grep -v "^${2:-} " "$st/pmset" 2>/dev/null; echo "${2:-} $v"; } > "$st/pmset.new"
         mv "$st/pmset.new" "$st/pmset" ;;
       "repeat cancel") rm -f "$st/sched" ;;
       "repeat "*) shift; echo "$*" > "$st/sched" ;;

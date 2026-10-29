@@ -92,4 +92,26 @@ if rv2_setup_begin; then
 fi
 rv2_setup_end
 
+section "REV-41: --display-sleep z zerem na początku nie jest błędem pmset"
+if rv2_setup_begin; then
+  rv2s setup-script > "$RV2/standalone.sh"
+  # pmset keeps the minutes as a number (fakes.sh: „05” is stored and shown as 5, like the real pmset).
+  out="$(ctlpw exec "/bin/bash $RV2/standalone.sh --no-guide --no-ssh-acl --display-sleep 05" 1 --root)"; code=$?
+  expect_code "--display-sleep 05: kod 0" "$code" 0 "$out"
+  expect_not "--display-sleep 05: bez błędu pmset" "$out" "pmset nie zmienił"
+  expect "--display-sleep 05: ustawiono 5 minut" "$out" "✚ Zasilanie: " "uśpienie ekranu po 5 min."
+  grep -qx 'displaysleep 5' "$RV2_SS/pmset" && pass "--display-sleep 05: pmset displaysleep 5" \
+    || fail "--display-sleep 05: stan pmset" "$(cat "$RV2_SS/pmset")"
+  out="$(ctlpw exec "/bin/bash $RV2/standalone.sh --no-guide --no-ssh-acl --display-sleep 005" 1 --root)"; code=$?
+  expect_code "--display-sleep 005 drugi raz: kod 0" "$code" 0 "$out"
+  expect "--display-sleep 005 drugi raz: bez zmian" "$out" "✔ Zasilanie: " "uśpienie ekranu po 5 min."
+  expect_not "--display-sleep 005 drugi raz: nie zmienia ponownie" "$out" "✚ Zasilanie: "
+  out="$(ctlpw exec "/bin/bash $RV2/standalone.sh --no-guide --no-ssh-acl --display-sleep 00" 1 --root)"; code=$?
+  expect_code "--display-sleep 00: kod 0" "$code" 0 "$out"
+  expect "--display-sleep 00: 0 minut" "$out" "uśpienie ekranu po 0 min."
+  grep -qx 'displaysleep 0' "$RV2_SS/pmset" && pass "--display-sleep 00: pmset displaysleep 0" \
+    || fail "--display-sleep 00: stan pmset" "$(cat "$RV2_SS/pmset")"
+fi
+rv2_setup_end
+
 rm -rf "$RV2"
