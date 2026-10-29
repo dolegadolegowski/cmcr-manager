@@ -395,7 +395,11 @@ public extension Scripts {
           [ "$SCR_SESSION" = "$CMCR_LAST" ] && return 0
           local out err pid i=0 state="" rc="" detail="" why
           # A screen covered by the attention-mode lock hides the panel: nobody could read it (AUDIT ZAJ-05).
-          if pgrep -x LockScreen >/dev/null 2>&1 || pgrep -f "CMCR_ATT""ENTION" >/dev/null 2>&1; then
+          # The overlay counts only in the session at the screen (it runs as that user): the auto-unlock timer of
+          # lockScreen (root) carries the tag too and outlives a logout, and a lock left in a session in the
+          # background covers nothing here (AUDIT REV-08).
+          if pgrep -x LockScreen >/dev/null 2>&1 \
+             || { [ -n "$CONSOLE_UID" ] && pgrep -u "$CONSOLE_UID" -f "CMCR_ATT""ENTION" >/dev/null 2>&1; }; then
             scr_emit STATE notify "$CONSOLE_USER" "ekran jest zablokowany w trybie uwagi – komunikat zostanie pokazany po odblokowaniu"
             SCR_RC=\#(ScriptCode.observeNotNotified)
             return 1
