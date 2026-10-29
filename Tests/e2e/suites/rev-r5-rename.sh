@@ -38,6 +38,9 @@ expect "rename, zamiana i powtórzona nazwa: oba komputery z tą samą nazwą" "
   "imąc02: „imąc02” → imac02.local – ten adres powtarza się" "nic nie zostało zmienione"
 expect_not "rename, zamiana i powtórzona nazwa: bez rady o zamianie dwóch innych komputerów" "$out" \
   "Komputery imac01 i imac02 zamieniają się nazwami"
+# Nor for imac01: its swap goes through imac02, whose name repeats, and the swap advice („Przy zamianie nazw…”),
+# followed, left one of them with the temporary name (AUDIT REV-64).
+expect_not "rename, zamiana i powtórzona nazwa: bez rady o zamianie przez powtórzoną nazwę" "$out" "Przy zamianie nazw"
 expect_not "rename, zamiana i powtórzona nazwa: komputer z powtórzoną nazwą bez rady o kolejności" "$out" \
   "imąc02: „imąc02” → imac02.local – ten adres ma teraz"
 # A renumbering (imac05 → imac06 → imac07) with a third Mac that also wants imac06: the advice „najpierw imac07,
