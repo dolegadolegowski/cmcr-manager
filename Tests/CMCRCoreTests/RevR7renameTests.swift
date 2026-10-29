@@ -98,4 +98,140 @@ struct RevR7renameTests {
         let cli = RenamePlan.namesStillHeld(renames([(six, six.name), (seven, seven.name)]))
         #expect(cli.count == 1 && cli[six.id]?.id == seven.id)
     }
+
+    /// AUDIT REV-69: a new name that two other renamed Macs still have – imac02 as the name on the list of „imac02” at
+    /// imac06.local and as the address of „imac04” at imac02.local – waits for both. Following only the first of them
+    /// („najpierw imac02 na imac07, potem imac05 na imac02”) was refused at the last step: imac04 still had
+    /// imac02.local.
+    @Test func aNameHeldByTwoRenamedMacsWaitsForBoth() {
+        let x = mac("imac05", "imac05.local"), y = mac("imac02", "imac06.local"), z = mac("imac04", "imac02.local")
+        let list = [x, y, z]
+        let read = [x.id: "imac05", y.id: "imac06", z.id: "imac02"]
+        let newNames = [x.id: "imac02", y.id: "imac07", z.id: "imac08"]
+        let typed = renames([(x, "imac02"), (y, "imac07"), (z, "imac08")])
+        let holders = RenamePlan.holders(typed, currentNames: read)
+        #expect(holders.count == 1 && holders[x.id]?.map(\.id) == [y.id, z.id])
+        #expect(RenamePlan.namesStillHeld(typed, currentNames: read).mapValues(\.id) == [x.id: y.id])
+        let steps = RenamePlan.steps(for: x, holders: holders)
+        #expect(steps == [.rename(y), .rename(z), .rename(x)])
+        #expect(RenamePlan.advice(for: x, holders: holders, newNames: newNames, in: .app)
+            == "Zmień nazwy po kolei, \(eachRun): najpierw imac02 na imac07, potem imac04 na imac08, potem imac05 na imac02.")
+        #expect(followInTheApp(steps, list: list, read: read, newNames: newNames)?.map(\.name)
+            == ["imac02", "imac07", "imac08"])
+        #expect(followInTheApp([.rename(y), .rename(x)], list: list, read: read, newNames: newNames) == nil)
+    }
+
+    /// AUDIT REV-69: names that go round in two loops – imac02 and imac03 swap names, and so do imac03 and imac05 –
+    /// need two temporary names: the second is „inną nazwę tymczasową”, and each new name says which Mac had the
+    /// temporary name. With one loop followed (imac03 waits for imac02 only), imac03's step was refused: imac05 still
+    /// had imac02.local.
+    @Test func twoLoopsGiveTwoTemporaryNames() {
+        let a = mac("imac02", "imac04.local"), b = mac("imac03", "imac01.local"), c = mac("imac05", "imac02.local")
+        let list = [a, b, c]
+        let read = [a.id: "imac04", b.id: "imac01", c.id: "imac02"]
+        let newNames = [a.id: "imac01", b.id: "imac02", c.id: "imac03"]
+        let holders = RenamePlan.holders(renames([(a, "imac01"), (b, "imac02"), (c, "imac03")]), currentNames: read)
+        #expect(holders[b.id]?.map(\.id) == [a.id, c.id])
+        let steps = RenamePlan.steps(for: a, holders: holders)
+        #expect(steps == [.temporary(a), .temporary(b), .rename(c), .target(b), .target(a)])
+        #expect(RenamePlan.advice(for: a, holders: holders, newNames: newNames, in: .app)
+            == "Komputery imac02, imac03 i imac05 zamieniają się nazwami. Zmień nazwy po kolei, \(eachRun): najpierw nadaj "
+            + "imac02 nazwę tymczasową, potem nadaj imac03 inną nazwę tymczasową, potem zmień nazwę imac05 na imac03, potem "
+            + "nadaj komputerowi z nazwą tymczasową (wcześniej imac03) docelową nazwę imac02, a na końcu nadaj komputerowi z "
+            + "nazwą tymczasową (wcześniej imac02) docelową nazwę imac01.")
+        #expect(followInTheApp(steps, list: list, read: read, newNames: newNames)?.map(\.name)
+            == ["imac01", "imac02", "imac03"])
+        #expect(followInTheApp([.temporary(a), .rename(b), .target(a)], list: list, read: read, newNames: newNames) == nil)
+    }
+
+    /// Plans drawn the same way on every run (SplitMix64).
+    private struct Draw {
+        var state: UInt64
+
+        mutating func below(_ n: Int) -> Int {
+            state &+= 0x9E37_79B9_7F4A_7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            return Int((z ^ (z >> 31)) % UInt64(n))
+        }
+
+        mutating func distinct(_ count: Int, of pool: [String]) -> [String] {
+            var rest = pool, chosen: [String] = []
+            for _ in 0..<count { chosen.append(rest.remove(at: below(rest.count))) }
+            return chosen
+        }
+    }
+
+    /// AUDIT REV-69: every order the app's sheet gives works when followed in the sheet, one Mac at a time – otherwise
+    /// it names a Mac of the order whose name is wrong. Lists of 2–5 Macs with different names and addresses, some at
+    /// IP addresses, some names not read, names on the list that are other Macs' names, and new names typed for some of
+    /// them. Before, about two in five of the orders given here were refused at a step, all through the name on the
+    /// list of another renamed Mac; with those names but one Mac per name, about one in six.
+    @Test func anAppOrderIsGivenOnlyWhenItWorks() {
+        let pool = (1...8).map { String(format: "imac%02d", $0) }
+        var draw = Draw(state: 69)
+        var orders = 0, temporary = 0, twoTemporary = 0, corrections = 0, atOnce = 0
+        for _ in 0..<4000 {
+            let count = 2 + draw.below(4)
+            let real = draw.distinct(count, of: pool), listed = draw.distinct(count, of: pool)
+            var list: [Machine] = [], read: [UUID: String] = [:]
+            for i in 0..<count {
+                let m = mac(listed[i], draw.below(5) == 0 ? "192.0.2.\(10 + i)" : real[i] + ".local")
+                list.append(m)
+                if draw.below(7) != 0 { read[m.id] = real[i] }
+            }
+            // Only the Macs that get new names are selected (a Mac whose name does not change is not renamed).
+            var newNames: [UUID: String] = [:]
+            for m in list where draw.below(10) < 7 {
+                let name = pool[draw.below(pool.count)]
+                let typed = draw.below(10) == 0 ? name.uppercased() : name
+                if typed != read[m.id] { newNames[m.id] = typed }
+            }
+            let renamed = list.filter { newNames[$0.id] != nil }
+            guard renamed.count >= 2 else { continue }
+            let typed = renamed.map { RenamePlan.Rename(machine: $0, localHostName: ComputerNames.localHostName(from: newNames[$0.id]!)) }
+            let taken = RenamePlan.namesTaken(by: list, renaming: Set(renamed.map(\.id)), readNames: read)
+            let rejected = RenamePlan.rejections(typed, taken: taken)
+            let held = RenamePlan.namesStillHeld(typed, currentNames: read)
+            let holders = RenamePlan.holders(typed, currentNames: read)
+            if held.isEmpty && rejected.isEmpty {
+                // The sheet renames them all at once: no new name is a name another Mac has now, so the list never has
+                // two Macs of one name, also when some of the renames fail.
+                atOnce += 1
+                for r in typed {
+                    for other in list where other.id != r.machine.id {
+                        #expect(!RenamePlan.names(of: other, read: read[other.id]).contains(r.localHostName.lowercased()))
+                    }
+                }
+            }
+            for m in renamed where held[m.id] != nil && rejected[m.id] == nil {
+                let steps = RenamePlan.steps(for: m, holders: holders)
+                let advice = RenamePlan.advice(for: m, holders: holders, newNames: newNames, rejected: rejected, in: .app)
+                let plan = list.map { "\($0.name)@\($0.address)/\(read[$0.id] ?? "-")→\(newNames[$0.id] ?? "=")" }
+                if advice.hasPrefix("Najpierw popraw") {
+                    corrections += 1
+                    #expect(steps.contains { rejected[$0.machine.id] != nil }, "\(plan) \(m.name): \(advice)")
+                    continue
+                }
+                orders += 1
+                let temporaries = steps.filter { if case .temporary = $0 { true } else { false } }.count
+                if temporaries > 0 { temporary += 1 }
+                if temporaries > 1 { twoTemporary += 1 }
+                guard let after = followInTheApp(steps, list: list, read: read, newNames: newNames) else {
+                    Issue.record("\(plan) \(m.name): \(advice)")
+                    continue
+                }
+                // Every Mac of the order has its new name, the others keep theirs.
+                let inOrder = Set(steps.map(\.machine.id))
+                #expect(inOrder.contains(m.id))
+                for (before, now) in zip(list, after) {
+                    #expect(now.name == (inOrder.contains(before.id) ? newNames[before.id] : before.name), "\(plan) \(m.name)")
+                }
+            }
+        }
+        // Orders given (with a temporary name, with two), advice to correct a name first, runs allowed at once.
+        #expect(orders == 1382 && temporary == 620 && twoTemporary == 51)
+        #expect(corrections == 925 && atOnce == 397)
+    }
 }

@@ -260,7 +260,7 @@ struct RenameComputersSheet: View {
                         Label("\(e.localHostName).local ma jeszcze \(other.name)", systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red)
                             .help("Ten adres ma teraz \(other.name), którego nazwa też jest zmieniana – macOS nadałby jednemu z nich inny adres. "
-                                  + RenamePlan.advice(for: e.machine, stillHeld: stillHeld, newNames: newNames,
+                                  + RenamePlan.advice(for: e.machine, holders: holders, newNames: newNames,
                                                       rejected: rejected, in: .app))
                     } else {
                         Text("\(e.localHostName).local").font(.body.monospaced())
@@ -323,9 +323,13 @@ struct RenameComputersSheet: View {
     /// Renamed Macs whose new `.local` name another Mac renamed here still has now (its address, its name on the list
     /// or the name read from it, AUDIT REV-69), with that Mac: a renumbering or a swap, renamed one Mac at a time
     /// (AUDIT REV-52, REV-63). The renames run at once.
-    var stillHeld: [UUID: Machine] {
-        RenamePlan.namesStillHeld(changes.map { RenamePlan.Rename(machine: $0.machine, localHostName: $0.localHostName) },
-                                  currentNames: classroom.names.mapValues(\.localHostName))
+    var stillHeld: [UUID: Machine] { holders.compactMapValues(\.first) }
+
+    /// Every renamed Mac that still has the new name of each Mac: the advice on the order waits for all of them
+    /// (RenamePlan.holders, AUDIT REV-69).
+    var holders: [UUID: [Machine]] {
+        RenamePlan.holders(changes.map { RenamePlan.Rename(machine: $0.machine, localHostName: $0.localHostName) },
+                           currentNames: classroom.names.mapValues(\.localHostName))
     }
 
     /// Macs whose new names are wrong whatever the order (invalid, taken, repeated – the rows above in red): the
