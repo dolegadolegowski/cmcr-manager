@@ -781,10 +781,10 @@ struct CLI: Sendable {
         let problems = await ScriptCatalog.syntaxCheck(samples)
         for p in problems { Console.err("✘ \(p)") }
         guard problems.isEmpty else {
-            Console.err("selftest: \(plural(problems.count, "błąd", "błędy", "błędów")) składni w skryptach zdalnych.")
+            Console.err("selftest: \(Polish.count(problems.count, "błąd", "błędy", "błędów")) składni w skryptach zdalnych.")
             return ExitCode.failure
         }
-        Console.out("✔ selftest: \(plural(samples.count, "skrypt", "skrypty", "skryptów")) (treść, tryb użytkownika i root) "
+        Console.out("✔ selftest: \(Polish.count(samples.count, "skrypt", "skrypty", "skryptów")) (treść, tryb użytkownika i root) "
                     + "– składnia bash poprawna.")
         return ExitCode.success
     }

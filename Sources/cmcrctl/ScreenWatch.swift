@@ -55,8 +55,8 @@ func screenWatchCommand(_ arguments: [String]) async -> Int32 {
         return ExitCode.failure
     }
     if summary.frames > 0 || (summary.cycles > 0 && summary.issue == nil) {
-        Console.out("Zakończono: \(plural(summary.cycles, "cykl", "cykle", "cykli")), "
-                    + "\(plural(summary.frames, "nowy obraz", "nowe obrazy", "nowych obrazów")).")
+        Console.out("Zakończono: \(Polish.count(summary.cycles, "cykl", "cykle", "cykli")), "
+                    + "\(Polish.count(summary.frames, "nowy obraz", "nowe obrazy", "nowych obrazów")).")
         return ExitCode.success
     }
     if let issue = summary.issue {
