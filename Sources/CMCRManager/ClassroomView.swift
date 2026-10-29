@@ -512,14 +512,21 @@ private struct LessonProgressSection: View {
                 }
             }
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
-                GridRow {
+                GridRow(alignment: .firstTextBaseline) {
                     Text("Komputer").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     ForEach(Array(run.plan.steps.enumerated()), id: \.offset) { _, step in
-                        Image(systemName: step.icon)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22)
-                            .help(step.title)
-                            .accessibilityLabel(step.title)
+                        VStack(spacing: 2) {
+                            Image(systemName: step.icon)
+                            if let caption = step.gridCaption(in: run.plan.steps) {
+                                Text(caption).font(.caption2).lineLimit(1).fixedSize()
+                            }
+                        }
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 22)
+                        .gridColumnAlignment(.center)
+                        .help(step.title)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(step.title)
                     }
                 }
                 ForEach(run.machines) { m in
@@ -536,6 +543,21 @@ private struct LessonProgressSection: View {
         } header: {
             Label("\(run.plan.kind.title) – \(run.startedAt.formatted(date: .omitted, time: .shortened))",
                   systemImage: "list.bullet.clipboard")
+        }
+    }
+}
+
+extension LessonStepKind {
+    /// A short caption under the symbol in the header of the lesson run grid, for a step whose symbol another step of
+    /// `steps` has too: both cleanups have `trash`, the symbol of Pliki › „Wyczyść folder…” (AUDIT UI-33), and two
+    /// identical columns did not say which folder was not cleaned (AUDIT UI-34). Nil for a symbol of its own – the
+    /// grid stays compact; the full title is in the tooltip.
+    func gridCaption(in steps: [LessonStepKind]) -> String? {
+        guard steps.contains(where: { $0 != self && $0.icon == icon }) else { return nil }
+        switch self {
+        case .cleanShared: return "folder ucznia"
+        case .cleanDownloads: return "Pobrane"
+        default: return title
         }
     }
 }

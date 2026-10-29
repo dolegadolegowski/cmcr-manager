@@ -109,6 +109,9 @@ struct NoticeAlert: ViewModifier {
 /// classroom.json that could not be read – shown like a notice, by the one window the user works in (`NoticeWindows`).
 /// Before, only the main window had this alert: with the Screen Wall alone on a projector the warning waited until
 /// the main window was opened again (AUDIT REV-66). Part of `NoticeAlert`, in the same windows.
+/// The alert shows the problems found when it opened (`ConfigIssuesBatch`) and removes only them: one found while it
+/// is open – AppKit does not update the text of an open alert – is shown by the next alert, not removed unseen
+/// (AUDIT REV-67).
 struct ConfigIssuesNotice: ViewModifier {
     @EnvironmentObject var model: AppModel
     /// The window of `NoticeAlert`.
@@ -116,27 +119,39 @@ struct ConfigIssuesNotice: ViewModifier {
     /// Whether that window is on screen: a change shows a warning that waited for an open window.
     let visible: Bool
 
-    private var isPresenter: Bool {
-        guard let first = model.configIssues.first, let mine = window.window else { return false }
-        return NoticeWindows.shared.presenter(.configIssues, id: first) === mine
+    private func isPresenter(_ batch: ConfigIssuesBatch) -> Bool {
+        guard let mine = window.window else { return false }
+        return NoticeWindows.shared.presenter(for: batch) === mine
+    }
+
+    private func dismiss(_ batch: ConfigIssuesBatch) {
+        if let rest = NoticeWindows.shared.dismiss(batch, from: model.configIssues) { model.configIssues = rest }
     }
 
     func body(content: Content) -> some View {
+        let batch = window.window == nil ? nil : NoticeWindows.shared.configIssues(for: model.configIssues)
         content.alert("Nie udało się wczytać części konfiguracji", isPresented: Binding(
-            get: { isPresenter },
+            get: { batch.map { isPresenter($0) } ?? false },
             // Only the window that shows the warning dismisses it, as with a notice.
-            set: { if !$0 && isPresenter { model.configIssues = [] } }
-        )) {
+            set: { if !$0, let batch, isPresenter(batch) { dismiss(batch) } }
+        ), presenting: batch) { batch in
             Button("Pokaż pliki w Finderze") {
                 NSWorkspace.shared.activateFileViewerSelecting([ConfigStore.directory])
-                model.configIssues = []
+                dismiss(batch)
             }
-            Button("OK", role: .cancel) { model.configIssues = [] }
-        } message: {
-            Text(model.configIssues.joined(separator: "\n\n")
+            Button("OK", role: .cancel) { dismiss(batch) }
+        } message: { batch in
+            Text(batch.issues.joined(separator: "\n\n")
                  + "\n\nSprawdź listę komputerów i ustawienia w dziale Konfiguracja.")
         }
     }
+}
+
+/// The configuration problems one alert shows: `model.configIssues` as they were when it opened, with an id of its
+/// own – every alert is placed anew by `NoticeWindows`, also one with the same text as an earlier one (AUDIT REV-68).
+struct ConfigIssuesBatch: Equatable {
+    let id = UUID()
+    let issues: [String]
 }
 
 struct WeakWindow {
@@ -153,6 +168,8 @@ final class NoticeWindows {
     enum Kind { case notice, configIssues }
     private var windows: [WeakWindow] = []
     private var chosen: [Kind: (id: AnyHashable, window: WeakWindow)] = [:]
+    /// The configuration problems the alert shows now, until it is dismissed.
+    private var shownIssues: ConfigIssuesBatch?
 
     func register(_ window: NSWindow) {
         windows.removeAll { $0.window == nil }
@@ -162,6 +179,32 @@ final class NoticeWindows {
     /// The window that shows `notice`, chosen once per notice (it stays there while that window is open).
     func presenter(for notice: AppNotice) -> NSWindow? {
         presenter(.notice, id: notice.id)
+    }
+
+    /// What the alert with the configuration problems shows for `issues` (`model.configIssues`): the problems it
+    /// shows already – a problem found meanwhile waits for the next alert (AUDIT REV-67) – else all of them.
+    func configIssues(for issues: [String]) -> ConfigIssuesBatch? {
+        if let shown = shownIssues, shown.issues.contains(where: issues.contains) { return shown }
+        chosen[.configIssues] = nil
+        shownIssues = issues.isEmpty ? nil : ConfigIssuesBatch(issues: issues)
+        return shownIssues
+    }
+
+    /// The window that shows `batch` of configuration problems, chosen once per batch as for a notice; none once the
+    /// batch was dismissed (its alert closing after „OK”).
+    func presenter(for batch: ConfigIssuesBatch) -> NSWindow? {
+        guard shownIssues?.id == batch.id else { return nil }
+        return presenter(.configIssues, id: batch.id)
+    }
+
+    /// `batch` was dismissed („OK”, „Pokaż pliki w Finderze”): what is left of `issues` – the problems found while it
+    /// was open, for the next alert – or nil when it was dismissed already. The window chosen for it is forgotten: the
+    /// next alert, also with the same text, is shown by the window the user works in then (AUDIT REV-68).
+    func dismiss(_ batch: ConfigIssuesBatch, from issues: [String]) -> [String]? {
+        guard shownIssues?.id == batch.id else { return nil }
+        shownIssues = nil
+        chosen[.configIssues] = nil
+        return issues.filter { !batch.issues.contains($0) }
     }
 
     /// The window that shows the message `id` of `kind`, chosen once per message (it stays there while that window is
