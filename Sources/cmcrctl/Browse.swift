@@ -11,7 +11,8 @@ enum BrowseCLI {
       cmcrctl rename nr ścieżka nowa-nazwa [--root]   zmień nazwę pliku lub folderu
       cmcrctl get nr ścieżka… katalog [--root]  pobierz wybrane elementy (z jednego folderu)
       cmcrctl collect KOMP [--from folder] [--to katalog] [--no-date] [--clean] [--root]
-                                                zbierz prace do <katalog>/<data godzina>/<host>
+                                                zbierz prace do <katalog>/<data godzina>/<host> (z folderów
+                                                prywatnych konta, np. Biurka, zawsze jako root – jak w aplikacji)
     """
 
     static let specs: [String: ModuleSpec] = [
@@ -75,6 +76,7 @@ enum BrowseCLI {
             guard a.positional.count == 2 else { use("cmcrctl mkdir KOMP ścieżka [-p] [--root]") }
             let list = legacyCLI.targets(a[0])
             let p = path(a.positional[1]), intermediate = a.has("-p")
+            logAction(list)
             return await eachHost(list, a) { io in
                 let r = await SSH.run(Scripts.makeDirectory(p, asRoot: asRoot, intermediate: intermediate), on: io.host,
                                       password: Keychain.password(for: io.host), settings: ssh, onOutput: io.stream)
@@ -89,6 +91,7 @@ enum BrowseCLI {
             if !dryRun {
                 let what = items.count == 1 ? items[0] : plural(items.count, "element", "elementy", "elementów")
                 CLI.confirm("Usunąć \(what) na: \(ModuleHosts.names(list))?", yes: a.yes)
+                logAction(list)
             }
             return await eachHost(list, a) { io in
                 let r = await SSH.run(Scripts.deleteItems(items, asRoot: asRoot, dryRun: dryRun), on: io.host,
@@ -99,6 +102,7 @@ enum BrowseCLI {
         case "rename":
             guard a.positional.count == 3 else { use("cmcrctl rename nr ścieżka nowa-nazwa [--root]") }
             let h = ModuleHosts.one(a[0], command, usage: "Użycie: cmcrctl rename nr ścieżka nowa-nazwa – podaj jeden komputer.")
+            logAction([h])
             let r = await SSH.run(Scripts.renameItem(path(a.positional[1]), to: a.positional[2], asRoot: asRoot), on: h,
                                   password: Keychain.password(for: h), settings: ssh, onOutput: Console.printer)
             return report(r)
@@ -112,6 +116,7 @@ enum BrowseCLI {
                 moduleUsageError(command, "Wszystkie pobierane elementy muszą być w jednym folderze.")
             }
             let local = URL(fileURLWithPath: expandTilde(a.positional[a.positional.count - 1]), isDirectory: true)
+            logAction([h])
             let (r, _) = await Operations.download(items.map(RemotePaths.lastComponent), in: folder, from: h, into: local,
                                                    asRoot: asRoot, password: Keychain.password(for: h),
                                                    settings: ssh, onOutput: Console.printer)
@@ -127,14 +132,18 @@ enum BrowseCLI {
             let folder = Operations.collectionFolder(base: a.value("--to") ?? prefs.collectBase(s),
                                                      timestamped: !a.has("--no-date") && prefs.collectTimestamped)
             let clean = a.has("--clean")
+            // As in the app: an account's private folders (Desktop, Documents…) are read as root.
+            let collectAsRoot = asRoot || RemotePaths.collectNeedsRoot(source, settings: s)
             if clean {
                 CLI.confirm("Zebrać prace z \(source) i usunąć zebrane pliki z komputerów: \(ModuleHosts.names(list))?",
                             yes: a.yes)
             }
-            Console.out("Zbieranie prac z \(source) do \(folder.path)")
+            logAction(list)
+            Console.out("Zbieranie prac z \(source) do \(folder.path)"
+                        + (collectAsRoot && !asRoot ? " (jako root – folder prywatny konta)" : ""))
             return await eachHost(list, a) { io in
                 let (r, _) = await Operations.collect(source: source, from: io.host, into: folder, name: io.host.name,
-                                                      asRoot: asRoot, cleanAfter: clean,
+                                                      asRoot: collectAsRoot, cleanAfter: clean,
                                                       password: Keychain.password(for: io.host), settings: ssh,
                                                       onOutput: io.stream)
                 return report(r, io)

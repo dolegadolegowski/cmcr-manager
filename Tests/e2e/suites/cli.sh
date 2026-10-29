@@ -247,7 +247,7 @@ expect_code "message: brak treści – kod 2" "$code" 2 "$out"
 clear_fakelog
 out="$(ctlpw logout 1 </dev/null)"; code=$?
 expect_code "logout: bez --yes – kod 2" "$code" 2 "$out"
-out="$(ctlpw logout 1 --yes)"
+out="$(ctlpw logout 1 --force --yes)"
 expect "logout: launchctl bootout sesji GUI" "$(fakelog)" "launchctl bootout gui/$(id -u)"
 expect "logout: komunikat" "$out" "Wylogowano $ME"
 # A student's session in the background after "Switch User" (AUDIT DOD-03, DOD-04).
@@ -257,7 +257,7 @@ expect "sesje GUI: także sesja w tle" "$out" "502 uczen2"
 out="$(ctl status 1 --json)"
 expect "status: sesje GUI w stanie komputera" "$out" "uczen2"
 clear_fakelog
-out="$(ctlpw logout 1 --yes)"
+out="$(ctlpw logout 1 --force --yes)"
 expect "logout: wylogowana także sesja w tle" "$(fakelog)" "launchctl bootout gui/502"
 expect "logout: komunikat o sesji w tle" "$out" "Wylogowano uczen2 (sesja w tle)"
 : > "$WORK/fake-no-console"

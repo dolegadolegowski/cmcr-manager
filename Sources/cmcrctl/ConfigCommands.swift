@@ -103,7 +103,9 @@ extension CLI {
     func hostsGenerate() -> Int32 {
         args.expect("hosts generate", options: ["--start", "--count", "--digits", "--domain", "--replace", "--append"],
                     positional: 3)
-        let prefix = checked(args[2] ?? "imac", .sshPart, "Niepoprawny prefiks")
+        // The prefix starts every generated name as well as every address and account, so it must pass both checks
+        // (a comma would make the names impossible to select: it separates the Macs in KOMP).
+        let prefix = checked(checked(args[2] ?? "imac", .name, "Niepoprawny prefiks"), .sshPart, "Niepoprawny prefiks")
         let start = args.int("--start", in: 0...999) ?? 1
         let count = args.int("--count", in: 1...250) ?? 15
         let digits = args.int("--digits", in: 1...4) ?? 2
@@ -119,6 +121,13 @@ extension CLI {
             confirm(hostsProblem == nil
                     ? "Zastąpić obecną listę (\(hosts.count)) wygenerowanymi wpisami (\(generated.count))?"
                     : "Zastąpić nieczytelny plik \(hostsPath) wygenerowanymi wpisami (\(generated.count))?")
+            // Like the app, a damaged hosts.json is never lost: its entries, MACs and groups stay in a copy.
+            if hostsProblem != nil {
+                guard let backup = ConfigStore.backupHostsFile() else {
+                    fail("✘ Nie można zachować kopii \(hostsPath) – lista komputerów nie została zmieniona.")
+                }
+                Console.out("Oryginał zachowano jako \(backup.path).")
+            }
             saveHostsOrFail(generated)
             Console.out("Lista komputerów zastąpiona.")
         } else if append {

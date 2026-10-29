@@ -70,7 +70,9 @@ enum SetupCommands {
                 return 2
             }
             var status: Int32 = 0
-            for h in select(target) {
+            let hosts = select(target)
+            if cl.mode == .apply { logAction(hosts) }
+            for h in hosts {
                 let what = cl.mode == .apply ? "konfiguracja jako root" : "sprawdzanie konfiguracji (bez zmian)"
                 print("══ \(h.name) (\(h.destination)): \(what)…")
                 if cl.options.setHostname && SetupScript.hostname(for: h) == nil {

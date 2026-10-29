@@ -4,14 +4,18 @@ import Foundation
 /// `cmcrctl` commands for lesson routines, attention mode, energy schedule, names and reports.
 enum ClassroomCLI {
     static let usage = """
-    Zajęcia, zasilanie i raporty:
-      cmcrctl lesson start|end KOMP [--no-wait] [--yes]   scenariusz zajęć zapisany w aplikacji (classroom.json)
+    Zajęcia, zasilanie i raporty
+      cmcrctl lesson start|end KOMP [--no-wait] [--yes]   scenariusz zajęć zapisany w aplikacji (classroom.json);
+                                                      komputery obsługiwane naraz, jak w aplikacji
       cmcrctl lock KOMP [--message "…"] [--mode automatic|lockScreen|overlay] [--minutes N]
       cmcrctl unlock KOMP                             zdejmij blokadę ekranu
       cmcrctl ask "pytanie" KOMP [--buttons "Tak,Nie"] [--timeout sekundy]
+                                                      bez --timeout: czas na odpowiedź zapisany w aplikacji
       cmcrctl schedule show [KOMP]                    harmonogram zasilania (bez KOMP: wszystkie)
       cmcrctl schedule set|clear KOMP [--on MTWRF@07:45] [--off MTWRF@16:30]
                        [--on-type wakeorpoweron|wake] [--off-type sleep|shutdown] [--no-autorestart] [--no-womp]
+                                                      bez --on/--off: harmonogram i zasady zapisane w aplikacji
+                                                      (classroom.json); --on/--off: tylko podane zdarzenia
       cmcrctl rename KOMP [--name "Nazwa"] [--dry-run] [--update-list] [--yes]
                                                       nazwy z listy; --name tylko dla jednego komputera
       cmcrctl rename-computer KOMP [--name "Nazwa"] [--dry-run] [--update-list] [--yes]
@@ -83,8 +87,12 @@ enum ClassroomCLI {
             guard buttons.count <= ClassroomConfig.maxQuestionButtons else {
                 use("Okno pytania mieści najwyżej \(ClassroomConfig.maxQuestionButtons) przyciski.")
             }
-            let seconds = a.int("--timeout", in: 5...3600) ?? 120
+            // As in the app: „Czekaj na odpowiedź” from classroom.json unless --timeout says otherwise.
+            let seconds = a.int("--timeout", in: 5...3600)
+                ?? min(3600, max(1, ClassroomStore.loadConfig().questionTimeoutMinutes) * 60)
             let list = ModuleHosts.changing(a[1], command)
+            Console.err("Czas na odpowiedź: " + (seconds % 60 == 0 ? "\(seconds / 60) min" : "\(seconds) s"))
+            logAction(list)
             return await ask(question, buttons: buttons, seconds: seconds, hosts: list, ssh: ssh)
 
         case "schedule":
@@ -96,9 +104,12 @@ enum ClassroomCLI {
             }
             switch action {
             case "set":
-                let schedule = parseSchedule(a)
+                // The schedule and the power policy saved in the app (classroom.json); the options change them.
+                let config = ClassroomStore.loadConfig()
+                let schedule = parseSchedule(a, saved: config.schedule)
                 let list = ModuleHosts.changing(a[1], "schedule set")
-                let autoRestart = !a.has("--no-autorestart"), wake = !a.has("--no-womp")
+                let autoRestart = config.autoRestartAfterPowerLoss && !a.has("--no-autorestart")
+                let wake = config.wakeOnLAN && !a.has("--no-womp")
                 return await runEach(list, a, ssh: ssh, timeout: 60) { _ in
                     Scripts.applyEnergySchedule(schedule, autoRestart: autoRestart, wakeOnLAN: wake)
                 }
@@ -193,28 +204,33 @@ enum ClassroomCLI {
             }
 
         case "report":
-            return await inventoryReport(to: a[0], hosts: ConfigStore.loadHosts(), ssh: ssh)
+            // The list every other command uses (an unreadable hosts.json is reported, never copied or repaired here).
+            legacyCLI.warnIfDefaultHosts()
+            return await inventoryReport(to: a[0], hosts: legacyCLI.hosts, ssh: ssh)
 
         default:
             use(usage)
         }
     }
 
-    /// `schedule set` options → schedule; a usage error (exit 2) for anything invalid.
-    static func parseSchedule(_ a: ModuleArguments) -> EnergySchedule {
+    /// `schedule set` options → schedule; a usage error (exit 2) for anything invalid. Without --on/--off it is
+    /// the schedule saved in the app (`saved`); with them, only the events given. --on-type/--off-type change the
+    /// saved types.
+    static func parseSchedule(_ a: ModuleArguments, saved: EnergySchedule) -> EnergySchedule {
         func use(_ text: String) -> Never { moduleUsageError(a.command, text) }
-        var s = EnergySchedule()
-        if let on = a.value("--on") {
+        var s = saved
+        let on = a.value("--on"), off = a.value("--off")
+        if on != nil || off != nil {
+            s.powerOnEnabled = on != nil
+            s.powerOffEnabled = off != nil
+        }
+        if let on {
             guard let parsed = parseEvent(on) else { use("Niepoprawne --on (np. MTWRF@07:45).") }
             (s.onDays, s.onTime) = parsed
-        } else if a.value("--off") != nil {
-            s.powerOnEnabled = false
         }
-        if let off = a.value("--off") {
+        if let off {
             guard let parsed = parseEvent(off) else { use("Niepoprawne --off (np. MTWRF@16:30).") }
             (s.offDays, s.offTime) = parsed
-        } else if a.value("--on") != nil {
-            s.powerOffEnabled = false
         }
         if let t = a.value("--on-type") {
             guard let v = EnergySchedule.OnType(rawValue: t) else { use("--on-type: wakeorpoweron lub wake") }
@@ -224,7 +240,9 @@ enum ClassroomCLI {
             guard let v = EnergySchedule.OffType(rawValue: t) else { use("--off-type: sleep lub shutdown") }
             s.offType = v
         }
-        if let e = s.validationError { use(e) }
+        if let e = s.validationError {
+            use(on == nil && off == nil ? "Harmonogram zapisany w aplikacji: \(e) Podaj --on lub --off." : e)
+        }
         return s
     }
 
@@ -291,6 +309,7 @@ enum ClassroomCLI {
         var hosts = a.has("--update-list") ? legacyCLI.editableHosts() : []
         CLI.confirm("Zmienić nazwę komputera (ComputerName, LocalHostName, HostName) na: \(ModuleHosts.names(targets))? "
                     + "Adres .local każdego z nich zmieni się według nowej nazwy.", yes: a.yes)
+        logAction(targets)
         var status = ExitCode.success
         for p in planned {
             Console.out("\(p.host.name):")
@@ -343,17 +362,34 @@ enum ClassroomCLI {
             }
         }
         defer { if let payload { try? FileManager.default.removeItem(at: payload) } }
+        logAction(hosts)
 
-        func host(_ h: Machine) -> LessonRunner.Host {
-            LessonRunner.Host(machine: h, password: Keychain.password(for: h), macs: h.macAddress.isEmpty ? [] : [h.macAddress])
+        // As in the app: Wake-on-LAN for the same MACs (status-cache.json), every Mac at once – packets go out to all
+        // first, each Mac then only waits for itself – and the other steps share the usual number of connections
+        // (ConcurrencyLimiter, „Komputery obsługiwane naraz”). Output stays in list order.
+        let snapshots = ClassroomStore.loadSnapshots()
+        let targets = hosts.map { h -> LessonRunner.Host in
+            let info = snapshots[h.id]?.info ?? [:]
+            return LessonRunner.Host(machine: h, password: Keychain.password(for: h),
+                                     macs: WakeOnLAN.candidateMACs(listed: h.macAddress, lastStatus: info),
+                                     extraBroadcasts: WakeOnLAN.lastSeenBroadcasts(info))
         }
-        var status = ExitCode.success
+        let parallel = max(1, settings.maxParallel)
+        func runAll(_ range: Range<Int>, materials: URL?, limiter: ConcurrencyLimiter?, jobs: Int) async -> [Int32] {
+            await runHosts(hosts, jobs: jobs, prefixLines: false) { io in
+                io.out("== \(io.host.name)")
+                let r = await LessonRunner.run(plan, on: targets[io.index], ssh: ssh, materials: materials, range: range,
+                                               limiter: limiter, onOutput: io.stream)
+                guard r.succeeded else {
+                    io.write(.stderr, r.stderr)
+                    return ExitCode.failure
+                }
+                return ExitCode.success
+            }
+        }
         var first = 0
         if plan.steps.first == .warn {
-            for h in hosts {
-                Console.out("== \(h.name)")
-                _ = await LessonRunner.run(plan, on: host(h), ssh: ssh, materials: nil, range: 0..<1, onOutput: Console.printer)
-            }
+            _ = await runAll(0..<1, materials: nil, limiter: nil, jobs: parallel)
             if wait {
                 let secs = max(1, plan.end.warnMinutes) * 60
                 Console.out("Czekam \(secs / 60) min przed kolejnymi krokami…")
@@ -362,16 +398,16 @@ enum ClassroomCLI {
             first = 1
         }
         guard first < plan.steps.count else { return ExitCode.success }
-        for h in hosts {
-            Console.out("== \(h.name)")
-            let r = await LessonRunner.run(plan, on: host(h), ssh: ssh, materials: payload, range: first..<plan.steps.count,
-                                           onOutput: Console.printer)
-            if !r.succeeded {
-                Console.write(.stderr, r.stderr)
-                status = ExitCode.failure
+        let waking = plan.steps[first...].contains(.wake)
+        if waking {
+            for t in targets {
+                for mac in t.macs { _ = try? WakeOnLAN.wake(mac: mac, extraBroadcasts: t.extraBroadcasts) }
             }
         }
-        return status
+        let codes = await runAll(first..<plan.steps.count, materials: payload,
+                                 limiter: waking ? ConcurrencyLimiter(limit: parallel) : nil,
+                                 jobs: waking ? hosts.count : parallel)
+        return codes.allSatisfy { $0 == ExitCode.success } ? ExitCode.success : ExitCode.failure
     }
 
     static func inventoryReport(to path: String?, hosts: [Machine], ssh: SSHSettings) async -> Int32 {
