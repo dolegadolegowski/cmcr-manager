@@ -61,4 +61,23 @@ import Testing
             #expect(!text.isEmpty && !text.contains("pusta wartość") && !text.contains("Przedrostek"), "\(text)")
         }
     }
+
+    // REV-26: in the restart sheet a Mac's FileVault badge and the warning above give the same answer: where the
+    // one-time unlock can be armed (authrestart=yes), neither says the Mac will stop at the unlock screen.
+    @Test func theFileVaultBadgeAgreesWithTheWarning() {
+        let stops = "Po ponownym uruchomieniu komputer zatrzyma się na ekranie odblokowania dysku."
+        let armed = PowerConfirmSheet.fileVaultHelp(autoUnlock: true)
+        #expect(armed != stops && armed.contains("fdesetup authrestart") && armed.contains("bez hasła FileVault"))
+        #expect(PowerConfirmSheet.fileVaultHelp(autoUnlock: false) == stops)
+        #expect(PowerConfirmSheet.fileVaultHelp(autoUnlock: nil) == stops)        // not known yet
+
+        let all = PowerConfirmSheet.fileVaultWarning(count: 2, autoUnlock: 2)
+        #expect(all.hasPrefix("FileVault jest włączony na 2 komputerach.") && all.contains("powinny uruchomić się bez hasła FileVault"))
+        let none = PowerConfirmSheet.fileVaultWarning(count: 2, autoUnlock: 0)
+        #expect(!none.contains("authrestart") && none.contains("pojawi się ekran odblokowania dysku"))
+        // Some of them: the warning must not promise either answer for all of them.
+        let some = PowerConfirmSheet.fileVaultWarning(count: 3, autoUnlock: 1)
+        #expect(some.contains("Na 1 komputerze aplikacja uzbroi jednorazowe odblokowanie dysku"), "\(some)")
+        #expect(some.contains("Na 2 komputerach po ponownym uruchomieniu pojawi się ekran odblokowania dysku"), "\(some)")
+    }
 }
