@@ -319,7 +319,8 @@ final class AppModel: ObservableObject {
             }
         }
     }
-    /// Problems found while loading hosts.json/settings.json (shown once at start).
+    /// Problems with hosts.json/settings.json (found at start or by a save) and classroom.json; shown once, by the
+    /// window the user works in (ConfigIssuesNotice).
     @Published var configIssues: [String] = []
     /// A password could not be saved in (or removed from) the Keychain; shown as an alert.
     @Published var keychainError: String?

@@ -2,8 +2,9 @@ import AppKit
 import CMCRCore
 import SwiftUI
 
-/// Tells the user at start that hosts.json or settings.json was damaged and where the original was kept,
-/// and that a password could not be saved in the Keychain.
+/// The alerts of the main window: a password that could not be saved in the Keychain (only the main window sets
+/// passwords), and – as in every window, by the one the user works in – the notices and the configuration problems
+/// (`noticeAlert`).
 struct ConfigIssuesAlert: ViewModifier {
     @EnvironmentObject var model: AppModel
     @ViewState private var showsSample = false
@@ -14,20 +15,7 @@ struct ConfigIssuesAlert: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        content.alert("Nie udało się wczytać części konfiguracji", isPresented: Binding(
-            get: { !model.configIssues.isEmpty },
-            set: { if !$0 { model.configIssues = [] } }
-        )) {
-            Button("Pokaż pliki w Finderze") {
-                NSWorkspace.shared.activateFileViewerSelecting([ConfigStore.directory])
-                model.configIssues = []
-            }
-            Button("OK", role: .cancel) { model.configIssues = [] }
-        } message: {
-            Text(model.configIssues.joined(separator: "\n\n")
-                 + "\n\nSprawdź listę komputerów i ustawienia w dziale Konfiguracja.")
-        }
-        .alert("Problem z Pękiem kluczy", isPresented: Binding(
+        content.alert("Problem z Pękiem kluczy", isPresented: Binding(
             get: { model.keychainError != nil },
             set: { if !$0 { model.keychainError = nil } }
         )) {
@@ -63,7 +51,7 @@ struct ConfigIssuesAlert: ViewModifier {
 }
 
 extension View {
-    /// Shows `model.notice` when this window is the one the user works in (`NoticeAlert`).
+    /// Shows `model.notice` and `model.configIssues` when this window is the one the user works in (`NoticeAlert`).
     func noticeAlert(showsToasts: Bool = false) -> some View {
         modifier(NoticeAlert(showsToasts: showsToasts))
     }
@@ -113,6 +101,41 @@ struct NoticeAlert: ViewModifier {
             } message: {
                 Text(model.notice?.message ?? "")
             }
+            .modifier(ConfigIssuesNotice(window: WeakWindow(mine), visible: visible))
+    }
+}
+
+/// `model.configIssues` – hosts.json or settings.json found damaged at start or by a save after a hand edit,
+/// classroom.json that could not be read – shown like a notice, by the one window the user works in (`NoticeWindows`).
+/// Before, only the main window had this alert: with the Screen Wall alone on a projector the warning waited until
+/// the main window was opened again (AUDIT REV-66). Part of `NoticeAlert`, in the same windows.
+struct ConfigIssuesNotice: ViewModifier {
+    @EnvironmentObject var model: AppModel
+    /// The window of `NoticeAlert`.
+    let window: WeakWindow
+    /// Whether that window is on screen: a change shows a warning that waited for an open window.
+    let visible: Bool
+
+    private var isPresenter: Bool {
+        guard let first = model.configIssues.first, let mine = window.window else { return false }
+        return NoticeWindows.shared.presenter(.configIssues, id: first) === mine
+    }
+
+    func body(content: Content) -> some View {
+        content.alert("Nie udało się wczytać części konfiguracji", isPresented: Binding(
+            get: { isPresenter },
+            // Only the window that shows the warning dismisses it, as with a notice.
+            set: { if !$0 && isPresenter { model.configIssues = [] } }
+        )) {
+            Button("Pokaż pliki w Finderze") {
+                NSWorkspace.shared.activateFileViewerSelecting([ConfigStore.directory])
+                model.configIssues = []
+            }
+            Button("OK", role: .cancel) { model.configIssues = [] }
+        } message: {
+            Text(model.configIssues.joined(separator: "\n\n")
+                 + "\n\nSprawdź listę komputerów i ustawienia w dziale Konfiguracja.")
+        }
     }
 }
 
@@ -121,12 +144,15 @@ struct WeakWindow {
     init(_ window: NSWindow? = nil) { self.window = window }
 }
 
-/// The windows that can show a notice (`NoticeAlert`) and the one chosen for the current notice.
+/// The windows that can show a notice (`NoticeAlert`) and the one chosen for the current notice and for the current
+/// configuration problems.
 @MainActor
 final class NoticeWindows {
     static let shared = NoticeWindows()
+    /// What a window shows for the model: `model.notice` or `model.configIssues`, each chosen on its own.
+    enum Kind { case notice, configIssues }
     private var windows: [WeakWindow] = []
-    private var chosen: (notice: UUID, window: WeakWindow)?
+    private var chosen: [Kind: (id: AnyHashable, window: WeakWindow)] = [:]
 
     func register(_ window: NSWindow) {
         windows.removeAll { $0.window == nil }
@@ -135,14 +161,20 @@ final class NoticeWindows {
 
     /// The window that shows `notice`, chosen once per notice (it stays there while that window is open).
     func presenter(for notice: AppNotice) -> NSWindow? {
+        presenter(.notice, id: notice.id)
+    }
+
+    /// The window that shows the message `id` of `kind`, chosen once per message (it stays there while that window is
+    /// open). A notice and the configuration problems may be in different windows.
+    func presenter(_ kind: Kind, id: AnyHashable) -> NSWindow? {
         windows.removeAll { $0.window == nil }
         let open = windows.compactMap(\.window).filter(\.isVisible)
-        if let chosen, chosen.notice == notice.id, let w = chosen.window.window, open.contains(where: { $0 === w }) {
+        if let c = chosen[kind], c.id == id, let w = c.window.window, open.contains(where: { $0 === w }) {
             return w
         }
         let w = Self.pick(open, key: NSApp.keyWindow.map(Self.owner), main: NSApp.mainWindow.map(Self.owner),
                           frontToBack: NSApp.orderedWindows)
-        chosen = w.map { (notice.id, WeakWindow($0)) }
+        chosen[kind] = w.map { (id, WeakWindow($0)) }
         return w
     }
 
