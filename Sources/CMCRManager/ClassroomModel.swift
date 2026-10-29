@@ -72,10 +72,21 @@ final class LessonRun: ObservableObject, Identifiable, @unchecked Sendable {
         states.values.filter { $0.contains { if case .failed = $0 { return true } else { return false } } }.count
     }
 
-    /// Macs where the routine did not run at all (left out as unreachable or with a logged-in student).
+    /// The state of the steps that a phase of the routine left a Mac out of (unreachable, or with a logged-in
+    /// student and „Pomiń komputery z zalogowanym użytkownikiem”); shown in the lesson table.
+    static func leftOut(loggedIn: Bool) -> StepState {
+        .skipped(leftOutPrefix + (loggedIn ? "zalogowany użytkownik" : "komputer niedostępny"))
+    }
+
+    private static let leftOutPrefix = "pominięto – "
+
+    /// Macs that a phase of the routine left out (`leftOut`) and where nothing failed (those count as problems).
+    /// A step that ran and had nothing to do („nikt nie jest zalogowany”, an empty materials folder) is not a skip
+    /// of the Mac (AUDIT REV-14).
     var skippedHosts: Int {
         states.values.filter { row in
-            !row.isEmpty && row.allSatisfy { if case .skipped = $0 { return true } else { return false } }
+            !row.contains { if case .failed = $0 { return true } else { return false } }
+                && row.contains { if case .skipped(let why) = $0 { return why.hasPrefix(Self.leftOutPrefix) } else { return false } }
         }.count
     }
 
@@ -416,8 +427,8 @@ final class ClassroomModel: ObservableObject {
         batch.onCancel = { [weak run] in run?.cancel() }
         // Macs left out on purpose or known to be off never run their steps: say why in the lesson table.
         for job in batch.jobs where job.state == .skipped {
-            let why = job.skipReason == .loggedInUser ? "pominięto – zalogowany użytkownik" : "pominięto – komputer niedostępny"
-            for i in range ?? 0..<plan.steps.count { run.update(job.machine.id, i, .skipped(why)) }
+            let state = LessonRun.leftOut(loggedIn: job.skipReason == .loggedInUser)
+            for i in range ?? 0..<plan.steps.count { run.update(job.machine.id, i, state) }
         }
     }
 
