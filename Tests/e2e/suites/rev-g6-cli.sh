@@ -82,4 +82,36 @@ expect_code "status po zmianie nazwy: kod 0" "$code" 0 "$out"
 expect "status po zmianie nazwy: połączenie bez ponownego zaufania" "$out" "● cmcr-e2e-g6-33"
 expect_not "status po zmianie nazwy: klucz nie jest „nowy”" "$out" "nie jest jeszcze zaufany"
 
+section "REV cmcrctl – trust bez listy komputerów pyta w terminalu także z --yes (AUDIT REV-32)"
+TT="$WORK/cfg-rev-g6-trust"
+TT_KNOWN="$WORK/rev-g6-trust-known_hosts"
+mkdir -p "$TT"
+python3 - "$WORK/config/settings.json" "$TT/settings.json" "$TT_KNOWN" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1])); s["extraSSHOptions"] = "UserKnownHostsFile=" + sys.argv[3]
+json.dump(s, open(sys.argv[2], "w"))
+PY
+cat > "$TT/hosts.json" <<EOF
+[
+ {"id":"63111111-1111-1111-1111-111111111111","name":"imac01","address":"127.0.0.1","user":"$ME","port":$PORT},
+ {"id":"63222222-2222-2222-2222-222222222222","name":"imac02","address":"localhost","user":"$ME","port":$PORT}
+]
+EOF
+: > "$TT_KNOWN"
+# A script started from Terminal inherits it: `cmcrctl trust $NR --yes` with an empty $NR.
+out="$(CMCR_CONFIG_DIR="$TT" script -q /dev/null "$CTL" trust --yes </dev/null 2>&1)"
+expect "trust --yes bez komputerów w terminalu: pytanie" "$out" "Nie podano komputerów – trust na wszystkich" \
+  "Wykonać na wszystkich? [t/N]" "Przerwano"
+expect_not "trust --yes bez komputerów: --yes nie odpowiada na pytanie" "$out" "zaufano"
+[ ! -s "$TT_KNOWN" ] && pass "trust --yes bez komputerów: known_hosts bez zmian" \
+  || fail "trust --yes bez komputerów: zapisano klucze bez pytania" "$(cat "$TT_KNOWN")"
+out="$(CMCR_CONFIG_DIR="$TT" "$CTL" trust --yes </dev/null 2>&1)"; code=$?
+expect_code "trust --yes bez komputerów i bez terminala: kod 2" "$code" 2 "$out"
+: > "$TT_KNOWN"
+out="$( (sleep 1; printf 't\n'; sleep 3) | CMCR_CONFIG_DIR="$TT" script -q /dev/null "$CTL" trust --yes 2>&1)"
+expect "trust bez komputerów w terminalu: po „t” – wszystkie" "$out" "Wykonać na wszystkich? [t/N]" "imac01: zaufano" "imac02: zaufano"
+out="$(CMCR_CONFIG_DIR="$TT" "$CTL" trust 1 --dry-run </dev/null 2>&1)"; code=$?
+expect "trust z numerem: bez pytania o wszystkie" "$out" "imac01" "zaufany"
+expect_not "trust z numerem: bez pytania o wszystkie (treść)" "$out" "Wykonać na wszystkich"
+
 rm -f "$WORK/rev-g6-hosts.orig"
