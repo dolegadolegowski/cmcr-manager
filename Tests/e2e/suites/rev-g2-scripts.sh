@@ -102,4 +102,27 @@ pkill -P "$RV_TIMER" 2>/dev/null; kill "$RV_TIMER" 2>/dev/null; wait "$RV_TIMER"
 rm -f "$WORK/console_user"
 printf '%s' "$rv_settings_backup" > "$WORK/config/settings.json"
 
+section "REV-09: odinstalowanie zamyka aplikację, której nazwa na dysku jest rozłożona (NFD)"
+# A bundle copied from an HFS+ image keeps its decomposed name on APFS; cmcr_ps lists processes precomposed.
+RV_NFD="$(python3 -c 'import sys, unicodedata; sys.stdout.write(unicodedata.normalize("NFD", sys.argv[1]))' 'Żółw Rev')"
+mkdir -p "$WORK/Applications/$RV_NFD.app/Contents/MacOS"
+cp /bin/sleep "$WORK/Applications/$RV_NFD.app/Contents/MacOS/$RV_NFD"
+codesign --force --sign - "$WORK/Applications/$RV_NFD.app/Contents/MacOS/$RV_NFD" >/dev/null 2>&1
+RV_PID="$( ( "$WORK/Applications/$RV_NFD.app/Contents/MacOS/$RV_NFD" 300 >/dev/null 2>&1 & echo $! ) )"
+sleep 0.3
+if [ "$(ls "$WORK/Applications" | grep -c "$RV_NFD")" = 1 ] && kill -0 "$RV_PID" 2>/dev/null; then
+  pass "NFD: aplikacja o rozłożonej nazwie działa"
+else
+  fail "NFD: nie udało się przygotować aplikacji" "$(ls "$WORK/Applications")"
+fi
+out="$(ctlpw _builder uninstall 1 "$WORK/Applications/$RV_NFD.app")"; code=$?
+expect_code "NFD: kod 0" "$code" 0 "$out"
+sleep 0.3
+[ ! -e "$WORK/Applications/$RV_NFD.app" ] && pass "NFD: aplikacja usunięta" || fail "NFD: aplikacja nadal jest" "$out"
+if kill -0 "$RV_PID" 2>/dev/null; then
+  fail "NFD: proces usuniętej aplikacji nadal działa" "$out"; kill "$RV_PID" 2>/dev/null
+else
+  pass "NFD: proces aplikacji zakończony przed usunięciem"
+fi
+
 rm -rf "$RV"

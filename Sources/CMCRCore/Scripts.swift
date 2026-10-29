@@ -338,7 +338,11 @@ public enum Scripts {
         esac
         FDA="  macOS chroni aplikacje: włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)."
         NAME="$(basename "$APP" .app)"
-        PIDS="$(cmcr_ps -axww -o pid=,comm= | awk -v n="/$NAME.app/Contents/MacOS/" 'index($0, n) > 0 {print $1}')"
+        # cmcr_ps lists precomposed names; the name on disk may be decomposed (e.g. copied from an HFS+ image), so
+        # the search uses it converted the same way (AUDIT REV-09). File operations keep the name as it is.
+        PSNAME="$(printf '%s' "$NAME" | iconv -c -f UTF-8-MAC -t UTF-8)"
+        [ -n "$PSNAME" ] || PSNAME="$NAME"
+        PIDS="$(cmcr_ps -axww -o pid=,comm= | awk -v n="/$PSNAME.app/Contents/MacOS/" 'index($0, n) > 0 {print $1}')"
         # Moved aside first (a rename needs the same permission as deleting): an app macOS protects stays where it is
         # and keeps running, instead of being quit for every user and then not removed.
         GONE="$(mktemp -d "$PARENT/.cmcr-uninstall.XXXXXX" 2>"$CMCR_TMP/rm.err")" \
