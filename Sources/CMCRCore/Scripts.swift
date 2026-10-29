@@ -330,7 +330,7 @@ public enum Scripts {
         PARENT="$(cmcr_realdir "$(dirname "$APP")")"; RAPPS="$(cmcr_realdir "$APPS")"
         case "$PARENT/" in "$RAPPS"/*) ;; *) echo "Odmowa: $APP wskazuje poza $APPS ($PARENT)." >&2; exit 2 ;; esac
         if [ -L "$APP" ]; then
-          echo "✘ Odmowa: $APP to tylko dowiązanie do „$(readlink "$APP")” (tak macOS umieszcza w Programach np. Safari) – nie odinstalowuję. Aplikacji systemowych nie można odinstalować." >&2
+          echo "✘ Odmowa: $APP to tylko dowiązanie do „$(readlink "$APP")” (tak macOS umieszcza w folderze Aplikacje np. Safari) – nie odinstalowuję. Aplikacji systemowych nie można odinstalować." >&2
           exit 2
         fi
         case "$(stat -f %Sf "$APP" 2>/dev/null)" in
@@ -903,7 +903,7 @@ public enum Scripts {
         fi
         HERE="$(stat -f %d:%i .)"
         PROBE="$(mktemp -d ./.cmcr-push.XXXXXX 2>/dev/null)" || {
-          echo "✘ Nie można zapisać w $DEST – brak uprawnień. Biurko, Dokumenty i Pobrane ucznia wymagają opcji „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)." >&2
+          echo "✘ Nie można zapisać w $DEST – brak uprawnień. Biurko, Dokumenty i Pobrane rzeczy ucznia wymagają opcji „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)." >&2
           exit 2
         }
         rmdir "$PROBE"
