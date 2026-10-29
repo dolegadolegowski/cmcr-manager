@@ -174,4 +174,22 @@ if rv3_setup_begin; then
 fi
 rv3_setup_end
 
+section "REV-50: --display-sleep 0 to „bez usypiania ekranu”, nie „po 0 min”"
+if rv3_setup_begin; then
+  rv3s setup-script > "$RV3/standalone.sh"
+  out="$(ctlpw exec "/bin/bash $RV3/standalone.sh --no-guide --no-ssh-acl --display-sleep 0" 1 --root)"; code=$?
+  expect_code "--display-sleep 0: kod 0" "$code" 0 "$out"
+  expect "--display-sleep 0: raport" "$out" "✚ Zasilanie: " "bez usypiania ekranu."
+  expect_not "--display-sleep 0: nie „po 0 min”" "$out" "po 0 min"
+  grep -qx 'displaysleep 0' "$RV3_SS/pmset" && pass "--display-sleep 0: pmset displaysleep 0" \
+    || fail "--display-sleep 0: stan pmset" "$(cat "$RV3_SS/pmset")"
+  out="$(ctlpw exec "/bin/bash $RV3/standalone.sh --no-guide --no-ssh-acl --display-sleep 10" 1 --root)"; code=$?
+  expect "--display-sleep 10: raport" "$out" "✚ Zasilanie: " "uśpienie ekranu po 10 min."
+  out="$(ctl exec "/bin/bash $RV3/standalone.sh --help" 1)"
+  expect "pomoc skryptu: --display-sleep 0 – nigdy" "$out" "uśpienie ekranu po MIN minutach (0 – nigdy)"
+  out="$(ctl setup --help)"
+  expect "pomoc cmcrctl setup: --display-sleep 0 – nigdy" "$out" "uśpienie ekranu po MIN minutach (0 – nigdy)"
+fi
+rv3_setup_end
+
 rm -rf "$RV3"

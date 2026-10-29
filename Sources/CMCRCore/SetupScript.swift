@@ -409,7 +409,7 @@ public struct SetupCommandLine: Sendable {
                                 w pliku: nazwa konta administratora)
       --no-wol                  nie zmieniaj Wake-on-LAN
       --no-sleep                komputer nie usypia się
-      --display-sleep MIN       uśpienie ekranu po MIN minutach
+      --display-sleep MIN       uśpienie ekranu po MIN minutach (0 – nigdy)
       --autorestart             włącz po zaniku zasilania
       --power-schedule "MTWRF 07:30 17:00 [shutdown|sleep]" | off
                                 harmonogram włączania/wyłączania; dni: M T W R F S U (pn–nd)

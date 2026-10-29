@@ -111,7 +111,8 @@ if rv2_setup_begin; then
   expect_not "--display-sleep 005 drugi raz: nie zmienia ponownie" "$out" "✚ Zasilanie: "
   out="$(ctlpw exec "/bin/bash $RV2/standalone.sh --no-guide --no-ssh-acl --display-sleep 00" 1 --root)"; code=$?
   expect_code "--display-sleep 00: kod 0" "$code" 0 "$out"
-  expect "--display-sleep 00: 0 minut" "$out" "uśpienie ekranu po 0 min."
+  # pmset: displaysleep 0 – the display never sleeps (AUDIT REV-50).
+  expect "--display-sleep 00: bez usypiania ekranu" "$out" "bez usypiania ekranu."
   grep -qx 'displaysleep 0' "$RV2_SS/pmset" && pass "--display-sleep 00: pmset displaysleep 0" \
     || fail "--display-sleep 00: stan pmset" "$(cat "$RV2_SS/pmset")"
 fi

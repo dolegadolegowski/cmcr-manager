@@ -85,7 +85,7 @@ Nazwa i zasilanie:
   --hostname NAZWA|auto    ustaw ComputerName i LocalHostName (auto = nazwa konta admin.)
   --no-wol                 nie zmieniaj „Budź przy dostępie do sieci”
   --no-sleep               komputer nie usypia się (ekran nadal może)
-  --display-sleep MIN      uśpienie ekranu po MIN minutach
+  --display-sleep MIN      uśpienie ekranu po MIN minutach (0 – nigdy)
   --autorestart            włącz po zaniku zasilania
   --power-schedule "MTWRF 07:30 17:00 [shutdown|sleep]" | off
                            harmonogram włączania/wyłączania (dni: M T W R F S U)
@@ -784,7 +784,11 @@ step_power() {
   [ "$OPT_WOL" = 1 ] && pm_set womp 1 "budzenie przy dostępie do sieci"
   [ "$OPT_WOL" = 1 ] && pm_set tcpkeepalive 1 "podtrzymanie sieci w uśpieniu"
   [ "$OPT_NO_SLEEP" = 1 ] && pm_set sleep 0 "bez usypiania komputera"
-  [ -n "$OPT_DISPLAY_SLEEP" ] && pm_set displaysleep "$OPT_DISPLAY_SLEEP" "uśpienie ekranu po $OPT_DISPLAY_SLEEP min"
+  if [ -n "$OPT_DISPLAY_SLEEP" ]; then
+    # displaysleep 0 w pmset to ekran, który nigdy nie usypia (nie „po 0 min”).
+    if [ "$OPT_DISPLAY_SLEEP" = 0 ]; then pm_set displaysleep 0 "bez usypiania ekranu"
+    else pm_set displaysleep "$OPT_DISPLAY_SLEEP" "uśpienie ekranu po $OPT_DISPLAY_SLEEP min"; fi
+  fi
   [ "$OPT_AUTORESTART" = 1 ] && pm_set autorestart 1 "start po zaniku zasilania"
   if [ -n "$PM_FAIL" ]; then record power fail "pmset nie zmienił ustawień zasilania: $PM_FAIL${PM_DID:+ (zmieniono: $PM_DID)}."
   elif [ -n "$PM_DID" ]; then changed_or_planned power "Zasilanie: $PM_DID."
