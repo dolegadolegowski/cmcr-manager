@@ -10,6 +10,16 @@ private final class Recorder<Value> {
     var values: [Value] = []
 }
 
+/// Holds an operation until the test opens it.
+@MainActor
+private final class Gate {
+    var open = false
+
+    func wait() async {
+        while !open { try? await Task.sleep(nanoseconds: 20_000_000) }
+    }
+}
+
 /// Review fixes (AUDIT REV-xx) in the lesson routines and the file browser that need no AppModel.
 @MainActor
 @Suite struct RevG4ClassroomBrowserTests {
@@ -122,5 +132,33 @@ struct RevG4ClassroomBrowserModelTests {
         #expect(shown.values.contains { $0 == nil },
                 "powtórzone pytanie nadal pokazywało „pominięto” zamiast czekać na odpowiedź: \(shown.values)")
         #expect(round.errors[a.id] != "pominięto – komputer niedostępny")
+    }
+
+    // browser-change-other-mac (AUDIT REV-15): after switching to another Mac, a change still running or finishing
+    // on the Mac shown before says which Mac it is about, instead of looking like the new Mac's.
+    @Test func aChangeOnTheMacShownBeforeSaysWhichMacItIsOn() async throws {
+        let a = AppTestEnvironment.closedHost("imac01"), b = AppTestEnvironment.closedHost("imac02")
+        let model = AppTestEnvironment.makeModel([a, b])
+        let browser = model.files.browser
+        browser.setHost(a.id)
+        let gate = Gate()
+        browser.runChange("Wyślij „Projekt” → imac01:/Users/uczen", on: a, activity: "Wysyłanie „Projekt”…") { _ in
+            await gate.wait()
+            return .failure("Brak miejsca na dysku")
+        }
+        #expect(browser.activity == "Wysyłanie „Projekt”…")
+        browser.setHost(b.id)                                       // the teacher clicks imac02 in the list
+        #expect(browser.activity == "imac01: Wysyłanie „Projekt”…")
+        browser.setHost(a.id)
+        #expect(browser.activity == "Wysyłanie „Projekt”…")
+        browser.setHost(b.id)
+        gate.open = true
+        let batch = try #require(model.batches.first)
+        #expect(await AppTestEnvironment.wait(10) { batch.finished && browser.notice != nil })
+        #expect(browser.activity == nil)
+        let notice = try #require(browser.notice)
+        #expect(notice.isError)
+        #expect(notice.text.hasPrefix("imac01: "), "\(notice.text)")
+        #expect(notice.batchID == batch.id)
     }
 }

@@ -22,7 +22,9 @@ final class RemoteBrowserModel: ObservableObject {
 
     unowned let app: AppModel
 
-    @Published private(set) var hostID: UUID?
+    @Published private(set) var hostID: UUID? {
+        didSet { if hostID != oldValue { showActivity() } }
+    }
     /// Folder shown (placeholders resolved once loaded).
     @Published private(set) var path = ""
     @Published private(set) var listing: RemoteListing? { didSet { refilter() } }
@@ -38,12 +40,13 @@ final class RemoteBrowserModel: ObservableObject {
     /// Entries after the hidden/search filters, sorted, folders first (like Finder's "Keep folders on top").
     @Published private(set) var visibleEntries: [RemoteEntry] = []
     @Published var selection = Set<RemoteEntry.ID>()
-    /// A change that is running right now ("Wysyłanie…").
+    /// A change that is running right now ("Wysyłanie…"); one on another Mac than the shown one names that Mac.
     @Published private(set) var activity: String?
-    /// Result of the last change.
+    /// Result of the last change; one made on another Mac than the shown one names that Mac.
     @Published var notice: Notice?
-    /// Changes still running (several may run at once), oldest first; `activity` shows the latest one.
-    private var runningChanges: [(id: UUID, text: String)] = []
+    /// Changes still running (several may run at once, also on a Mac shown before), oldest first; `activity` shows
+    /// the latest one.
+    private var runningChanges: [(id: UUID, host: Machine, text: String)] = []
     /// The user switched „Jako administrator” off in this folder: no automatic sudo until another folder or Mac
     /// is opened (AUDIT PLI-14).
     private var rootTurnedOff = false
@@ -248,12 +251,13 @@ final class RemoteBrowserModel: ObservableObject {
         asRoot || l.asRoot || !l.writable || l.owner != l.adminUser || entries.contains { $0.owner != l.adminUser }
     }
 
-    private func runChange(_ title: String, on m: Machine, activity text: String,
-                           operation: @escaping @MainActor (Job) async -> CommandResult,
-                           done: (@MainActor (Bool) -> Void)? = nil) {
+    /// Runs a change of the shown folder on `m` as a job; the status bar shows `text` while it runs, then its result.
+    func runChange(_ title: String, on m: Machine, activity text: String,
+                   operation: @escaping @MainActor (Job) async -> CommandResult,
+                   done: (@MainActor (Bool) -> Void)? = nil) {
         let token = UUID()
-        runningChanges.append((token, text))
-        activity = text
+        runningChanges.append((token, m, text))
+        showActivity()
         notice = nil
         // The Mac shown here just answered the listing: a stale „offline” must not skip the change (AUDIT PLI-15).
         app.runBatch(title, on: [m], section: .browser, includeUnreachable: true, operation: { _, job in
@@ -261,16 +265,29 @@ final class RemoteBrowserModel: ObservableObject {
         }, completion: { batch in
             // Another change may still be running (AUDIT PLI-16): keep showing it.
             self.runningChanges.removeAll { $0.id == token }
-            self.activity = self.runningChanges.last?.text
+            self.showActivity()
             let job = batch.jobs.first
             let ok = job?.state == .succeeded
             let summary = job?.summary ?? ""
-            self.notice = Notice(text: ok ? (summary.isEmpty || summary == "OK" ? "Gotowe." : summary)
-                                          : (summary.isEmpty ? "Operacja nie powiodła się." : summary),
-                                 isError: !ok, batchID: batch.id)
+            let result = ok ? (summary.isEmpty || summary == "OK" ? "Gotowe." : summary)
+                : (summary.isEmpty ? "Operacja nie powiodła się." : summary)
+            self.notice = Notice(text: self.naming(m, result), isError: !ok, batchID: batch.id)
             done?(ok)
             if m.id == self.hostID { self.reload() }
         })
+    }
+
+    /// The latest change on the shown Mac, otherwise the latest one on a Mac shown before (AUDIT PLI-16).
+    private func showActivity() {
+        let change = runningChanges.last { $0.host.id == hostID } ?? runningChanges.last
+        activity = change.map { naming($0.host, $0.text) }
+    }
+
+    /// `text` about a change on `m` as the status bar says it: after switching to another Mac (a click in the host
+    /// list), a change still running or finishing on the Mac shown before names that Mac, so it is not taken for
+    /// the new one's (AUDIT REV-15).
+    private func naming(_ m: Machine, _ text: String) -> String {
+        m.id == hostID ? text : "\(app.current(m).name): \(text)"
     }
 
     func makeFolder(named name: String) {
