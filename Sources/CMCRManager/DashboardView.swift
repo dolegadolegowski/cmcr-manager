@@ -133,7 +133,7 @@ struct DashboardView: View {
                 Button {
                     classroom.exportInventory(model)
                 } label: {
-                    Label("Zapisz raport o komputerach (CSV)…", systemImage: "tablecells")
+                    Label("Zapisz raport o komputerach (CSV)…", systemImage: "square.and.arrow.up")
                 }
                 Button {
                     showVersions = true
