@@ -67,7 +67,7 @@ struct PowerView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                TargetButton(title: "Wyślij wiadomość", icon: "paperplane.fill") {
+                TargetButton(title: "Wyślij wiadomość", icon: "text.bubble") {
                     let t = title, m = text, d = asDialog
                     model.runScript("Wiadomość: \(m.prefix(40))", on: model.selectedMachines, section: .power) { _ in
                         Scripts.message(title: t, text: m, asDialog: d)

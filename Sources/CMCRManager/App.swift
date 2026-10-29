@@ -301,7 +301,7 @@ struct MachineListView: View {
                     } description: {
                         Text("Dodaj iMaki w Konfiguracji › Komputery.")
                     } actions: {
-                        Button("Otwórz konfigurację") { model.section = .setup }
+                        Button("Otwórz Konfigurację") { model.section = .setup }
                     }
                 } else {
                     ContentUnavailableView {

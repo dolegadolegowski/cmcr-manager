@@ -230,7 +230,7 @@ private struct StartLessonSection: View {
                 .help(buttonHelp)
             }
         } header: {
-            Label("Rozpocznij zajęcia", systemImage: "play.circle")
+            Label("Rozpocznij zajęcia", systemImage: "play.fill")
         } footer: {
             Text("Kroki wykonują się po kolei na każdym komputerze; postęp zobaczysz poniżej i w dziale Zadania.")
                 .foregroundStyle(.secondary)

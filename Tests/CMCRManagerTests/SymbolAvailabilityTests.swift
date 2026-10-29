@@ -99,6 +99,46 @@ import Testing
         #expect(uses.count > 150, "sprawdzono podejrzanie mało symboli (\(uses.count))")
     }
 
+    /// `Label("Tytuł", systemImage: "symbol")` and `title: "Tytuł", icon: "symbol"` (TargetButton, PowerActionRow,
+    /// OptionToggle…) pairs with a literal title, with their places.
+    static func labels(in source: String, file: String) -> [(title: String, symbol: String, place: String)] {
+        let pairs = [#"Label\(\s*"((?:[^"\\]|\\.)*)"\s*,\s*systemImage:\s*"([^"]+)""#,
+                     #"title:\s*"((?:[^"\\]|\\.)*)"\s*,\s*icon:\s*"([^"]+)""#].map { try! NSRegularExpression(pattern: $0) }
+        var out: [(String, String, String)] = []
+        for (index, line) in source.components(separatedBy: "\n").enumerated() {
+            let ns = line as NSString
+            for pair in pairs {
+            for match in pair.matches(in: line, range: NSRange(location: 0, length: ns.length)) {
+                let title = ns.substring(with: match.range(at: 1))
+                guard !title.contains("\\(") else { continue }
+                out.append((title, ns.substring(with: match.range(at: 2)), "\(file):\(index + 1)"))
+            }
+            }
+        }
+        return out
+    }
+
+    /// One action – one symbol (AUDIT UI-08): a title has the same symbol wherever it appears. A filled variant
+    /// marks the state the action turned on (the „Jako administrator” badge next to its toggle) and counts as the
+    /// same symbol. Three titles name two different things: „Zamknij” (closing a message in this window and
+    /// quitting an app on the iMacs), „Otwórz” (a folder in the browser and an address on the iMacs) and „Budzenie
+    /// przez sieć” (the Obudź action and the Wake-on-LAN setting).
+    @Test func oneTitleOneSymbol() throws {
+        let twoActions: Set<String> = ["Zamknij", "Otwórz", "Budzenie przez sieć"]
+        var byTitle: [String: [(symbol: String, place: String)]] = [:]
+        for file in Self.appSources {
+            for use in Self.labels(in: try String(contentsOf: file, encoding: .utf8), file: file.lastPathComponent) {
+                byTitle[use.title, default: []].append((use.symbol, use.place))
+            }
+        }
+        #expect(byTitle.count > 150, "sprawdzono podejrzanie mało etykiet (\(byTitle.count))")
+        func base(_ symbol: String) -> String { symbol.hasSuffix(".fill") ? String(symbol.dropLast(5)) : symbol }
+        for (title, uses) in byTitle.sorted(by: { $0.key < $1.key }) where !twoActions.contains(title) {
+            let symbols = Set(uses.map { base($0.symbol) })
+            #expect(symbols.count == 1, "„\(title)” ma różne symbole: \(uses.map { "\($0.symbol) (\($0.place))" }.joined(separator: ", "))")
+        }
+    }
+
     @Test func noSymbolReservedByAppleIsUsed() throws {
         let data = try Data(contentsOf: Self.table)
         let plist = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])

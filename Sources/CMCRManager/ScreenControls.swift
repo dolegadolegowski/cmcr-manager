@@ -164,7 +164,7 @@ struct MessageComposer: View {
                 Spacer()
                 Button("Anuluj", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button(action: send) { Label("Wyślij wiadomość", systemImage: "paperplane.fill") }
+                Button(action: send) { Label("Wyślij wiadomość", systemImage: "text.bubble") }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

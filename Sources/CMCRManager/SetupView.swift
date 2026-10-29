@@ -1084,7 +1084,7 @@ struct ConfigurationLinkSection: View {
                     model.section = .setup
                     MainWindow.bringToFront(openWindow)
                 } label: {
-                    Label("Otwórz Konfigurację", systemImage: "arrow.up.forward.app")
+                    Label("Otwórz Konfigurację", systemImage: "gearshape")
                 }
                 .help("Pokazuje dział Konfiguracja w głównym oknie")
             } label: {
