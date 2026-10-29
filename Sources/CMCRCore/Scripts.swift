@@ -1289,7 +1289,17 @@ public enum Scripts {
           dseditgroup -o edit -a admin -t group "$G" \
             || { echo "✘ Nie udało się dodać grupy Administratorzy do listy dostępu – usługi nie włączono." >&2; exit 1; }
         fi
-        echo "Dostęp do Udostępniania ekranu: tylko administratorzy."
+        # Accounts on the list itself (an earlier „Tylko ci użytkownicy”, a restored …-disabled list) keep their
+        # access: they are named, as the setup script does, instead of promising administrators only (AUDIT REV-06).
+        OTHERS=""
+        for m in $(dscl . -read "/Groups/$G" GroupMembership 2>/dev/null | sed 's/^GroupMembership://'); do
+          is_admin_user "$m" || OTHERS="$OTHERS $m"
+        done
+        if [ -z "$OTHERS" ]; then
+          echo "Dostęp do Udostępniania ekranu: tylko administratorzy."
+        else
+          echo "⚠︎ Dostęp do Udostępniania ekranu mają nie tylko administratorzy – na liście dostępu są też konta bez uprawnień administratora:$OTHERS. Usuń je, jeśli nie powinny się łączyć: Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Udostępnianie ekranu”." >&2
+        fi
         launchctl enable system/com.apple.screensharing 2>/dev/null
         launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null
         if launchctl print system/com.apple.screensharing >/dev/null 2>&1; then
