@@ -631,6 +631,10 @@ final class AppModel: ObservableObject {
         } else {
             job.state = .failed
             let (reach, message) = SSH.diagnose(r)
+            // A connection that failed or broke off under the command ends with ssh's own 255 (or a refusal's code):
+            // the command may still be running on the Mac and has no exit code of its own, so the history and the
+            // exports show the connection error, not „kod 255” (AUDIT REV-51, ZAD-16).
+            if reach != .online { job.exitCode = nil }
             // Streamed error output is in the log already; adding it again doubled it (AUDIT ZAD-10). What the result
             // has beyond it (a local step that failed afterwards) is the reason of the failure (AUDIT REV-12).
             let missing = job.streamedErrors.missing(from: r.stderrText.trimmingCharacters(in: .whitespacesAndNewlines))
