@@ -50,3 +50,90 @@ expect "rename, przenumerowanie i powtórzona nazwa: oba komputery z tą samą n
   "IMAC06: „IMAC06” → IMAC06.local – ten adres powtarza się" \
   "imac07: „imac07” → imac07.local"
 expect_not "rename, przenumerowanie i powtórzona nazwa: bez rady, której nie da się dokończyć" "$out" "najpierw imac07"
+
+# r5_renamed NAME NEW – what `rename NAME [--name NEW] --update-list` writes to the list after the rename.
+r5_renamed() {
+  python3 - "$R5/hosts.json" "$1" "$2" <<'PY'
+import json, sys
+path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+hosts = json.load(open(path))
+for h in hosts:
+    if h["name"] == old: h["name"] = new; h["address"] = new + ".local"
+json.dump(hosts, open(path, "w"))
+PY
+}
+# r5_list – the list as „name@address …”.
+r5_list() {
+  python3 -c 'import json, sys; print(" ".join(h["name"] + "@" + h["address"] for h in json.load(open(sys.argv[1]))))' \
+    "$R5/hosts.json"
+}
+# r5_steps NAME – the steps of the advice cmcrctl printed (stdin) for the Mac NAME, one per line: „MAC<tab>NEW NAME”
+# (no new name: the one from the list); advice without the whole order ends with exit 1.
+r5_steps() {
+  python3 -c '
+import re, sys
+mac, out = sys.argv[1], sys.stdin.read()
+line = next((l for l in out.splitlines() if l.startswith(mac + ": ") and "ten adres ma teraz" in l), "")
+if ": najpierw " not in line:
+    sys.exit("brak kolejności w radzie dla " + mac)
+advice = line.split(": najpierw ", 1)[1].rstrip(".")
+head, sep, last = advice.rpartition(", a na końcu ")
+for p in (head.split(", potem ") + [last]) if sep else advice.split(", potem "):
+    m = re.fullmatch(r"nadaj (\S+) nazwę tymczasową \(--name\)", p)
+    t = re.fullmatch(r"nadaj komputerowi z nazwą tymczasową docelową nazwę (\S+) \(--name\)", p)
+    r = re.fullmatch(r"(?:zmień nazwę )?(\S+)", p)
+    if m: print(m[1] + "\ttymczasowa")
+    elif t: print("tymczasowa\t" + t[1])
+    elif r: print(r[1] + "\t")
+    else: sys.exit("nieznany krok: " + p)
+' "$1"
+}
+# r5_follow TITLE NAME OUTPUT LIST – follows the advice printed for NAME literally: each step a run of its own (with
+# --dry-run), the list updated after it as --update-list does; LIST: the list expected at the end (r5_list).
+r5_follow() {
+  local steps mac name n=0 out code
+  if ! steps="$(printf '%s\n' "$3" | r5_steps "$2" 2>&1)"; then fail "$1: $steps" "$3"; return; fi
+  while IFS=$'\t' read -r mac name; do
+    n=$((n + 1))
+    if [ -n "$name" ]; then out="$(r5 rename "$mac" --name "$name" --dry-run)"; else out="$(r5 rename "$mac" --dry-run)"; fi
+    code=$?
+    expect_code "$1: krok $n – $mac${name:+ → $name}: kod 0" "$code" 0 "$out"
+    r5_renamed "$mac" "${name:-$mac}"
+  done <<< "$steps"
+  expect_code "$1: lista po ostatnim kroku" "$(r5_list)" "$4" "$(cat "$R5/hosts.json")"
+}
+
+section "REV R5 cmcrctl – rename: nazwy w kółko – rada podaje całą kolejność i działa wykonana dosłownie (AUDIT REV-61)"
+ROT3=("$A imac02 imac01.local" "$B imac03 imac02.local" "$C imac01 imac03.local")
+r5_hosts "${ROT3[@]}"
+out="$(r5 rename @1,@2,@3 --dry-run)"; code=$?
+expect_code "rename, w kółko między trzema: kod 2" "$code" 2 "$out"
+# A temporary name for the Mac asked about frees the name of the Mac before it in the loop: the others go backwards.
+expect "rename, w kółko między trzema: cała kolejność od komputera, którego dotyczy rada" "$out" \
+  "imac02: „imac02” → imac02.local – ten adres ma teraz imac03 (imac02.local), którego nazwa też jest zmieniana (macOS nadałby wtedy jednemu z nich inny adres). Komputery imac02, imac03 i imac01 zamieniają się nazwami w kółko. Zmień nazwy po kolei, za każdym razem z --update-list: najpierw nadaj imac02 nazwę tymczasową (--name), potem zmień nazwę imac01, potem imac03, a na końcu nadaj komputerowi z nazwą tymczasową docelową nazwę imac02 (--name)." \
+  "najpierw nadaj imac03 nazwę tymczasową (--name), potem zmień nazwę imac02, potem imac01, a na końcu nadaj komputerowi z nazwą tymczasową docelową nazwę imac03 (--name)." \
+  "najpierw nadaj imac01 nazwę tymczasową (--name), potem zmień nazwę imac03, potem imac02, a na końcu nadaj komputerowi z nazwą tymczasową docelową nazwę imac01 (--name)."
+expect_not "rename, w kółko między trzema: bez „pozostałych po kolei” bez kolejności" "$out" "pozostałych po kolei"
+for mac in imac02 imac03 imac01; do
+  r5_hosts "${ROT3[@]}"
+  out="$(r5 rename @1,@2,@3 --dry-run)"
+  r5_follow "rename, w kółko między trzema, rada przy $mac" "$mac" "$out" \
+    "imac02@imac02.local imac03@imac03.local imac01@imac01.local"
+done
+ROT4=("$A imac02 imac01.local" "$B imac03 imac02.local" "$C imac04 imac03.local" "$D imac01 imac04.local")
+for mac in imac02 imac03 imac04 imac01; do
+  r5_hosts "${ROT4[@]}"
+  out="$(r5 rename @1,@2,@3,@4 --dry-run)"
+  r5_follow "rename, w kółko między czterema, rada przy $mac" "$mac" "$out" \
+    "imac02@imac02.local imac03@imac03.local imac04@imac04.local imac01@imac01.local"
+done
+# A renumbering: from the free end, the Mac asked about last.
+REN3=("$A imac06 imac05.local" "$B imac07 imac06.local" "$C imac08 imac07.local")
+r5_hosts "${REN3[@]}"
+out="$(r5 rename @1,@2,@3 --dry-run)"
+r5_follow "rename, przenumerowanie trzech, rada przy imac06" imac06 "$out" \
+  "imac06@imac06.local imac07@imac07.local imac08@imac08.local"
+r5_hosts "${REN3[@]}"
+out="$(r5 rename @1,@2,@3 --dry-run)"
+r5_follow "rename, przenumerowanie trzech, rada przy imac07" imac07 "$out" \
+  "imac06@imac05.local imac07@imac07.local imac08@imac08.local"

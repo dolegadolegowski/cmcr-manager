@@ -300,28 +300,6 @@ enum ClassroomCLI {
         return status
     }
 
-    /// How to rename a Mac whose new name another Mac renamed in the same run still has – advice that works when
-    /// followed (AUDIT REV-54): a renumbering one Mac at a time from the free end of the chain, names that go round (a
-    /// swap, a rotation of three or more) with a temporary name. Every step needs --update-list: otherwise the list
-    /// keeps the old address of the Mac renamed before, and the next step is refused as taken (AUDIT REV-55). With it
-    /// the temporary name goes to the list too, so the target name is given with --name at the end.
-    static func renameOrderAdvice(for h: Machine, stillHeld: [UUID: Machine]) -> String {
-        switch RenamePlan.order(of: h, stillHeld: stillHeld) {
-        case .steps(let steps):
-            return (steps.count > 2 ? "Zmień nazwy po kolei" : "Zmień nazwy w dwóch krokach")
-                + ", za każdym razem z --update-list: najpierw " + steps.map(\.name).joined(separator: ", potem ") + "."
-        case .loop(let loop) where loop.count == 2 && loop[0].id == h.id:
-            return "Przy zamianie nazw nadaj najpierw jednemu z nich nazwę tymczasową (--name), potem zmień nazwę drugiego, "
-                + "a na końcu nadaj pierwszemu docelową nazwę (--name), za każdym razem z --update-list."
-        case .loop(let loop):
-            let names = loop.map(\.name)
-            return "Komputery \(names.dropLast().joined(separator: ", ")) i \(names[names.count - 1]) zamieniają się nazwami"
-                + (loop.count > 2 ? " w kółko" : "")
-                + ": nadaj najpierw jednemu z nich nazwę tymczasową (--name), potem zmień nazwy pozostałych po kolei, "
-                + "a na końcu nadaj mu docelową nazwę (--name), za każdym razem z --update-list."
-        }
-    }
-
     /// ComputerName, LocalHostName and HostName from the host list (or `--name` for one Mac). Always needs an
     /// explicit host list; every new name is checked before anything changes, and the change is confirmed.
     static func renameComputers(_ a: ModuleArguments, ssh: SSHSettings) async -> Int32 {
@@ -369,11 +347,11 @@ enum ClassroomCLI {
                 continue
             }
             // The address of another Mac renamed here, which gives it up only with its own rename – a renumbering or a
-            // swap: the same Bonjour conflict (AUDIT REV-52).
+            // swap: the same Bonjour conflict (AUDIT REV-52). The advice gives the whole order (AUDIT REV-54, REV-61).
             if let other = stillHeld[h.id] {
                 Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma teraz \(other.name) (\(other.address)), którego "
                             + "nazwa też jest zmieniana (macOS nadałby wtedy jednemu z nich inny adres). "
-                            + Self.renameOrderAdvice(for: h, stillHeld: stillHeld))
+                            + RenamePlan.advice(for: h, stillHeld: stillHeld))
                 invalid = true
                 continue
             }
