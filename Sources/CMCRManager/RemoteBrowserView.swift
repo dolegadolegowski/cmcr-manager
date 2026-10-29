@@ -382,9 +382,11 @@ extension RemoteBrowserModel {
         let conflicts = conflicts(for: urls)
         guard !conflicts.isEmpty else { return nil }
         let place = host.map { " na komputerze \($0.name)" } ?? ""
+        // The names are those already on the iMac: direction overrides are shown, not applied (AUDIT DOD-13).
+        let existing = Self.names(conflicts.map { TerminalText.escape($0, keepBackslash: true) })
         return ConfirmRequest(
             title: "Zastąpić istniejące elementy?",
-            message: "W tym folderze\(place) są już: \(Self.names(conflicts)). Pliki o tych samych nazwach zostaną zastąpione, a do folderów zostanie dodana nowa zawartość.",
+            message: "W tym folderze\(place) są już: \(existing). Pliki o tych samych nazwach zostaną zastąpione, a do folderów zostanie dodana nowa zawartość.",
             button: "Zastąp", targets: []) { [weak self] in
             self?.upload(urls)
         }
@@ -396,7 +398,8 @@ extension RemoteBrowserModel {
         let title = entries.count == 1
             ? "Usunąć „\(entries[0].displayName)”?"
             : "Usunąć \(Polish.count(entries.count, "element", "elementy", "elementów"))?"
-        let place = "z komputera \(host?.name ?? "") (\(path))"
+        // The folder and the names are read from the iMac: direction overrides are shown, not applied (AUDIT DOD-13).
+        let place = "z komputera \(host?.name ?? "") (\(TerminalText.escape(path, keepBackslash: true)))"
         let message = entries.count == 1
             ? "Element zostanie trwale usunięty \(place). Nie trafi do Kosza – tej operacji nie można cofnąć."
             : "Zostaną trwale usunięte \(place): \(Self.names(entries.map(\.displayName))). Nie trafią do Kosza – tej operacji nie można cofnąć."

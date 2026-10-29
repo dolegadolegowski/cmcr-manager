@@ -351,8 +351,8 @@ final class RemoteBrowserModel: ObservableObject {
         let groupName = subfolder?.group ?? l.group
         let owner = ownerName == l.adminUser || ownerName.isEmpty ? "" : "\(ownerName):\(groupName)"
         let root = asRoot || !owner.isEmpty || !l.writable
-        let what = Self.subject(urls.map(\.lastPathComponent))
-        runChange("Wyślij \(what.title) → \(m.name):\(destination)", on: m, activity: "Wysyłanie \(what.activity)…") { job in
+        let what = Self.subject(urls.map { TerminalText.escape($0.lastPathComponent, keepBackslash: true) })
+        runChange(Self.uploadTitle(urls, to: destination, on: m.name), on: m, activity: "Wysyłanie \(what.activity)…") { job in
             switch await Payload.make(urls, handle: job.handle) {
             case .failure(let e):
                 return .failure(e.localizedDescription)
@@ -364,6 +364,14 @@ final class RemoteBrowserModel: ObservableObject {
                                              onOutput: OutputSink(job).callback)
             }
         }
+    }
+
+    /// Title of an upload (Zadania, the toast, the result box). The destination is read from the iMac and a file may
+    /// come from one (collected work): a direction override in their names is shown, not applied to the rest of the
+    /// title, as in the other changes' titles (AUDIT DOD-13, REV-19).
+    static func uploadTitle(_ urls: [URL], to destination: String, on host: String) -> String {
+        let what = subject(urls.map { TerminalText.escape($0.lastPathComponent, keepBackslash: true) }).title
+        return "Wyślij \(what) → \(host):\(TerminalText.escape(destination, keepBackslash: true))"
     }
 
     /// What a change acts on: one name in quotes, or how many items. `title` follows a verb („Usuń 3 elementy”),

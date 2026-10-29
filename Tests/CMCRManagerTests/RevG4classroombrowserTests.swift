@@ -83,6 +83,21 @@ private final class Gate {
         #expect(one.title == "„praca.txt”")
         #expect(one.activity == "„praca.txt”")
     }
+
+    // upload-title-escaped (AUDIT REV-19, DOD-13): a direction override in a student's folder name (or in the name
+    // of a file collected from an iMac) is shown in the upload's title, not applied to the rest of it.
+    @Test func theUploadTitleShowsDirectionOverrides() {
+        let file = URL(fileURLWithPath: "/tmp/zadanie.txt")
+        let title = RemoteBrowserModel.uploadTitle([file], to: "/Users/uczen/Public/cmcr/prace\u{202E}fdp.app",
+                                                   on: "imac01")
+        #expect(title == "Wyślij „zadanie.txt” → imac01:/Users/uczen/Public/cmcr/prace\\u{202E}fdp.app")
+        let collected = URL(fileURLWithPath: "/tmp/praca\u{202E}fdp.command")
+        let named = RemoteBrowserModel.uploadTitle([collected], to: "/Users/uczen/Desktop", on: "imac02")
+        #expect(!named.unicodeScalars.contains { (0x202A...0x202E).contains($0.value) || (0x2066...0x2069).contains($0.value) },
+                "\(named.debugDescription)")
+        #expect(RemoteBrowserModel.uploadTitle([file, collected], to: "/Users/uczen/Desktop", on: "imac02")
+                == "Wyślij 2 elementy → imac02:/Users/uczen/Desktop")
+    }
 }
 
 /// Review fixes (AUDIT REV-xx) of the classroom and file browser models that need an AppModel.
@@ -174,5 +189,17 @@ struct RevG4ClassroomBrowserModelTests {
         #expect(notice.isError)
         #expect(notice.text.hasPrefix("imac01: "), "\(notice.text)")
         #expect(notice.batchID == batch.id)
+    }
+
+    // confirm-path-escaped (AUDIT REV-19, DOD-13): the delete confirmation names the folder read from the iMac with
+    // its direction overrides shown, like the names in it.
+    @Test func theDeleteConfirmationShowsDirectionOverridesInTheFolder() throws {
+        let a = AppTestEnvironment.closedHost("imac01")
+        let model = AppTestEnvironment.makeModel([a])
+        let browser = model.files.browser
+        browser.open("/Users/uczen/Public/cmcr/prace\u{202E}fdp.app", on: a.id)
+        defer { browser.cancel() }
+        let request = try #require(browser.deleteConfirmation([RemoteEntry(name: "zadanie.txt", kind: .file)]))
+        #expect(request.message.contains("(/Users/uczen/Public/cmcr/prace\\u{202E}fdp.app)"), "\(request.message)")
     }
 }
