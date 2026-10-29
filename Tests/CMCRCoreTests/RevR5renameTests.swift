@@ -109,12 +109,13 @@ struct RevR5renameTests {
                                                      RenamePlan.Rename(machine: six, localHostName: "imac07"),
                                                      RenamePlan.Rename(machine: seven, localHostName: "imac08")])
         let newNames = [five.id: "imac06", six.id: "imac07", seven.id: "imac08"]
+        // Every step with the name typed in the sheet (AUDIT REV-65).
         #expect(RenamePlan.advice(for: five, stillHeld: renumbering, newNames: newNames, in: .app)
             == "Zmień nazwy po kolei, zaznaczając za każdym razem tylko jeden komputer, z włączoną aktualizacją listy "
-            + "komputerów: najpierw imac07, potem imac06, potem imac05.")
+            + "komputerów: najpierw imac07 na imac08, potem imac06 na imac07, potem imac05 na imac06.")
         #expect(RenamePlan.advice(for: six, stillHeld: renumbering, newNames: newNames, in: .app)
             == "Zmień nazwy w dwóch krokach, zaznaczając za każdym razem tylko jeden komputer, z włączoną aktualizacją "
-            + "listy komputerów: najpierw imac07, potem imac06.")
+            + "listy komputerów: najpierw imac07 na imac08, potem imac06 na imac07.")
         // Names that go round: the new names come from the sheet, not from the list.
         let a = mac("imac01", "imac01.local"), b = mac("imac02", "imac02.local"), c = mac("imac03", "imac03.local")
         let rotation = RenamePlan.namesStillHeld([RenamePlan.Rename(machine: a, localHostName: "imac02"),
@@ -124,14 +125,14 @@ struct RevR5renameTests {
         #expect(RenamePlan.advice(for: a, stillHeld: rotation, newNames: rotated, in: .app)
             == "Komputery imac01, imac02 i imac03 zamieniają się nazwami w kółko. Zmień nazwy po kolei, zaznaczając za "
             + "każdym razem tylko jeden komputer, z włączoną aktualizacją listy komputerów: najpierw nadaj imac01 nazwę "
-            + "tymczasową, potem zmień nazwę imac03, potem imac02, a na końcu nadaj komputerowi z nazwą tymczasową "
-            + "docelową nazwę imac02.")
+            + "tymczasową, potem zmień nazwę imac03 na imac01, potem imac02 na imac03, a na końcu nadaj komputerowi z "
+            + "nazwą tymczasową docelową nazwę imac02.")
         let swap = RenamePlan.namesStillHeld([RenamePlan.Rename(machine: a, localHostName: "imac02"),
                                               RenamePlan.Rename(machine: b, localHostName: "imac01")])
-        #expect(RenamePlan.advice(for: a, stillHeld: swap, in: .app)
-            == "Przy zamianie nazw nadaj najpierw jednemu z nich nazwę tymczasową, potem zmień nazwę drugiego, a na końcu "
-            + "nadaj pierwszemu docelową nazwę, zaznaczając za każdym razem tylko jeden komputer, z włączoną aktualizacją "
-            + "listy komputerów.")
+        #expect(RenamePlan.advice(for: a, stillHeld: swap, newNames: [a.id: "imac02", b.id: "imac01"], in: .app)
+            == "Komputery imac01 i imac02 zamieniają się nazwami. Zmień nazwy po kolei, zaznaczając za każdym razem tylko "
+            + "jeden komputer, z włączoną aktualizacją listy komputerów: najpierw nadaj imac01 nazwę tymczasową, potem "
+            + "zmień nazwę imac02 na imac01, a na końcu nadaj komputerowi z nazwą tymczasową docelową nazwę imac02.")
         // cmcrctl keeps its own words for the same plans.
         #expect(RenamePlan.advice(for: five, stillHeld: renumbering, in: .cmcrctl)
             == "Zmień nazwy po kolei, za każdym razem z --update-list: najpierw imac07, potem imac06, potem imac05.")

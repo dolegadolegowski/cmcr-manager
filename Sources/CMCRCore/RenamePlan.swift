@@ -181,7 +181,11 @@ public enum RenamePlan {
     /// updated after each – otherwise the list keeps the old address of the Mac renamed before, and the next step is
     /// refused as taken (AUDIT REV-55). cmcrctl names --update-list, and --name for the temporary name and, at the end,
     /// for the new name (the list has the temporary name by then); the app selects one Mac at a time and updates the
-    /// list itself when its „Zaktualizuj nazwy i adresy na liście” is on – one order in both (AUDIT REV-63).
+    /// list itself when its „Zaktualizuj nazwy i adresy na liście” is on – one order in both (AUDIT REV-63). The app
+    /// names the new name of every Mac it renames („zmień nazwę imac03 na imac01”), also in a swap: the sheet is
+    /// closed to follow the advice and forgets the names typed in it (AUDIT REV-65); in cmcrctl the names on the list
+    /// are the new names.
+    ///
     /// `newNames`: the name each Mac gets (default: its name on the list, as in cmcrctl). `rejected`: the Macs of the
     /// same run whose new names are wrong whatever the order (`rejections`) – an order through one of them would stop
     /// at it, or leave a Mac of a swap with the temporary name, so the advice names them instead (AUDIT REV-64).
@@ -198,13 +202,18 @@ public enum RenamePlan {
         let eachRun = tool == .cmcrctl ? "za każdym razem z --update-list"
             : "zaznaczając za każdym razem tylko jeden komputer, z włączoną aktualizacją listy komputerów"
         let byName = tool == .cmcrctl ? " (--name)" : ""
+        // A Mac renamed in a step, in the app with the name typed for it (AUDIT REV-65).
+        func renamed(_ m: Machine) -> String {
+            guard tool == .app, let new = newNames[m.id] else { return m.name }
+            return "\(m.name) na \(new)"
+        }
         let loop: [Machine]
         switch order(of: machine, stillHeld: stillHeld) {
         case .steps(let chain):
             return (chain.count > 2 ? "Zmień nazwy po kolei" : "Zmień nazwy w dwóch krokach")
-                + ", \(eachRun): najpierw " + chain.map(\.name).joined(separator: ", potem ") + "."
-        case .loop(let l) where l.count == 2 && l[0].id == machine.id:
-            // A swap: either Mac can go first.
+                + ", \(eachRun): najpierw " + chain.map(renamed).joined(separator: ", potem ") + "."
+        case .loop(let l) where tool == .cmcrctl && l.count == 2 && l[0].id == machine.id:
+            // A swap: either Mac can go first. The app gives the steps with the names typed in the sheet, as below.
             return "Przy zamianie nazw nadaj najpierw jednemu z nich nazwę tymczasową\(byName), potem zmień nazwę drugiego, "
                 + "a na końcu nadaj pierwszemu docelową nazwę\(byName), \(eachRun)."
         case .loop(let l):
@@ -218,7 +227,7 @@ public enum RenamePlan {
             case .temporary(let m):
                 phrases.append("nadaj \(m.name) nazwę tymczasową\(byName)")
             case .rename(let m):
-                phrases.append(afterRename ? m.name : "zmień nazwę \(m.name)")
+                phrases.append(afterRename ? renamed(m) : "zmień nazwę \(renamed(m))")
             case .target(let m):
                 phrases.append("nadaj komputerowi z nazwą tymczasową docelową nazwę \(newNames[m.id] ?? m.name)\(byName)")
             }
