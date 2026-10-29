@@ -613,20 +613,30 @@ final class ClassroomModel: ObservableObject {
                             return Scripts.renameComputer(computerName: e.computerName, localHostName: e.localHostName)
                         }) { m, r in
             guard r.succeeded, let e = byID[m.id] else { return }
-            self.names[m.id] = ComputerNameInfo(computerName: e.computerName, localHostName: e.localHostName,
-                                                hostName: e.localHostName)
-            guard updateList, let i = model.machines.firstIndex(where: { $0.id == m.id }) else { return }
-            let before = model.machines[i]
-            if model.machines[i].name != e.computerName { model.machines[i].name = e.computerName }
-            if let address = ComputerNames.addressAfterRename(model.machines[i].address, localHostName: e.localHostName),
-               address != model.machines[i].address {
-                model.machines[i].address = address
-                // The Mac keeps its host keys: trust them under the new address too, so the next connection is not
-                // refused as an unknown Mac (AUDIT KOM-07).
-                let after = model.machines[i], ss = model.sshSettings
-                Task { await HostTrust.carryTrust(from: before, to: after, settings: ss) }
-            }
+            self.renamed(e, model: model, updateList: updateList)
         }
+    }
+
+    /// A Mac was renamed: shows its new names and, with `updateList`, updates its host list entry.
+    func renamed(_ e: RenameEntry, model: AppModel, updateList: Bool) {
+        let id = e.machine.id
+        names[id] = ComputerNameInfo(computerName: e.computerName, localHostName: e.localHostName, hostName: e.localHostName)
+        guard updateList, let before = model.machine(id) else { return }
+        var updated = before
+        updated.name = e.computerName
+        if let address = ComputerNames.addressAfterRename(before.address, localHostName: e.localHostName) {
+            updated.address = address
+        }
+        guard updated != before else { return }
+        // One write, by id: saving the list takes over what cmcrctl changed in hosts.json meanwhile and may replace
+        // the whole array (AUDIT KON-04), so an index taken before a write can point at another Mac after it
+        // (AUDIT REV-18).
+        if let i = model.machines.firstIndex(where: { $0.id == id }) { model.machines[i] = updated }
+        guard updated.address != before.address else { return }
+        // The Mac keeps its host keys: trust them under the new address too, so the next connection is not
+        // refused as an unknown Mac (AUDIT KOM-07).
+        let after = model.machine(id) ?? updated, ss = model.sshSettings
+        Task { await HostTrust.carryTrust(from: before, to: after, settings: ss) }
     }
 
     // MARK: - App versions

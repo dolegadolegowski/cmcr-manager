@@ -53,3 +53,36 @@ import Testing
         #expect(after.outcome.text.hasPrefix("Problemy na 1 komputerze –"), "\(after.outcome.text)")
     }
 }
+
+/// Review fixes (AUDIT REV-xx) of the classroom and file browser models that need an AppModel.
+@MainActor
+@Suite(.serialized, .enabled(if: AppTestEnvironment.isIsolated, "uruchamiaj przez scripts/test.sh (izolowana konfiguracja)"))
+struct RevG4ClassroomBrowserModelTests {
+    let classroom = ClassroomModel.shared
+
+    // rename-list-index (AUDIT REV-18): saving the new name takes over what cmcrctl changed in hosts.json meanwhile
+    // (AUDIT KON-04) and may replace the whole list; the new address must still land in the renamed Mac's entry.
+    @Test func aRenameUpdatesItsOwnEntryAfterCmcrctlChangedTheList() throws {
+        let a = Machine(name: "imac01", address: "imac01.local", user: "nikt")
+        let b = Machine(name: "imac02", address: "imac02.local", user: "nikt")
+        let c = Machine(name: "imac03", address: "imac03.local", user: "nikt")
+        let model = AppTestEnvironment.makeModel([a, b, c])
+        let file = ConfigStore.directory.appendingPathComponent("hosts.json")
+        try JSONEncoder().encode([b, c]).write(to: file)        // cmcrctl hosts remove imac01 during the rename
+        classroom.renamed(.init(machine: b, computerName: "imac22", localHostName: "imac22"), model: model,
+                          updateList: true)
+        #expect(model.machines.map(\.id) == [b.id, c.id])
+        #expect(model.machine(b.id)?.name == "imac22")
+        #expect(model.machine(b.id)?.address == "imac22.local")
+        #expect(model.machine(c.id)?.address == "imac03.local", "nowy adres trafił do wpisu innego komputera")
+        let saved = try JSONDecoder().decode([Machine].self, from: Data(contentsOf: file))
+        #expect(saved == model.machines)
+        #expect(classroom.names[b.id]?.computerName == "imac22")
+
+        // The last entry, with an entry before it removed meanwhile (an index past the end before the fix).
+        try JSONEncoder().encode([model.machines[1]]).write(to: file)
+        classroom.renamed(.init(machine: c, computerName: "imac33", localHostName: "imac33"), model: model,
+                          updateList: true)
+        #expect(model.machines.map(\.address) == ["imac33.local"])
+    }
+}
