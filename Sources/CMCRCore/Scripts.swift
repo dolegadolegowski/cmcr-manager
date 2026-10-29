@@ -68,7 +68,7 @@ public enum Scripts {
           echo "setup_time=$(plutil -extract timestamp raw -o - "$SJ" 2>/dev/null)"
           echo "setup_todo=$(plutil -extract todo_count raw -o - "$SJ" 2>/dev/null)"
         fi
-        # Listing this folder needs Full Disk Access ("Pełny dostęp do dysku dla zdalnych użytkowników");
+        # Listing this folder needs Full Disk Access („Daj użytkownikom zdalnym pełny dostęp do dysku”);
         # a denial is silent, macOS never asks.
         if ls "/Library/Application Support/com.apple.TCC/" >/dev/null 2>&1; then echo "fda=yes"; else echo "fda=no"; fi
         echo "sshuser=$(id -un)"
@@ -336,7 +336,7 @@ public enum Scripts {
         case "$(stat -f %Sf "$APP" 2>/dev/null)" in
           *restricted*) echo "✘ $APP jest chroniona przez macOS (System Integrity Protection) – aplikacji systemowych nie można odinstalować." >&2; exit 2 ;;
         esac
-        FDA="  macOS chroni aplikacje: włącz „Pełny dostęp do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie)."
+        FDA="  macOS chroni aplikacje: włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)."
         NAME="$(basename "$APP" .app)"
         PIDS="$(cmcr_ps -axww -o pid=,comm= | awk -v n="/$NAME.app/Contents/MacOS/" 'index($0, n) > 0 {print $1}')"
         # Moved aside first (a rename needs the same permission as deleting): an app macOS protects stays where it is
@@ -373,7 +373,7 @@ public enum Scripts {
     static let installLibrary = #"""
     CMCR_APPS="${CMCR_APPS_DIR:-/Applications}"
     cmcr_fda_hint() {
-      echo "  Wskazówka: jeśli aplikacja nie jest uruchomiona, włącz „Pełny dostęp do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie) – bez tego macOS nie pozwala podmieniać aplikacji." >&2
+      echo "  Wskazówka: jeśli aplikacja nie jest uruchomiona, włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”) – bez tego macOS nie pozwala podmieniać aplikacji." >&2
     }
     # Apple's own software, Mac App Store apps or a Developer ID certificate issued by Apple (chain checked).
     CMCR_APPLE_REQ='anchor apple or (anchor apple generic and (certificate leaf[field.1.2.840.113635.100.6.1.9] or certificate leaf[field.1.2.840.113635.100.6.1.13]))'
@@ -903,7 +903,7 @@ public enum Scripts {
         fi
         HERE="$(stat -f %d:%i .)"
         PROBE="$(mktemp -d ./.cmcr-push.XXXXXX 2>/dev/null)" || {
-          echo "✘ Nie można zapisać w $DEST – brak uprawnień. Biurko, Dokumenty i Pobrane ucznia wymagają „Pełnego dostępu do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie)." >&2
+          echo "✘ Nie można zapisać w $DEST – brak uprawnień. Biurko, Dokumenty i Pobrane ucznia wymagają opcji „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)." >&2
           exit 2
         }
         rmdir "$PROBE"
@@ -943,7 +943,7 @@ public enum Scripts {
             if [ -e "$t" ] || [ -L "$t" ]; then
               if ! /bin/mv "$t" "$STAGE/old/$n" 2>/dev/null; then
                 echo "✘ Nie można zastąpić $DEST/$n" >&2
-                case "$n" in *.app) echo "  Jeśli aplikacja nie jest uruchomiona: włącz „Pełny dostęp do dysku dla zdalnych użytkowników” (Ustawienia systemowe › Ogólne › Udostępnianie › Zdalne logowanie)." >&2 ;; esac
+                case "$n" in *.app) echo "  Jeśli aplikacja nie jest uruchomiona: włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)." >&2 ;; esac
                 RC=1; continue
               fi
             fi
@@ -1046,7 +1046,7 @@ public enum Scripts {
         if find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +; then
           echo "Wyczyszczono $REAL"
         else
-          echo "⚠︎ Nie wszystko udało się usunąć. Foldery Biurko/Dokumenty wymagają „Pełnego dostępu do dysku dla zdalnych użytkowników”." >&2
+          echo "⚠︎ Nie wszystko udało się usunąć. Foldery Biurko/Dokumenty wymagają opcji „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)." >&2
           RC=1
         fi
         ls -la .

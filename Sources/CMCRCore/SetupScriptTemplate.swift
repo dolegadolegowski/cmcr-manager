@@ -949,10 +949,10 @@ step_tcc() {
   esac
   # Systemowa baza TCC jest chroniona przez SIP – tych uprawnień nie da się nadać skryptem (tylko ręcznie lub przez MDM).
   case "$FDA_REMOTE" in
-    yes) record tcc_fda ok "Pełny dostęp do dysku dla użytkowników zdalnych: włączony." ;;
-    *)   record tcc_fda todo "Ustawienia › Ogólne › Udostępnianie › (i) przy „Zdalne logowanie” › włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”$([ "$FDA_REMOTE" = unknown ] && echo ' (nie da się tego sprawdzić lokalnie – sprawdź z aplikacji)')."
+    yes) record tcc_fda ok "„Daj użytkownikom zdalnym pełny dostęp do dysku”: włączone." ;;
+    *)   record tcc_fda todo "Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie” › włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”$([ "$FDA_REMOTE" = unknown ] && echo ' (nie da się tego sprawdzić lokalnie – sprawdź z aplikacji)')."
          if open_pane "x-apple.systempreferences:com.apple.preferences.sharing?Services_RemoteLogin"; then
-           detail "Otworzyłem Udostępnianie: kliknij (i) obok „Zdalne logowanie”, włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”, OK."
+           detail "Otworzyłem Udostępnianie: kliknij ⓘ przy „Zdalne logowanie”, włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”, OK."
            wait_enter
          fi ;;
   esac

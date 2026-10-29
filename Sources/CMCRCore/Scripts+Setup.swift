@@ -247,7 +247,7 @@ public struct ReadinessReport: Sendable {
         items[.fda] = fdaGranted
             ? ReadinessItem(.ok, "włączony", "Sesje SSH mają pełny dostęp do dysku.")
             : ReadinessItem(.manual, "ręcznie",
-                "„Daj użytkownikom zdalnym pełny dostęp do dysku” jest wyłączone – pobieranie prac z Biurka/Dokumentów ucznia i podmiana aplikacji mogą się nie udać. Włącza się to przy komputerze (Otwórz instrukcję).")
+                "„Daj użytkownikom zdalnym pełny dostęp do dysku” jest wyłączone – pobieranie prac z Biurka/Dokumentów ucznia i podmiana aplikacji mogą się nie udać. Włącza się to przy komputerze: Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie” (Otwórz instrukcję).")
 
         switch v["filevault"] {
         case "off": items[.filevault] = ReadinessItem(.ok, "wyłączony", "Po restarcie iMac od razu jest dostępny przez SSH.")
