@@ -1,8 +1,141 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import CMCRCore
 @testable import CMCRManager
+
+/// Fixes from the eighth review round in the app: the window that shows a notice or the configuration problems
+/// (AUDIT REV-72).
+@MainActor
+@Suite struct RevR8appFixNoticeTests {
+    static let notice = AppNotice(title: "Nie udało się zapisać zrzutu ekranu", message: "Wolumin jest tylko do odczytu.")
+
+    /// Lets the main queue run what was put on it so far (a choice announced to the windows a moment later).
+    static func nextTurn() async {
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in DispatchQueue.main.async { done.resume() } }
+    }
+
+    /// A window with something attached to it – the alert SwiftUI shows as a sheet.
+    static func showsAlert(_ window: NSWindow) -> NSWindow {
+        let alert = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 60, height: 40), styleMask: [.titled],
+                             backing: .buffered, defer: false)
+        alert.isReleasedWhenClosed = false
+        window.beginSheet(alert)
+        return alert
+    }
+}
+
+extension RevR8appFixNoticeTests {
+    // REV-72: the window that showed a message was minimized (the Screen Wall on a projector): its own update moved
+    // the message to another window, but nothing told that window – NoticeWindows was not observed and the model did
+    // not change. The message was shown by no window until some unrelated change of the model (up to the 2-minute
+    // refresh in an idle classroom). Every window looks again when a message gets another window.
+    @Test func aMessageThatMovesToAnotherWindowIsShownThereAtOnce() async throws {
+        let windows = NoticeWindows()
+        let main = RevR7appTests.window(), wall = RevR7appTests.window()
+        defer { main.close(); wall.close() }
+        windows.register(main)
+        windows.register(wall)
+        wall.orderFront(nil)
+        let notice = Self.notice
+        let issues = try #require(windows.configIssues(for: ["ISSUE-A"]))
+        #expect(windows.presenter(for: notice) === wall)
+        #expect(windows.presenter(for: issues) === wall)
+        await Self.nextTurn()
+        let placed = windows.placements
+        // The Screen Wall is minimized: no longer visible.
+        wall.orderOut(nil)
+        #expect(windows.presenter(for: notice) === main)
+        await Self.nextTurn()
+        #expect(windows.placements != placed, "okno, które ma teraz pokazać komunikat, nie dowiedziało się o tym")
+        let movedNotice = windows.placements
+        #expect(windows.presenter(for: issues) === main)
+        await Self.nextTurn()
+        #expect(windows.placements != movedNotice, "okno, które ma teraz pokazać ostrzeżenie, nie dowiedziało się o tym")
+        // The same answer again tells nobody anything: the windows do not keep updating each other.
+        let settled = windows.placements
+        #expect(windows.presenter(for: notice) === main)
+        #expect(windows.presenter(for: issues) === main)
+        await Self.nextTurn()
+        #expect(windows.placements == settled)
+    }
+
+    // …a window that shows a message and goes away without updating itself (closed by code: the screen window of
+    // a Mac removed from the list) makes the other windows look again too.
+    @Test func aWindowThatGoesAwayWithAMessageMakesTheOthersLookAgain() async throws {
+        let windows = NoticeWindows()
+        let main = RevR7appTests.window(), wall = RevR7appTests.window()
+        defer { main.close(); wall.close() }
+        windows.register(main)
+        windows.register(wall)
+        wall.orderFront(nil)
+        #expect(windows.presenter(for: Self.notice) === wall)
+        await Self.nextTurn()
+        let placed = windows.placements
+        wall.orderOut(nil)
+        windows.windowChanged(wall, onScreen: false)
+        await Self.nextTurn()
+        #expect(windows.placements != placed)
+        #expect(windows.presenter(for: Self.notice) === main)
+        // A window without a message going away changes nothing.
+        await Self.nextTurn()
+        let settled = windows.placements
+        windows.windowChanged(wall, onScreen: false)
+        await Self.nextTurn()
+        #expect(windows.placements == settled)
+    }
+
+    // …and when a window comes back on screen (restored from the Dock), a message the window chosen for it does not
+    // show – nothing is attached to that window – is placed anew, in the window the user works in now, instead of
+    // waiting for some other change.
+    @Test func aWindowThatComesBackShowsAMessageNoWindowShows() async throws {
+        let windows = NoticeWindows()
+        let main = RevR7appTests.window(), wall = RevR7appTests.window()
+        defer { main.close(); wall.close() }
+        windows.register(main)
+        windows.register(wall)
+        main.orderFront(nil)
+        #expect(windows.presenter(for: Self.notice) === main)
+        wall.orderFront(nil)
+        await Self.nextTurn()
+        let placed = windows.placements
+        windows.windowChanged(wall, onScreen: true)
+        #expect(windows.presenter(for: Self.notice) === wall)
+        await Self.nextTurn()
+        #expect(windows.placements != placed)
+    }
+
+    // A message that a window shows stays there when another window comes on screen: no alert jumps between windows.
+    @Test func aShownMessageStaysWhereItIs() async throws {
+        let windows = NoticeWindows()
+        let main = RevR7appTests.window(), wall = RevR7appTests.window()
+        defer { main.close(); wall.close() }
+        windows.register(main)
+        windows.register(wall)
+        main.orderFront(nil)
+        #expect(windows.presenter(for: Self.notice) === main)
+        let alert = Self.showsAlert(main)
+        defer { main.endSheet(alert) }
+        #expect(main.attachedSheet === alert)
+        wall.orderFront(nil)
+        await Self.nextTurn()
+        let placed = windows.placements
+        windows.windowChanged(wall, onScreen: true)
+        #expect(windows.presenter(for: Self.notice) === main)
+        await Self.nextTurn()
+        #expect(windows.placements == placed)
+    }
+
+    // The windows look again when the choice changes: NoticeAlert and ConfigIssuesNotice observe NoticeWindows.
+    @Test func everyWindowObservesTheChoice() {
+        func observes(_ modifier: Any) -> Bool {
+            Mirror(reflecting: modifier).children.contains { $0.value is ObservedObject<NoticeWindows> }
+        }
+        #expect(observes(NoticeAlert()))
+        #expect(observes(ConfigIssuesNotice(window: WeakWindow(), visible: true)))
+    }
+}
 
 /// Fixes from the eighth review round in the app that need an AppModel (AUDIT REV-74, REV-75).
 @MainActor
