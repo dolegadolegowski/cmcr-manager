@@ -64,8 +64,12 @@ enum ScriptCommands {
         let ssh = sshSettings
         let allowUnsigned = a.has("--allow-unsigned")
         return await eachHost(targets, a) { io in
-            let r = await Operations.install(payload: payload, on: io.host, allowUnsigned: allowUnsigned,
-                                             password: Keychain.password(for: io.host), settings: ssh, onOutput: io.stream)
+            // A registered job: Ctrl-C stops the upload or the installer on the iMac too (Interruption).
+            let r = await Interruption.shared.job(on: io.host) { handle in
+                await Operations.install(payload: payload, on: io.host, allowUnsigned: allowUnsigned,
+                                         password: Keychain.password(for: io.host), settings: ssh, handle: handle,
+                                         onOutput: io.stream)
+            }
             return io.report(r)
         }
     }

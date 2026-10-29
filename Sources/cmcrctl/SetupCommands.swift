@@ -79,14 +79,23 @@ enum SetupCommands {
             var status: Int32 = 0
             let hosts = select(target)
             if cl.mode == .apply { logAction(hosts) }
+            var notStarted: [Machine] = []
             for h in hosts {
+                // After Ctrl-C the remaining Macs are left as they are (AUDIT REV-36).
+                if Interruption.shared.isInterrupted {
+                    notStarted.append(h)
+                    status = ExitCode.failure
+                    continue
+                }
                 let what = cl.mode == .apply ? "konfiguracja jako root" : "sprawdzanie konfiguracji (bez zmian)"
                 print("══ \(h.name) (\(h.destination)): \(what)…")
                 if cl.options.setHostname && SetupScript.hostname(for: h) == nil {
                     err("Uwaga: adres \(h.address) nie ma postaci nazwa.local – nazwa komputera \(h.name) zostanie bez zmian.")
                 }
                 let script = SetupScript.remote(cl.options, host: h, settings: settings, publicKey: key, mode: cl.mode)
-                let r = await SSH.run(script, on: h, password: Keychain.password(for: h), settings: ssh, onOutput: printer)
+                // A registered job: Ctrl-C stops the configuration on the iMac too (Interruption).
+                let r = await Interruption.shared.run(script, on: h, password: Keychain.password(for: h), settings: ssh,
+                                                      onOutput: printer)
                 if let report = SetupReport.parse(r.stdoutText) {
                     print("→ \(h.name): \(report.summary)")
                 } else if !r.succeeded {
@@ -94,6 +103,7 @@ enum SetupCommands {
                 }
                 if !r.succeeded { status = ExitCode.failure }
             }
+            Interruption.shared.reportNotStarted(notStarted)
             return status
 
         default:

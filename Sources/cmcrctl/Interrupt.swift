@@ -3,8 +3,16 @@ import Foundation
 
 /// Ctrl-C (SIGINT) and SIGTERM while commands run on the iMacs (AUDIT ZAD-13). Like „Przerwij” in the app, an
 /// interrupted cmcrctl stops the command on every iMac too, waits until that is done and ends with 128 + signal
-/// (130 for Ctrl-C). Every remote command runs as a registered job (job id, output relays), so a connection lost
-/// to a sleeping MacBook no longer kills it either – as in the app.
+/// (130 for Ctrl-C).
+///
+/// Every command that changes something on the iMacs runs its remote work as a registered job (AUDIT REV-36) – `run`
+/// for one script, `job` for the file, install and lesson operations that take a ProcessHandle: exec, push, pull,
+/// clean, open-app, quit-app, open-url, kill, uninstall, brew, updates install, message, logout, power, install,
+/// install-url, mkdir, rm, rename, get, collect, lock, unlock, ask, schedule set/clear, power-later, power-cancel,
+/// rename-computer, lesson and setup (and `ls ŚCIEŻKA KOMP` and updates history, which share runScript). Their
+/// scripts get a job id and output relays, so a connection lost to a sleeping MacBook no longer kills them either –
+/// as in the app. Commands that only read (status, updates list, readiness, filevault, app-version, schedule show,
+/// exists, `ls nr`, apps, screenshot, screen-watch, report, wake) are not jobs: Ctrl-C ends them at once.
 ///
 /// Nothing exits from inside a job (AUDIT REV-35): the interrupted jobs return their cancelled results, so every
 /// host's output – with how the stop went („▸ Zatrzymano polecenie na komputerze.”, or why it may still run there)

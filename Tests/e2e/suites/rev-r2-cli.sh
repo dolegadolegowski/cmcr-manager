@@ -107,3 +107,40 @@ expect_not "-j 1, Ctrl-C: drugi komputer nie zaczął" "$R2_OUT" "[imac02]"
 sleep 4
 [ "$(grep -c x "$R2S" 2>/dev/null)" = 1 ] && [ ! -e "$R2M" ] && pass "-j 1, Ctrl-C: nic więcej nie uruchomiono" \
   || fail "-j 1, Ctrl-C: polecenie działało dalej" "$(cat "$R2S" "$R2M" 2>&1; echo "$R2_OUT")"
+
+section "REV R2 cmcrctl – Ctrl-C zatrzymuje na iMacach każde polecenie, które coś zmienia (AUDIT REV-36)"
+# Each command waits on the iMac in a fake (slow.NAME, see fakes.sh) and is interrupted there: the step after the
+# pause must never happen, and cmcrctl reports the stop.
+r2_slow_stop() { # r2_slow_stop LABEL FAKE ARGS…
+  local label="$1" fake="$2"
+  shift 2
+  echo 4 > "$WORK/slow.$fake"
+  clear_fakelog
+  r2_interrupt "fakelog | grep -q '$fake: pauza'" "$@"
+  cp "$WORK/rev-r2-int.out" "$WORK/rev-r2-int-$fake.out"
+  expect_code "$label, Ctrl-C: kod 130" "$R2_CODE" 130 "$R2_OUT"
+  expect "$label, Ctrl-C: polecenie zatrzymane na komputerze" "$R2_OUT" "Przerywanie" "▸ Zatrzymano polecenie na komputerze."
+  sleep 5
+  rm -f "$WORK/slow.$fake"
+  expect_not "$label, Ctrl-C: polecenie nie dokończyło się na iMacu" "$(fakelog)" "$fake: po pauzie"
+}
+mkdir -p "$WORK/rev-r2-pkgroot/x"
+echo x > "$WORK/rev-r2-pkgroot/x/plik.txt"
+if pkgbuild --quiet --root "$WORK/rev-r2-pkgroot" --identifier pl.cmcr.e2e.r2 --version 1.0 \
+    --install-location /tmp/cmcr-e2e-never "$WORK/rev-r2.pkg" >/dev/null 2>&1; then
+  r2_slow_stop "install" installer install "$WORK/rev-r2.pkg" 1 --allow-unsigned
+  expect_not "install, Ctrl-C: installer nie uruchomiony" "$(fakelog)" "installer -pkg"
+else
+  echo "  (pkgbuild niedostępny – pominięto install)"
+fi
+python3 - "$R2/classroom.json" <<'PY'
+import json, sys
+json.dump({"end": {"warn": False, "collect": False, "quitApps": False, "cleanShared": False, "cleanDownloads": False,
+                   "logout": True, "power": "none"}}, open(sys.argv[1], "w"))
+PY
+r2_slow_stop "lesson end" launchctl-bootout lesson end 1 --yes
+rm -f "$R2/classroom.json"
+r2_slow_stop "ask" ask-dialog ask "Pytanie R2" 1 --timeout 30
+r2_slow_stop "rename-computer" scutil rename-computer 1,2 --yes
+expect "rename-computer, Ctrl-C: drugi komputer bez zmian" "$R2_OUT" "▸ Nie uruchomiono polecenia na 1 komputerze: imac02."
+expect_not "rename-computer, Ctrl-C: scutil nie zmienił nazwy" "$(fakelog)" "scutil --set"

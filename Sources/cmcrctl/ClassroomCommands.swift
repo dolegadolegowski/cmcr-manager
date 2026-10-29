@@ -266,14 +266,21 @@ enum ClassroomCLI {
     }
 
     /// Asks all Macs at once; answers are printed as they arrive. Students type the answers, so they are escaped.
+    /// Every question is a registered job: Ctrl-C closes the dialogs on the iMacs too, as „Przerwij” in the app
+    /// (AUDIT REV-36); of the scripts' output only how that went is shown („imac01: ▸ Zatrzymano polecenie…”).
     static func ask(_ question: String, buttons: [String], seconds: Int, hosts: [Machine], ssh: SSHSettings) async -> Int32 {
         let script = Scripts.ask(title: "Pytanie od nauczyciela", prompt: question, buttons: buttons, timeoutSeconds: seconds)
         var status = ExitCode.success
         await withTaskGroup(of: (Machine, CommandResult).self) { group in
             for h in hosts {
                 let pw = Keychain.password(for: h)
+                let stopNotes: @Sendable (OutputChannel, Data) -> Void = { channel, data in
+                    guard channel == .stderr, data.starts(with: Data("▸ ".utf8)) else { return }
+                    Console.write(.stderr, Data("\(h.name): ".utf8) + data)
+                }
                 group.addTask {
-                    (h, await SSH.run(script, on: h, password: pw, settings: ssh, timeout: TimeInterval(seconds + 60)))
+                    (h, await Interruption.shared.run(script, on: h, password: pw, settings: ssh,
+                                                      timeout: TimeInterval(seconds + 60), onOutput: stopNotes))
                 }
             }
             for await (h, r) in group {
@@ -350,11 +357,19 @@ enum ClassroomCLI {
                     + "Adres .local każdego z nich zmieni się według nowej nazwy.", yes: a.yes)
         logAction(targets)
         var status = ExitCode.success
+        var notStarted: [Machine] = []
         for p in planned {
+            // After Ctrl-C the remaining Macs keep their names (AUDIT REV-36).
+            if Interruption.shared.isInterrupted {
+                notStarted.append(p.host)
+                status = ExitCode.failure
+                continue
+            }
             Console.out("\(p.host.name):")
-            let r = await SSH.run(Scripts.renameComputer(computerName: p.name, localHostName: p.localHostName), on: p.host,
-                                  password: Keychain.password(for: p.host), settings: ssh, timeout: 60,
-                                  onOutput: Console.printer)
+            // A registered job: Ctrl-C stops the rename on the iMac too (Interruption).
+            let r = await Interruption.shared.run(Scripts.renameComputer(computerName: p.name, localHostName: p.localHostName),
+                                                  on: p.host, password: Keychain.password(for: p.host), settings: ssh,
+                                                  timeout: 60, onOutput: Console.printer)
             if report(r) != ExitCode.success { status = ExitCode.failure }
             if r.succeeded, a.has("--update-list"), let i = hosts.firstIndex(where: { $0.id == p.host.id }) {
                 let before = hosts[i]
@@ -372,6 +387,7 @@ enum ClassroomCLI {
                 }
             }
         }
+        Interruption.shared.reportNotStarted(notStarted)
         return status
     }
 
@@ -424,8 +440,12 @@ enum ClassroomCLI {
         func runAll(_ range: Range<Int>, materials: URL?, limiter: ConcurrencyLimiter?, jobs: Int) async -> [Int32] {
             await runHosts(hosts, jobs: jobs, prefixLines: false) { io in
                 io.out("== \(io.host.name)")
-                let r = await LessonRunner.run(plan, on: targets[io.index], ssh: ssh, materials: materials, range: range,
-                                               limiter: limiter, onOutput: io.stream)
+                // A registered job: Ctrl-C stops the step running on the iMac and skips the rest (AUDIT REV-36).
+                let r = await Interruption.shared.job(on: io.host) { handle in
+                    await LessonRunner.run(plan, on: targets[io.index], ssh: ssh, materials: materials, range: range,
+                                           limiter: limiter, handle: handle, onOutput: io.stream)
+                }
+                if r.cancelled { return io.report(r) }
                 guard r.succeeded else {
                     io.write(.stderr, r.stderr)
                     return ExitCode.failure
@@ -436,6 +456,8 @@ enum ClassroomCLI {
         var first = 0
         if plan.steps.first == .warn {
             _ = await runAll(0..<1, materials: nil, limiter: nil, jobs: parallel)
+            // Interrupted during the warning: the other steps do not start (Ctrl-C during the pause ends at once).
+            if Interruption.shared.isInterrupted { return ExitCode.failure }
             if wait {
                 let secs = max(1, plan.end.warnMinutes) * 60
                 Console.out("Czekam \(secs / 60) min przed kolejnymi krokami…")

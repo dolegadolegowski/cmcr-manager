@@ -78,8 +78,9 @@ enum BrowseCLI {
             let p = path(a.positional[1]), intermediate = a.has("-p")
             logAction(list)
             return await eachHost(list, a) { io in
-                let r = await SSH.run(Scripts.makeDirectory(p, asRoot: asRoot, intermediate: intermediate), on: io.host,
-                                      password: Keychain.password(for: io.host), settings: ssh, onOutput: io.stream)
+                let r = await Interruption.shared.run(Scripts.makeDirectory(p, asRoot: asRoot, intermediate: intermediate),
+                                                      on: io.host, password: Keychain.password(for: io.host),
+                                                      settings: ssh, onOutput: io.stream)
                 return report(r, io)
             }
 
@@ -94,8 +95,9 @@ enum BrowseCLI {
                 logAction(list)
             }
             return await eachHost(list, a) { io in
-                let r = await SSH.run(Scripts.deleteItems(items, asRoot: asRoot, dryRun: dryRun), on: io.host,
-                                      password: Keychain.password(for: io.host), settings: ssh, onOutput: io.stream)
+                let r = await Interruption.shared.run(Scripts.deleteItems(items, asRoot: asRoot, dryRun: dryRun),
+                                                      on: io.host, password: Keychain.password(for: io.host),
+                                                      settings: ssh, onOutput: io.stream)
                 return report(r, io)
             }
 
@@ -103,8 +105,9 @@ enum BrowseCLI {
             guard a.positional.count == 3 else { use("cmcrctl rename nr ścieżka nowa-nazwa [--root]") }
             let h = ModuleHosts.one(a[0], command, usage: "Użycie: cmcrctl rename nr ścieżka nowa-nazwa – podaj jeden komputer.")
             logAction([h])
-            let r = await SSH.run(Scripts.renameItem(path(a.positional[1]), to: a.positional[2], asRoot: asRoot), on: h,
-                                  password: Keychain.password(for: h), settings: ssh, onOutput: Console.printer)
+            let r = await Interruption.shared.run(Scripts.renameItem(path(a.positional[1]), to: a.positional[2], asRoot: asRoot),
+                                                  on: h, password: Keychain.password(for: h), settings: ssh,
+                                                  onOutput: Console.printer)
             return report(r)
 
         case "get":
@@ -117,9 +120,11 @@ enum BrowseCLI {
             }
             let local = URL(fileURLWithPath: expandTilde(a.positional[a.positional.count - 1]), isDirectory: true)
             logAction([h])
-            let (r, _) = await Operations.download(items.map(RemotePaths.lastComponent), in: folder, from: h, into: local,
-                                                   asRoot: asRoot, password: Keychain.password(for: h),
-                                                   settings: ssh, onOutput: Console.printer)
+            let (r, _) = await Interruption.shared.job(on: h) { handle in
+                await Operations.download(items.map(RemotePaths.lastComponent), in: folder, from: h, into: local,
+                                          asRoot: asRoot, password: Keychain.password(for: h), settings: ssh,
+                                          handle: handle, onOutput: Console.printer)
+            }
             return report(r)
 
         case "collect":
@@ -142,10 +147,12 @@ enum BrowseCLI {
             Console.out("Zbieranie prac z \(source) do \(folder.path)"
                         + (collectAsRoot && !asRoot ? " (jako root – folder prywatny konta)" : ""))
             return await eachHost(list, a) { io in
-                let (r, _) = await Operations.collect(source: source, from: io.host, into: folder, name: io.host.name,
-                                                      asRoot: collectAsRoot, cleanAfter: clean,
-                                                      password: Keychain.password(for: io.host), settings: ssh,
-                                                      onOutput: io.stream)
+                let (r, _) = await Interruption.shared.job(on: io.host) { handle in
+                    await Operations.collect(source: source, from: io.host, into: folder, name: io.host.name,
+                                             asRoot: collectAsRoot, cleanAfter: clean,
+                                             password: Keychain.password(for: io.host), settings: ssh,
+                                             handle: handle, onOutput: io.stream)
+                }
                 return report(r, io)
             }
 
