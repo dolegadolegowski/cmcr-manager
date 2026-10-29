@@ -98,6 +98,24 @@ private final class Gate {
         #expect(RemoteBrowserModel.uploadTitle([file, collected], to: "/Users/uczen/Desktop", on: "imac02")
                 == "Wyślij 2 elementy → imac02:/Users/uczen/Desktop")
     }
+
+    // name-prompt (AUDIT REV-28, REV-30): the prompt of the file browser and of the folder picker says why a name
+    // cannot be used (and keeps it for correcting) for every name the browser would refuse, and only for those.
+    @Test func everyNameTheBrowserRefusesIsExplained() {
+        let long = String(repeating: "ż", count: 128)                     // 256 bytes in UTF-8
+        for name in ["", ".", "..", "Prace 2024/25", long, "a\0b"] {
+            #expect(!RemotePaths.isValidName(name))
+            #expect(NamePrompt.problem(name) != nil, "\(name.debugDescription)")
+        }
+        #expect(NamePrompt.problem(long)?.contains("za długa") == true)
+        #expect(NamePrompt.problem("Prace 2024/25")?.contains("„/”") == true)
+        for name in ["Prace 2024-25", ".ukryty", "Zadanie domowe", String(repeating: "ż", count: 127)] {
+            #expect(RemotePaths.isValidName(name))
+            #expect(NamePrompt.problem(name) == nil, "\(name)")
+        }
+        #expect(NamePrompt(kind: .newFolder, text: "Nowy folder").isNewFolder)
+        #expect(!NamePrompt(kind: .rename(RemoteEntry(name: "a", kind: .file)), text: "a").isNewFolder)
+    }
 }
 
 /// Review fixes (AUDIT REV-xx) of the classroom and file browser models that need an AppModel.

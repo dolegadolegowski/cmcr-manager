@@ -383,16 +383,6 @@ final class RemoteBrowserModel: ObservableObject {
         return (Polish.count(n, "element", "elementy", "elementów"), "\(n) elementów")
     }
 
-    /// A name typed for a new folder or a rename that cannot be used: said in the status bar instead of a beep, which
-    /// left the teacher guessing why nothing happened (AUDIT WSP-07).
-    func reportInvalidName(_ name: String) {
-        let why = name.isEmpty ? "nazwa nie może być pusta"
-            : name == "." || name == ".." ? "„.” i „..” nie mogą być nazwą"
-            : name.utf8.count > 255 ? "nazwa jest za długa"
-            : "nazwa nie może zawierać „/”"
-        notice = Notice(text: "Nie utworzono ani nie zmieniono nazwy – \(why).", isError: true)
-    }
-
     /// Names of `urls` that already exist in the current folder (would be replaced by an upload).
     func conflicts(for urls: [URL]) -> [String] {
         let names = Set(listing?.entries.map(\.name) ?? [])

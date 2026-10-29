@@ -52,7 +52,7 @@ private struct RemoteBrowserPage: View {
         .searchable(text: $browser.search, placement: .toolbar, prompt: "Szukaj w tym folderze")
         .navigationSubtitle(browser.host.map { "\($0.name) — \(browser.path)" } ?? "")
         .confirmation($confirm)
-        .namePrompt($prompt, folder: browser.path, onInvalid: { browser.reportInvalidName($0) }) { p, name in
+        .namePrompt($prompt, folder: browser.path) { p, name in
             switch p.kind {
             case .newFolder: browser.makeFolder(named: name)
             case .rename(let e): browser.rename(e, to: name)
@@ -218,9 +218,12 @@ private struct RemoteBrowserPage: View {
                     .accessibilityHidden(true)
                 Text(notice.text)
                     .truncationMode(.middle)
-                Button("Szczegóły") { model.showJobs(notice.batchID) }
-                    .buttonStyle(.link)
-                    .help("Pełny wynik w dziale Zadania")
+                // Only a result of a job has details; without one, Zadania would show an unrelated action (AUDIT UI-17).
+                if let batchID = notice.batchID {
+                    Button("Szczegóły") { model.showJobs(batchID) }
+                        .buttonStyle(.link)
+                        .help("Pełny wynik w dziale Zadania")
+                }
             } else {
                 Text(summary)
             }
