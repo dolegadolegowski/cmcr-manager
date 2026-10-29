@@ -245,7 +245,9 @@ struct RenameComputersSheet: View {
                 }
                 .width(min: 120, ideal: 150)
                 TableColumn("Nowy adres") { $e in
-                    if !ComputerNames.isValidLocalHostName(e.localHostName) {
+                    if isUnchanged(e) {
+                        Text("\(e.localHostName).local").font(.body.monospaced()).foregroundStyle(.secondary)
+                    } else if !ComputerNames.isValidLocalHostName(e.localHostName) {
                         Label("niepoprawna nazwa", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                     } else if let owner = takenBy[e.localHostName.lowercased()] {
                         Label("\(e.localHostName).local ma już \(owner)", systemImage: "exclamationmark.triangle")
@@ -291,7 +293,7 @@ struct RenameComputersSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(changes.isEmpty || !duplicates.isEmpty || !stillHeld.isEmpty
-                          || entries.contains { !ComputerNames.isValidLocalHostName($0.localHostName) })
+                          || changes.contains { !ComputerNames.isValidLocalHostName($0.localHostName) })
             }
         }
         .padding(20)
@@ -308,16 +310,26 @@ struct RenameComputersSheet: View {
     /// `.local` names (lowercased) given to more than one of the Macs, or already used by another Mac on the list;
     /// Bonjour would rename the extra ones (imac04-2) and the updated list would point at the other Mac. The same rule
     /// as `cmcrctl rename KOMP` (RenamePlan.repeatedNames, AUDIT REV-62).
-    var duplicates: Set<String> {
-        RenamePlan.repeatedNames(entries.map(\.localHostName))
-            .union(Set(entries.map { $0.localHostName.lowercased() }).intersection(takenBy.keys))
-    }
+    var duplicates: Set<String> { conflicts.duplicates }
 
     /// `.local` names of the Macs that are not renamed here (from their addresses, their names on the list and the
     /// names read from them), with the Mac that has the name (AUDIT KOM-15, REV-58).
-    var takenBy: [String: String] {
-        Self.namesTaken(by: model.machines, renaming: Set(entries.map(\.id)),
-                        readNames: classroom.names.mapValues(\.localHostName))
+    var takenBy: [String: String] { conflicts.taken }
+
+    var conflicts: (taken: [String: String], duplicates: Set<String>) {
+        Self.conflicts(entries: entries, unchanged: Set(entries.filter(isUnchanged).map(\.id)), machines: model.machines,
+                       readNames: classroom.names.mapValues(\.localHostName))
+    }
+
+    /// A checked Mac whose names are already the new ones is not renamed (only `changes` are), so it keeps its
+    /// address, its name on the list and the name read from it: those stay taken for the others (AUDIT REV-71).
+    static func conflicts(entries: [Entry], unchanged: Set<UUID>, machines: [Machine],
+                          readNames: [UUID: String]) -> (taken: [String: String], duplicates: Set<String>) {
+        let renamed = entries.filter { !unchanged.contains($0.id) }
+        let taken = namesTaken(by: machines, renaming: Set(renamed.map(\.id)), readNames: readNames)
+        let duplicates = RenamePlan.repeatedNames(renamed.map(\.localHostName))
+            .union(Set(renamed.map { $0.localHostName.lowercased() }).intersection(taken.keys))
+        return (taken, duplicates)
     }
 
     /// Renamed Macs whose new `.local` name another Mac renamed here still has now (its address, its name on the list
@@ -335,7 +347,7 @@ struct RenameComputersSheet: View {
     /// Macs whose new names are wrong whatever the order (invalid, taken, repeated – the rows above in red): the
     /// advice gives no order through one of them, it names them to correct first (AUDIT REV-64).
     var rejected: [UUID: RenamePlan.Rejection] {
-        RenamePlan.rejections(entries.map { RenamePlan.Rename(machine: $0.machine, localHostName: $0.localHostName) },
+        RenamePlan.rejections(changes.map { RenamePlan.Rename(machine: $0.machine, localHostName: $0.localHostName) },
                               taken: takenBy)
     }
 
