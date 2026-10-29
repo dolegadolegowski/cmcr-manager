@@ -15,7 +15,7 @@ public enum LessonStepKind: String, Codable, CaseIterable, Sendable {
         case .collect: return "Zbierz prace"
         case .quitApps: return "Zamknij aplikacje"
         case .cleanShared: return "Wyczyść folder ucznia"
-        case .cleanDownloads: return "Wyczyść Pobrane"
+        case .cleanDownloads: return "Wyczyść Pobrane rzeczy"
         case .logout: return "Wyloguj"
         case .sleep: return "Uśpij"
         case .shutdown: return "Wyłącz"
@@ -292,10 +292,14 @@ public enum LessonRunner {
                 return outcome(await remote(Scripts.quitAllApps(), timeout: 60), ok: "aplikacje zamknięte")
             }
             var failed: [String] = []
+            var nobody = 0
             for app in plan.end.appList {
                 let r = await remote(Scripts.quitApp(app, force: false), timeout: 60)
+                // Nobody at the screen: nothing to quit – a skipped step, not „zamknięto” (AUDIT DOD-08).
+                if r.stdoutText.contains("CMCR:NOUSER") { nobody += 1; continue }
                 if !r.succeeded { failed.append(app) }
             }
+            if !plan.end.appList.isEmpty && nobody == plan.end.appList.count { return .skipped("nikt nie jest zalogowany") }
             return failed.isEmpty ? .done("zamknięto: \(plan.end.appList.joined(separator: ", "))")
                 : .failed("nie zamknięto: \(failed.joined(separator: ", "))")
 

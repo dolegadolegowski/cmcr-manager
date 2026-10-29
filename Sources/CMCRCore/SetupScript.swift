@@ -412,7 +412,7 @@ public struct SetupCommandLine: Sendable {
       --autorestart             włącz po zaniku zasilania
       --power-schedule "MTWRF 07:30 17:00 [shutdown|sleep]" | off
                                 harmonogram włączania/wyłączania; dni: M T W R F S U (pn–nd)
-      --rosetta                 zainstaluj Rosetta 2
+      --rosetta                 zainstaluj Rosettę 2
       --updates check|download|auto
       --fix-firewall            wyłącz „Blokuj wszystkie połączenia przychodzące”
       --verify                  tylko sprawdź (nic nie zmienia); --dry-run pokazuje też polecenia
