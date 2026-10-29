@@ -113,15 +113,29 @@ struct CMCRManagerApp: App {
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
+    @ViewState private var columns = NavigationSplitViewVisibility.all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
                 .safeAreaInset(edge: .bottom, spacing: 0) { UpdateBanner() }
                 .navigationSplitViewColumnWidth(min: 190, ideal: 210)
         } content: {
             MachineListView()
                 .navigationSplitViewColumnWidth(min: 250, ideal: 290)
+                .toolbar {
+                    // The sidebar button with a short title, at the start of the computer list's toolbar: the
+                    // system one („Ukryj pasek boczny”) does not fit above the sidebar with titles under the icons
+                    // and always ended up in the overflow menu (AUDIT UI-06). Widok › ⌃⌘S does the same.
+                    ToolbarItem(placement: .navigation) {
+                        Button {
+                            columns = columns == .all ? .doubleColumn : .all
+                        } label: {
+                            Label("Pasek boczny", systemImage: "sidebar.left")
+                        }
+                        .help(columns == .all ? "Ukryj pasek boczny (⌃⌘S)" : "Pokaż pasek boczny (⌃⌘S)")
+                    }
+                }
         } detail: {
             DetailView()
         }
@@ -149,8 +163,8 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        // The system's sidebar button stays: without it a hidden sidebar could only come back through the
-        // Widok menu (AUDIT UI-06).
+        // Replaced by the „Pasek boczny” button in ContentView (AUDIT UI-06).
+        .toolbar(removing: .sidebarToggle)
     }
 
     func row(_ s: AppSection) -> some View {
