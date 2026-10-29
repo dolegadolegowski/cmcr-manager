@@ -257,13 +257,13 @@ struct RenameComputersSheet: View {
                         Label("\(e.localHostName).local powtarza się", systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red)
                             .help("Dwa komputery nie mogą mieć tego samego adresu w sieci")
-                    } else if let other = stillHeld[e.id] {
+                    } else if let held = Self.stillHeldText(localHostName: e.localHostName, holders: holders[e.id] ?? [],
+                                                            readNames: classroom.names.mapValues(\.localHostName)) {
                         // The whole order, the same as cmcrctl gives (AUDIT REV-63).
-                        Label("\(e.localHostName).local ma jeszcze \(other.name)", systemImage: "exclamationmark.triangle")
+                        Label(held.label, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red)
-                            .help("Ten adres ma teraz \(other.name), którego nazwa też jest zmieniana – macOS nadałby jednemu z nich inny adres. "
-                                  + RenamePlan.advice(for: e.machine, holders: holders, newNames: newNames,
-                                                      rejected: rejected, in: .app))
+                            .help(held.reason + " " + RenamePlan.advice(for: e.machine, holders: holders, newNames: newNames,
+                                                                        rejected: rejected, in: .app))
                     } else {
                         Text("\(e.localHostName).local").font(.body.monospaced())
                             .foregroundStyle(isUnchanged(e) ? .secondary : .primary)
@@ -336,6 +336,26 @@ struct RenameComputersSheet: View {
     /// or the name read from it, AUDIT REV-69), with that Mac: a renumbering or a swap, renamed one Mac at a time
     /// (AUDIT REV-52, REV-63). The renames run at once.
     var stillHeld: [UUID: Machine] { holders.compactMapValues(\.first) }
+
+    /// The red row and the reason in its tooltip for a Mac whose new `.local` name other Macs renamed here still have
+    /// (`holders`, in the order of the selected Macs). A Mac that has the name as its `.local` address or as the
+    /// LocalHostName read from it is named first: macOS would give one of the two another address. A Mac that has it
+    /// only as its name on the list has no such address – the step waits for it because the list would have two Macs
+    /// with that name if its rename failed (AUDIT REV-73). nil when no Mac still has the name.
+    static func stillHeldText(localHostName: String, holders: [Machine],
+                              readNames: [UUID: String]) -> (label: String, reason: String)? {
+        let name = localHostName.lowercased()
+        if let other = holders.first(where: {
+            $0.address.lowercased() == "\(name).local" || readNames[$0.id]?.lowercased() == name
+        }) {
+            return ("\(localHostName).local ma jeszcze \(other.name)",
+                    "Ten adres ma teraz \(other.name), którego nazwa też jest zmieniana – macOS nadałby jednemu z nich inny adres.")
+        }
+        guard let other = holders.first else { return nil }
+        return ("„\(other.name)” jest jeszcze na liście",
+                "Na liście jest jeszcze komputer „\(other.name)” (\(other.address)), którego nazwa też jest zmieniana – gdyby "
+                + "jego zmiana się nie udała, lista miałaby dwa komputery o tej nazwie.")
+    }
 
     /// Every renamed Mac that still has the new name of each Mac: the advice on the order waits for all of them
     /// (RenamePlan.holders, AUDIT REV-69).
