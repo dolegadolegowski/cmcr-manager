@@ -347,15 +347,21 @@ enum MainWindow {
     /// Shows the main window (opening a new one when it was closed).
     @MainActor static func bringToFront(_ openWindow: OpenWindowAction) {
         NSApp.activate(ignoringOtherApps: true)
-        let candidates = NSApp.windows.filter {
-            $0.canBecomeMain && !ScreenWindowRegistry.contains($0) && ($0.isVisible || $0.isMiniaturized)
-        }
-        if let main = candidates.first(where: { $0.identifier?.rawValue.hasPrefix(id) == true }) ?? candidates.first {
+        if let main = NSApp.windows.first(where: {
+            isMain(identifier: $0.identifier?.rawValue, shown: $0.isVisible || $0.isMiniaturized)
+        }) {
             if main.isMiniaturized { main.deminiaturize(nil) }
             main.makeKeyAndOrderFront(nil)
         } else {
             openWindow(id: id)
         }
+    }
+
+    /// A window of the main WindowGroup ("main-AppWindow-1") that is on screen or in the Dock. No other window stands
+    /// in for it: with the main window closed, the Settings window or a screen window must not be brought forward
+    /// instead – the section change would stay invisible (AUDIT KON-10, REV-23).
+    static func isMain(identifier: String?, shown: Bool) -> Bool {
+        shown && identifier?.hasPrefix(id) == true
     }
 }
 
@@ -471,6 +477,11 @@ struct ScreenTile: View {
 
     private var actions: ScreenActions { ScreenActions(model: model, center: center, openWindow: openWindow) }
 
+    /// The selection mark sits in the corner of the hover action bar and would cover (and take the clicks of) its first
+    /// button, „Powiększ”: while the pointer is on the tile the bar has the corner and the accent border still marks
+    /// the selection (AUDIT REV-29).
+    static func showsSelectionMark(isSelected: Bool, hovering: Bool) -> Bool { isSelected && !hovering }
+
     var body: some View {
         ScreenPicture(feed: feed)
             .overlay(alignment: .bottom) { if showLabels { labels } }
@@ -494,12 +505,14 @@ struct ScreenTile: View {
             }
             .overlay(alignment: .topLeading) {
                 // Selected tiles carry a mark, not only a coloured border (AUDIT UI-19).
-                if isSelected {
+                if Self.showsSelectionMark(isSelected: isSelected, hovering: hovering) {
                     Image(systemName: "checkmark.circle.fill")
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, Color.accentColor)
                         .font(.title3)
                         .padding(6)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
                         .accessibilityHidden(true)
                 }
             }

@@ -530,11 +530,13 @@ struct HostListGeneratorSheet: View {
     }
 
     /// The pattern becomes names, accounts and addresses: refused like in `cmcrctl hosts generate` (AUDIT KON-14).
+    /// The fields are named by their labels, with a colon before the problem as in cmcrctl (AUDIT REV-25).
     static func patternProblem(prefix: String, domain: String) -> String? {
+        if prefix.isEmpty { return "Wpisz początek nazwy, zanim utworzysz listę." }
         if let p = HostEntry.problem(prefix, as: .name) ?? HostEntry.problem(prefix, as: .sshPart) {
-            return "Przedrostek nazwy \(p) – popraw go, zanim utworzysz listę."
+            return "Początek nazwy: \(p) – popraw go, zanim utworzysz listę."
         }
-        if let p = HostEntry.problem(domain, as: .domain) { return "Domena \(p) – popraw ją, zanim utworzysz listę." }
+        if let p = HostEntry.problem(domain, as: .domain) { return "Domena sieci: \(p) – popraw ją, zanim utworzysz listę." }
         return nil
     }
 

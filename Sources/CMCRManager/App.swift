@@ -438,7 +438,7 @@ struct MachineListView: View {
                             let members = HostGroups.members(of: g, in: model.machines).count
                             confirmGroupRemoval = ConfirmRequest(
                                 title: "Usunąć grupę „\(g)”?",
-                                message: "Grupa zniknie z \(Polish.computers(members)). Same komputery zostają na liście.",
+                                message: "Grupa zniknie z \(Polish.ofComputers(members)). Same komputery zostają na liście.",
                                 button: "Usuń grupę", targets: []) {
                                 HostGroups.remove(g, from: Set(model.machines.map(\.id)), in: &model.machines)
                                 if query.group == g { query.group = nil }

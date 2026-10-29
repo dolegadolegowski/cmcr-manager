@@ -390,7 +390,7 @@ struct PowerConfirmSheet: View {
                 if request.kind == .restart, classroom.fileVault[m.id] == true {
                     Label("FileVault", systemImage: "lock.doc")
                         .foregroundStyle(.orange)
-                        .help("Po ponownym uruchomieniu komputer zatrzyma się na ekranie odblokowania dysku.")
+                        .help(Self.fileVaultHelp(autoUnlock: classroom.fileVaultAutoUnlock[m.id]))
                 }
                 if let user {
                     Label(skipped ? "\(user) – pominięty" : "zalogowany: \(user)", systemImage: "person.fill")
@@ -437,14 +437,31 @@ struct PowerConfirmSheet: View {
     /// unlock screen is only the fallback there (AUDIT KOM-12).
     var fileVaultWarning: String {
         let fv = reached.filter { classroom.fileVault[$0.id] == true }
-        let lead = "FileVault jest włączony \(Polish.onComputers(fv.count))."
-        if fv.allSatisfy({ classroom.fileVaultAutoUnlock[$0.id] == true }) {
+        return Self.fileVaultWarning(count: fv.count, autoUnlock: fv.filter { classroom.fileVaultAutoUnlock[$0.id] == true }.count)
+    }
+
+    /// `count` Macs with FileVault, `autoUnlock` of them can arm the one-time unlock. When only some can, the warning
+    /// says how many of each – the badges in the list tell which (AUDIT REV-26).
+    static func fileVaultWarning(count: Int, autoUnlock: Int) -> String {
+        let lead = "FileVault jest włączony \(Polish.onComputers(count))."
+        let locked = "dopóki ktoś nie wpisze hasła przy komputerze, nie połączysz się z nim (ani podglądem, ani budzeniem przez sieć)."
+        if autoUnlock >= count {
             return lead + " Aplikacja uzbroi jednorazowe odblokowanie dysku (fdesetup authrestart), więc komputery powinny "
                 + "uruchomić się bez hasła FileVault. Jeśli konto administratora nie może odblokować dysku, zatrzymają się "
                 + "na ekranie odblokowania – wtedy nie połączysz się z nimi, dopóki ktoś nie wpisze hasła przy komputerze."
         }
-        return lead + " Po ponownym uruchomieniu pojawi się ekran odblokowania dysku – dopóki ktoś nie wpisze hasła przy "
-            + "komputerze, nie połączysz się z nim (ani podglądem, ani budzeniem przez sieć)."
+        if autoUnlock == 0 { return lead + " Po ponownym uruchomieniu pojawi się ekran odblokowania dysku – " + locked }
+        return lead + " \(Polish.onComputers(autoUnlock).capitalizedFirst) aplikacja uzbroi jednorazowe odblokowanie dysku "
+            + "(fdesetup authrestart), więc tam restart powinien obyć się bez hasła FileVault. "
+            + "\(Polish.onComputers(count - autoUnlock).capitalizedFirst) po ponownym uruchomieniu pojawi się ekran "
+            + "odblokowania dysku – " + locked + " Który komputer jak się uruchomi – w podpowiedzi oznaczenia „FileVault” na liście."
+    }
+
+    /// Tooltip of a Mac's „FileVault” badge: the same answer as the warning below the list (AUDIT KOM-12, REV-26).
+    static func fileVaultHelp(autoUnlock: Bool?) -> String {
+        guard autoUnlock == true else { return "Po ponownym uruchomieniu komputer zatrzyma się na ekranie odblokowania dysku." }
+        return "Aplikacja uzbroi jednorazowe odblokowanie dysku (fdesetup authrestart), więc ten komputer powinien uruchomić "
+            + "się bez hasła FileVault. Jeśli się nie uda, zatrzyma się na ekranie odblokowania dysku."
     }
 
     var needsAcknowledgement: Bool {

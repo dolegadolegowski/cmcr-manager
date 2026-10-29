@@ -147,8 +147,11 @@ struct UpdatesView: View {
                             script: { _ in
                                 Scripts.installUpdates(restart: r, recommendedOnly: rec, downloadOnly: false, allowMajorUpgrade: major)
                             }) { m, result in
-                // Installed: the list and the sidebar badge must not keep offering them (AUDIT APL-15).
-                if result.succeeded { model.updates[m.id] = nil }
+                // Installed: the list and the sidebar badge must not keep offering them (AUDIT APL-15) – but what the
+                // script skipped is still pending (AUDIT REV-27).
+                if result.succeeded {
+                    model.updates[m.id] = model.updates[m.id]?.remaining(afterInstall: result.stdoutText, recommendedOnly: rec)
+                }
             }
         }
     }
@@ -183,6 +186,39 @@ struct UpdatesView: View {
             Label("Aktualizacje aplikacji", systemImage: "app.badge.checkmark")
         } footer: {
             FormSectionNote("Unity i Android SDK aktualizuje się w dziale Instalacja.")
+        }
+    }
+}
+
+extension UpdateInfo {
+    /// What is still offered after a successful run of `Scripts.installUpdates`. The script installs only the labels
+    /// it prints as „→ label”: without „Pozwól na nową wersję macOS” it skips a new major macOS („↷ Pominięto…”),
+    /// with „Tylko zalecane” the optional updates, and it also succeeds when nothing was left to install. So only the
+    /// installed labels leave the list (AUDIT APL-15, REV-27); nil when nothing is pending any more.
+    func remaining(afterInstall output: String, recommendedOnly: Bool) -> UpdateInfo? {
+        switch check {
+        case .upToDate: return self
+        case .failed: return nil
+        case .available(let titles):
+            let lines = output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            // Nothing could have been skipped, so an empty list at install time means they were installed meanwhile.
+            if !recommendedOnly, lines.contains("✔ Brak aktualizacji do zainstalowania."),
+               !lines.contains(where: { $0.hasPrefix("↷ ") }) {
+                return nil
+            }
+            let installed = Set(lines.filter { $0.hasPrefix("→ ") }.map { $0.dropFirst(2).trimmingCharacters(in: .whitespaces) })
+            // The check's labels in the order of its titles: Parsers.softwareUpdates gives one title per label.
+            let labels = raw.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { $0.hasPrefix("* Label:") }
+                .map { $0.dropFirst("* Label:".count).trimmingCharacters(in: .whitespaces) }
+            let all = Parsers.softwareUpdates(raw)
+            guard labels.count == all.count else { return self }      // cannot tell: keep offering them
+            let done = Set(zip(labels, all).filter { installed.contains($0.0) }.map(\.1))
+            let left = titles.filter { !done.contains($0) }
+            guard !left.isEmpty else { return nil }
+            var info = self
+            info.check = .available(left)
+            return info
         }
     }
 }
