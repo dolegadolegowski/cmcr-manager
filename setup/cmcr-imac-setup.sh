@@ -73,6 +73,7 @@ SSH i zdalny dostęp:
   --no-ssh-acl             nie ograniczaj SSH do administratorów
   --no-ssh-tuning          nie dodawaj ustawień sshd (keepalive)
   --ssh-key-only           SSH tylko z kluczem (wyłącza logowanie hasłem) – ostrożnie!
+                           Bez tej opcji wyłączone wcześniej logowanie hasłem wraca.
   --enable-vnc             włącz Udostępnianie ekranu (VNC) dla administratorów
   --sudo-nopasswd          sudo bez hasła dla konta administracyjnego (NIEZALECANE)
   --no-sudo-nopasswd       usuń wcześniej dodane sudo bez hasła
@@ -145,6 +146,8 @@ valid_account "$OPT_STUDENT" || die_usage "niepoprawna nazwa konta ucznia: $OPT_
 case "$OPT_SHARED_MODE" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) ;; *) die_usage "niepoprawne uprawnienia: $OPT_SHARED_MODE" ;; esac
 case "$OPT_UPDATES" in ''|check|download|auto) ;; *) die_usage "--updates: check, download lub auto" ;; esac
 case "$OPT_DISPLAY_SLEEP" in '') ;; *[!0-9]*) die_usage "--display-sleep: liczba minut" ;; esac
+# pmset podaje minuty bez zer na początku („05” → 5); inaczej porównanie z odczytem nigdy by się nie zgadzało.
+while [ "${#OPT_DISPLAY_SLEEP}" -gt 1 ] && [ "${OPT_DISPLAY_SLEEP#0}" != "$OPT_DISPLAY_SLEEP" ]; do OPT_DISPLAY_SLEEP="${OPT_DISPLAY_SLEEP#0}"; done
 case "$OPT_KEY_FROM" in *[!A-Za-z0-9.:/*?,!-]*) die_usage "--key-from: dozwolone adresy, maski i wzorce (np. 10.0.0.0/8,*.local)" ;; esac
 case "$OPT_SHARED" in
   '') ;;
@@ -546,27 +549,35 @@ key_only_text() { if [ "$1" = 1 ]; then printf 'SSH wyłącznie z kluczem: włą
 
 step_sshd_tuning() {
   # Raport mówi wprost, czy logowanie hasłem jest wyłączone i czy to uruchomienie to zmienia (włącza albo wyłącza).
-  local cur_ko=0
+  local cur_ko=0 drop_ko=0
   grep -Eq '^PasswordAuthentication[[:space:]]+no' "$SSHD_DROPIN" 2>/dev/null && cur_ko=1
-  [ "$OPT_SSH_TUNING" = 1 ] || [ "$OPT_SSH_KEY_ONLY" = 1 ] || {
-    record sshd_conf skipped "Ustawienia sshd bez zmian ($(key_only_text $cur_ko))."; return
-  }
+  # Bez --ssh-key-only logowanie hasłem ma działać, także z --no-ssh-tuning: wtedy z pliku znikają tylko linie
+  # logowania kluczem, a keepalive zostaje, jaki był.
+  if [ "$OPT_SSH_TUNING" != 1 ] && [ "$OPT_SSH_KEY_ONLY" != 1 ]; then
+    [ "$cur_ko" = 1 ] || { record sshd_conf skipped "Ustawienia sshd bez zmian ($(key_only_text $cur_ko))."; return; }
+    drop_ko=1
+  fi
   if ! grep -Eq '^Include[[:space:]]+/etc/ssh/sshd_config\.d/\*' "$SSHD_CONFIG" 2>/dev/null; then
     record sshd_conf warn "sshd_config nie wczytuje /etc/ssh/sshd_config.d – pomijam (nie zmieniam głównego pliku)."
     return
   fi
   local want="$WORK/sshd.conf"
-  {
-    echo "# CMCR Manager – zarządzane przez cmcr-imac-setup.sh $CMCR_SETUP_VERSION. Nie edytuj ręcznie."
-    echo "# Rozłącza martwe sesje (np. gdy Mac nauczyciela uśnie w trakcie zadania)."
-    echo "ClientAliveInterval 30"
-    echo "ClientAliveCountMax 6"
-    if [ "$OPT_SSH_KEY_ONLY" = 1 ]; then
-      echo "# Logowanie wyłącznie kluczem."
-      echo "PasswordAuthentication no"
-      echo "KbdInteractiveAuthentication no"
-    fi
-  } > "$want"
+  if [ $drop_ko -eq 1 ]; then
+    grep -Ev '^[[:space:]]*(PasswordAuthentication|KbdInteractiveAuthentication)([[:space:]]|$)' "$SSHD_DROPIN" \
+      | grep -vxF '# Logowanie wyłącznie kluczem.' > "$want"
+  else
+    {
+      echo "# CMCR Manager – zarządzane przez cmcr-imac-setup.sh $CMCR_SETUP_VERSION. Nie edytuj ręcznie."
+      echo "# Rozłącza martwe sesje (np. gdy Mac nauczyciela uśnie w trakcie zadania)."
+      echo "ClientAliveInterval 30"
+      echo "ClientAliveCountMax 6"
+      if [ "$OPT_SSH_KEY_ONLY" = 1 ]; then
+        echo "# Logowanie wyłącznie kluczem."
+        echo "PasswordAuthentication no"
+        echo "KbdInteractiveAuthentication no"
+      fi
+    } > "$want"
+  fi
   if [ "$OPT_SSH_KEY_ONLY" = 1 ] && [ "$KEY_OK" != 1 ]; then
     if [ -z "$OPT_PUBKEYS" ]; then
       record sshd_conf fail "--ssh-key-only wymaga podania klucza (--pubkey) – inaczej utracisz dostęp. Pominięto."
@@ -581,6 +592,7 @@ step_sshd_tuning() {
   fi
   local what now="" plan=""
   what="keepalive; $(key_only_text "$OPT_SSH_KEY_ONLY")"
+  [ $drop_ko -eq 1 ] && what="keepalive bez zmian; $(key_only_text 0)"
   if [ "$cur_ko" != "$OPT_SSH_KEY_ONLY" ]; then
     if [ "$OPT_SSH_KEY_ONLY" = 1 ]; then now=" – logowanie hasłem przestaje działać"; plan=" – logowanie hasłem przestanie działać"
     else now=" – logowanie hasłem znów działa"; plan=" – logowanie hasłem znów zadziała"; fi
