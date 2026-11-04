@@ -322,6 +322,7 @@ public extension Scripts {
         CMCR_LAST=\#(shQuote(o.alreadyNotifiedUser ?? ""))
         CMCR_DISPLAY=\#(shQuote(o.display.scriptValue))
         SCR_NOTICE="$(echo \#(Data(observeNoticeJXA().utf8).base64EncodedString()) | base64 -D)"
+        \#(screenCaptureApprovalShell)
         if [ -n "${SCR_IN_SET:-}" ]; then
           CMCR_MAXSIZE="$SCR_IN_SIZE"; CMCR_INTERVAL="$SCR_IN_INTERVAL"; CMCR_DISPLAY="$SCR_IN_DISPLAY"; CMCR_LAST="$SCR_IN_LAST"
         fi
@@ -471,8 +472,21 @@ public extension Scripts {
           scr_emit FRAME "$d" "$n" "$size" "$hash"
           cat "$out" 2>/dev/null || exit 0
         }
+        # macOS 15+: replayd's remembered consent for the SSH session is renewed before the first capture of every
+        # account (and hourly), so the person at the screen never gets the "…requesting to bypass the system private
+        # window picker" alert (cmcr_sc_approval, the CMCR-REPLAYD block of setup/cmcr-imac-setup.sh). Best effort:
+        # without Full Disk Access for remote users the file cannot be written and the capture goes on as before.
+        scr_approval() {
+          local h
+          if [ "${SCR_APPROVED_FOR-x}" = "$CONSOLE_USER" ] && [ $((SECONDS - SCR_APPROVED_AT)) -lt 3600 ]; then return 0; fi
+          SCR_APPROVED_FOR="$CONSOLE_USER"; SCR_APPROVED_AT=$SECONDS
+          [ -n "${SCR_OS:-}" ] || SCR_OS="$(sw_vers -productVersion 2>/dev/null)"
+          h="$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p' | head -n 1)"
+          SCR_APPROVAL="$(cmcr_sc_approval "$CONSOLE_USER" "${h:+${CMCR_SETUP_ROOT_PREFIX:-}$h}" "$SCR_OS" </dev/null 2>/dev/null)"
+        }
         scr_capture() {
           local i n files f
+          scr_approval
           rm -f "$SCR_DIR"/raw*.jpg "$SCR_DIR"/out*.jpg 2>/dev/null
           case "$CMCR_DISPLAY" in
             main) scr_gui /usr/sbin/screencapture -x -C -m -t jpg "$SCR_DIR/raw1.jpg" ;;

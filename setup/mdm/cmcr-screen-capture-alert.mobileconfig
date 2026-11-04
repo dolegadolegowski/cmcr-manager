@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  CMCR Manager: macOS 15.1+ nie pokazuje osobie przy komputerze okna, że „sshd-session” chce pominąć systemowy
+  wybór okien i mieć dostęp do ekranu (podgląd ekranów w CMCR Manager działa wtedy bez pytania ucznia).
+
+  Klucz forceBypassScreenCaptureAlert działa WYŁĄCZNIE w profilu wdrożonym przez MDM: macOS ignoruje go w profilu
+  zainstalowanym ręcznie (schemat Apple: allowmanualinstall: false). Wgraj ten plik do MDM szkoły jako profil
+  niestandardowy (niektóre MDM, np. Jamf, wymagają wcześniej podpisania profilu) i przypisz go iMacom pracowni.
+  Bez MDM okno wyłącza sam CMCR Manager (odnawia zgodę przed każdym podglądem – zob. README).
+
+  Ten profil NIE nadaje uprawnienia „Nagrywanie ekranu”: profil PPPC może je tylko zablokować albo pozwolić
+  włączyć je kontu standardowemu. Uprawnienie trzeba raz włączyć przy komputerze.
+  Źródło: https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.applicationaccess.yaml
+-->
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadDisplayName</key>
+			<string>Podgląd ekranu bez okna zgody</string>
+			<key>PayloadIdentifier</key>
+			<string>pl.cmcr.manager.screen-capture-alert.restrictions</string>
+			<key>PayloadType</key>
+			<string>com.apple.applicationaccess</string>
+			<key>PayloadUUID</key>
+			<string>6AB3551F-E566-468B-9360-944747700DAE</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>forceBypassScreenCaptureAlert</key>
+			<true/>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>macOS 15.1+: bez okna z pytaniem osoby przy komputerze, czy sesja SSH (podgląd ekranów CMCR Manager) może dalej widzieć ekran. Działa tylko wdrożony przez MDM.</string>
+	<key>PayloadDisplayName</key>
+	<string>CMCR Manager – podgląd ekranu bez okna zgody</string>
+	<key>PayloadIdentifier</key>
+	<string>pl.cmcr.manager.screen-capture-alert</string>
+	<key>PayloadOrganization</key>
+	<string>CMCR Manager</string>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>329F940F-108F-4F8D-9EAD-3DB347E57837</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>

@@ -27,7 +27,7 @@ umask 022
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/libexec:/usr/libexec/ApplicationFirewall"
 export LC_ALL=C
 
-CMCR_SETUP_VERSION="1.0.0"
+CMCR_SETUP_VERSION="1.1.0"
 CMCR_SETUP_SCHEMA=1
 NL=$'\n'
 
@@ -364,6 +364,86 @@ screen_preflight() {
   ( sleep 10; kill "$p" 2>/dev/null ) </dev/null >/dev/null 2>&1 & w=$!
   wait "$p"; kill "$w" 2>/dev/null
 }
+
+# >>> CMCR-REPLAYD – ten blok CMCR Manager wkleja też do podglądu ekranu i do sprawdzania gotowości >>>
+# Od macOS 15 replayd co jakiś czas pokazuje osobie przy komputerze okno, że „sshd-session” chce pominąć
+# systemowy wybór okien i mieć bezpośredni dostęp do ekranu („Continue to Allow” / „Allow For One Month”).
+# Odpowiedź zapamiętuje osobno dla każdego konta w ~/Library/Group Containers/group.com.apple.replayd/
+# ScreenCaptureApprovals.plist, pod ścieżką procesu, któremu macOS przypisuje sesję SSH
+# (/usr/libexec/sshd-keygen-wrapper – także wtedy, gdy okno mówi „sshd-session”). Okno wraca, gdy ostatnie
+# użycie jest starsze niż 30 dni (kScreenCapturePrivacyHintPolicy) albo minęła data przypomnienia
+# (kScreenCapturePrivacyHintDate). Odnowienie zapisuje to, co macOS zapisuje po „Zezwól”: użycie „teraz”,
+# przypomnienie w 2099. W macOS 15.0 wpis był samą datą następnego pytania.
+# To nie jest uprawnienie TCC „Nagrywanie ekranu” (to da się włączyć tylko przy komputerze), tylko
+# zapamiętana odpowiedź – zapis nie wymaga wyłączenia SIP ani MDM. Folder jest jednak chroniony: potrzebny jest
+# pełny dostęp do dysku („Daj użytkownikom zdalnym pełny dostęp do dysku” dla sesji SSH). Bez niego okno wyłącza
+# na stałe tylko profil MDM setup/mdm/cmcr-screen-capture-alert.mobileconfig (macOS 15.1+).
+CMCR_SC_CLIENT=/usr/libexec/sshd-keygen-wrapper
+CMCR_SC_HINT=2099-01-01T00:00:00Z
+# cmcr_sc_as KONTO POLECENIE… – jako to konto: root nigdy nie zapisuje sam w cudzym katalogu domowym.
+cmcr_sc_as() {
+  local u="$1"; shift
+  if [ "$(id -un)" = "$u" ]; then "$@"
+  elif [ "$(id -u)" -eq 0 ]; then sudo -u "$u" -- "$@"
+  else return 1; fi
+}
+# cmcr_sc_epoch KONTO PLIK KLUCZ – data z pliku w sekundach od 1970 (puste, gdy jej nie ma).
+cmcr_sc_epoch() {
+  local s
+  s="$(cmcr_sc_as "$1" plutil -extract "$3" raw -o - "$2" 2>/dev/null)" || return 0
+  date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$s" +%s 2>/dev/null
+}
+# cmcr_sc_approval KONTO KATALOG_DOMOWY WERSJA_MACOS [check] – sprawdza zgodę i odnawia ją, gdy wygasa (z „check”
+# tylko sprawdza). Wypisuje: ok (ważna), renewed (odnowiono), stale (do odnowienia – tylko z „check”),
+# na (macOS < 15, okna nie ma), nohome (brak katalogu domowego), denied (brak dostępu do pliku – zwykle brak pełnego
+# dostępu do dysku), error (nie da się działać jako to konto).
+cmcr_sc_approval() {
+  local u="$1" h="$2" v="$3" mode="${4:-}" maj min d f now lu hd n uid ts
+  maj="${v%%.*}"; min="${v#*.}"; [ "$min" = "$v" ] && min=0; min="${min%%.*}"
+  case "$maj" in ''|*[!0-9]*) maj=0 ;; esac
+  case "$min" in ''|*[!0-9]*) min=0 ;; esac
+  if [ "$maj" -lt 15 ]; then echo na; return 0; fi
+  if [ -z "$u" ] || [ -z "$h" ] || [ ! -d "$h" ]; then echo nohome; return 0; fi
+  if [ "$(id -un)" != "$u" ] && [ "$(id -u)" -ne 0 ]; then echo error; return 0; fi
+  d="$h/Library/Group Containers/group.com.apple.replayd"; f="$d/ScreenCaptureApprovals.plist"
+  # Bez pełnego dostępu do dysku macOS nie pokazuje nawet zawartości tego folderu.
+  if [ -d "$d" ] && ! cmcr_sc_as "$u" ls "$d" >/dev/null 2>&1; then echo denied; return 0; fi
+  now="$(date -u +%s)"
+  if [ "$maj" -eq 15 ] && [ "$min" -eq 0 ]; then
+    hd="$(cmcr_sc_epoch "$u" "$f" "$CMCR_SC_CLIENT")"
+    if [ -n "$hd" ] && [ $((hd - now)) -gt 31536000 ]; then echo ok; return 0; fi
+  else
+    lu="$(cmcr_sc_epoch "$u" "$f" "$CMCR_SC_CLIENT.kScreenCaptureApprovalLastUsed")"
+    hd="$(cmcr_sc_epoch "$u" "$f" "$CMCR_SC_CLIENT.kScreenCapturePrivacyHintDate")"
+    # Z zapasem: odnowienie po 20 z 30 dni; przypomnienie musi wypadać dalej niż za rok.
+    if [ -n "$lu" ] && [ -n "$hd" ] && [ $((now - lu)) -lt 1728000 ] && [ $((lu - now)) -lt 86400 ] \
+       && [ $((hd - now)) -gt 31536000 ]; then echo ok; return 0; fi
+  fi
+  if [ "$mode" = check ]; then echo stale; return 0; fi
+  cmcr_sc_as "$u" mkdir -p "$d" 2>/dev/null
+  # Brak pliku albo plik bez słownika (uszkodzony): pusty słownik. Istniejący zostaje – inne aplikacje mają w nim
+  # swoje wpisy.
+  if ! cmcr_sc_as "$u" plutil -convert xml1 -o - "$f" 2>/dev/null | grep -q '^<dict'; then
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict/></plist>\n' \
+      | cmcr_sc_as "$u" tee "$f" >/dev/null 2>&1 || { echo denied; return 0; }
+  fi
+  n="$(cmcr_sc_as "$u" plutil -extract "$CMCR_SC_CLIENT.kScreenCaptureAlertableUsageCount" raw -o - "$f" 2>/dev/null)"
+  case "$n" in ''|*[!0-9]*) n=1 ;; esac
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  uid="$(id -u "$u" 2>/dev/null)"
+  # replayd trzyma zgody w pamięci i nadpisałby odnowienie swoją kopią: zatrzymany przed zapisem i po nim
+  # (launchd uruchamia go ponownie przy następnym nagrywaniu ekranu).
+  [ -n "$uid" ] && cmcr_sc_as "$u" pkill -KILL -x -U "$uid" replayd >/dev/null 2>&1
+  if [ "$maj" -eq 15 ] && [ "$min" -eq 0 ]; then
+    cmcr_sc_as "$u" plutil -replace "$CMCR_SC_CLIENT" -date "$CMCR_SC_HINT" "$f" >/dev/null 2>&1 || { echo denied; return 0; }
+  else
+    cmcr_sc_as "$u" plutil -replace "$CMCR_SC_CLIENT" -xml "<dict><key>kScreenCaptureAlertableUsageCount</key><integer>$n</integer><key>kScreenCaptureApprovalLastAlerted</key><date>$ts</date><key>kScreenCaptureApprovalLastUsed</key><date>$ts</date><key>kScreenCapturePrivacyHintDate</key><date>$CMCR_SC_HINT</date><key>kScreenCapturePrivacyHintPolicy</key><integer>2592000</integer></dict>" "$f" >/dev/null 2>&1 \
+      || { echo denied; return 0; }
+  fi
+  [ -n "$uid" ] && cmcr_sc_as "$u" pkill -KILL -x -U "$uid" replayd >/dev/null 2>&1
+  echo renewed
+}
+# <<< CMCR-REPLAYD <<<
 
 printf 'CMCR Manager – przygotowanie iMaca (skrypt %s, tryb: %s)\n' "$CMCR_SETUP_VERSION" "$MODE"
 printf 'Komputer: %s · macOS %s (%s) · %s · konto admin.: %s · uczeń: %s%s\n' \
@@ -998,11 +1078,31 @@ step_tcc() {
            wait_enter
          fi ;;
   esac
-  if [ "$OS_MAJOR" -ge 15 ]; then
-    detail "macOS $OS_MAJOR co jakiś czas (zwykle raz w miesiącu, czasem przy każdym nowym połączeniu) pyta osobę przy komputerze,"
-    detail "czy „sshd-session” może dalej mieć dostęp do ekranu. Podgląd działa po zezwoleniu (po angielsku „Allow For One Month”);"
-    detail "po odmowie pokazuje tylko tapetę, dopóki ktoś nie zezwoli przy komputerze."
-  fi
+  step_screen_alert
+}
+
+# Okno macOS 15+ „sshd-session chce pominąć systemowy wybór okien” (blok CMCR-REPLAYD): zgoda zapamiętana dla
+# ucznia i dla osoby przy komputerze. Podgląd ekranu odnawia ją też sam przed każdym połączeniem.
+step_screen_alert() {
+  local u h st seen=" " mode="" what="Okno macOS o dostępie sesji SSH do ekranu"
+  [ "$OS_MAJOR" -ge 15 ] || return 0
+  [ $CHANGE -eq 1 ] || mode=check
+  for u in "$STUDENT" "$CONSOLE_USER"; do
+    [ -n "$u" ] || continue
+    case "$seen" in *" $u "*) continue ;; esac
+    seen="$seen$u "
+    dscl . -read "/Users/$u" UniqueID >/dev/null 2>&1 || continue
+    h="$(home_of "$u")"
+    st="$(cmcr_sc_approval "$u" "$h" "$OS_VER" $mode)"
+    case "$st" in
+      ok)      record screen_alert ok "$what (konto $u): wyłączone – zgoda zapamiętana." ;;
+      renewed) record screen_alert changed "$what (konto $u): wyłączone – odnowiono zapamiętaną zgodę." ;;
+      stale)   record screen_alert pending "Wymaga zmiany: $what (konto $u) – odnowienie zapamiętanej zgody." ;;
+      nohome)  record screen_alert skipped "$what (konto $u): konto nie ma jeszcze katalogu domowego – zgodę zapisze pierwszy podgląd ekranu." ;;
+      denied)  record screen_alert warn "$what (konto $u): brak dostępu do zapamiętanej zgody – włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”$([ $VIA_SSH -eq 0 ] && echo ' (przy komputerze: pełny dostęp do dysku dla Terminala)'). Do tego czasu macOS może co jakiś czas pytać osobę przy komputerze; na stałe wyłącza je profil MDM setup/mdm/cmcr-screen-capture-alert.mobileconfig." ;;
+      *)       record screen_alert warn "$what (konto $u): nie udało się sprawdzić zapamiętanej zgody." ;;
+    esac
+  done
 }
 
 write_marker() {

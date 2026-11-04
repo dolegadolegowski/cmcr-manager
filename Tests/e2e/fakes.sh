@@ -464,6 +464,8 @@ pkill() {
       [ -e "$(_e2e_state attention.running)" ] && rc=0; rm -f "$(_e2e_state attention.running)"
       command pkill -U "$(id -u)" -f CMCR_ATTENTION && rc=0 ;;
     cmcr-delayed-power) command pkill -U "$(id -u)" -f cmcr-delayed-power && rc=0 ;;
+    # The test user's real replayd is never stopped (renewing the screen-capture consent, cmcr_sc_approval).
+    replayd) rc=0 ;;
     *)
       # Anything else really signals the matching processes, but through the guarded kill below.
       case "${1:-}" in -[0-9]*|-[A-Z][A-Z]*) sig="$1"; shift ;; esac

@@ -269,7 +269,7 @@ enum ManualStep: String, CaseIterable, Identifiable {
 
     var summary: String {
         switch self {
-        case .fullDiskAccess: return "Pobieranie prac z Biurka i Dokumentów ucznia, czyszczenie folderów, podmiana aplikacji."
+        case .fullDiskAccess: return "Pobieranie prac z Biurka i Dokumentów ucznia, czyszczenie folderów, podmiana aplikacji, a od macOS 15 także wyłączenie okna, w którym system pyta ucznia o zgodę na podgląd ekranu."
         case .screenRecording: return "Bez tego podgląd ekranów pokazuje tylko tapetę."
         case .screenSharing: return "Tylko gdy Udostępnianie ekranu (VNC) pokazuje czarny obraz."
         case .fileVault: return "Z FileVault iMac po restarcie jest niedostępny, dopóki ktoś go nie odblokuje."
@@ -309,7 +309,8 @@ enum ManualStep: String, CaseIterable, Identifiable {
             return ["macOS chroni to ustawienie – nie da się go włączyć zdalnie ani skryptem (tylko przy komputerze lub przez MDM)."]
         case .screenRecording:
             return ["W macOS 26.1–26.2 dodane narzędzie może nie być widoczne na liście – to błąd systemu, uprawnienie działa.",
-                    "Od macOS 15 system co jakiś czas pyta zalogowanego użytkownika o zgodę na nagrywanie; wyłączyć to można tylko profilem MDM."]
+                    "Samego uprawnienia nie da się nadać zdalnie: systemowa baza TCC jest chroniona przez SIP, a profil MDM może Nagrywanie ekranu tylko zablokować albo pozwolić włączyć je kontu standardowemu – nie włączyć.",
+                    "Okno, w którym macOS 15+ co jakiś czas pyta zalogowanego użytkownika o zgodę na dostęp do ekranu, CMCR Manager wyłącza sam przed każdym podglądem (potrzebny pełny dostęp do dysku dla sesji zdalnych). Na Macach w MDM wyłącza je na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig."]
         case .screenSharing:
             return ["Od macOS 12.1 usługa włączona zdalnie potrafi pokazywać czarny ekran, dopóki ktoś raz jej nie przełączy."]
         case .fileVault:
