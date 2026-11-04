@@ -228,7 +228,8 @@ import Testing
     @Test func catalogCoversEveryPowerActionAndUpdateVariant() {
         let names = Set(ScriptCatalog.samples.map(\.name))
         for action in PowerAction.allCases { #expect(names.contains("power(\(action.rawValue))")) }
-        #expect(names.filter { $0.hasPrefix("installUpdates") }.count == 8)
+        // The 8 combinations of restart/recommended/download, plus --major with an awkward run id.
+        #expect(names.filter { $0.hasPrefix("installUpdates") }.count == 9)
         #expect(names.count == ScriptCatalog.samples.count, "nazwy próbek są unikalne")
     }
 
