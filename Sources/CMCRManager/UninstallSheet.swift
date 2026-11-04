@@ -33,6 +33,17 @@ struct UninstallSheet: View {
                     .disabled(preview.isLoading)
                 }
             }
+            let versions = preview.versionLines
+            if !versions.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Usuwane wersje").font(.callout.weight(.medium))
+                    ForEach(versions, id: \.self) { line in
+                        Text(line).font(.callout).monospacedDigit().textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(preview.targets) { m in machine(m) }

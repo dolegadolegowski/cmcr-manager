@@ -76,6 +76,14 @@ final class UninstallPreview: ObservableObject, Identifiable {
         targets.filter { if case .report(let r) = results[$0.id] { return r.hasWork }; return false }
     }
 
+    /// Which version of each app the dry run found on which Mac: „Gra: 1.0 (imac01), 2.0 (imac02)”.
+    var versionLines: [String] {
+        UninstallReport.versionLines(targets.compactMap { m in
+            if case .report(let r) = results[m.id] { return (m.name, r) }
+            return nil
+        })
+    }
+
     var plannedKB: Int64 {
         targets.reduce(0) { sum, m in
             if case .report(let r) = results[m.id] { return sum + (r.summary?.plannedKB ?? 0) }

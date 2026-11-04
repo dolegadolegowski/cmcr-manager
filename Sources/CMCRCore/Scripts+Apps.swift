@@ -22,6 +22,15 @@ extension Scripts {
     # One field of a record: tabs and line breaks would split it.
     cmcr_clean() { local s="$1"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/ }"; printf '%s' "$s"; }
     cmcr_plist() { plutil -extract "$2" raw -o - "$1" 2>/dev/null; }
+    # The version people see: CFBundleShortVersionString, else CFBundleVersion; a blank value does not count.
+    cmcr_app_version() {
+      local k v
+      for k in CFBundleShortVersionString CFBundleVersion; do
+        v="$(cmcr_plist "$1" "$k" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        if [ -n "$v" ]; then printf '%s' "$v"; return 0; fi
+      done
+      return 0
+    }
     # Accounts whose ~/Applications count as allowed: the student account from the settings and the logged-in user.
     cmcr_app_users() {
       local u seen=" "
@@ -103,8 +112,7 @@ extension Scripts {
           fi
           case "$loc" in system) kind=system ;; unity) kind=unity ;; esac
           bid="$(cmcr_plist "$a/Contents/Info.plist" CFBundleIdentifier)"
-          ver="$(cmcr_plist "$a/Contents/Info.plist" CFBundleShortVersionString)"
-          [ -n "$ver" ] || ver="$(cmcr_plist "$a/Contents/Info.plist" CFBundleVersion)"
+          ver="$(cmcr_app_version "$a/Contents/Info.plist")"
           if [ $kind = app ]; then
             case "$(stat -f %Sf "$a" 2>/dev/null)" in *restricted*) kind=system ;; esac
           fi
@@ -353,8 +361,7 @@ extension Scripts {
           esac
           B="$ITEM"; [ $KIND = unity ] && B="$ITEM/Unity.app"
           BID="$(cmcr_plist "$B/Contents/Info.plist" CFBundleIdentifier)"
-          VER="$(cmcr_plist "$B/Contents/Info.plist" CFBundleShortVersionString)"
-          [ -n "$VER" ] || VER="$(cmcr_plist "$B/Contents/Info.plist" CFBundleVersion)"
+          VER="$(cmcr_app_version "$B/Contents/Info.plist")"
           TITLE="${NAME%.app}"
           if [ $KIND = unity ]; then VER="$NAME"; TITLE="Unity $NAME"; fi
           case "$BID" in

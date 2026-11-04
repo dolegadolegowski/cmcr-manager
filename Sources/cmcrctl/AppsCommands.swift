@@ -55,7 +55,9 @@ extension CLI {
     }
 
     static func json(_ app: InstalledApp) -> [String: Any] {
-        var d: [String: Any] = ["name": app.name, "path": app.path, "bundleID": app.bundleID, "version": app.version,
+        // A missing version (neither CFBundleShortVersionString nor CFBundleVersion) is null, not "".
+        var d: [String: Any] = ["name": app.name, "path": app.path, "bundleID": app.bundleID,
+                                "version": app.version.isEmpty ? NSNull() : app.version as Any,
                                 "kind": app.kind.rawValue, "location": app.location, "receipts": app.receipts,
                                 "removable": app.isRemovable]
         if let kb = app.sizeKB { d["sizeKB"] = kb }
@@ -68,8 +70,12 @@ extension CLI {
         func esc(_ s: String) -> String { TerminalText.escape(s, keepBackslash: true) }
         var lines: [String] = []
         let shown = inv.apps.filter { system || $0.kind != .system }
+        if !shown.isEmpty {
+            lines.append("  " + pad("Aplikacja", 28) + " " + pad("Wersja", 14) + " " + pad("Rozmiar", 9, right: true) + "  "
+                         + pad("Identyfikator", 36) + " Ścieżka")
+        }
         for app in shown {
-            var line = "  " + pad(esc(app.name), 28) + " " + pad(esc(app.version.isEmpty ? "—" : app.version), 14) + " "
+            var line = "  " + pad(esc(app.name), 28) + " " + pad(esc(app.versionText), 14) + " "
                 + pad(AppInventory.sizeText(app.sizeKB), 9, right: true) + "  " + pad(esc(app.bundleID.isEmpty ? "—" : app.bundleID), 36)
                 + " " + esc(app.path)
             if !app.kindLabel.isEmpty { line += "  [\(app.kindLabel)\(app.isRemovable ? "" : ", nie do odinstalowania")]" }
@@ -110,17 +116,24 @@ extension CLI {
         let list = targets(pos.last)
         let pkg = args.has("--with-package-files")
         if args.has("--dry-run") { return await runUninstall(on: list, apps, dryRun: true, packageFiles: pkg) }
+        var versions = ""
         if !args.yes && isatty(STDIN_FILENO) != 0 {
             Console.err("Podgląd – na komputerach nic jeszcze nie zostało zmienione:")
-            _ = await runUninstall(on: list, apps, dryRun: true, packageFiles: pkg)
+            let preview = ResultBox(count: list.count)
+            _ = await runUninstall(on: list, apps, dryRun: true, packageFiles: pkg, results: preview)
+            // Which version goes where, in the question itself (the preview may have scrolled away).
+            let reports = zip(list, preview.all()).compactMap { h, r in r.map { (h.name, UninstallReport.parse($0.stdoutText)) } }
+            let lines = UninstallReport.versionLines(reports)
+            if !lines.isEmpty { versions = " Wersje: " + lines.map { TerminalText.escape($0) }.joined(separator: "; ") + "." }
         }
         let what = apps.count == 1 ? apps[0] : "\(apps.count) aplikacje (\(apps.joined(separator: ", ")))"
-        confirm("Odinstalować \(what) na: \(names(list))? Uruchomiona aplikacja zostanie zamknięta – niezapisana praca przepadnie.")
+        confirm("Odinstalować \(what) na: \(names(list))?\(versions) Uruchomiona aplikacja zostanie zamknięta – niezapisana praca przepadnie.")
         logAction(list)
         return await runUninstall(on: list, apps, dryRun: false, packageFiles: pkg)
     }
 
-    func runUninstall(on list: [Machine], _ apps: [String], dryRun: Bool, packageFiles: Bool) async -> Int32 {
+    func runUninstall(on list: [Machine], _ apps: [String], dryRun: Bool, packageFiles: Bool,
+                      results: ResultBox? = nil) async -> Int32 {
         let ssh = sshSettings()
         let script = Scripts.uninstallApps(apps, studentUser: settings.studentUser, dryRun: dryRun, packageFiles: packageFiles)
         let makeHeader = header
@@ -138,6 +151,7 @@ extension CLI {
                 let rest = renderer.finish(channel)
                 if !rest.isEmpty { io.write(channel, rest + Data("\n".utf8)) }
             }
+            results?.set(io.index, r)
             return io.report(r)
         }
         return combine(codes)

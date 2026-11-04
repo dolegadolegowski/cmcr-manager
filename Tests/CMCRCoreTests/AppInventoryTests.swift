@@ -93,7 +93,9 @@ import Testing
     @Test func rendersPolishLines() {
         let text = UninstallReport.render(Self.run)
         let mb = AppInventory.sizeText(2048)
-        #expect(text.contains("▸ Gra – 1.0, pl.test.gra, \(mb): /Applications/Gra.app"))
+        #expect(text.contains("▸ Gra – wersja 1.0, pl.test.gra, \(mb): /Applications/Gra.app"))
+        #expect(UninstallReport.line(UninstallRecord(verb: .target, what: "app", path: "/Applications/B.app", detail: "B",
+                                                     extra: ["", "pl.test.b", "", "apps"])) == "▸ B – wersja —, pl.test.b: /Applications/B.app")
         #expect(text.contains("Aplikacja jest uruchomiona – konto: uczen (PID 123 456)"))
         #expect(text.contains("• Do usunięcia – aplikację: /Applications/Gra.app (\(mb))"))
         #expect(text.contains("usługę systemową (LaunchDaemon) pl.test.gra.helper (najpierw zatrzymana)"))
@@ -149,6 +151,44 @@ import Testing
         }
     }
 
+    // MARK: - Versions on several Macs
+
+    static let lab = (1...11).map { String(format: "imac%02d", $0) }
+
+    @Test func versionsAreListedWithTheirMacs() {
+        let pairs = Self.lab.map { ($0, $0 == "imac11" ? "12.0" : "12.1") }
+        #expect(VersionSummary.text(pairs.map { (host: $0.0, version: $0.1) }, order: Self.lab) == "12.1 (imac01–imac10), 12.0 (imac11)")
+        // One version on every Mac: just the version; no version anywhere: „—”.
+        #expect(VersionSummary.text([("imac01", "3.0"), ("imac02", "3.0")], order: Self.lab) == "3.0")
+        #expect(VersionSummary.text([("imac01", ""), ("imac02", "")], order: Self.lab) == "—")
+        #expect(VersionSummary.text([], order: Self.lab) == "—")
+        // A Mac without a version is shown, last.
+        #expect(VersionSummary.text([("imac02", ""), ("imac01", "2.0")], order: Self.lab) == "2.0 (imac01), — (imac02)")
+        // As many Macs: the newest version first (numerically: 1.10 > 1.9).
+        #expect(VersionSummary.text([("imac01", "1.9"), ("imac02", "1.10")], order: Self.lab) == "1.10 (imac02), 1.9 (imac01)")
+    }
+
+    /// A range never hides a Mac that does not have this version (or the app), and two Macs are not a range.
+    @Test func hostRangesFollowTheListOrder() {
+        #expect(VersionSummary.hostList(["imac01", "imac02", "imac03", "imac05"], order: Self.lab) == "imac01–imac03, imac05")
+        #expect(VersionSummary.hostList(["imac01", "imac02"], order: Self.lab) == "imac01, imac02")
+        #expect(VersionSummary.hostList(["imac03", "imac01", "imac02"], order: Self.lab) == "imac03, imac01, imac02")
+        #expect(VersionSummary.groups([("imac03", "1"), ("imac01", "1"), ("imac02", "1")], order: Self.lab).first?.hosts
+                == ["imac01", "imac02", "imac03"])
+        #expect(VersionSummary.hostList(["x", "imac01"], order: Self.lab) == "x, imac01")
+    }
+
+    @Test func uninstallVersionLinesPerApp() {
+        func report(_ version: String) -> UninstallReport {
+            UninstallReport.parse("CMCR:UN\ttarget\tapp\t/Applications/Gra.app\tGra\t\(version)\tpl.test.gra\t10\tapps\n"
+                                  + "CMCR:UN\ttarget\tapp\t/Applications/Edytor.app\tEdytor\t7\tpl.test.e\t10\tapps")
+        }
+        let lines = UninstallReport.versionLines([("imac01", report("1.0")), ("imac02", report("2.0")), ("imac03", report(""))])
+        #expect(lines == ["Gra: 2.0 (imac02), 1.0 (imac01), — (imac03)", "Edytor: 7"])
+        #expect(AppInventory.parse("CMCR:APP\tapps\tapp\t/Applications/A.app\ta\t 1.2 \t1\t").apps.first?.version == "1.2")
+        #expect(InstalledApp(path: "/Applications/A.app", location: "apps", kind: .app).versionText == "—")
+    }
+
     // MARK: - Running the scripts locally
 
     /// Folders of the test: Applications, Users/<account>/Applications and the system folders (fsroot), plus fakes:
@@ -187,10 +227,13 @@ import Testing
              "CMCR_USERS_DIR": dir.appendingPathComponent("Users").path, "CMCR_FS_PREFIX": dir.appendingPathComponent("fsroot").path]
         }
 
-        func makeApp(_ folder: URL, _ name: String, bundleID: String, version: String = "1.0") throws {
+        /// `version` is CFBundleShortVersionString and `build` CFBundleVersion; nil leaves the key out.
+        func makeApp(_ folder: URL, _ name: String, bundleID: String, version: String? = "1.0", build: String? = nil) throws {
             let contents = folder.appendingPathComponent("\(name).app/Contents")
             try FileManager.default.createDirectory(at: contents.appendingPathComponent("MacOS"), withIntermediateDirectories: true)
-            let plist: [String: Any] = ["CFBundleIdentifier": bundleID, "CFBundleShortVersionString": version]
+            var plist: [String: Any] = ["CFBundleIdentifier": bundleID]
+            if let version { plist["CFBundleShortVersionString"] = version }
+            if let build { plist["CFBundleVersion"] = build }
             try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
                 .write(to: contents.appendingPathComponent("Info.plist"))
             try Data(count: 4096).write(to: contents.appendingPathComponent("MacOS/\(name)"))
@@ -225,6 +268,13 @@ import Testing
         try lab.makeApp(lab.apps.appendingPathComponent("Utilities"), "Narzędzie", bundleID: "pl.test.narzedzie")
         try lab.makeApp(lab.home.appendingPathComponent("Applications"), "Gra", bundleID: "pl.test.gra")
         try lab.makeApp(lab.apps, "Pages Test", bundleID: "com.apple.test")
+        // Version fallbacks: CFBundleVersion without CFBundleShortVersionString (or with a blank one), neither,
+        // and a Unity editor (its folder's name).
+        try lab.makeApp(lab.apps, "Tylko Build", bundleID: "pl.test.build", version: nil, build: "77")
+        try lab.makeApp(lab.apps, "Pusta Wersja", bundleID: "pl.test.pusta", version: "  ", build: "5.0.1")
+        try lab.makeApp(lab.apps, "Bez Wersji", bundleID: "pl.test.bez", version: nil, build: nil)
+        try lab.makeApp(lab.apps.appendingPathComponent("Unity/Hub/Editor/6000.6.8f1"), "Unity",
+                        bundleID: "com.unity3d.UnityEditor5.x", version: "6000.6.8f1")
         let r = await lab.run(Scripts.appInventory(studentUser: Lab.me))
         #expect(r.exitCode == 0)
         #expect(Lab.errors(r).isEmpty, "\(r.stderrText)")
@@ -236,6 +286,10 @@ import Testing
         #expect(byName["Narzędzie"]?.location == "utilities")
         #expect(byName["Gra"]?.location == "user:\(Lab.me)")
         #expect(byName["Pages Test"]?.kind == .apple)
+        #expect(byName["Tylko Build"]?.version == "77")
+        #expect(byName["Pusta Wersja"]?.version == "5.0.1")
+        #expect(byName["Bez Wersji"]?.version == "" && byName["Bez Wersji"]?.versionText == "—")
+        #expect(byName["Unity 6000.6.8f1"]?.version == "6000.6.8f1" && byName["Unity 6000.6.8f1"]?.kind == .unity)
         #expect(inv.apps.contains { $0.kind == .system && $0.path.hasPrefix("/System/Applications/") })
     }
 
@@ -243,13 +297,14 @@ import Testing
         let lab = try Lab()
         defer { lab.remove() }
         try #require(await lab.guardFakes())
-        try lab.makeApp(lab.apps, "Gra", bundleID: "pl.test.gra", version: "1.0")
+        try lab.makeApp(lab.apps, "Gra", bundleID: "pl.test.gra", version: nil, build: "42")
         let app = lab.apps.appendingPathComponent("Gra.app").path
         let dry = await lab.run(Scripts.uninstallApps(["Gra"], studentUser: Lab.me, dryRun: true))
         #expect(dry.exitCode == 0, "\(dry.stdoutText)\(dry.stderrText)")
         #expect(Lab.errors(dry).isEmpty, "\(dry.stderrText)")
         let plan = UninstallReport.parse(dry.stdoutText)
         #expect(plan.planned.map(\.path) == [app])
+        #expect(plan.targets.first?.version == "42", "wersja z CFBundleVersion, gdy brak CFBundleShortVersionString")
         #expect(plan.summary?.dryRun == true)
         #expect(FileManager.default.fileExists(atPath: app))
         let real = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me))

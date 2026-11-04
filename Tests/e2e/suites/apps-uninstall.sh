@@ -219,3 +219,59 @@ expect "App Store i MDM: wyjaśnienia" "$out" "Aplikacja z App Store" "zarządza
 out="$(ctl uninstall --help)"
 expect "uninstall --help" "$out" "--dry-run" "--with-package-files"
 rm -rf "$WORK/Users/inny" "$WORK/in/podmiana" "$AP_HOME/Applications/Podmiana"
+
+section "Wersje aplikacji na dwóch komputerach"
+# A second test iMac (imac03): another sshd of this run, the same fakes, its own Applications folder.
+AP2="$WORK/mac2"
+AP2_PORT=$((PORT + 1))
+mkdir -p "$AP2/Applications"
+sed -e "s/^Port .*/Port $AP2_PORT/" -e "s#^PidFile .*#PidFile $AP2/sshd.pid#" \
+  -e "s#CMCR_APPS_DIR=[^ ]*#CMCR_APPS_DIR=$AP2/Applications#" "$WORK/sshd_config" > "$AP2/sshd_config"
+/usr/sbin/sshd -D -e -f "$AP2/sshd_config" 2>"$AP2/sshd.log" &
+AP2_PID=$!
+for _ in $(seq 1 50); do nc -z 127.0.0.1 "$AP2_PORT" 2>/dev/null && break; sleep 0.1; done
+cp "$WORK/config/hosts.json" "$AP2/hosts.json.bak"
+python3 - "$WORK/config/hosts.json" "$ME" "$AP2_PORT" <<'PY'
+import json, sys
+p, me, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
+hosts = json.load(open(p))
+hosts.append({"id": "33333333-3333-3333-3333-333333333333", "name": "imac03", "address": "127.0.0.1", "user": me, "port": port})
+json.dump(hosts, open(p, "w"))
+PY
+out="$("$CTL" trust 3 --yes 2>&1)"
+expect "drugi komputer: klucz zaufany" "$out" "imac03: zaufano"
+ap_mkapp "$AP_APPS" "Wersje Test" pl.test.wersje 1.0
+ap_mkapp "$AP2/Applications" "Wersje Test" pl.test.wersje 2.0
+# Without CFBundleShortVersionString: CFBundleVersion is the version; without both: none („—”, null in JSON).
+ap_mkapp "$AP2/Applications" "Tylko Build" pl.test.build 9.9
+plutil -remove CFBundleShortVersionString "$AP2/Applications/Tylko Build.app/Contents/Info.plist"
+plutil -insert CFBundleVersion -string 77 "$AP2/Applications/Tylko Build.app/Contents/Info.plist"
+ap_mkapp "$AP_APPS" "Bez Wersji" pl.test.bez 9.9
+plutil -remove CFBundleShortVersionString "$AP_APPS/Bez Wersji.app/Contents/Info.plist"
+out="$(ctl apps installed 1,3 --json)"; code=$?
+expect_code "dwa komputery: apps installed --json – kod 0" "$code" 0 "$out"
+ap_json2() { # ap_json2 JSON HOST-INDEX APP – version of APP on that host ("None" when missing)
+  printf '%s' "$1" | python3 -c "import json,sys; d=json.load(sys.stdin); a={x['name']: x for x in d[$2]['apps']}; print(repr(a['$3']['version']) if '$3' in a else 'brak')" 2>&1
+}
+expect "dwa komputery: każdy ze swoją wersją" "$(ap_json2 "$out" 0 "Wersje Test") $(ap_json2 "$out" 1 "Wersje Test")" "'1.0' '2.0'"
+expect "wersja z CFBundleVersion, gdy brak CFBundleShortVersionString" "$(ap_json2 "$out" 1 "Tylko Build")" "'77'"
+expect "brak obu kluczy: wersja null w JSON" "$(ap_json2 "$out" 0 "Bez Wersji")" "None"
+out="$(ctl apps installed 1,3)"
+expect "apps installed: kolumna Wersja" "$out" "Aplikacja" "Wersja" "Rozmiar" "Identyfikator"
+expect "apps installed: wersje w wierszach obu komputerów" "$(printf '%s\n' "$out" | grep 'Wersje Test')" "1.0" "2.0"
+expect "apps installed: brak wersji jako —" "$(printf '%s\n' "$out" | grep 'Bez Wersji')" "—"
+expect "apps installed: wersja z CFBundleVersion" "$(printf '%s\n' "$out" | grep 'Tylko Build')" " 77 "
+out="$(ctlpw uninstall "Wersje Test" 1,3 --dry-run)"; code=$?
+expect_code "podgląd na dwóch komputerach: kod 0" "$code" 0 "$out"
+expect "podgląd: usuwana wersja na każdym komputerze" "$out" \
+  "== imac01" "▸ Wersje Test – wersja 1.0, pl.test.wersje" "== imac03" "▸ Wersje Test – wersja 2.0, pl.test.wersje"
+expect "podgląd: aplikacja bez wersji" "$(ctlpw uninstall "Bez Wersji" 1 --dry-run)" "▸ Bez Wersji – wersja —"
+out="$(ctlpw uninstall "Wersje Test" 1,3 --yes)"; code=$?
+expect_code "odinstalowanie na dwóch komputerach: kod 0" "$code" 0 "$out"
+expect "odinstalowanie: raport z wersją z każdego komputera" "$out" "wersja 1.0" "wersja 2.0" "Wynik: usunięto"
+[ ! -e "$AP_APPS/Wersje Test.app" ] && [ ! -e "$AP2/Applications/Wersje Test.app" ] \
+  && pass "odinstalowanie: usunięte na obu komputerach" || fail "odinstalowanie: aplikacja została" "$out"
+kill "$AP2_PID" 2>/dev/null
+wait "$AP2_PID" 2>/dev/null
+cp "$AP2/hosts.json.bak" "$WORK/config/hosts.json"
+rm -rf "$AP_APPS/Bez Wersji.app"

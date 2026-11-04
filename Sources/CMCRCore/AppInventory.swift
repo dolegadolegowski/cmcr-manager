@@ -49,6 +49,10 @@ public struct InstalledApp: Identifiable, Hashable, Sendable {
     /// The folder it is in.
     public var folder: String { (path as NSString).deletingLastPathComponent }
 
+    /// The version for people: CFBundleShortVersionString, else CFBundleVersion (the inventory falls back on its
+    /// own), the editor version of a Unity editor; "—" when the app has neither.
+    public var versionText: String { version.isEmpty ? "—" : version }
+
     /// The account whose ~/Applications it is in.
     public var user: String? { location.hasPrefix("user:") ? String(location.dropFirst(5)) : nil }
 
@@ -156,7 +160,8 @@ public enum AppInventory {
             switch tag {
             case "CMCR:APP" where f.count >= 8:
                 guard let kind = InstalledApp.Kind(rawValue: f[2]), f[3].hasPrefix("/") else { continue }
-                inv.apps.append(InstalledApp(path: f[3], location: f[1], kind: kind, bundleID: f[4], version: f[5],
+                inv.apps.append(InstalledApp(path: f[3], location: f[1], kind: kind, bundleID: f[4],
+                                             version: f[5].trimmingCharacters(in: .whitespaces),
                                              sizeKB: Int64(f[6]),
                                              receipts: f[7].split(separator: ",").map(String.init)))
             case "CMCR:PKG" where f.count >= 5:
@@ -183,5 +188,56 @@ public enum AppInventory {
     public static func sizeText(_ kb: Int64?) -> String {
         guard let kb else { return "—" }
         return ByteCountFormatter.string(fromByteCount: kb * 1024, countStyle: .file)
+    }
+}
+
+/// Which Macs have which version of an app: „12.1 (imac01–imac10), 12.0 (imac11)”. A run of three or more Macs that
+/// follow each other in the list is written as a range; a missing version is „—”.
+public enum VersionSummary {
+    public struct Group: Hashable, Sendable {
+        /// Empty when the app has no version.
+        public let version: String
+        /// Macs in list order.
+        public let hosts: [String]
+        public var versionText: String { version.isEmpty ? "—" : version }
+    }
+
+    /// Groups (Mac, version) pairs: the version on most Macs first, then the newest; „—” last.
+    public static func groups(_ pairs: [(host: String, version: String)], order: [String]) -> [Group] {
+        let position = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        var byVersion: [String: [String]] = [:]
+        for p in pairs { byVersion[p.version, default: []].append(p.host) }
+        return byVersion.map { version, hosts in
+            Group(version: version, hosts: hosts.sorted { (position[$0] ?? .max, $0) < (position[$1] ?? .max, $1) })
+        }
+        .sorted { a, b in
+            if a.version.isEmpty != b.version.isEmpty { return !a.version.isEmpty }
+            if a.hosts.count != b.hosts.count { return a.hosts.count > b.hosts.count }
+            return a.version.compare(b.version, options: .numeric) == .orderedDescending
+        }
+    }
+
+    /// One version: just it. Several: every version with its Macs.
+    public static func text(_ pairs: [(host: String, version: String)], order: [String]) -> String {
+        let g = groups(pairs, order: order)
+        guard g.count > 1 else { return g.first?.versionText ?? "—" }
+        return g.map { "\($0.versionText) (\(hostList($0.hosts, order: order)))" }.joined(separator: ", ")
+    }
+
+    /// „imac01–imac10, imac12”: Macs next to each other in `order` (three or more) become a range; a Mac of the list
+    /// that is not in `hosts` breaks the range, so a range never hides a Mac without this version.
+    public static func hostList(_ hosts: [String], order: [String]) -> String {
+        let position = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        var runs: [[String]] = []
+        for h in hosts {
+            if let last = runs.last?.last, let a = position[last], let b = position[h], b == a + 1 {
+                runs[runs.count - 1].append(h)
+            } else {
+                runs.append([h])
+            }
+        }
+        return runs.map { run in
+            run.count >= 3 ? "\(run[0])–\(run[run.count - 1])" : run.joined(separator: ", ")
+        }.joined(separator: ", ")
     }
 }

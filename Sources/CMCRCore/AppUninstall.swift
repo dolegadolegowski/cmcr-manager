@@ -45,6 +45,10 @@ public struct UninstallRecord: Hashable, Sendable {
     }
 
     var kb: Int64? { Int64(detail) }
+
+    /// The version of the app a `target` record is about; "—" when it has none.
+    public var version: String { verb == .target ? (extra.first ?? "") : "" }
+    public var versionText: String { version.isEmpty ? "—" : version }
 }
 
 /// Counts from the closing record.
@@ -86,6 +90,21 @@ public struct UninstallReport: Sendable {
 
     /// Apps the run works on (target records), in order.
     public var targets: [UninstallRecord] { records.filter { $0.verb == .target } }
+
+    /// Which version of each app is removed on which Mac: „Gra: 1.0 (imac01), 2.0 (imac02)” per app (by its name),
+    /// from the reports of several Macs in list order.
+    public static func versionLines(_ reports: [(host: String, report: UninstallReport)]) -> [String] {
+        var names: [String] = []
+        var pairs: [String: [(host: String, version: String)]] = [:]
+        for (host, report) in reports {
+            for t in report.targets {
+                if pairs[t.detail] == nil { names.append(t.detail) }
+                pairs[t.detail, default: []].append((host, t.version))
+            }
+        }
+        let order = reports.map(\.host)
+        return names.map { "\($0): \(VersionSummary.text(pairs[$0] ?? [], order: order))" }
+    }
     public var refusals: [UninstallRecord] { records.filter { $0.verb == .refused } }
     public var failures: [UninstallRecord] { records.filter { $0.verb == .failed } }
     public var notes: [UninstallRecord] { records.filter { $0.verb == .note } }
@@ -139,11 +158,10 @@ public struct UninstallReport: Sendable {
         let sizeSuffix = size(r.kb).map { " (\($0))" } ?? ""
         switch r.verb {
         case .target:
-            let version = r.extra.first.flatMap { $0.isEmpty ? nil : $0 }
             let bid = r.extra.count > 1 && !r.extra[1].isEmpty ? r.extra[1] : nil
             let kb = r.extra.count > 2 ? Int64(r.extra[2]) : nil
-            let facts = [version, bid, size(kb)].compactMap { $0 }
-            return "▸ \(r.detail)\(facts.isEmpty ? "" : " – " + facts.joined(separator: ", ")): \(r.path)"
+            let facts = ["wersja \(r.versionText)", bid, size(kb)].compactMap { $0 }
+            return "▸ \(r.detail) – \(facts.joined(separator: ", ")): \(r.path)"
         case .plan:
             switch r.what {
             case "app", "unity": return "  • Do usunięcia – \(noun(r.what)): \(r.path)\(sizeSuffix)"

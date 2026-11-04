@@ -16,13 +16,21 @@ import Testing
                                      Self.app("/Applications/blender.app")])
         let b = HostInventory(apps: [Self.app("/Applications/Gra.app", version: "1.1", kb: 300),
                                      Self.app("/Users/u/Applications/Gra.app", location: "user:u")])
-        let rows = InstalledAppsSection.rows([a, b])
+        let c = HostInventory(apps: [Self.app("/Applications/Gra.app", version: "1.1"),
+                                     Self.app("/Applications/blender.app", version: "")])
+        let rows = InstalledAppsSection.rows([("imac01", a), ("imac02", b), ("imac03", c)], order: ["imac01", "imac02", "imac03"])
         #expect(rows.map(\.app.path) == ["/Applications/blender.app", "/Applications/Gra.app", "/Users/u/Applications/Gra.app"])
         let gra = try #require(rows.first { $0.app.path == "/Applications/Gra.app" })
-        #expect(gra.count == 2)
-        #expect(gra.versions == ["1.0", "1.1"] && gra.versionText == "różne (2)")
+        #expect(gra.count == 3)
+        // Every version with its Macs – never only the first one.
+        #expect(gra.versions == ["1.1", "1.0"])
+        #expect(gra.versionText == "1.1 (imac02, imac03), 1.0 (imac01)")
+        #expect(gra.versionDetail == "imac01: 1.0\nimac02: 1.1\nimac03: 1.1")
         #expect(gra.sizeKB == 300)
-        #expect(rows[0].versionText == "1.0" && rows[0].count == 1)
+        #expect(rows[0].versionText == "1.0 (imac01), — (imac03)" && rows[0].count == 2)
+        // One Mac: its own version.
+        let one = InstalledAppsSection.rows([("imac02", b)], order: ["imac02"])
+        #expect(one.first { $0.app.path == "/Applications/Gra.app" }?.versionText == "1.1")
         let packages = InstalledAppsSection.packageRows([
             HostInventory(packages: [InstalledPackage(id: "b"), InstalledPackage(id: "a")]),
             HostInventory(packages: [InstalledPackage(id: "a")]),

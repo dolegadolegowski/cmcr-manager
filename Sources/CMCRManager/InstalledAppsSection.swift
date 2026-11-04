@@ -12,15 +12,23 @@ struct InstalledAppsSection: View {
     @ViewState private var showPackages = false
     @ViewState private var preview: UninstallPreview?
 
-    /// One row of the table: the same path on several Macs.
+    /// One row of the table: the same path on several Macs, with the version each of them has.
     struct Row: Identifiable {
         let app: InstalledApp
-        let count: Int
-        let versions: [String]
+        /// (Mac, version) for every Mac that has the app; the version is empty when the app has none.
+        let hosts: [(host: String, version: String)]
+        /// The checked Macs in list order (ranges in the version text never skip one of them).
+        let order: [String]
         let sizeKB: Int64?
         var id: String { app.path }
-        var versionText: String {
-            versions.isEmpty ? "—" : versions.count == 1 ? versions[0] : "różne (\(versions.count))"
+        var count: Int { hosts.count }
+        /// The distinct versions, the most common first.
+        var versions: [String] { VersionSummary.groups(hosts, order: order).map(\.version) }
+        /// One version: it („—” when the app has none). Several: each with its Macs, „12.1 (imac01–imac10), 12.0 (imac11)”.
+        var versionText: String { VersionSummary.text(hosts, order: order) }
+        /// Every Mac with its version, one per line (the column's help).
+        var versionDetail: String {
+            hosts.map { "\($0.host): \($0.version.isEmpty ? "—" : $0.version)" }.joined(separator: "\n")
         }
     }
 
@@ -35,7 +43,8 @@ struct InstalledAppsSection: View {
         let checked = machines.filter { model.installedApps[$0.id] != nil }.count
         let loading = machines.filter { model.installedAppsLoading.contains($0.id) }.count
         let failed = machines.compactMap { m in model.installedAppsErrors[m.id].map { (m.name, $0) } }
-        let all = Self.rows(machines.compactMap { model.installedApps[$0.id] })
+        let all = Self.rows(machines.compactMap { m in model.installedApps[m.id].map { (m.name, $0) } },
+                            order: machines.map(\.name))
         let rows = all.filter { showProtected || $0.app.isRemovable }
         let needle = filter.trimmingCharacters(in: .whitespaces)
         let shown = needle.isEmpty ? rows : rows.filter {
@@ -133,9 +142,10 @@ struct InstalledAppsSection: View {
                     .monospacedDigit()
                     .foregroundStyle(row.versions.count > 1 ? Color.orange : Color.primary)
                     .lineLimit(1)
-                    .help(row.versions.count > 1 ? "Na komputerach są różne wersje: \(row.versions.joined(separator: ", "))" : row.versionText)
+                    .truncationMode(.tail)
+                    .help(row.versions.count > 1 ? "Na komputerach są różne wersje:\n\(row.versionDetail)" : row.versionDetail)
             }
-            .width(min: 60, ideal: 90, max: 140)
+            .width(min: 70, ideal: 110, max: 260)
             TableColumn("Rozmiar") { row in
                 Text(AppInventory.sizeText(row.sizeKB))
                     .monospacedDigit()
@@ -219,14 +229,16 @@ struct InstalledAppsSection: View {
         }
     }
 
-    /// Why the selected apps cannot be removed, or what is special about removing them.
+    /// The versions of the selected apps on the checked Macs (the column may be too narrow for all of them), then why
+    /// they cannot be removed or what is special about removing them.
     func selectedNote(_ selected: [Row]) -> String? {
-        let notes = selected.compactMap { row -> String? in
+        let versions = selected.prefix(3).map { "\($0.app.name) – wersja: \($0.versionText)" }
+        let notes = versions + selected.compactMap { row -> String? in
             if let reason = row.app.reasonNotRemovable { return "\(row.app.name): \(reason)" }
             return row.app.uninstallNote.map { "\(row.app.name): \($0)" }
         }
         let unique = notes.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-        return unique.isEmpty ? nil : unique.prefix(3).joined(separator: "\n")
+        return unique.isEmpty ? nil : unique.prefix(6).joined(separator: "\n")
     }
 
     func startUninstall(_ apps: [InstalledApp]) {
@@ -275,24 +287,21 @@ struct InstalledAppsSection: View {
 
     // MARK: Data
 
-    static func rows(_ inventories: [HostInventory]) -> [Row] {
-        var order: [String] = []
+    /// One row per app path over the Macs (`name` = the Mac's name), sorted by app name.
+    static func rows(_ inventories: [(name: String, inventory: HostInventory)], order: [String]) -> [Row] {
+        var paths: [String] = []
         var first: [String: InstalledApp] = [:]
-        var counts: [String: Int] = [:]
-        var versions: [String: [String]] = [:]
+        var hosts: [String: [(host: String, version: String)]] = [:]
         var sizes: [String: Int64] = [:]
-        for inv in inventories {
+        for (name, inv) in inventories {
             for app in inv.apps {
-                if first[app.path] == nil { first[app.path] = app; order.append(app.path) }
-                counts[app.path, default: 0] += 1
-                if !app.version.isEmpty, !(versions[app.path] ?? []).contains(app.version) {
-                    versions[app.path, default: []].append(app.version)
-                }
+                if first[app.path] == nil { first[app.path] = app; paths.append(app.path) }
+                hosts[app.path, default: []].append((name, app.version))
                 if let kb = app.sizeKB { sizes[app.path] = max(sizes[app.path] ?? 0, kb) }
             }
         }
-        return order.compactMap { path in
-            first[path].map { Row(app: $0, count: counts[path] ?? 0, versions: versions[path] ?? [], sizeKB: sizes[path]) }
+        return paths.compactMap { path in
+            first[path].map { Row(app: $0, hosts: hosts[path] ?? [], order: order, sizeKB: sizes[path]) }
         }
         .sorted {
             let order = $0.app.name.localizedStandardCompare($1.app.name)
