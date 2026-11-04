@@ -94,6 +94,18 @@ if codesign -dr - "$APP" 2>&1 | grep -q 'designated => cdhash'; then
   warn "Podpis ad-hoc: po uaktualnieniu macOS ponownie zapyta o dostęp do hasła w Pęku kluczy."
   warn "Stała tożsamość podpisu: scripts/make-signing-identity.sh (README › Podpis kodu)."
 fi
+# CMCR Screen Agent (docs/screen-agent.md) travels inside the app and is installed on the iMacs from there.
+AGENT="$APP/Contents/Helpers/CMCR Screen Agent.app"
+AGENT_SRC="Sources/CMCRCore/ScreenAgentInfo.swift"
+[ -x "$AGENT/Contents/MacOS/cmcr-screen-agent" ] || die "Brak usługi podglądu ekranu w pakiecie ($AGENT)."
+codesign --verify --strict "$AGENT" || die "Podpis kodu usługi podglądu ekranu jest nieprawidłowy."
+AGENT_VERSION=$("$AGENT/Contents/MacOS/cmcr-screen-agent" --version)
+AGENT_EXPECTED=$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' "$AGENT_SRC")
+[ "$AGENT_VERSION" = "$AGENT_EXPECTED" ] || die "Usługa podglądu zgłasza wersję '$AGENT_VERSION', a $AGENT_SRC – '$AGENT_EXPECTED'."
+if codesign -dr - "$AGENT" 2>&1 | grep -q 'designated => cdhash'; then
+  warn "Usługa podglądu ekranu ma podpis ad-hoc: każda nowa wersja usługi ($AGENT_VERSION) wymaga ponownego nadania"
+  warn "uprawnienia „Nagrywanie ekranu” przy każdym iMacu. Stała tożsamość: scripts/make-signing-identity.sh."
+fi
 
 step "Pakowanie"
 rm -rf "$DIST"; mkdir -p "$DIST"
