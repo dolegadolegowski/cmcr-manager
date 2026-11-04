@@ -28,7 +28,14 @@ enum SetupTab: String, CaseIterable, Identifiable {
 
 struct SetupView: View {
     /// Remembered when leaving Konfiguracja (AUDIT UI-16).
-    @AppStorage("setupTab") private var tab = SetupTab.hosts
+    @AppStorage(Self.tabKey) private var tab = SetupTab.hosts
+    static let tabKey = "setupTab"
+
+    /// Opens Konfiguracja at `tab` (also from the Settings window, whose links bring the main window forward).
+    @MainActor static func show(_ tab: SetupTab, model: AppModel) {
+        UserDefaults.standard.set(tab.rawValue, forKey: tabKey)
+        model.section = .setup
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -985,6 +992,7 @@ struct ConnectionSettings: View {
 
 struct ScreenPreviewSettings: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Section {
@@ -1007,10 +1015,25 @@ struct ScreenPreviewSettings: View {
             Text("Podgląd ekranów – prywatność")
         }
         Section {
+            // The images come from CMCR Screen Agent on each iMac (docs/screen-agent.md), which needs installing and a
+            // one-time permission at the computer – both in Przygotowanie iMaców.
+            LabeledContent {
+                Button {
+                    SetupView.show(.readiness, model: model)
+                    MainWindow.bringToFront(openWindow)
+                } label: {
+                    Label("Przygotowanie iMaców", systemImage: "checklist")
+                }
+                .help("Instalacja usługi podglądu i prośba o uprawnienie nagrywania ekranu: Konfiguracja › Przygotowanie iMaców")
+            } label: {
+                SettingLabel(title: "Usługa podglądu na iMacach",
+                             caption: "Podgląd korzysta z usługi \(ScreenAgentInfo.displayName) na iMacu. Zrzut ekranu powstaje tylko wtedy, gdy podgląd o niego poprosi – co ustawiony czas odświeżania – i zastępuje poprzedni zrzut na iMacu",
+                             icon: "puzzlepiece.extension.fill", color: .red)
+            }
             LabeledContent {
                 NumberField(value: $model.settings.screenshotInterval, range: 3...300, unit: "s", name: "Odświeżanie")
             } label: {
-                SettingLabel(title: "Odświeżanie obrazu", caption: "Co ile sekund pobierać nowy obraz ekranu",
+                SettingLabel(title: "Odświeżanie obrazu", caption: "Co ile sekund prosić iMaca o nowy zrzut ekranu i pobierać go",
                              icon: "arrow.clockwise", color: .teal)
             }
             LabeledContent {
