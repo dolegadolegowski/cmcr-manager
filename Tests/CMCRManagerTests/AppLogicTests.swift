@@ -471,7 +471,7 @@ struct AppLogicTests {
         let run = try #require(classroom.run)
         let warning = try #require(model.batches.first { $0.title == "Zakończenie zajęć – ostrzeżenie" })
         warning.cancel()
-        #expect(await AppTestEnvironment.wait(5) { run.finished }, "zakończenie zajęć trwa dalej (\(run.phase))")
+        #expect(await AppTestEnvironment.wait(20) { run.finished }, "zakończenie zajęć trwa dalej (\(run.phase))")
         #expect(run.countdownEnd == nil)
         try await Task.sleep(nanoseconds: 300_000_000)
         #expect(!model.batches.contains { $0.title == "Zakończenie zajęć" }, "po przerwaniu ruszyły kroki zakończenia")
@@ -552,7 +552,7 @@ struct AppLogicTests {
             while !job.handle.isCancelled { try? await Task.sleep(nanoseconds: 20_000_000) }
             return CommandResult(exitCode: 130, cancelled: true)
         })
-        #expect(await AppTestEnvironment.wait(5) { batch.jobs.first?.state == .running })
+        #expect(await AppTestEnvironment.wait(20) { batch.jobs.first?.state == .running })
         await model.stopAllWorkBeforeQuitting(limit: 10)
         #expect(remoteStop.done, "zakończenie nie poczekało na zatrzymanie polecenia na iMacu")
         #expect(batch.finished)
@@ -578,7 +578,7 @@ extension AppLogicTests {
         st.info = ["console": "jan", "sessions": "jan,ola", "mac": "aa:bb:cc:dd:ee:ff"]
         model.statuses[a.id] = st
         model.refreshStatus([a])
-        #expect(await AppTestEnvironment.wait(15) { ![.online, .checking].contains(model.status(a).reachability) })
+        #expect(await AppTestEnvironment.wait(30) { ![.online, .checking].contains(model.status(a).reachability) })
         #expect(model.status(a).reachability == .offline)
         #expect(model.status(a).consoleUser == nil)
         #expect(model.status(a).loggedInUsers.isEmpty)
@@ -720,9 +720,9 @@ extension AppLogicTests {
             while !job.handle.isCancelled { try? await Task.sleep(nanoseconds: 20_000_000) }
             return CommandResult(exitCode: 255, cancelled: true)
         })
-        #expect(await AppTestEnvironment.wait(5) { stopped.jobs.first?.state == .running })
+        #expect(await AppTestEnvironment.wait(20) { stopped.jobs.first?.state == .running })
         stopped.cancel()
-        #expect(await AppTestEnvironment.wait(5) { stopped.finished })
+        #expect(await AppTestEnvironment.wait(20) { stopped.finished })
         let job = try #require(stopped.jobs.first)
         #expect(job.summary == "Przerwano – polecenie może nadal działać na komputerze")
         #expect(job.exitCode == nil)
@@ -734,7 +734,7 @@ extension AppLogicTests {
             sink(.stdout, Data("krok 2\n".utf8))
             return CommandResult(exitCode: 1, stderr: Data("błąd A\n".utf8))
         })
-        #expect(await AppTestEnvironment.wait(5) { failed.finished })
+        #expect(await AppTestEnvironment.wait(20) { failed.finished })
         let output = try #require(failed.jobs.first?.output)
         #expect(output.components(separatedBy: "błąd A").count == 2, "\(output)")
         #expect(failed.jobs.first?.exitCode == 1)

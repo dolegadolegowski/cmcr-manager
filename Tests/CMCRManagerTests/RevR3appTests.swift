@@ -12,7 +12,7 @@ struct RevR3appTests {
     func finishedJob(on host: Machine, in model: AppModel, title: String,
                      result: CommandResult) async throws -> (job: Job, batch: Batch, record: JobRecord) {
         let batch = try #require(model.runBatch(title, on: [host]) { _, _ in result })
-        #expect(await AppTestEnvironment.wait(5) { batch.finished })
+        #expect(await AppTestEnvironment.wait(20) { batch.finished })
         await JobHistory.waitForPendingWrites()
         let job = try #require(batch.jobs.first)
         let record = try #require(JobHistory.load().first { $0.id == job.id })

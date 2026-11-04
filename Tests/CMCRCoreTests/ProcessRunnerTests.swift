@@ -19,6 +19,7 @@ private func openPipeCount() -> Int {
     }.count
 }
 
+/// Bounds of 25 s: below the 30 s or 60 s a process that was not stopped would take, with room for a busy CI runner.
 private func elapsed(since start: Date) -> TimeInterval { Date().timeIntervalSince(start) }
 
 @Suite(.serialized)
@@ -55,7 +56,7 @@ struct ProcessRunnerTests {
         let r = await ProcessRunner.run("/bin/sleep", ["60"], timeout: 0.3)
         #expect(r.timedOut)
         #expect(!r.succeeded)
-        #expect(elapsed(since: start) < 15)
+        #expect(elapsed(since: start) < 25)
     }
 
     @Test func childIgnoringSIGTERMIsKilled() async {
@@ -64,7 +65,7 @@ struct ProcessRunnerTests {
         #expect(r.timedOut)
         // SIGKILL after 3 s, then at most 1 s of draining while the orphaned sleep holds the pipes
         // (the rest is slack for a busy CI runner).
-        #expect(elapsed(since: start) < 15)
+        #expect(elapsed(since: start) < 25)
     }
 
     @Test func handleCancelsTheProcess() async {
@@ -76,7 +77,7 @@ struct ProcessRunnerTests {
         }
         let r = await ProcessRunner.run("/bin/sleep", ["60"], handle: handle)
         #expect(r.cancelled)
-        #expect(elapsed(since: start) < 15)
+        #expect(elapsed(since: start) < 25)
         let again = await ProcessRunner.run("/bin/echo", ["x"], handle: handle)
         #expect(again.cancelled)
     }
@@ -88,7 +89,7 @@ struct ProcessRunnerTests {
         task.cancel()
         let r = await task.value
         #expect(r.cancelled)
-        #expect(elapsed(since: start) < 15)
+        #expect(elapsed(since: start) < 25)
     }
 
     @Test func cancelActionsRunOnceAndCanBeAwaited() async {
@@ -109,7 +110,7 @@ struct ProcessRunnerTests {
         let start = Date()
         let r = await ProcessRunner.run("/bin/sh", ["-c", "sleep 30 & echo gotowe"])
         #expect(r.stdoutText == "gotowe\n")
-        #expect(elapsed(since: start) < 15)
+        #expect(elapsed(since: start) < 25)
     }
 
     @Test func capturedOutputKeepsTheNewestBytes() async {

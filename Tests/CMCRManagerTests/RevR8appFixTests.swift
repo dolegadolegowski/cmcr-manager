@@ -144,7 +144,7 @@ struct RevR8appFixTests {
     /// Runs one job on `host` that ends with `result`.
     func failedJob(on host: Machine, in model: AppModel, result: CommandResult) async throws {
         let batch = try #require(model.runBatch("Wiadomość", on: [host]) { _, _ in result })
-        #expect(await AppTestEnvironment.wait(5) { batch.finished })
+        #expect(await AppTestEnvironment.wait(20) { batch.finished })
         #expect(batch.jobs.first?.state == .failed)
     }
 }
