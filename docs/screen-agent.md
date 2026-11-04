@@ -110,7 +110,9 @@ DYLD_INSERT_LIBRARIES …` w sesji ucznia nie wstrzyknie biblioteki do procesu, 
 Uruchamia go root (albo sam zalogowany użytkownik). Przed wysłaniem polecenia sprawdza:
 `lstat` gniazda (gniazdo, nie dowiązanie, właściciel = uid), `LOCAL_PEERCRED` (uid = docelowy uid) i
 `LOCAL_PEERPID` → `proc_pidpath` = zainstalowany plik wykonywalny usługi (ta sama ścieżka po `realpath` albo
-ten sam plik – urządzenie i i-węzeł). Inaczej `ERR untrusted`. Katalog `run` musi być prawdziwym katalogiem
+ten sam plik – urządzenie i i-węzeł), a ten proces działa w trybie `serve` (argumenty z `kern.procargs2`:
+`LOCAL_PEERPID` wskazuje proces, który utworzył gniazdo nasłuchujące – obcy program mógłby je przekazać
+potomkowi i uruchomić przez `exec` prawdziwą usługę w krótkim trybie, np. `client`). Inaczej `ERR untrusted`. Katalog `run` musi być prawdziwym katalogiem
 roota (albo samego klienta). Uruchomiony przez innego użytkownika niż root i `<uid>` kończy się kodem 2.
 
 | Polecenie | Wyjście (stdout, wiersze) | Kod wyjścia |

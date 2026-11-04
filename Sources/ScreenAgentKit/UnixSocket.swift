@@ -208,6 +208,29 @@ public enum PeerIdentity {
         return String(cString: buf)
     }
 
+    /// The arguments `pid` was started with (argv, `kern.procargs2`); readable for root and for the same user.
+    public static func arguments(of pid: pid_t) -> [String]? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+        var buf = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+        // Layout: argc (int32), the exec path, NUL padding, then argc NUL-terminated arguments.
+        let argc = buf.withUnsafeBytes { Int($0.load(as: Int32.self)) }
+        guard argc > 0, argc < 4096 else { return nil }
+        var i = MemoryLayout<Int32>.size
+        while i < size && buf[i] != 0 { i += 1 }
+        while i < size && buf[i] == 0 { i += 1 }
+        var args: [String] = []
+        while args.count < argc && i < size {
+            var j = i
+            while j < size && buf[j] != 0 { j += 1 }
+            args.append(String(decoding: buf[i..<j], as: UTF8.self))
+            i = j + 1
+        }
+        return args.count == argc ? args : nil
+    }
+
     /// Whether two paths name the same file: the same resolved path, or the same file system object (firmlinks such
     /// as /Library ↔ /System/Volumes/Data/Library resolve to different strings).
     public static func sameFile(_ a: String, _ b: String) -> Bool {

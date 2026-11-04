@@ -330,6 +330,9 @@ private func socketPair() throws -> (Int32, Int32) {
     #expect(PeerIdentity.sameFile(exe, Bundle.main.executablePath ?? CommandLine.arguments[0]))
     #expect(!PeerIdentity.sameFile(exe, "/bin/sh"))
     #expect(!PeerIdentity.sameFile("/nonexistent/a", "/nonexistent/a"))
+    // The client also requires the agent's own argv to be `… serve`.
+    #expect(PeerIdentity.arguments(of: pid) == CommandLine.arguments)
+    #expect(PeerIdentity.arguments(of: 999_999) == nil)
 }
 
 // MARK: - Saved screenshots

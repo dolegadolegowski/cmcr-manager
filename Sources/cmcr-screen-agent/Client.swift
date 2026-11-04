@@ -179,6 +179,13 @@ enum Client {
             close(fd)
             throw Failure.untrusted("gniazdo obsługuje \(exe) (PID \(pid)), a nie zainstalowana usługa \(expected)")
         }
+        // LOCAL_PEERPID names the process that created the listening socket. Some other program could create it,
+        // pass it to a child and then exec the installed agent in a short-lived mode (e.g. `client`) to borrow its
+        // path; the agent in `serve` mode would have replaced that socket with its own.
+        guard let args = PeerIdentity.arguments(of: pid), args.count == 2, args[1] == "serve" else {
+            close(fd)
+            throw Failure.untrusted("proces \(pid) po drugiej stronie gniazda nie jest usługą w trybie serve")
+        }
         return fd
     }
 
