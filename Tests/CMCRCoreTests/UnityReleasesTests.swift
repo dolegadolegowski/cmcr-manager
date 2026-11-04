@@ -113,11 +113,14 @@ private func page(_ releases: String...) -> Data {
     let r = try UnityReleases.parse(page(release("6000.6.8f1", "237b6593792b")), for: .exact("6000.6.8f1"))
     let need = r.diskNeed(modules: ["android"])
     // x86_64 downloads 30 MB more: its total wins, rounded up to whole KB.
-    #expect(need.editorKB == (5_030_000_000 + 10_213_404_000 + 1023) / 1024)
-    #expect(need.modulesKB == ["android": (2_900_000_166 + 7_700_000_001 + 1023) / 1024])
+    let editorKB: Int64 = (5_030_000_000 + 10_213_404_000 + 1023) / 1024
+    #expect(need.editorKB == editorKB)
+    let androidKB: Int64 = (2_900_000_166 + 7_700_000_001 + 1023) / 1024
+    #expect(need.modulesKB == ["android": androidKB])
     #expect(r.diskNeed(modules: []).modulesKB.isEmpty)
     let total = r.totalSize(modules: ["android", "ios"])
-    #expect(total.download == 5_030_000_000 + 2_900_000_166 + 874_332_753)
+    let download: Int64 = 5_030_000_000 + 2_900_000_166 + 874_332_753
+    #expect(total.download == download)
 }
 
 @Test func unityResolveAsksTheAPIOnce() async throws {
