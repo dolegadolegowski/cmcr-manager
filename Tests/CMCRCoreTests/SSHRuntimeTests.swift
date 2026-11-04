@@ -348,8 +348,9 @@ struct SessionStartTests {
         #expect(r.cancelled)
         #expect(log.text.contains("Polecenie nie zostało uruchomione"))
         #expect(!log.text.contains("zatrzymać"))
-        // A remote stop would itself wait for the silent port (ConnectTimeout 30 s).
-        #expect(Date().timeIntervalSince(start) < 15)
+        // A remote stop would itself wait for the silent port (ConnectTimeout 30 s, OperationTimeout.cancel 30 s);
+        // 25 s stays below that and leaves room for a busy CI runner (17.6 s seen on macos-15-intel).
+        #expect(Date().timeIntervalSince(start) < 25)
     }
 
     @Test func aTimeoutBeforeTheStartNeedsNoRemoteStop() async throws {
@@ -363,7 +364,8 @@ struct SessionStartTests {
         #expect(r.timedOut)
         #expect(!log.text.contains("zatrzymać"))
         #expect(!r.stderrText.contains("▸"))
-        #expect(Date().timeIntervalSince(start) < 15)
+        // As above: below the 30 s of a remote stop, with room for a busy CI runner (15.4 s seen on macos-15-intel).
+        #expect(Date().timeIntervalSince(start) < 25)
     }
 
     @Test func portProbeTellsAnsweringMacsApart() async throws {
