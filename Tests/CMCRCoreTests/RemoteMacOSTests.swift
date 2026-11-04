@@ -221,6 +221,6 @@ private func bashSyntaxOK(_ script: RemoteScript) -> Bool {
 @Test func setupScheduleComparesTheRealPmsetEvents() {
     let t = SetupScriptTemplate.text
     #expect(t.contains("sched_block()"))
-    #expect(t.contains("plutil -extract power_schedule_sched raw"))
+    #expect(t.contains(#"plist_get "$MARKER" power_schedule_sched"#))
     #expect(t.contains(#""power_schedule_sched": "%s""#))
 }

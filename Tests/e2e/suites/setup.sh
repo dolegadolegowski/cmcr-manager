@@ -131,6 +131,22 @@ expect "setup po odmowie pmset: harmonogram ustawiony ponownie" "$out" "Harmonog
 out="$(setup_run --verify)"
 expect "setup --verify po ponowieniu: nic do zmiany" "$out" "✔ Harmonogram: pn wt śr cz pt" '"pending_count": 0,'
 
+# macOS 15: plutil prints „Could not extract value…” for a missing key on stdout (macOS 26 and later: on stderr).
+# A marker from an older script has no schedule keys: a run without --power-schedule carries the schedule over
+# from the marker and must not store plutil's error as the schedule (fake: plutil-macos15).
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); [d.pop(k, None) for k in ("power_schedule", "power_schedule_sched")]; json.dump(d, open(sys.argv[1], "w"))' "$MARK"
+: > "$WORK/plutil-macos15"
+out="$(sctl setup 1 --no-ssh-acl --no-sleep --sudo-nopasswd)"; code=$?
+expect_code "macOS 15 (plutil): setup bez --power-schedule – kod 0" "$code" 0 "$out"
+marker="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("plan=[%s] sched=[%s]" % (d["power_schedule"], d["power_schedule_sched"]))' "$MARK" 2>&1)"
+expect "macOS 15 (plutil): znacznik bez komunikatu błędu plutil" "$marker" "plan=[] sched=[]"
+expect_not "macOS 15 (plutil): raport bez komunikatu błędu plutil" "$out" "Could not extract"
+out="$(setup_run)"; code=$?
+expect "macOS 15 (plutil): harmonogram z opcji ustawiony ponownie" "$out" "Harmonogram ustawiony: pn wt śr cz pt"
+out="$(setup_run --verify)"
+expect "macOS 15 (plutil): --verify po ponownym ustawieniu – nic do zmiany" "$out" "✔ Harmonogram: pn wt śr cz pt" '"pending_count": 0,'
+rm -f "$WORK/plutil-macos15"
+
 cp -p "$SR/etc/ssh/sshd_config.d/050-cmcr-manager.conf" "$WORK/sshd-before.conf"
 : > "$SS/sshd-t-fails"
 out="$(setup_run --ssh-key-only)"; code=$?

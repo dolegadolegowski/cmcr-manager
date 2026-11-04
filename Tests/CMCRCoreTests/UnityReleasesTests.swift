@@ -202,7 +202,8 @@ private final class LockedURLs: @unchecked Sendable {
         try modulesJSON(selected).write(to: ed.appendingPathComponent("modules.json"), atomically: true, encoding: .utf8)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
-        p.arguments = ["--noprofile", "--norc", "-c", Scripts.unityCompleteness + "\ncmcr_unity_read; cmcr_unity_need \"$1\"", "_", module]
+        p.arguments = ["--noprofile", "--norc", "-c",
+                       RemoteScript.library + "\n" + Scripts.unityCompleteness + "\ncmcr_unity_read; cmcr_unity_need \"$1\"", "_", module]
         p.environment = ["PATH": "/usr/bin:/bin", "ED": ed.path, "MODLIST": dir.appendingPathComponent("m.tsv").path,
                          "MARK": ed.appendingPathComponent(".cmcr-installed").path]
         let out = Pipe()
