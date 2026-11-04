@@ -75,6 +75,8 @@ public enum ScriptCatalog {
             Sample(name: "unityInstallEditor", script: Scripts.unityInstallEditor(version: "6000.3.7f1", modules: ["android", a],
                                                                                   changeset: "abc123")),
             Sample(name: "unityInstallEditor(min)", script: Scripts.unityInstallEditor(version: a, modules: [])),
+            Sample(name: "unityInstallModules(line)", script: Scripts.unityInstallModules(version: "6000.6", modules: ["android", a])),
+            Sample(name: "androidSDK(line)", script: Scripts.androidSDK(unityVersion: "6000.6", apiLevels: ["34", a])),
             Sample(name: "unityInstallEditor(need)", script: Scripts.unityInstallEditor(
                 version: "6000.6.8f1", modules: ["android", a], changeset: a,
                 diskNeed: UnityDiskNeed(editorKB: 14_900_000, modulesKB: ["android": 10_400_000, a: 1]))),

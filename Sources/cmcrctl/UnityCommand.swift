@@ -71,6 +71,10 @@ enum UnityCLI {
 
     static func list(_ a: ModuleArguments) async -> Int32 {
         onlyInstallOptions(a)
+        if a.positional.count > 2 {
+            moduleUsageError(a.command, "Nadmiarowy argument „\(a.positional[2])” – kilka komputerów podaj razem: cmcrctl unity list 1,5 "
+                             + "(albo zakres 1-5).")
+        }
         let targets = ModuleHosts.readOnly(a[1])
         let ssh = sshSettings
         return await eachHost(targets, a) { io in

@@ -153,8 +153,76 @@ private final class LockedURLs: @unchecked Sendable {
     #expect(body.contains(#"--childModules"#))
     #expect(body.contains(#""$HUB" -- --headless "$@" --errors </dev/null"#))        // --errors after the command
     #expect(body.contains("df -Pk"))
+    #expect(body.contains("reserve=$((total / 10)); [ \"$reserve\" -ge 10485760 ] || reserve=10485760"))   // 10%, ≥ 10 GB
+    #expect(body.contains(#"MARK="$ED/.cmcr-installed""#))
+    #expect(body.contains(#"if [ $RC -ne 0 ] && ! codesign --verify --strict "$ED/Unity.app""#))
     // Without sizes (Unity could not be asked) nothing is checked: 0 KB.
     let bare = Scripts.unityInstallEditor(version: "6000.3.7f1", modules: []).body
     #expect(bare.contains("CS=''; EDKB=0") && bare.contains("MODS=()") && bare.contains("MODKB=()"))
     #expect(Scripts.unityHub(["editors", "--installed"]).body.contains(#"APPS="${CMCR_APPS_DIR:-/Applications}""#))
+}
+
+/// Actions on an editor that is already there resolve a line on the iMac, among the installed editors – never through
+/// the Release API, whose newest release the lab may not have.
+@Test func unityModulesAndAndroidSDKUseTheNewestInstalledEditorOfALine() {
+    let modules = Scripts.unityInstallModules(version: "6000.6", modules: ["ios"]).body
+    #expect(modules.contains("L='6000.6'; V=\"\"; VK=\"\""))
+    #expect(modules.contains(#"for D in "$IP/$L".*/; do"#))
+    #expect(modules.contains(#"'install-modules' '--version' "$V" '-m' 'ios' '--childModules' --errors"#))
+    #expect(!modules.contains("V='6000.6'"))
+    let exact = Scripts.unityInstallModules(version: "6000.6.8f1", modules: ["ios"]).body
+    #expect(exact.contains("V='6000.6.8f1'") && !exact.contains("L='"))
+    let sdk = Scripts.androidSDK(unityVersion: "6000.6", apiLevels: ["34"]).body
+    #expect(sdk.contains("L='6000.6'") && sdk.contains(#"BASE="$IP/$V/PlaybackEngines/AndroidPlayer""#))
+}
+
+/// The completeness functions of the install script against modules.json files shaped like Unity Hub's.
+@Test func unityCompletenessFindsMissingChildModulesAndFiles() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cmcr-unity-\(UUID().uuidString)")
+    let ed = dir.appendingPathComponent("6000.6.8f1")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let android = ed.appendingPathComponent("PlaybackEngines/AndroidPlayer")
+    try FileManager.default.createDirectory(at: android.appendingPathComponent("SDK/cmdline-tools/16.0/bin"),
+                                            withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: android.appendingPathComponent("NDK"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: android.appendingPathComponent("OpenJDK/bin"), withIntermediateDirectories: true)
+    for tool in ["SDK/cmdline-tools/16.0/bin/sdkmanager", "OpenJDK/bin/java"] {
+        let url = android.appendingPathComponent(tool)
+        try Data("#!/bin/sh\n".utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+    func modulesJSON(_ selected: Set<String>) -> String {
+        let tree = [("android", ""), ("android-open-jdk-17.0.18+8", "android"), ("android-sdk-ndk-tools", "android"),
+                    ("android-ndk-r27c", "android-sdk-ndk-tools"), ("cmake-3.22.1", "android-sdk-ndk-tools"),
+                    ("ios", ""), ("documentation", "")]
+        return "[" + tree.map { #"{"id": "\#($0.0)", "parent": "\#($0.1)", "selected": \#(selected.contains($0.0)), "eula": null}"# }
+            .joined(separator: ",\n") + "]"
+    }
+    func need(_ module: String, selected: Set<String>) throws -> String {
+        try modulesJSON(selected).write(to: ed.appendingPathComponent("modules.json"), atomically: true, encoding: .utf8)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["--noprofile", "--norc", "-c", Scripts.unityCompleteness + "\ncmcr_unity_read; cmcr_unity_need \"$1\"", "_", module]
+        p.environment = ["PATH": "/usr/bin:/bin", "ED": ed.path, "MODLIST": dir.appendingPathComponent("m.tsv").path,
+                         "MARK": ed.appendingPathComponent(".cmcr-installed").path]
+        let out = Pipe()
+        p.standardOutput = out
+        try p.run()
+        p.waitUntilExit()
+        return String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .split(separator: "\n").joined(separator: " ")
+    }
+    let all: Set<String> = ["android", "android-open-jdk-17.0.18+8", "android-sdk-ndk-tools", "android-ndk-r27c", "cmake-3.22.1"]
+    #expect(try need("android", selected: all) == "")
+    #expect(try need("android", selected: []) == "android")
+    // --childModules stopped half-way: the branches with something missing, also two levels down (NDK under the tools).
+    #expect(try need("android", selected: ["android"]) == "android-open-jdk-17.0.18+8 android-sdk-ndk-tools")
+    #expect(try need("android", selected: all.subtracting(["android-ndk-r27c"])) == "android-sdk-ndk-tools")
+    #expect(try need("ios", selected: all) == "ios")
+    #expect(try need("webgl", selected: all) == "webgl")                         // not in modules.json at all
+    // Everything selected, but a file the Android SDK action needs is gone.
+    try FileManager.default.removeItem(at: android.appendingPathComponent("OpenJDK/bin/java"))
+    #expect(try need("android", selected: all) == "android-open-jdk-17.0.18+8")
+    try FileManager.default.removeItem(at: android.appendingPathComponent("NDK"))
+    #expect(try need("android", selected: all) == "android-sdk-ndk-tools android-open-jdk-17.0.18+8")
 }

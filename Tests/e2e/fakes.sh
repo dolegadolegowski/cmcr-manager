@@ -807,9 +807,46 @@ export -f lsappinfo 2>/dev/null
 # --- Unity Hub (Tests/e2e/suites/unity.sh) ---------------------------------------------------------------
 # The suite puts an executable "Unity Hub" into $CMCR_APPS_DIR/Unity Hub.app that calls this function (it sees the
 # fakes through BASH_ENV). Like the real Hub in headless mode it installs editors into
-# $CMCR_APPS_DIR/Unity/Hub/Editor/<version> (Unity.app/Contents/MacOS/Unity and modules.json). Control files in
-# $CMCR_E2E_WORK: unity-hub.fail (install and install-modules fail, nothing installed), unity-hub.rc1 (they install
-# but end with code 1, like Hub's HUBX-520), unity-hub.nomodules (the editor is installed without the modules).
+# $CMCR_APPS_DIR/Unity/Hub/Editor/<version>: an ad-hoc signed Unity.app, modules.json with every module of the release
+# (id, parent, selected) and, for the Android parts, sdkmanager, NDK and OpenJDK/bin/java. A module comes with every
+# module under it (--childModules). Control files in $CMCR_E2E_WORK: unity-hub.fail (install and install-modules fail,
+# nothing installed), unity-hub.rc1 (they install but end with code 1, like Hub's HUBX-520), unity-hub.nomodules (the
+# editor without the modules), unity-hub.nochildren (the modules without the ones under them), unity-hub.broken (code 1
+# and a Unity.app whose signature no longer matches, like an unpacking that stopped half-way).
+_e2e_unity_tree() { # "id:parent" of every module, as in modules.json of Unity 6000.6
+  printf '%s\n' android: android-open-jdk-17.0.18+8:android android-sdk-ndk-tools:android \
+    android-ndk-r27c:android-sdk-ndk-tools ios: webgl: documentation:
+}
+_e2e_unity_add() { # DIR MODULE – MODULE and, without unity-hub.nochildren, every module under it
+  echo "$2" >> "$1/.e2e-modules"
+  [ -e "${CMCR_E2E_WORK:-/nonexistent}/unity-hub.nochildren" ] && return 0
+  local c
+  for c in $(_e2e_unity_tree | awk -F: -v p="$2" '$2 == p {print $1}'); do _e2e_unity_add "$1" "$c"; done
+}
+_e2e_unity_write() { # DIR – modules.json as Hub writes it, and the files of the Android parts installed
+  local d="$1" a="$1/PlaybackEngines/AndroidPlayer"
+  _e2e_unity_tree | awk -F: -v list="$d/.e2e-modules" '
+    BEGIN { while ((getline m < list) > 0) have[m] = 1; print "[" }
+    { printf "%s  {\"id\": \"%s\", \"parent\": \"%s\", \"selected\": %s, \"eula\": null}", (NR > 1 ? ",\n" : ""), $1, $2,
+             ($1 in have) ? "true" : "false" }
+    END { print "\n]" }' > "$d/modules.json"
+  if grep -qxF android-sdk-ndk-tools "$d/.e2e-modules"; then
+    mkdir -p "$a/SDK/cmdline-tools/16.0/bin" "$a/NDK"
+    printf '#!/bin/bash\n_e2e_log "sdkmanager $*"\n' > "$a/SDK/cmdline-tools/16.0/bin/sdkmanager"
+    chmod +x "$a/SDK/cmdline-tools/16.0/bin/sdkmanager"
+  fi
+  if grep -qxF android-open-jdk-17.0.18+8 "$d/.e2e-modules"; then
+    mkdir -p "$a/OpenJDK/bin"; printf '#!/bin/sh\n' > "$a/OpenJDK/bin/java"; chmod +x "$a/OpenJDK/bin/java"
+  fi
+}
+_e2e_unity_editor() { # DIR – an ad-hoc signed Unity.app, like Hub unpacks it
+  mkdir -p "$1/Unity.app/Contents/MacOS" || return 1
+  cp /bin/sleep "$1/Unity.app/Contents/MacOS/Unity"
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Unity</string>
+<key>CFBundleIdentifier</key><string>com.unity3d.UnityEditor5.x</string><key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>\n' > "$1/Unity.app/Contents/Info.plist"
+  codesign --force --sign - "$1/Unity.app" >/dev/null 2>&1
+}
 _e2e_unity_hub() {
   local w="${CMCR_E2E_WORK:-/nonexistent}" ip="${CMCR_APPS_DIR:-/nonexistent}/Unity/Hub/Editor"
   [ "${1:-}" = -- ] && shift
@@ -836,21 +873,17 @@ _e2e_unity_hub() {
       fi
       d="$ip/$v"
       if [ "$cmd" = install ] || [ "$cmd" = i ]; then
-        mkdir -p "$d/Unity.app/Contents/MacOS" || return 1
-        printf '#!/bin/sh\n' > "$d/Unity.app/Contents/MacOS/Unity"; chmod +x "$d/Unity.app/Contents/MacOS/Unity"
+        _e2e_unity_editor "$d" || return 1
         : >> "$d/.e2e-modules"
       elif [ ! -x "$d/Unity.app/Contents/MacOS/Unity" ]; then
         echo "Error: No editor found for version \"$v\"."; return 1
       fi
-      [ -e "$w/unity-hub.nomodules" ] || for m in $mods; do echo "$m" >> "$d/.e2e-modules"; done
-      # modules.json as Hub writes it: every module of the release, "selected" for the installed ones.
-      { echo "["
-        for m in android ios webgl; do
-          if grep -qxF "$m" "$d/.e2e-modules"; then echo "  {\"id\": \"$m\", \"selected\": true},"
-          else echo "  {\"id\": \"$m\", \"selected\": false},"; fi
-        done
-        echo '  {"id": "documentation", "selected": false, "eula": null}'
-        echo "]"; } > "$d/modules.json"
+      [ -e "$w/unity-hub.nomodules" ] || for m in $mods; do _e2e_unity_add "$d" "$m"; done
+      _e2e_unity_write "$d"
+      if [ -e "$w/unity-hub.broken" ]; then
+        echo "<!-- zmienione po podpisaniu -->" >> "$d/Unity.app/Contents/Info.plist"
+        echo "Error: extraction failed (atrapa)"; return 1
+      fi
       echo "Editor installed successfully (atrapa)."
       [ -e "$w/unity-hub.rc1" ] && return 1
       return 0 ;;

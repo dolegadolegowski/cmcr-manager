@@ -211,17 +211,16 @@ struct InstallView: View {
                 .disabled(unityVersion.isEmpty || resolvingUnity)
             }
             FormActionRow("Moduły do zainstalowanego edytora",
-                          caption: "Dodaje zaznaczone moduły, gdy edytor w tej wersji już jest na komputerach.") {
+                          caption: "Dodaje zaznaczone moduły, gdy edytor w tej wersji już jest na komputerach (linia, np. 6000.6, "
+                              + "to najnowsza wersja zainstalowana na danym komputerze).") {
                 TargetButton(title: "Dodaj moduły", icon: "plus.square", prominent: false) {
                     let mods = Array(unityModules).sorted()
-                    let targets = model.selectedMachines
-                    withUnityRelease("Nie można dodać modułów Unity", modules: mods) { v, _ in
-                        model.runScript("Unity \(v): moduły \(mods.joined(separator: ","))", on: targets) { _ in
-                            Scripts.unityInstallModules(version: v, modules: mods)
-                        }
+                    guard let v = installedUnityVersion("Nie można dodać modułów Unity") else { return }
+                    model.runScript("Unity \(v): moduły \(mods.joined(separator: ","))", on: model.selectedMachines) { _ in
+                        Scripts.unityInstallModules(version: v, modules: mods)
                     }
                 }
-                .disabled(unityModules.isEmpty || unityVersion.isEmpty || resolvingUnity)
+                .disabled(unityModules.isEmpty || unityVersion.isEmpty)
             }
             TextField(text: $androidAPIs, prompt: Text("32, 34")) {
                 Text("Wersje Android API")
@@ -232,14 +231,12 @@ struct InstallView: View {
                           caption: "Narzędzia do budowania gier na Androida – w podanych wersjach API, dla edytora Unity z modułem Android.") {
                 TargetButton(title: "Zainstaluj Android SDK", icon: "cpu", prominent: false) {
                     let apis = androidAPIs.split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
-                    let targets = model.selectedMachines
-                    withUnityRelease("Nie można zainstalować Android SDK", modules: []) { v, _ in
-                        model.runScript("sdkmanager API \(apis.joined(separator: ","))", on: targets) { _ in
-                            Scripts.androidSDK(unityVersion: v, apiLevels: apis)
-                        }
+                    guard let v = installedUnityVersion("Nie można zainstalować Android SDK") else { return }
+                    model.runScript("sdkmanager API \(apis.joined(separator: ","))", on: model.selectedMachines) { _ in
+                        Scripts.androidSDK(unityVersion: v, apiLevels: apis)
                     }
                 }
-                .disabled(androidAPIs.isEmpty || resolvingUnity)
+                .disabled(androidAPIs.isEmpty || unityVersion.isEmpty)
             }
         } header: {
             Label("Unity Hub i Android SDK", systemImage: "cube")
@@ -248,6 +245,17 @@ struct InstallView: View {
                             + "– postęp widać w dziale Zadania. Wcześniej zainstaluj Unity Hub (Homebrew: pakiet unity-hub). "
                             + "Licencję (logowanie ucznia w Unity Hub albo licencja edukacyjna szkoły) aktywuje się osobno.")
         }
+    }
+
+    /// The field for actions on an editor that is already installed (modules, Android SDK): an exact version, or a line
+    /// that each iMac resolves to its newest installed editor – never the newest release on Unity's servers, which the
+    /// lab may not have yet. Nil (after an alert) when the field is neither.
+    private func installedUnityVersion(_ failure: String) -> String? {
+        guard let input = UnityVersionInput(unityVersion) else {
+            model.reportFailure(failure, UnityReleaseError.invalidInput(unityVersion.trimmingCharacters(in: .whitespaces)))
+            return nil
+        }
+        return input.text
     }
 
     /// Runs `body` with the field as one exact version. A line (6000.6) becomes its newest final release, asked once,

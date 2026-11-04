@@ -278,8 +278,9 @@ struct HostGateTests {
         #expect(await gate.acquire("k"))
         let start = Date()
         #expect(!(await gate.acquire("k", timeout: 0.2)))
-        // Generous: on a busy CI runner the waiting task may resume seconds after the timer fires.
-        #expect(Date().timeIntervalSince(start) < 10)
+        // Generous: on a busy CI runner the waiting task may resume seconds after the timer fires (12.4 s on
+        // macos-15-intel with all suites in parallel). A wait that never ended would still fail.
+        #expect(Date().timeIntervalSince(start) < 30)
         let handle = ProcessHandle()
         Task {
             try? await Task.sleep(nanoseconds: 100_000_000)

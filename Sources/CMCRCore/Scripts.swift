@@ -669,6 +669,92 @@ public enum Scripts {
     if [ ! -x "$HUB" ]; then echo "Brak Unity Hub w $APPS – zainstaluj go najpierw (Instalacja › Homebrew: unity-hub, jako cask)." >&2; exit 2; fi
     """#
 
+    /// `IP`: the folder this account's Unity Hub installs editors into (Unity Hub › Settings › Installs); the default
+    /// one when Hub gives none or is not there. Needs `APPS` and `HUB`.
+    static let unityEditorsFolder = #"""
+    IP=""; [ -x "$HUB" ] && IP="$("$HUB" -- --headless install-path --get 2>/dev/null </dev/null | tail -n 1)"
+    case "$IP" in /*) IP="${IP%/}" ;; *) IP="$APPS/Unity/Hub/Editor" ;; esac
+    """#
+
+    /// Sets `V` to an exact version. A line (6000.6) is the newest editor of that line installed on this Mac: actions on an
+    /// editor that is already there (modules, Android SDK) must not follow a newer release on Unity's servers.
+    static func unityInstalledVersion(_ versionOrLine: String) -> String {
+        guard UnityReleases.isLine(versionOrLine) else { return "V=\(shQuote(versionOrLine))" }
+        return #"""
+        L=\#(shQuote(versionOrLine)); V=""; VK=""
+        for D in "$IP/$L".*/; do
+          [ -x "$D/Unity.app/Contents/MacOS/Unity" ] || continue
+          N="$(basename "$D")"
+          # 6000.6.10f1 → 006000000006000010000003000001: numbers in order, finals (f) above betas (b) and alphas (a).
+          K="$(printf '%s\n' "$N" | sed 's/a/.0./;s/b/.1./;s/c/.2./;s/f/.3./;s/p/.4./' | awk -F. '{for (i = 1; i <= NF; i++) printf "%06d", $i}')"
+          if [ -z "$V" ] || [[ "$K" > "$VK" ]]; then V="$N"; VK="$K"; fi
+        done
+        if [ -z "$V" ]; then
+          echo "✘ Na tym komputerze nie ma edytora Unity z linii $L (w $IP) – najpierw „Zainstaluj edytor”." >&2; exit 2
+        fi
+        echo "→ Unity $V (najnowsza zainstalowana z linii $L)"
+        """#
+    }
+
+    /// Shell functions that tell whether the editor in `ED` and its modules are complete (see `unityInstallEditor`).
+    /// Need `ED`, `MARK`, `MODLIST`, `V` and `CS`.
+    static let unityCompleteness = #"""
+    # Hub's modules.json → "id<TAB>parent<TAB>selected" per module, in $MODLIST.
+    cmcr_unity_read() {
+      local i=0 id
+      : > "$MODLIST"
+      while id="$(plutil -extract "$i.id" raw -o - "$ED/modules.json" 2>/dev/null)"; do
+        printf '%s\t%s\t%s\n' "$id" "$(plutil -extract "$i.parent" raw -o - "$ED/modules.json" 2>/dev/null)" \
+          "$(plutil -extract "$i.selected" raw -o - "$ED/modules.json" 2>/dev/null)" >> "$MODLIST"
+        i=$((i + 1))
+      done
+    }
+    # What to ask Hub for so that module $1 is complete, one id per line (nothing: complete): the module itself when it is
+    # not installed; otherwise, for every module under it (what --childModules installs) that is not, the child of $1 it
+    # belongs to.
+    cmcr_unity_missing() {
+      awk -F'\t' -v top="$1" '
+        { id[NR] = $1; par[NR] = $2; sel[NR] = $3 }
+        END {
+          for (i = 1; i <= NR; i++) if (id[i] == top) found = (sel[i] == "true") ? 2 : 1
+          if (found != 2) { print top; exit }
+          branch[top] = top
+          do {
+            changed = 0
+            for (i = 1; i <= NR; i++) if (!(id[i] in branch) && (par[i] in branch)) {
+              branch[id[i]] = (par[i] == top) ? id[i] : branch[par[i]]; changed = 1
+            }
+          } while (changed)
+          for (i = 1; i <= NR; i++) if (id[i] != top && (id[i] in branch) && sel[i] != "true" && !(branch[id[i]] in shown)) {
+            shown[branch[id[i]]] = 1; print branch[id[i]]
+          }
+        }' "$MODLIST"
+    }
+    # The files the Android SDK action needs; for each one missing, the module of Hub that brings it.
+    cmcr_unity_files() {
+      [ "$1" = android ] || return 0
+      local b="$ED/PlaybackEngines/AndroidPlayer" j
+      if ! ls "$b"/SDK/cmdline-tools/*/bin/sdkmanager >/dev/null 2>&1 || [ ! -d "$b/NDK" ]; then echo android-sdk-ndk-tools; fi
+      if [ ! -x "$b/OpenJDK/bin/java" ] && [ ! -x "$b/OpenJDK/Contents/Home/bin/java" ]; then
+        j="$(awk -F'\t' '$2 == "android" && $1 ~ /^android-open-jdk/ {print $1; exit}' "$MODLIST")"
+        echo "${j:-android-open-jdk}"
+      fi
+    }
+    cmcr_unity_need() {
+      local m; m="$(cmcr_unity_missing "$1")"
+      if [ "$m" = "$1" ]; then printf '%s\n' "$1"; return; fi
+      { [ -z "$m" ] || printf '%s\n' "$m"; cmcr_unity_files "$1"; } | awk 'NF && !seen[$0]++'
+    }
+    # The editor is complete: CMCR's marker (written after a checked install), or – installed some other way – Hub's
+    # modules.json and a valid signature of Unity.app. A binary alone may be what an interrupted install left.
+    cmcr_unity_editor_ok() {
+      [ -x "$ED/Unity.app/Contents/MacOS/Unity" ] || return 1
+      [ -f "$MARK" ] && return 0
+      [ -f "$ED/modules.json" ] && codesign --verify --strict "$ED/Unity.app" 2>/dev/null
+    }
+    cmcr_unity_mark() { { printf 'version=%s\nchangeset=%s\ninstalled=%s\n' "$V" "$CS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$MARK"; } 2>/dev/null; }
+    """#
+
     public static func unityHub(_ arguments: [String]) -> RemoteScript {
         RemoteScript(#"""
         \#(unityHubFind)
@@ -681,52 +767,55 @@ public enum Scripts {
     /// Apple Silicon), together with the child modules of the selected modules – for `android` that is the
     /// Android SDK & NDK Tools and OpenJDK, without which `sdkmanager` does not exist.
     ///
-    /// A Mac that already has the editor is skipped, or gets only the modules it lacks (Hub's own modules.json
-    /// says which are installed). With `diskNeed` (from the Unity Release API) a Mac without enough free space
-    /// stops before downloading. Success is checked on disk afterwards: Hub's exit code is not reliable (it
-    /// reports 1 after some successful installs, HUBX-520).
+    /// A Mac whose editor and modules are complete is skipped; one that lacks modules, or parts of them, gets only those.
+    /// Complete: the editor carries CMCR's marker (written after a checked install) or – installed some other way – has
+    /// Hub's modules.json and a valid signature; each module and every module under it is selected in modules.json; for
+    /// android also the files the Android SDK action needs (sdkmanager, NDK, OpenJDK). An editor that is there but not
+    /// complete (an interrupted install) is installed again. With `diskNeed` (from the Unity Release API) a Mac that would
+    /// keep less than 10% of its volume (at least 10 GB) free stops before downloading. Success is checked on disk
+    /// afterwards: Hub's exit code is not reliable (it reports 1 after some successful installs, HUBX-520), so with a code
+    /// other than 0 the editor must also pass the signature check.
     public static func unityInstallEditor(version: String, modules: [String], changeset: String = "",
                                           diskNeed: UnityDiskNeed? = nil) -> RemoteScript {
         RemoteScript(#"""
         \#(unityHubFind)
+        \#(unityEditorsFolder)
         V=\#(shQuote(version)); CS=\#(shQuote(changeset)); EDKB=\#(diskNeed?.editorKB ?? 0)
         MODS=(\#(modules.map(shQuote).joined(separator: " ")))
         MODKB=(\#(modules.map { String(diskNeed?.modulesKB[$0] ?? 0) }.joined(separator: " ")))
         ARCH=x86_64; [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] && ARCH=arm64
-        # Hub's install folder for this account (Unity Hub › Settings › Installs); the default when it gives none.
-        IP="$("$HUB" -- --headless install-path --get 2>/dev/null </dev/null | tail -n 1)"
-        case "$IP" in /*) IP="${IP%/}" ;; *) IP="$APPS/Unity/Hub/Editor" ;; esac
-        ED="$IP/$V"
-        # Unity Hub's modules.json in the editor folder: [{"id": …, "selected": true|false, …}, …]
-        cmcr_unity_has() {
-          local i=0 id
-          while id="$(plutil -extract "$i.id" raw -o - "$ED/modules.json" 2>/dev/null)"; do
-            if [ "$id" = "$1" ]; then [ "$(plutil -extract "$i.selected" raw -o - "$ED/modules.json" 2>/dev/null)" = true ]; return; fi
-            i=$((i + 1))
-          done
-          return 1
-        }
+        ED="$IP/$V"; MARK="$ED/.cmcr-installed"; MODLIST="$CMCR_TMP/unity-modules.tsv"
+        \#(unityCompleteness)
         cmcr_unity_gb() { awk -v k="$1" 'BEGIN {printf "%.1f", k / 1048576}'; }
-        # Stops when the volume of the install folder has less than $1 KB free (0 = size unknown, no check).
+        # Stops unless the volume of the install folder keeps a reserve: $1 KB (download and unpacked files; 0 = size
+        # unknown, no check) plus 10% of the volume, at least 10 GB, must be free.
         cmcr_unity_room() {
           [ "$1" -gt 0 ] 2>/dev/null || return 0
-          local d="$IP" free
+          local d="$IP" total free reserve
           while [ ! -d "$d" ]; do d="$(dirname "$d")"; done
-          free="$(df -Pk "$d" 2>/dev/null | awk 'NR == 2 {print $4}')"
-          [ -n "$free" ] && [ "$free" -lt "$1" ] || return 0
-          echo "✘ Za mało miejsca na dysku: wolne $(cmcr_unity_gb "$free") GB, potrzeba ok. $(cmcr_unity_gb "$1") GB (pobranie i rozpakowanie). Nic nie zainstalowano." >&2
+          set -- "$1" $(df -Pk "$d" 2>/dev/null | awk 'NR == 2 {print $2, $4}')
+          total="${2:-0}"; free="${3:-}"
+          [ -n "$free" ] || return 0
+          reserve=$((total / 10)); [ "$reserve" -ge 10485760 ] || reserve=10485760
+          [ "$free" -lt $(($1 + reserve)) ] || return 0
+          echo "✘ Za mało miejsca na dysku: wolne $(cmcr_unity_gb "$free") GB, potrzeba ok. $(cmcr_unity_gb "$1") GB (pobranie i rozpakowanie) i $(cmcr_unity_gb "$reserve") GB zapasu (10% dysku, co najmniej 10 GB). Nic nie zainstalowano." >&2
           exit 1
         }
         TODO=(); NEED=0
-        if [ -x "$ED/Unity.app/Contents/MacOS/Unity" ]; then
+        if cmcr_unity_editor_ok; then
+          cmcr_unity_read
           for ((i = 0; i < ${#MODS[@]}; i++)); do
-            cmcr_unity_has "${MODS[$i]}" || { TODO[${#TODO[@]}]="${MODS[$i]}"; NEED=$((NEED + MODKB[$i])); }
+            P="$(cmcr_unity_need "${MODS[$i]}")"
+            [ -n "$P" ] || continue
+            while IFS= read -r X; do [ -z "$X" ] || TODO[${#TODO[@]}]="$X"; done <<< "$P"
+            NEED=$((NEED + MODKB[$i]))
           done
           if [ ${#TODO[@]} -eq 0 ]; then
+            [ -f "$MARK" ] || cmcr_unity_mark
             echo "✔ Unity $V jest już zainstalowany${MODS[0]+ (moduły: ${MODS[*]})} – pominięto."
             exit 0
           fi
-          echo "→ Unity $V już jest, brakujące moduły: ${TODO[*]}"
+          echo "→ Unity $V już jest, brakuje: ${TODO[*]}"
           cmcr_unity_room "$NEED"
           set -- install-modules --version "$V"
         else
@@ -737,7 +826,9 @@ public enum Scripts {
             echo "✘ Konto $(id -un) nie może zapisywać w $D (właściciel: $(stat -f %Su "$D" 2>/dev/null)) – Unity Hub nie zainstaluje tam edytora. Zmień właściciela, np. w Poleceniach jako root: chown -R $(id -un):admin \"$D\"" >&2
             exit 1
           fi
-          [ -d "$ED" ] && echo "Uwaga: folder $ED już istnieje, ale bez edytora (przerwana instalacja?)."
+          if [ -d "$ED" ]; then
+            echo "Uwaga: w $ED jest niepełna instalacja Unity $V (przerwana?) – Unity Hub zainstaluje edytor ponownie. Gdyby się nie udało, usuń ten folder i spróbuj jeszcze raz."
+          fi
           TODO=(${MODS[@]+"${MODS[@]}"})
           set -- install --version "$V"
           [ -n "$CS" ] && set -- "$@" --changeset "$CS"
@@ -752,21 +843,45 @@ public enum Scripts {
           echo "✘ Unity Hub zakończył pracę (kod $RC), ale w $ED nie ma edytora Unity $V." >&2
           exit 1
         fi
-        MISS=""; for M in ${TODO[@]+"${TODO[@]}"}; do cmcr_unity_has "$M" || MISS="$MISS $M"; done
-        if [ -n "$MISS" ]; then echo "✘ Unity $V jest, ale nie zainstalowano modułów:$MISS (kod Unity Hub $RC)." >&2; exit 1; fi
+        if [ $RC -ne 0 ] && ! codesign --verify --strict "$ED/Unity.app" 2>/dev/null; then
+          echo "✘ Unity Hub zakończył się kodem $RC, a edytor w $ED jest niepełny (podpis Unity.app się nie zgadza). Usuń ten folder i spróbuj ponownie." >&2
+          exit 1
+        fi
+        cmcr_unity_read
+        MISS=""
+        for M in ${MODS[@]+"${MODS[@]}"}; do
+          P="$(cmcr_unity_need "$M")"
+          [ -z "$P" ] || MISS="$MISS $(printf '%s' "$P" | tr '\n' ' ')"
+        done
+        MISS="$(printf '%s' "$MISS" | sed 's/  */ /g; s/ $//')"
+        if [ -n "$MISS" ]; then
+          echo "✘ Unity $V jest, ale brakuje:$MISS (kod Unity Hub $RC) – ponowna instalacja doinstaluje brakujące części." >&2
+          exit 1
+        fi
+        cmcr_unity_mark
         [ $RC -eq 0 ] || echo "Uwaga: Unity Hub zakończył się kodem $RC, ale edytor i moduły są na miejscu."
         echo "✔ Unity $V ($ARCH) w $ED${MODS[0]+, moduły: ${MODS[*]}}"
         """#)
     }
 
+    /// Adds modules to an editor that is already installed; a line (6000.6) means its newest version on the Mac.
     public static func unityInstallModules(version: String, modules: [String]) -> RemoteScript {
-        unityHub(["install-modules", "--version", version] + modules.flatMap { ["-m", $0] } + ["--childModules"])
+        let args = (modules.flatMap { ["-m", $0] } + ["--childModules"]).map(shQuote).joined(separator: " ")
+        return RemoteScript(#"""
+        \#(unityHubFind)
+        \#(unityEditorsFolder)
+        \#(unityInstalledVersion(version))
+        "$HUB" -- --headless 'install-modules' '--version' "$V" \#(args) --errors </dev/null
+        """#)
     }
 
     public static func androidSDK(unityVersion: String, apiLevels: [String]) -> RemoteScript {
         let packages = ["platform-tools"] + apiLevels.map { "platforms;android-\($0)" }
         return RemoteScript(#"""
-        BASE="/Applications/Unity/Hub/Editor/"\#(shQuote(unityVersion))"/PlaybackEngines/AndroidPlayer"
+        APPS="${CMCR_APPS_DIR:-/Applications}"; HUB="$APPS/Unity Hub.app/Contents/MacOS/Unity Hub"
+        \#(unityEditorsFolder)
+        \#(unityInstalledVersion(unityVersion))
+        BASE="$IP/$V/PlaybackEngines/AndroidPlayer"
         SDKM="$BASE/SDK/cmdline-tools/latest/bin/sdkmanager"
         if [ ! -x "$SDKM" ]; then
           L="$(ls -d "$BASE"/SDK/cmdline-tools/*/bin/sdkmanager 2>/dev/null)"
