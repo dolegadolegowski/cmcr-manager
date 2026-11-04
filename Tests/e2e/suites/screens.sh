@@ -40,6 +40,38 @@ expect_code "zrzut: własna sesja bez sudo" "$(scr_count '^sudo ')" 0 "$(fakelog
 w="$(scr_width "$WORK/scr-own.jpg")"
 [ "$w" -gt 0 ] && [ "$w" -le 640 ] && pass "zrzut: pomniejszony do limitu (${w} px)" || fail "zrzut: rozmiar $w px"
 
+# macOS 15+: before capturing, the preview renews replayd's remembered consent for the SSH session, so the student is
+# never asked whether "sshd-session" may keep seeing the screen (cmcr_sc_approval). The home folder is the one under
+# CMCR_SETUP_ROOT_PREFIX (fakes.sh), never the real one, and the fake pkill does not stop the real replayd.
+section "Podgląd ekranów – zapamiętana zgoda replayd (macOS 15+)"
+scr_home="$WORK/setup-root$HOME"
+scr_plist="$scr_home/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"
+if [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 15 ]; then
+  # The first missing folder on the way is removed again afterwards (the setup suite expects its own tree).
+  scr_made=""; scr_d="$scr_home"
+  while [ "$scr_d" != "$WORK" ] && [ "$scr_d" != / ]; do [ -d "$scr_d" ] || scr_made="$scr_d"; scr_d="$(dirname "$scr_d")"; done
+  mkdir -p "$scr_home"
+  rm -f "$scr_plist"
+  clear_fakelog
+  out="$(ctlpw screenshot 1 "$WORK/scr-approval.jpg")"; code=$?
+  expect_code "zgoda replayd: zrzut działa" "$code" 0 "$out"
+  expect "zgoda replayd: wpis sesji SSH zapisany przed zrzutem" "$(plutil -p "$scr_plist" 2>&1)" \
+    '"/usr/libexec/sshd-keygen-wrapper" => {' '"kScreenCapturePrivacyHintDate" => 2099-01-01' '"kScreenCapturePrivacyHintPolicy" => 2592000'
+  expect_code "zgoda replayd: replayd zatrzymany przed zapisem i po nim" "$(scr_count '^pkill -KILL -x -U [0-9]* replayd$')" 2 "$(fakelog)"
+  clear_fakelog
+  out="$(ctlpw screenshot 1 "$WORK/scr-approval2.jpg")"; code=$?
+  expect_code "zgoda replayd: drugi zrzut działa" "$code" 0 "$out"
+  expect_code "zgoda replayd: ważna zgoda nie jest odnawiana (replayd nietknięty)" "$(scr_count 'replayd')" 0 "$(fakelog)"
+  plutil -replace "/usr/libexec/sshd-keygen-wrapper.kScreenCaptureApprovalLastUsed" -date 2020-01-01T00:00:00Z "$scr_plist"
+  clear_fakelog
+  ctlpw screenshot 1 "$WORK/scr-approval3.jpg" >/dev/null
+  expect_code "zgoda replayd: wygasła zgoda odnowiona" "$(scr_count '^pkill -KILL -x -U [0-9]* replayd$')" 2 "$(fakelog)"
+  expect_not "zgoda replayd: data użycia odświeżona" "$(plutil -p "$scr_plist" 2>&1)" "2020-01-01"
+  if [ -n "$scr_made" ]; then rm -rf "$scr_made"; else rm -rf "$scr_home/Library/Group Containers/group.com.apple.replayd"; fi
+else
+  pass "zgoda replayd: macOS starszy niż 15 – okna nie ma, pominięto"
+fi
+
 scr_console daemon
 clear_fakelog
 out="$(ctlpw screenshot 1 "$WORK/scr-student.jpg")"; code=$?

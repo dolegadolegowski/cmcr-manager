@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  CMCR Manager: pełny dostęp do dysku dla sesji SSH – to samo co „Daj użytkownikom zdalnym pełny dostęp do dysku”
+  (Ustawienia › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”), ale nadane zdalnie przez MDM.
+  Potrzebne do pobierania prac z Biurka/Dokumentów ucznia, podmiany aplikacji i do tego, by CMCR Manager mógł sam
+  wyłączać okno macOS 15+ z pytaniem o zgodę na podgląd ekranu.
+
+  Profil PPPC działa WYŁĄCZNIE wdrożony przez MDM z zatwierdzeniem użytkownika lub rejestracją automatyczną
+  (schemat Apple: userapprovedmdm: true, allowmanualinstall: false). Każdy proces uruchomiony przez SSH dostaje
+  wtedy pełny dostęp do dysku – tak jak po włączeniu przełącznika przy komputerze.
+  Wymagania kodu sprawdzone poleceniem: codesign -dr - /usr/libexec/sshd-keygen-wrapper /usr/libexec/sshd-session
+  Źródło: https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.TCC.configuration-profile-policy.yaml
+-->
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadDisplayName</key>
+			<string>Pełny dostęp do dysku dla sesji SSH</string>
+			<key>PayloadIdentifier</key>
+			<string>pl.cmcr.manager.ssh-full-disk-access.pppc</string>
+			<key>PayloadType</key>
+			<string>com.apple.TCC.configuration-profile-policy</string>
+			<key>PayloadUUID</key>
+			<string>FE240928-ADD9-4475-99E4-FA9AA1AFA945</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>Services</key>
+			<dict>
+				<key>SystemPolicyAllFiles</key>
+				<array>
+					<dict>
+						<key>Authorization</key>
+						<string>Allow</string>
+						<key>CodeRequirement</key>
+						<string>identifier "com.apple.sshd-keygen-wrapper" and anchor apple</string>
+						<key>Comment</key>
+						<string>Sesje SSH (CMCR Manager)</string>
+						<key>Identifier</key>
+						<string>/usr/libexec/sshd-keygen-wrapper</string>
+						<key>IdentifierType</key>
+						<string>path</string>
+					</dict>
+					<dict>
+						<key>Authorization</key>
+						<string>Allow</string>
+						<key>CodeRequirement</key>
+						<string>identifier "com.apple.sshd-session" and anchor apple</string>
+						<key>Comment</key>
+						<string>Sesje SSH od OpenSSH 9.8 (CMCR Manager)</string>
+						<key>Identifier</key>
+						<string>/usr/libexec/sshd-session</string>
+						<key>IdentifierType</key>
+						<string>path</string>
+					</dict>
+				</array>
+			</dict>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>Pełny dostęp do dysku dla sesji SSH, z których korzysta CMCR Manager. Działa tylko wdrożony przez MDM.</string>
+	<key>PayloadDisplayName</key>
+	<string>CMCR Manager – pełny dostęp do dysku dla SSH</string>
+	<key>PayloadIdentifier</key>
+	<string>pl.cmcr.manager.ssh-full-disk-access</string>
+	<key>PayloadOrganization</key>
+	<string>CMCR Manager</string>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>0FFF2F82-EE82-4986-BDE9-7FE5D2EDF8FD</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>
