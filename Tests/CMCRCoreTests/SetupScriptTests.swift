@@ -19,6 +19,24 @@ private func bashSyntaxCheck(_ text: String) throws -> Bool {
 
 private let testKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDdtiSxiX/5C8QZGgQhHVN+qsuG6QgBNdbXqFQMUqFft cmcr-test"
 
+/// The setup script repeats the agent's paths and version (it cannot import ScreenAgentInfo).
+@Test func setupScriptKnowsTheScreenAgent() {
+    let t = SetupScript.template
+    #expect(t.contains("AGENT_APP=\"$R\(ScreenAgentInfo.appPath)\""))
+    #expect(t.contains("AGENT_EXE=\"$AGENT_APP/Contents/MacOS/\(ScreenAgentInfo.executableName)\""))
+    #expect(t.contains("CMCR_SCREEN_AGENT_VERSION=\"\(ScreenAgentInfo.version)\""))
+    #expect(t.contains("CMCR_SC_ID=\(ScreenAgentInfo.bundleID)\n"))
+    #expect(t.contains("CMCR_SC_EXE='\(ScreenAgentInfo.executablePath)'\n"))
+    // Checked only, never installed (the agent ships in the app) and never a failure.
+    let step = t.components(separatedBy: "step_screen_agent() {").last?.components(separatedBy: "\n}\n").first ?? ""
+    #expect(!step.isEmpty)
+    #expect(!step.contains(" fail ") && !step.contains("record screen_agent fail"))
+    #expect(step.contains("Szybkie naprawy › Zainstaluj usługę podglądu"))
+    #expect(t.contains("  step_screen_agent\n  step_screen_alert\n}"))
+    #expect(t.contains("\"screen_agent\": \"%s\""))
+    #expect(!t.contains("record tcc_screen"))
+}
+
 @Test func embeddedSetupScriptMatchesRepository() throws {
     let file = try String(contentsOf: repoRoot.appendingPathComponent("setup/cmcr-imac-setup.sh"), encoding: .utf8)
     #expect(SetupScript.template == file, "Run scripts/embed-setup.sh after changing setup/cmcr-imac-setup.sh")
@@ -188,12 +206,16 @@ private let testKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDdtiSxiX/5C8QZGgQhHV
     sudo=ok
     tcc=readable
     tcc_fda=2
-    tcc_screen=2
+    agent_installed=1
+    agent_version=\(ScreenAgentInfo.version)
+    agent_loaded=1
+    agent_ping=AGENT \(ScreenAgentInfo.version) perm=granted locked=0 console=1 asleep=0 user=student
+    agent_ping_rc=0
     """
     let r = ReadinessReport.parse(text, student: "student", sharedFolder: "/Users/student/Public/cmcr")
     #expect(r.isReady)
     #expect(r[.vnc].state == .off)
-    #expect(r[.screen].state == .ok)
+    #expect(r[.screen].state == .ok && r[.screen].short == "gotowy")
     #expect(r.fixableBySetup.isEmpty && r.needsVisit.isEmpty)
 }
 
@@ -222,6 +244,9 @@ private let testKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDdtiSxiX/5C8QZGgQhHV
     #expect(r[.setup].state == .warning && r[.setup].short == "v0.9.0")
     #expect(r.needsVisit == [.fda])
     #expect(r.fixableBySetup == [.ssh, .folder, .wol, .setup])
+    // A missing screen agent is installed by „Skonfiguruj zaznaczone” as well.
+    let noAgent = ReadinessReport.parse(text + "\nagent_installed=0\n", student: "student", sharedFolder: "/Users/student/Public/cmcr")
+    #expect(noAgent.fixableBySetup == [.ssh, .folder, .wol, .screen, .setup])
 
     let off = ReadinessReport.unreachable("Komputer nie odpowiada.")
     #expect(off[.ssh].state == .problem && off[.ssh].detail == "Komputer nie odpowiada.")

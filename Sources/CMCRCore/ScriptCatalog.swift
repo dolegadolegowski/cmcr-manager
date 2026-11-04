@@ -105,6 +105,11 @@ public enum ScriptCatalog {
             Sample(name: "screenCapture(display)", script: Scripts.screenCapture(ScreenCaptureOptions(maxSize: 0, quality: 0, interval: 1,
                                                                                                       notify: false, onlyStandardAccounts: false,
                                                                                                       display: .number(2)))),
+            // CMCR Screen Agent (Scripts+ScreenAgent.swift)
+            Sample(name: "installScreenAgent", script: Scripts.installScreenAgent(remoteTar: "/tmp/\(a).tar")),
+            Sample(name: "removeScreenAgent", script: Scripts.removeScreenAgent()),
+            Sample(name: "requestScreenAgentPermission", script: Scripts.requestScreenAgentPermission()),
+            Sample(name: "screenAgentStatus", script: Scripts.screenAgentStatus()),
             // U6 files (Scripts+Browse.swift)
             Sample(name: "listDirectory", script: Scripts.listDirectory("/Users/{console}/\(a)", asRoot: false)),
             Sample(name: "listDirectory(root)", script: Scripts.listDirectory("/", asRoot: true, limit: 10)),

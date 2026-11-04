@@ -143,29 +143,20 @@ private func bashSyntaxOK(_ script: RemoteScript) -> Bool {
 
 // MARK: - screen-observe-notification-best-effort
 
+/// The notice is shown by the screen agent (`client <uid> notice <b64 title> <b64 text>`), which confirms it is on
+/// screen; anything else counts as not notified and nothing is captured.
 @Test func observeNoticeIsAConfirmedPanelNotABestEffortNotification() {
-    let jxa = Scripts.observeNoticeJXA()
-    #expect(compileOSA(jxa, language: "JavaScript") == nil)
-    #expect(jxa.contains("CMCR:NOTICE:shown") && jxa.contains("CMCR:NOTICE:hidden"))
-    #expect(jxa.contains(Scripts.observeNoticeText))
-    // It ends itself: the timer is set up before anything is reported.
-    #expect(jxa.range(of: "'terminate:'")!.lowerBound < jxa.range(of: "say(shown")!.lowerBound)
-
     let script = Scripts.screenCapture(ScreenCaptureOptions(maxSize: 800))
     #expect(!script.body.contains("display notification \""))
+    #expect(!script.body.contains("osascript"), "the notice comes from the agent, not from JXA over SSH")
+    #expect(script.body.contains("SCR_NOTICE_T=\(Data(Scripts.observeNoticeTitle.utf8).base64EncodedString())"))
+    #expect(script.body.contains("SCR_NOTICE_X=\(Data(Scripts.observeNoticeText.utf8).base64EncodedString())"))
+    #expect(script.body.contains("scr_agent notice \"$SCR_NOTICE_T\" \"$SCR_NOTICE_X\""))
+    #expect(script.body.contains("shown)\n      CMCR_LAST=\"$SCR_SESSION\""))
     #expect(script.body.contains("STATE notify"))
     #expect(script.body.contains("if scr_notify; then"))
-    #expect(script.body.contains("0|3|4|5|\(ScriptCode.observeNotNotified))"))
+    #expect(script.body.contains("0|3|4|5|\(ScriptCode.observeNotNotified)|\(ScriptCode.agentUnavailable))"))
     #expect(bashSyntaxOK(script))
-}
-
-/// The notice builds its panels on a real Mac (bridged selectors exist); nothing is shown in --dry-run.
-@Test func observeNoticeDryRunBuildsPanels() {
-    let f = tempFile("notice.js", Scripts.observeNoticeJXA())
-    defer { try? FileManager.default.removeItem(at: f) }
-    let (code, out) = runTool("/usr/bin/osascript", ["-l", "JavaScript", f.path, "--dry-run"])
-    #expect(code == 0, "\(out)")
-    #expect(out.hasPrefix("panels="), "\(out)")
 }
 
 @Test func failedNoticeIsAnIssueThatHidesTheImage() {
@@ -188,32 +179,24 @@ private func bashSyntaxOK(_ script: RemoteScript) -> Bool {
 
 // MARK: - sequoia-screen-capture-prompts
 
-@Test func screenRecordingReadinessPrefersThePreflightOfTheRealProcessChain() {
-    let base = "os=15.6\nadmin=imac07\nconsole=student\nkey=ok\nfolder=ok\nsudo=ok\ntcc=readable\ntcc_fda=2\n"
-    // TCC.db still has the old sshd-keygen-wrapper grant, but the SSH chain (sshd-session) is refused.
-    let stale = ReadinessReport.parse(base + "tcc_screen=2\nscreen_preflight=false\n", student: "student",
-                                      sharedFolder: "/Users/student/Public/cmcr")
-    #expect(stale[.screen].state == .manual)
-    #expect(stale[.screen].detail.contains("/usr/libexec/sshd-session"))
-    // Granted to sshd-session only: the preflight says yes.
-    let granted = ReadinessReport.parse(base + "tcc_screen=-1\nscreen_preflight=true\n", student: "student",
-                                        sharedFolder: "/Users/student/Public/cmcr")
-    #expect(granted[.screen].state == .ok)
-    // macOS 15+: the recurring consent window is explained.
-    #expect(granted[.screen].detail.contains(ReadinessReport.screenCaptureAlertNote))
-    let older = ReadinessReport.parse("os=14.7\nadmin=imac07\nconsole=student\nkey=ok\nfolder=ok\nsudo=ok\nscreen_preflight=true\n",
-                                      student: "student", sharedFolder: "/Users/student/Public/cmcr")
-    #expect(older[.screen].state == .ok && !older[.screen].detail.contains("Od macOS 15"))
-    // Without a preflight the TCC rows still decide.
-    let dbOnly = ReadinessReport.parse(base + "tcc_screen=2\n", student: "student", sharedFolder: "/Users/student/Public/cmcr")
-    #expect(dbOnly[.screen].state == .ok)
-}
-
-@Test func tccChecksAcceptTheSshdSessionClient() {
+/// The readiness check asks the agent (`ping`) instead of reading TCC.db (macOS 27 forbids it) or running a preflight
+/// through the SSH session, whose responsible process no longer captures anything.
+@Test func screenReadinessAsksTheAgentNotTCC() {
     let readiness = Scripts.readiness(student: "student", sharedFolder: "/Users/student/Public/cmcr", publicKey: nil).body
+    #expect(!readiness.contains("kTCCServiceScreenCapture"))
+    #expect(!readiness.contains("CGPreflightScreenCaptureAccess"))
+    #expect(!readiness.contains("screen_preflight"))
+    #expect(readiness.contains("cmcr_agent_probe \"$CONSOLE_UID\""))
+    #expect(readiness.contains("cmcr_agent_probe \"$CUID\""))
+    // Full Disk Access may still use the TCC rows of the SSH session where they are readable.
     #expect(readiness.contains("client LIKE '%sshd-keygen-wrapper' OR client LIKE '%sshd-session'"))
-    #expect(SetupScriptTemplate.text.contains("client LIKE '%sshd-keygen-wrapper' OR client LIKE '%sshd-session'"))
-    #expect(SetupScriptTemplate.text.contains("tcc_ssh_value kTCCServiceScreenCapture"))
+    #expect(SetupScriptTemplate.text.contains("tcc_ssh_value kTCCServiceSystemPolicyAllFiles"))
+    #expect(!SetupScriptTemplate.text.contains("tcc_ssh_value kTCCServiceScreenCapture"))
+    #expect(!SetupScriptTemplate.text.contains("CGPreflightScreenCaptureAccess"))
+    // A TCC row of the old SSH grant no longer means anything for the preview.
+    let old = ReadinessReport.parse("os=15.6\nadmin=imac07\nconsole=student\nsudo=ok\ntcc=readable\ntcc_fda=2\ntcc_screen=2\nscreen_preflight=true\nagent_installed=0\n",
+                                    student: "student", sharedFolder: "/Users/student/Public/cmcr")
+    #expect(old[.screen].state == .problem && old[.screen].short == "brak usługi")
 }
 
 // MARK: - setup-schedule-stale-ok

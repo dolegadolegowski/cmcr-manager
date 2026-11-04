@@ -168,6 +168,18 @@ Zmienia się tylko to, kto robi zrzut:
 - odnawianie zapamiętanej zgody replayd (macOS 15+) dotyczy klientów usługi (identyfikator i ścieżka pliku
   wykonywalnego), nie `sshd-keygen-wrapper`.
 
+Szczegóły wykonania:
+- brak usługi sprawdzany jest przed przejściem na roota (bez sudo), więc „brak usługi” nie ginie za błędem hasła;
+- kody wyjścia: `agent-missing`/`agent-down`/`agent-untrusted` → 9 (`ScriptCode.agentUnavailable`), `agent-perm` → 5,
+  `notify` → 8; `scr_run_root` przepuszcza 9 jak pozostałe kody wyniku;
+- zrzut jest czytany raz do prywatnej kopii w `$CMCR_TMP` (md5 i wysyłka z tej samej kopii – drugi podgląd tego
+  samego konta może w tym czasie podmienić plik usługi); ścieżka pliku pochodzi z wiersza `SHOT`;
+- kod 14 z kodem `asleep`/`notconsole`/`nodisplay` dostaje opis po polsku („ekran jest uśpiony”, …);
+- tryb uwagi (`LockScreen`, nakładka `CMCR_ATTENTION`) sprawdza dalej skrypt, przed zapytaniem usługi – usługa go nie widzi;
+- przy kodzie 10: `launchctl enable gui/<uid>/<label>` (uczeń mógł usługę wyłączyć we własnej sesji), potem
+  `bootstrap`/`kickstart -k` i do 5 s oczekiwania, aż usługa odpowie na `ping` (samo gniazdo nic nie znaczy – zabita
+  usługa zostawia stare); `Operations.screenshot` ma limit 60 s (sudo + dwa takie wznowienia).
+
 ## Instalacja (`Operations.installScreenAgent`)
 
 1. Aplikacja znajduje własną kopię usługi (`ScreenAgentLocator.bundledAgent()`, `Contents/Helpers`),
@@ -181,18 +193,38 @@ Zmienia się tylko to, kto robi zrzut:
 3. Wynik w wierszach `CMCR:AGENT <installed|updated|unchanged> <wersja>` i
    `CMCR:AGENT-SESSION <konto> <uid> <wiersz ping albo ERR …>`.
 
+Szczegóły instalacji:
+- aplikacja jest wymieniana tylko wtedy, gdy zainstalowanej nie ma, ma inną wersję albo nieprawidłowy podpis;
+  sam LaunchAgent (porównany bajt po bajcie z `ScreenAgentInfo.launchAgentPlist(executable: "$R"+ścieżka)`) jest
+  przepisywany niezależnie – zmiana tylko jego to też `updated` (aplikacja i uprawnienie zostają);
+- gdy nowa kopia ma inne wymaganie podpisu (`codesign -d -r-`, przy podpisie ad-hoc zawsze) niż wymieniana, skrypt
+  robi `tccutil reset ScreenCapture pl.cmcr.manager.screen-agent` i ostrzega, że uprawnienie trzeba nadać ponownie
+  (stary wpis pokazywałby włączony przełącznik, a macOS i tak odmawiałby nowej kopii);
+- przed `bootstrap` jest `launchctl enable`; usługa załadowana, ale milcząca, dostaje `kickstart -k`;
+- kod wyjścia 0 także wtedy, gdy usługa w którejś sesji nie odpowiada (widać to w `CMCR:AGENT-SESSION … ERR …`);
+  1 – nieprawidłowe archiwum, identyfikator, wersja, podpis albo błąd zapisu (z przywróceniem poprzedniej kopii).
+
 Usuwanie (`Scripts.removeScreenAgent`): `bootout` w sesjach, usunięcie LaunchAgenta, aplikacji, `run`, `shots`
-i `tccutil reset ScreenCapture pl.cmcr.manager.screen-agent`.
+i `tccutil reset ScreenCapture pl.cmcr.manager.screen-agent`. Wynik: `CMCR:AGENT removed <wersja>` albo
+`CMCR:AGENT absent -`.
 
 Prośba o uprawnienie (`Scripts.requestScreenAgentPermission`): `client <uid> request-permission` w sesji
 zalogowanego użytkownika – macOS pokazuje przy komputerze okno z przyciskiem „Otwórz Ustawienia systemowe”, a
 usługa pojawia się na liście „Nagrywanie ekranu i dźwięku systemowego”. Włączyć ją musi administrator przy
-komputerze (albo uczeń, jeśli profil MDM PPPC ma `AllowStandardUserToSetSystemService`).
+komputerze (albo uczeń, jeśli profil MDM PPPC ma `AllowStandardUserToSetSystemService`). Wynik:
+`CMCR:AGENT-PERMISSION <granted|denied>`; kody: 0, 3 (nikt nie jest zalogowany), 9 (brak usługi, nie odpowiada także
+po ponownym uruchomieniu, niezaufana), 1 (inny błąd).
+
+Stan (`Scripts.screenAgentStatus`, `Operations.screenAgentStatus`): wiersze `console=…`, `agent_installed=0|1`,
+`agent_version=…` (bez sudo) oraz z sesji osoby przy komputerze (jako root, chyba że to konto SSH) `agent_loaded=0|1`,
+`agent_ping=<AGENT … albo ERR <kod> <opis>>`, `agent_ping_rc=<kod klienta>`. Te same wiersze wypisuje sprawdzanie
+gotowości; oba czyta jedna funkcja `ScreenAgentStatus.parse`.
 
 ## Gotowość (kolumna „Podgląd ekranu”, `ReadinessCheck.screen`)
 
 Sprawdzanie (`Scripts.readiness`) dopisuje `kv agent_installed 0|1`, `kv agent_version X`, `kv agent_loaded
-0|1` i `kv agent_ping <wiersz AGENT … albo ERR …>` (część root). Stan:
+0|1`, `kv agent_ping <wiersz AGENT … albo ERR …>` i `kv agent_ping_rc N` (część root; gdy konto SSH jest osobą przy
+komputerze – bez sudo). Nie czyta już bazy TCC ani nie uruchamia `CGPreflightScreenCaptureAccess` z sesji SSH. Stan:
 
 | Warunek | Stan | Krótko |
 |---|---|---|
@@ -200,8 +232,22 @@ Sprawdzanie (`Scripts.readiness`) dopisuje `kv agent_installed 0|1`, `kv agent_v
 | starsza wersja niż `ScreenAgentInfo.version` | warning (naprawialne) | „v1.0.0” |
 | nikt nie jest zalogowany | unknown | „nikt nie zalogowany” |
 | usługa nie odpowiada | warning (naprawialne) | „nie odpowiada” |
+| na gnieździe odpowiada inny program (kod 11) | warning (naprawialne) | „niezaufana” |
+| brak sudo (nie da się zapytać usługi innego konta) | unknown | „?” |
 | `perm=denied` | manual (wizyta przy komputerze) | „nadaj uprawnienie” |
 | `perm=granted` | ok | „gotowy” |
+
+Od macOS 15 komórka dopisuje też stan zapamiętanej zgody replayd (okno „…chce pominąć systemowy wybór okien”).
+
+## Skrypt przygotowania (`setup/cmcr-imac-setup.sh` 1.2.0)
+
+Skrypt nie może zainstalować usługi (plik wykonywalny jest w aplikacji). W `step_tcc` zamiast sprawdzania uprawnienia
+sesji SSH jest krok `screen_agent`: brak usługi albo starsza wersja niż `CMCR_SCREEN_AGENT_VERSION` → `warn` z
+instrukcją instalacji z aplikacji, `perm=denied` → `todo` (włączyć przy komputerze), `perm=granted` → `ok`; nigdy
+`fail`. JSON znacznika ma nowe pole `"screen_agent": "<wersja>|none"`, a `"screen_capture_remote"` pochodzi z `ping`
+usługi. Blok CMCR-REPLAYD odnawia zgodę replayd pod dwoma kluczami – identyfikatorem usługi (`CMCR_SC_ID`) i ścieżką
+jej pliku wykonywalnego (`CMCR_SC_EXE`) – w formacie macOS 15.0 albo 15.1+. Klucze mają kropki i spacje, więc odczyt
+i zapis idą przez `/usr/libexec/PlistBuddy` (`Print -x`, jedno wywołanie `Delete`+`Merge /dev/stdin`), nie `plutil`.
 
 ## Podpis i uprawnienie
 

@@ -335,10 +335,12 @@ struct P2DiagnoseTests {
 
 struct P2ScreenIssueTextTests {
     @Test func screenCaptureProblemsNameTheIMac() {
-        let capture = ScreenIssue.captureFailed("").message
-        #expect(capture.hasPrefix("Zrzut ekranu nieudany. Na tym iMacu nadaj sesjom SSH uprawnienie"), "\(capture)")
+        let permission = ScreenIssue.agentPermission.message
+        #expect(permission.hasPrefix("Usługa podglądu nie ma jeszcze uprawnienia do nagrywania ekranu. Przy tym iMacu:"), "\(permission)")
+        #expect(ScreenIssue.agentMissing.message.contains("Na tym iMacu nie ma usługi podglądu"))
         #expect(ScreenIssue.sudoNotPermitted.message.contains("nie jest administratorem tego iMaca"))
-        for issue in [ScreenIssue.captureFailed("x"), .sudoNotPermitted] {
+        for issue in [ScreenIssue.captureFailed("x"), .sudoNotPermitted, .agentPermission, .agentMissing, .agentDown("x"),
+                      .agentUntrusted("x")] {
             #expect(!issue.message.contains("tym Macu") && !issue.message.contains("tego Maca"))
         }
     }
