@@ -217,7 +217,9 @@ import Testing
             profiles() { printf 'MDM enrollment: No\n'; }
             launchctl() { _lab_log "launchctl $*"; return 0; }
             kill() { _lab_log "kill $*"; return 0; }
-            export -f _lab_log sudo pkgutil profiles launchctl kill
+            # As on macOS 15: plutil prints „Could not extract value…” on stdout (macOS 26 and later: on stderr).
+            plutil() { command plutil "$@" 2>&1; }
+            export -f _lab_log sudo pkgutil profiles launchctl kill plutil
             """#
             try fakes.write(to: dir.appendingPathComponent("fakes.sh"), atomically: true, encoding: .utf8)
         }

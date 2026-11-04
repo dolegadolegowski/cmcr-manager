@@ -21,7 +21,9 @@ extension Scripts {
     CMCR_T="$(printf '\t')"
     # One field of a record: tabs and line breaks would split it.
     cmcr_clean() { local s="$1"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/ }"; printf '%s' "$s"; }
-    cmcr_plist() { plutil -extract "$2" raw -o - "$1" 2>/dev/null; }
+    # One value of a plist, or nothing. Only a successful plutil counts: for a missing key the plutil of macOS 15 prints
+    # „Could not extract value…” on stdout (later versions on stderr), which must not become a version or a bundle id.
+    cmcr_plist() { local v; v="$(plutil -extract "$2" raw -o - "$1" 2>/dev/null)" || return 0; printf '%s' "$v"; }
     # The version people see: CFBundleShortVersionString, else CFBundleVersion; a blank value does not count.
     cmcr_app_version() {
       local k v
