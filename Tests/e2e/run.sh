@@ -59,6 +59,13 @@ fi
 BIN="$(cd "$ROOT" && swift build --show-bin-path 2>/dev/null)"
 CTL="$BIN/cmcrctl"
 [ -x "$CTL" ] || { echo "Brak $CTL"; exit 1; }
+# CMCR Screen Agent as the app ships it (an ad-hoc signed bundle of the debug build, with the DEBUG test seams);
+# the app and cmcrctl upload this one (ScreenAgentLocator honours the variable only in the harness / DEBUG).
+AGENT_BIN="$BIN/cmcr-screen-agent"
+[ -x "$AGENT_BIN" ] || { echo "Brak $AGENT_BIN"; exit 1; }
+"$ROOT/scripts/make-agent-bundle.sh" "$AGENT_BIN" "$WORK/agent-bundle" >/dev/null 2>"$WORK/agent-bundle.err" \
+  || { cat "$WORK/agent-bundle.err"; echo "Nie można zbudować pakietu CMCR Screen Agent"; exit 1; }
+export CMCR_SCREEN_AGENT_APP="$WORK/agent-bundle/CMCR Screen Agent.app"
 
 # ---------------------------------------------------------------- environment
 ME="$(id -un)"

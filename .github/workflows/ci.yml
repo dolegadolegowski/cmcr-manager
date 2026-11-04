@@ -59,5 +59,16 @@ jobs:
         run: |
           scripts/build-app.sh
           test "$("build/CMCR Manager.app/Contents/MacOS/CMCRManager" --cmcr-self-test)" = "$(tr -d '[:space:]' < VERSION)"
+      - name: Screen agent helper
+        run: |
+          # CMCR Screen Agent (docs/screen-agent.md): signed nested code with the version of ScreenAgentInfo.
+          AGENT="build/CMCR Manager.app/Contents/Helpers/CMCR Screen Agent.app"
+          codesign --verify --strict "$AGENT"
+          EXPECTED="$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' Sources/CMCRCore/ScreenAgentInfo.swift)"
+          test -n "$EXPECTED"
+          test "$("$AGENT/Contents/MacOS/cmcr-screen-agent" --version)" = "$EXPECTED"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$AGENT/Contents/Info.plist")" = pl.cmcr.manager.screen-agent
+          # A release build has no test seams (DEBUG only).
+          ! "$AGENT/Contents/MacOS/cmcr-screen-agent" --test-seams 2>/dev/null
       - name: Shell scripts syntax
         run: for f in scripts/*.sh Tests/e2e/*.sh Tests/e2e/suites/*.sh; do bash -n "$f"; done
