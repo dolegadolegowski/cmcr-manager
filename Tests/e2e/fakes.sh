@@ -803,3 +803,57 @@ lsappinfo() {
   esac
 }
 export -f lsappinfo 2>/dev/null
+
+# --- Unity Hub (Tests/e2e/suites/unity.sh) ---------------------------------------------------------------
+# The suite puts an executable "Unity Hub" into $CMCR_APPS_DIR/Unity Hub.app that calls this function (it sees the
+# fakes through BASH_ENV). Like the real Hub in headless mode it installs editors into
+# $CMCR_APPS_DIR/Unity/Hub/Editor/<version> (Unity.app/Contents/MacOS/Unity and modules.json). Control files in
+# $CMCR_E2E_WORK: unity-hub.fail (install and install-modules fail, nothing installed), unity-hub.rc1 (they install
+# but end with code 1, like Hub's HUBX-520), unity-hub.nomodules (the editor is installed without the modules).
+_e2e_unity_hub() {
+  local w="${CMCR_E2E_WORK:-/nonexistent}" ip="${CMCR_APPS_DIR:-/nonexistent}/Unity/Hub/Editor"
+  [ "${1:-}" = -- ] && shift
+  [ "${1:-}" = --headless ] && shift
+  _e2e_log "unity-hub $*"
+  local cmd="${1:-}"; shift
+  local v="" m="" mods="" d
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --version|-v) v="$2"; shift 2 ;;
+      --changeset|-c|--architecture|-a) shift 2 ;;
+      -m|--module) mods="$mods $2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  case "$cmd" in
+    install-path|ip) echo "$ip" ;;
+    editors|e)
+      for d in "$ip"/*/; do [ -x "$d/Unity.app/Contents/MacOS/Unity" ] && echo "$(basename "$d") (atrapa) installed at ${d}Unity.app"; done ;;
+    install|i|install-modules|im)
+      if [ -e "$w/unity-hub.fail" ]; then
+        echo "Failed to execute the command due the following, please see '-- --headless help' for assistance."
+        echo "Error: download failed (atrapa)"; return 1
+      fi
+      d="$ip/$v"
+      if [ "$cmd" = install ] || [ "$cmd" = i ]; then
+        mkdir -p "$d/Unity.app/Contents/MacOS" || return 1
+        printf '#!/bin/sh\n' > "$d/Unity.app/Contents/MacOS/Unity"; chmod +x "$d/Unity.app/Contents/MacOS/Unity"
+        : >> "$d/.e2e-modules"
+      elif [ ! -x "$d/Unity.app/Contents/MacOS/Unity" ]; then
+        echo "Error: No editor found for version \"$v\"."; return 1
+      fi
+      [ -e "$w/unity-hub.nomodules" ] || for m in $mods; do echo "$m" >> "$d/.e2e-modules"; done
+      # modules.json as Hub writes it: every module of the release, "selected" for the installed ones.
+      { echo "["
+        for m in android ios webgl; do
+          if grep -qxF "$m" "$d/.e2e-modules"; then echo "  {\"id\": \"$m\", \"selected\": true},"
+          else echo "  {\"id\": \"$m\", \"selected\": false},"; fi
+        done
+        echo '  {"id": "documentation", "selected": false, "eula": null}'
+        echo "]"; } > "$d/modules.json"
+      echo "Editor installed successfully (atrapa)."
+      [ -e "$w/unity-hub.rc1" ] && return 1
+      return 0 ;;
+    *) echo "Error: '$cmd' is not a Hub command."; return 1 ;;
+  esac
+}

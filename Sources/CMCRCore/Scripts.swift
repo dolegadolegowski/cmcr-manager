@@ -662,29 +662,100 @@ public enum Scripts {
 
     // MARK: - Unity Hub / Android SDK (notes.md)
 
-    static let unityHubPath = "/Applications/Unity Hub.app/Contents/MacOS/Unity Hub"
+    /// Unity Hub of the account the script runs as (`$CMCR_APPS_DIR` stands in for /Applications in the tests).
+    static let unityHubFind = #"""
+    APPS="${CMCR_APPS_DIR:-/Applications}"
+    HUB="$APPS/Unity Hub.app/Contents/MacOS/Unity Hub"
+    if [ ! -x "$HUB" ]; then echo "Brak Unity Hub w $APPS – zainstaluj go najpierw (Instalacja › Homebrew: unity-hub, jako cask)." >&2; exit 2; fi
+    """#
 
     public static func unityHub(_ arguments: [String]) -> RemoteScript {
         RemoteScript(#"""
-        HUB=\#(shQuote(unityHubPath))
-        if [ ! -x "$HUB" ]; then echo "Brak Unity Hub w /Applications (zainstaluj np. brew install --cask unity-hub)." >&2; exit 2; fi
-        "$HUB" -- --headless \#(arguments.map(shQuote).joined(separator: " "))
+        \#(unityHubFind)
+        "$HUB" -- --headless \#(arguments.map(shQuote).joined(separator: " ")) </dev/null
         """#)
     }
 
-    /// Installs an editor for the Mac's own architecture (Unity Hub defaults to Intel, which runs under
-    /// Rosetta on Apple Silicon) together with the child modules of the selected modules – for `android`
-    /// that is the Android SDK & NDK Tools and OpenJDK, without which `sdkmanager` does not exist.
-    public static func unityInstallEditor(version: String, modules: [String], changeset: String = "") -> RemoteScript {
-        var args = ["install", "--version", version]
-        if !changeset.isEmpty { args += ["--changeset", changeset] }
-        let mods = modules.flatMap { ["-m", $0] } + (modules.isEmpty ? [] : ["--childModules"])
-        return RemoteScript(#"""
-        HUB=\#(shQuote(unityHubPath))
-        if [ ! -x "$HUB" ]; then echo "Brak Unity Hub w /Applications (zainstaluj np. brew install --cask unity-hub)." >&2; exit 2; fi
+    /// Installs an editor through Unity Hub (headless, as the administrator account – Hub unpacks the packages
+    /// itself, no root needed) for the Mac's own architecture (Hub defaults to Intel, which runs under Rosetta on
+    /// Apple Silicon), together with the child modules of the selected modules – for `android` that is the
+    /// Android SDK & NDK Tools and OpenJDK, without which `sdkmanager` does not exist.
+    ///
+    /// A Mac that already has the editor is skipped, or gets only the modules it lacks (Hub's own modules.json
+    /// says which are installed). With `diskNeed` (from the Unity Release API) a Mac without enough free space
+    /// stops before downloading. Success is checked on disk afterwards: Hub's exit code is not reliable (it
+    /// reports 1 after some successful installs, HUBX-520).
+    public static func unityInstallEditor(version: String, modules: [String], changeset: String = "",
+                                          diskNeed: UnityDiskNeed? = nil) -> RemoteScript {
+        RemoteScript(#"""
+        \#(unityHubFind)
+        V=\#(shQuote(version)); CS=\#(shQuote(changeset)); EDKB=\#(diskNeed?.editorKB ?? 0)
+        MODS=(\#(modules.map(shQuote).joined(separator: " ")))
+        MODKB=(\#(modules.map { String(diskNeed?.modulesKB[$0] ?? 0) }.joined(separator: " ")))
         ARCH=x86_64; [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] && ARCH=arm64
-        echo "→ Unity Hub: \#(args.joined(separator: " ")) (architektura $ARCH)"
-        "$HUB" -- --headless \#(args.map(shQuote).joined(separator: " ")) --architecture "$ARCH" \#(mods.map(shQuote).joined(separator: " "))
+        # Hub's install folder for this account (Unity Hub › Settings › Installs); the default when it gives none.
+        IP="$("$HUB" -- --headless install-path --get 2>/dev/null </dev/null | tail -n 1)"
+        case "$IP" in /*) IP="${IP%/}" ;; *) IP="$APPS/Unity/Hub/Editor" ;; esac
+        ED="$IP/$V"
+        # Unity Hub's modules.json in the editor folder: [{"id": …, "selected": true|false, …}, …]
+        cmcr_unity_has() {
+          local i=0 id
+          while id="$(plutil -extract "$i.id" raw -o - "$ED/modules.json" 2>/dev/null)"; do
+            if [ "$id" = "$1" ]; then [ "$(plutil -extract "$i.selected" raw -o - "$ED/modules.json" 2>/dev/null)" = true ]; return; fi
+            i=$((i + 1))
+          done
+          return 1
+        }
+        cmcr_unity_gb() { awk -v k="$1" 'BEGIN {printf "%.1f", k / 1048576}'; }
+        # Stops when the volume of the install folder has less than $1 KB free (0 = size unknown, no check).
+        cmcr_unity_room() {
+          [ "$1" -gt 0 ] 2>/dev/null || return 0
+          local d="$IP" free
+          while [ ! -d "$d" ]; do d="$(dirname "$d")"; done
+          free="$(df -Pk "$d" 2>/dev/null | awk 'NR == 2 {print $4}')"
+          [ -n "$free" ] && [ "$free" -lt "$1" ] || return 0
+          echo "✘ Za mało miejsca na dysku: wolne $(cmcr_unity_gb "$free") GB, potrzeba ok. $(cmcr_unity_gb "$1") GB (pobranie i rozpakowanie). Nic nie zainstalowano." >&2
+          exit 1
+        }
+        TODO=(); NEED=0
+        if [ -x "$ED/Unity.app/Contents/MacOS/Unity" ]; then
+          for ((i = 0; i < ${#MODS[@]}; i++)); do
+            cmcr_unity_has "${MODS[$i]}" || { TODO[${#TODO[@]}]="${MODS[$i]}"; NEED=$((NEED + MODKB[$i])); }
+          done
+          if [ ${#TODO[@]} -eq 0 ]; then
+            echo "✔ Unity $V jest już zainstalowany${MODS[0]+ (moduły: ${MODS[*]})} – pominięto."
+            exit 0
+          fi
+          echo "→ Unity $V już jest, brakujące moduły: ${TODO[*]}"
+          cmcr_unity_room "$NEED"
+          set -- install-modules --version "$V"
+        else
+          NEED=$EDKB; for K in ${MODKB[@]+"${MODKB[@]}"}; do NEED=$((NEED + K)); done
+          cmcr_unity_room "$NEED"
+          D="$IP"; while [ ! -d "$D" ]; do D="$(dirname "$D")"; done
+          if [ ! -w "$D" ]; then
+            echo "✘ Konto $(id -un) nie może zapisywać w $D (właściciel: $(stat -f %Su "$D" 2>/dev/null)) – Unity Hub nie zainstaluje tam edytora. Zmień właściciela, np. w Poleceniach jako root: chown -R $(id -un):admin \"$D\"" >&2
+            exit 1
+          fi
+          [ -d "$ED" ] && echo "Uwaga: folder $ED już istnieje, ale bez edytora (przerwana instalacja?)."
+          TODO=(${MODS[@]+"${MODS[@]}"})
+          set -- install --version "$V"
+          [ -n "$CS" ] && set -- "$@" --changeset "$CS"
+          set -- "$@" --architecture "$ARCH"
+        fi
+        for M in ${TODO[@]+"${TODO[@]}"}; do set -- "$@" -m "$M"; done
+        [ ${#TODO[@]} -gt 0 ] && set -- "$@" --childModules
+        echo "→ Unity Hub ($ARCH): $*"
+        "$HUB" -- --headless "$@" --errors </dev/null
+        RC=$?
+        if [ ! -x "$ED/Unity.app/Contents/MacOS/Unity" ]; then
+          echo "✘ Unity Hub zakończył pracę (kod $RC), ale w $ED nie ma edytora Unity $V." >&2
+          exit 1
+        fi
+        MISS=""; for M in ${TODO[@]+"${TODO[@]}"}; do cmcr_unity_has "$M" || MISS="$MISS $M"; done
+        if [ -n "$MISS" ]; then echo "✘ Unity $V jest, ale nie zainstalowano modułów:$MISS (kod Unity Hub $RC)." >&2; exit 1; fi
+        [ $RC -eq 0 ] || echo "Uwaga: Unity Hub zakończył się kodem $RC, ale edytor i moduły są na miejscu."
+        echo "✔ Unity $V ($ARCH) w $ED${MODS[0]+, moduły: ${MODS[*]}}"
         """#)
     }
 

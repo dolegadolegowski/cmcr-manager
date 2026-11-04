@@ -108,8 +108,10 @@ import Testing
 
 @Test func unityInstallsNativeEditorWithChildModules() {
     let body = Scripts.unityInstallEditor(version: "6000.3.7f1", modules: ["android"]).body
-    #expect(body.contains(#"--architecture "$ARCH" '-m' 'android' '--childModules'"#))
-    #expect(!Scripts.unityInstallEditor(version: "6000.3.7f1", modules: []).body.contains("childModules"))
+    #expect(body.contains(#"set -- "$@" --architecture "$ARCH""#))
+    #expect(body.contains(#"for M in ${TODO[@]+"${TODO[@]}"}; do set -- "$@" -m "$M"; done"#))
+    #expect(body.contains(#"[ ${#TODO[@]} -gt 0 ] && set -- "$@" --childModules"#))
+    #expect(Scripts.unityInstallEditor(version: "6000.3.7f1", modules: []).body.contains("MODS=()"))
     #expect(Scripts.unityInstallModules(version: "6000.3.7f1", modules: ["ios"]).body.contains("'--childModules'"))
 }
 
