@@ -87,7 +87,7 @@ func runEach(_ list: [Machine], _ a: ModuleArguments, ssh: SSHSettings, timeout:
 enum ExtraCommands {
     static var usage: String {
         // The classroom commands have a heading of their own: a blank line before it, like before every section.
-        [ScriptCommands.usage, SetupCommands.usage, BrowseCLI.usage, "\n" + ClassroomCLI.usage, screenWatchUsage,
+        [ScriptCommands.usage, UnityCLI.usage, SetupCommands.usage, BrowseCLI.usage, "\n" + ClassroomCLI.usage, screenWatchUsage,
          SelfUpdateCommand.usage].joined(separator: "\n")
     }
 
@@ -123,7 +123,7 @@ enum ExtraCommands {
         }
         let ssh = sshSettings
         switch command {
-        case "install", "install-url": return await ScriptCommands.run(command, args)
+        case "install", "install-url", "unity": return await ScriptCommands.run(command, args)
         case "screen-watch": return await screenWatchCommand(args)
         case "rename": return await rename(args, ssh: ssh)
         default:

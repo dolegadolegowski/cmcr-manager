@@ -7,7 +7,9 @@ struct InstallView: View {
     @ViewState private var downloadURL = ""
     @ViewState private var brewName = ""
     @ViewState private var brewCask = true
-    @ViewState private var unityVersion = "6000.3.7f1"
+    @ViewState private var unityVersion = "6000.6"
+    /// The version is being looked up in the Unity Release API (the buttons wait, no second click starts a second run).
+    @ViewState private var resolvingUnity = false
     @ViewState private var unityModules: Set<String> = ["android"]
     @ViewState private var androidAPIs = "32, 34"
     @ViewState private var confirm: ConfirmRequest?
@@ -165,8 +167,11 @@ struct InstallView: View {
 
     var unitySection: some View {
         Section {
-            TextField("Wersja edytora Unity", text: $unityVersion, prompt: Text("6000.3.7f1"))
-                .font(.body.monospacedDigit())
+            TextField(text: $unityVersion, prompt: Text("6000.6 lub 6000.6.8f1")) {
+                Text("Wersja edytora Unity")
+                Text("Linia (6000.6) to jej najnowsza wersja – ta sama na wszystkich komputerach.")
+            }
+            .font(.body.monospacedDigit())
             LabeledContent {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), alignment: .leading)], alignment: .leading,
                           spacing: 6) {
@@ -184,7 +189,8 @@ struct InstallView: View {
                 Text("Platformy, na które uczniowie będą budować gry.")
             }
             FormActionRow("Edytor Unity",
-                          caption: "Instaluje edytor w podanej wersji razem z zaznaczonymi modułami.") {
+                          caption: "Instaluje edytor razem z zaznaczonymi modułami. Komputery, które go mają, są pomijane "
+                              + "(dostają tylko brakujące moduły); bez wolnego miejsca na dysku nic nie jest pobierane.") {
                 TargetButton(title: "Pokaż zainstalowane", icon: "list.bullet", prominent: false) {
                     // --installed: only the editors on the iMac (--all also lists every release in the Hub, APL-14).
                     model.runScript("Unity Hub: editors --installed", on: model.selectedMachines) { _ in
@@ -192,19 +198,24 @@ struct InstallView: View {
                     }
                 }
                 TargetButton(title: "Zainstaluj edytor", icon: "square.and.arrow.down") {
-                    let v = unityVersion
                     let mods = Array(unityModules).sorted()
-                    model.runScript("Unity \(v) + \(mods.joined(separator: ","))", on: model.selectedMachines) { _ in
-                        Scripts.unityInstallEditor(version: v, modules: mods)
+                    let targets = model.selectedMachines
+                    withUnityRelease("Nie można zainstalować edytora Unity", modules: mods) { v, release in
+                        let script = Scripts.unityInstallEditor(version: v, modules: mods, changeset: release?.changeset ?? "",
+                                                                diskNeed: release?.diskNeed(modules: mods))
+                        model.runScript("Unity \(v)" + (mods.isEmpty ? "" : " + \(mods.joined(separator: ","))"), on: targets) { _ in
+                            script
+                        }
                     }
                 }
-                .disabled(unityVersion.isEmpty)
+                .disabled(unityVersion.isEmpty || resolvingUnity)
             }
             FormActionRow("Moduły do zainstalowanego edytora",
-                          caption: "Dodaje zaznaczone moduły, gdy edytor w tej wersji już jest na komputerach.") {
+                          caption: "Dodaje zaznaczone moduły, gdy edytor w tej wersji już jest na komputerach (linia, np. 6000.6, "
+                              + "to najnowsza wersja zainstalowana na danym komputerze).") {
                 TargetButton(title: "Dodaj moduły", icon: "plus.square", prominent: false) {
-                    let v = unityVersion
                     let mods = Array(unityModules).sorted()
+                    guard let v = installedUnityVersion("Nie można dodać modułów Unity") else { return }
                     model.runScript("Unity \(v): moduły \(mods.joined(separator: ","))", on: model.selectedMachines) { _ in
                         Scripts.unityInstallModules(version: v, modules: mods)
                     }
@@ -219,18 +230,59 @@ struct InstallView: View {
             FormActionRow("Android SDK",
                           caption: "Narzędzia do budowania gier na Androida – w podanych wersjach API, dla edytora Unity z modułem Android.") {
                 TargetButton(title: "Zainstaluj Android SDK", icon: "cpu", prominent: false) {
-                    let v = unityVersion
                     let apis = androidAPIs.split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
+                    guard let v = installedUnityVersion("Nie można zainstalować Android SDK") else { return }
                     model.runScript("sdkmanager API \(apis.joined(separator: ","))", on: model.selectedMachines) { _ in
                         Scripts.androidSDK(unityVersion: v, apiLevels: apis)
                     }
                 }
-                .disabled(androidAPIs.isEmpty)
+                .disabled(androidAPIs.isEmpty || unityVersion.isEmpty)
             }
         } header: {
             Label("Unity Hub i Android SDK", systemImage: "cube")
         } footer: {
-            FormSectionNote("Instalacje Unity trwają długo – postęp widać w dziale Zadania. Wcześniej zainstaluj Unity Hub (Homebrew: pakiet unity-hub).")
+            FormSectionNote("Instalacje Unity trwają długo (edytor to ok. 5 GB do pobrania na każdym komputerze, z modułem Android ok. 8 GB) "
+                            + "– postęp widać w dziale Zadania. Wcześniej zainstaluj Unity Hub (Homebrew: pakiet unity-hub). "
+                            + "Licencję (logowanie ucznia w Unity Hub albo licencja edukacyjna szkoły) aktywuje się osobno.")
+        }
+    }
+
+    /// The field for actions on an editor that is already installed (modules, Android SDK): an exact version, or a line
+    /// that each iMac resolves to its newest installed editor – never the newest release on Unity's servers, which the
+    /// lab may not have yet. Nil (after an alert) when the field is neither.
+    private func installedUnityVersion(_ failure: String) -> String? {
+        guard let input = UnityVersionInput(unityVersion) else {
+            model.reportFailure(failure, UnityReleaseError.invalidInput(unityVersion.trimmingCharacters(in: .whitespaces)))
+            return nil
+        }
+        return input.text
+    }
+
+    /// Runs `body` with the field as one exact version. A line (6000.6) becomes its newest final release, asked once,
+    /// here, so every iMac gets the same one; an exact version is looked up for its changeset and download size.
+    /// When Unity cannot be asked, an exact version still goes ahead (Unity Hub has its own release list), a line not.
+    private func withUnityRelease(_ failure: String, modules: [String],
+                                  _ body: @escaping @MainActor (String, UnityRelease?) -> Void) {
+        guard let input = UnityVersionInput(unityVersion) else {
+            model.reportFailure(failure, UnityReleaseError.invalidInput(unityVersion.trimmingCharacters(in: .whitespaces)))
+            return
+        }
+        resolvingUnity = true
+        Task { @MainActor in
+            defer { resolvingUnity = false }
+            do {
+                let release = try await UnityReleases.resolve(input)
+                let unknown = release.unknownModules(modules)
+                guard unknown.isEmpty else {
+                    model.reportFailure(failure, hint: "Unity \(release.version) nie ma modułów: \(unknown.joined(separator: ", ")).")
+                    return
+                }
+                body(release.version, release)
+            } catch let e as UnityReleaseError where e.isLookupUnavailable {
+                if case .exact(let v) = input { body(v, nil) } else { model.reportFailure(failure, e) }
+            } catch {
+                model.reportFailure(failure, error)
+            }
         }
     }
 }

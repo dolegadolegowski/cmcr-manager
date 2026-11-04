@@ -596,40 +596,226 @@ public enum Scripts {
 
     // MARK: - Unity Hub / Android SDK (notes.md)
 
-    static let unityHubPath = "/Applications/Unity Hub.app/Contents/MacOS/Unity Hub"
+    /// Unity Hub of the account the script runs as (`$CMCR_APPS_DIR` stands in for /Applications in the tests).
+    static let unityHubFind = #"""
+    APPS="${CMCR_APPS_DIR:-/Applications}"
+    HUB="$APPS/Unity Hub.app/Contents/MacOS/Unity Hub"
+    if [ ! -x "$HUB" ]; then echo "Brak Unity Hub w $APPS – zainstaluj go najpierw (Instalacja › Homebrew: unity-hub, jako cask)." >&2; exit 2; fi
+    """#
+
+    /// `IP`: the folder this account's Unity Hub installs editors into (Unity Hub › Settings › Installs); the default
+    /// one when Hub gives none or is not there. Needs `APPS` and `HUB`.
+    static let unityEditorsFolder = #"""
+    IP=""; [ -x "$HUB" ] && IP="$("$HUB" -- --headless install-path --get 2>/dev/null </dev/null | tail -n 1)"
+    case "$IP" in /*) IP="${IP%/}" ;; *) IP="$APPS/Unity/Hub/Editor" ;; esac
+    """#
+
+    /// Sets `V` to an exact version. A line (6000.6) is the newest editor of that line installed on this Mac: actions on an
+    /// editor that is already there (modules, Android SDK) must not follow a newer release on Unity's servers.
+    static func unityInstalledVersion(_ versionOrLine: String) -> String {
+        guard UnityReleases.isLine(versionOrLine) else { return "V=\(shQuote(versionOrLine))" }
+        return #"""
+        L=\#(shQuote(versionOrLine)); V=""; VK=""
+        for D in "$IP/$L".*/; do
+          [ -x "$D/Unity.app/Contents/MacOS/Unity" ] || continue
+          N="$(basename "$D")"
+          # 6000.6.10f1 → 006000000006000010000003000001: numbers in order, finals (f) above betas (b) and alphas (a).
+          K="$(printf '%s\n' "$N" | sed 's/a/.0./;s/b/.1./;s/c/.2./;s/f/.3./;s/p/.4./' | awk -F. '{for (i = 1; i <= NF; i++) printf "%06d", $i}')"
+          if [ -z "$V" ] || [[ "$K" > "$VK" ]]; then V="$N"; VK="$K"; fi
+        done
+        if [ -z "$V" ]; then
+          echo "✘ Na tym komputerze nie ma edytora Unity z linii $L (w $IP) – najpierw „Zainstaluj edytor”." >&2; exit 2
+        fi
+        echo "→ Unity $V (najnowsza zainstalowana z linii $L)"
+        """#
+    }
+
+    /// Shell functions that tell whether the editor in `ED` and its modules are complete (see `unityInstallEditor`).
+    /// Need `ED`, `MARK`, `MODLIST`, `V` and `CS`.
+    static let unityCompleteness = #"""
+    # Hub's modules.json → "id<TAB>parent<TAB>selected" per module, in $MODLIST.
+    cmcr_unity_read() {
+      local i=0 id
+      : > "$MODLIST"
+      while id="$(plutil -extract "$i.id" raw -o - "$ED/modules.json" 2>/dev/null)"; do
+        printf '%s\t%s\t%s\n' "$id" "$(plutil -extract "$i.parent" raw -o - "$ED/modules.json" 2>/dev/null)" \
+          "$(plutil -extract "$i.selected" raw -o - "$ED/modules.json" 2>/dev/null)" >> "$MODLIST"
+        i=$((i + 1))
+      done
+    }
+    # What to ask Hub for so that module $1 is complete, one id per line (nothing: complete): the module itself when it is
+    # not installed; otherwise, for every module under it (what --childModules installs) that is not, the child of $1 it
+    # belongs to.
+    cmcr_unity_missing() {
+      awk -F'\t' -v top="$1" '
+        { id[NR] = $1; par[NR] = $2; sel[NR] = $3 }
+        END {
+          for (i = 1; i <= NR; i++) if (id[i] == top) found = (sel[i] == "true") ? 2 : 1
+          if (found != 2) { print top; exit }
+          branch[top] = top
+          do {
+            changed = 0
+            for (i = 1; i <= NR; i++) if (!(id[i] in branch) && (par[i] in branch)) {
+              branch[id[i]] = (par[i] == top) ? id[i] : branch[par[i]]; changed = 1
+            }
+          } while (changed)
+          for (i = 1; i <= NR; i++) if (id[i] != top && (id[i] in branch) && sel[i] != "true" && !(branch[id[i]] in shown)) {
+            shown[branch[id[i]]] = 1; print branch[id[i]]
+          }
+        }' "$MODLIST"
+    }
+    # The files the Android SDK action needs; for each one missing, the module of Hub that brings it.
+    cmcr_unity_files() {
+      [ "$1" = android ] || return 0
+      local b="$ED/PlaybackEngines/AndroidPlayer" j
+      if ! ls "$b"/SDK/cmdline-tools/*/bin/sdkmanager >/dev/null 2>&1 || [ ! -d "$b/NDK" ]; then echo android-sdk-ndk-tools; fi
+      if [ ! -x "$b/OpenJDK/bin/java" ] && [ ! -x "$b/OpenJDK/Contents/Home/bin/java" ]; then
+        j="$(awk -F'\t' '$2 == "android" && $1 ~ /^android-open-jdk/ {print $1; exit}' "$MODLIST")"
+        echo "${j:-android-open-jdk}"
+      fi
+    }
+    cmcr_unity_need() {
+      local m; m="$(cmcr_unity_missing "$1")"
+      if [ "$m" = "$1" ]; then printf '%s\n' "$1"; return; fi
+      { [ -z "$m" ] || printf '%s\n' "$m"; cmcr_unity_files "$1"; } | awk 'NF && !seen[$0]++'
+    }
+    # The editor is complete: CMCR's marker (written after a checked install), or – installed some other way – Hub's
+    # modules.json and a valid signature of Unity.app. A binary alone may be what an interrupted install left.
+    cmcr_unity_editor_ok() {
+      [ -x "$ED/Unity.app/Contents/MacOS/Unity" ] || return 1
+      [ -f "$MARK" ] && return 0
+      [ -f "$ED/modules.json" ] && codesign --verify --strict "$ED/Unity.app" 2>/dev/null
+    }
+    cmcr_unity_mark() { { printf 'version=%s\nchangeset=%s\ninstalled=%s\n' "$V" "$CS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$MARK"; } 2>/dev/null; }
+    """#
 
     public static func unityHub(_ arguments: [String]) -> RemoteScript {
         RemoteScript(#"""
-        HUB=\#(shQuote(unityHubPath))
-        if [ ! -x "$HUB" ]; then echo "Brak Unity Hub w /Applications (zainstaluj np. brew install --cask unity-hub)." >&2; exit 2; fi
-        "$HUB" -- --headless \#(arguments.map(shQuote).joined(separator: " "))
+        \#(unityHubFind)
+        "$HUB" -- --headless \#(arguments.map(shQuote).joined(separator: " ")) </dev/null
         """#)
     }
 
-    /// Installs an editor for the Mac's own architecture (Unity Hub defaults to Intel, which runs under
-    /// Rosetta on Apple Silicon) together with the child modules of the selected modules – for `android`
-    /// that is the Android SDK & NDK Tools and OpenJDK, without which `sdkmanager` does not exist.
-    public static func unityInstallEditor(version: String, modules: [String], changeset: String = "") -> RemoteScript {
-        var args = ["install", "--version", version]
-        if !changeset.isEmpty { args += ["--changeset", changeset] }
-        let mods = modules.flatMap { ["-m", $0] } + (modules.isEmpty ? [] : ["--childModules"])
-        return RemoteScript(#"""
-        HUB=\#(shQuote(unityHubPath))
-        if [ ! -x "$HUB" ]; then echo "Brak Unity Hub w /Applications (zainstaluj np. brew install --cask unity-hub)." >&2; exit 2; fi
+    /// Installs an editor through Unity Hub (headless, as the administrator account – Hub unpacks the packages
+    /// itself, no root needed) for the Mac's own architecture (Hub defaults to Intel, which runs under Rosetta on
+    /// Apple Silicon), together with the child modules of the selected modules – for `android` that is the
+    /// Android SDK & NDK Tools and OpenJDK, without which `sdkmanager` does not exist.
+    ///
+    /// A Mac whose editor and modules are complete is skipped; one that lacks modules, or parts of them, gets only those.
+    /// Complete: the editor carries CMCR's marker (written after a checked install) or – installed some other way – has
+    /// Hub's modules.json and a valid signature; each module and every module under it is selected in modules.json; for
+    /// android also the files the Android SDK action needs (sdkmanager, NDK, OpenJDK). An editor that is there but not
+    /// complete (an interrupted install) is installed again. With `diskNeed` (from the Unity Release API) a Mac that would
+    /// keep less than 10% of its volume (at least 10 GB) free stops before downloading. Success is checked on disk
+    /// afterwards: Hub's exit code is not reliable (it reports 1 after some successful installs, HUBX-520), so with a code
+    /// other than 0 the editor must also pass the signature check.
+    public static func unityInstallEditor(version: String, modules: [String], changeset: String = "",
+                                          diskNeed: UnityDiskNeed? = nil) -> RemoteScript {
+        RemoteScript(#"""
+        \#(unityHubFind)
+        \#(unityEditorsFolder)
+        V=\#(shQuote(version)); CS=\#(shQuote(changeset)); EDKB=\#(diskNeed?.editorKB ?? 0)
+        MODS=(\#(modules.map(shQuote).joined(separator: " ")))
+        MODKB=(\#(modules.map { String(diskNeed?.modulesKB[$0] ?? 0) }.joined(separator: " ")))
         ARCH=x86_64; [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] && ARCH=arm64
-        echo "→ Unity Hub: \#(args.joined(separator: " ")) (architektura $ARCH)"
-        "$HUB" -- --headless \#(args.map(shQuote).joined(separator: " ")) --architecture "$ARCH" \#(mods.map(shQuote).joined(separator: " "))
+        ED="$IP/$V"; MARK="$ED/.cmcr-installed"; MODLIST="$CMCR_TMP/unity-modules.tsv"
+        \#(unityCompleteness)
+        cmcr_unity_gb() { awk -v k="$1" 'BEGIN {printf "%.1f", k / 1048576}'; }
+        # Stops unless the volume of the install folder keeps a reserve: $1 KB (download and unpacked files; 0 = size
+        # unknown, no check) plus 10% of the volume, at least 10 GB, must be free.
+        cmcr_unity_room() {
+          [ "$1" -gt 0 ] 2>/dev/null || return 0
+          local d="$IP" total free reserve
+          while [ ! -d "$d" ]; do d="$(dirname "$d")"; done
+          set -- "$1" $(df -Pk "$d" 2>/dev/null | awk 'NR == 2 {print $2, $4}')
+          total="${2:-0}"; free="${3:-}"
+          [ -n "$free" ] || return 0
+          reserve=$((total / 10)); [ "$reserve" -ge 10485760 ] || reserve=10485760
+          [ "$free" -lt $(($1 + reserve)) ] || return 0
+          echo "✘ Za mało miejsca na dysku: wolne $(cmcr_unity_gb "$free") GB, potrzeba ok. $(cmcr_unity_gb "$1") GB (pobranie i rozpakowanie) i $(cmcr_unity_gb "$reserve") GB zapasu (10% dysku, co najmniej 10 GB). Nic nie zainstalowano." >&2
+          exit 1
+        }
+        TODO=(); NEED=0
+        if cmcr_unity_editor_ok; then
+          cmcr_unity_read
+          for ((i = 0; i < ${#MODS[@]}; i++)); do
+            P="$(cmcr_unity_need "${MODS[$i]}")"
+            [ -n "$P" ] || continue
+            while IFS= read -r X; do [ -z "$X" ] || TODO[${#TODO[@]}]="$X"; done <<< "$P"
+            NEED=$((NEED + MODKB[$i]))
+          done
+          if [ ${#TODO[@]} -eq 0 ]; then
+            [ -f "$MARK" ] || cmcr_unity_mark
+            echo "✔ Unity $V jest już zainstalowany${MODS[0]+ (moduły: ${MODS[*]})} – pominięto."
+            exit 0
+          fi
+          echo "→ Unity $V już jest, brakuje: ${TODO[*]}"
+          cmcr_unity_room "$NEED"
+          set -- install-modules --version "$V"
+        else
+          NEED=$EDKB; for K in ${MODKB[@]+"${MODKB[@]}"}; do NEED=$((NEED + K)); done
+          cmcr_unity_room "$NEED"
+          D="$IP"; while [ ! -d "$D" ]; do D="$(dirname "$D")"; done
+          if [ ! -w "$D" ]; then
+            echo "✘ Konto $(id -un) nie może zapisywać w $D (właściciel: $(stat -f %Su "$D" 2>/dev/null)) – Unity Hub nie zainstaluje tam edytora. Zmień właściciela, np. w Poleceniach jako root: chown -R $(id -un):admin \"$D\"" >&2
+            exit 1
+          fi
+          if [ -d "$ED" ]; then
+            echo "Uwaga: w $ED jest niepełna instalacja Unity $V (przerwana?) – Unity Hub zainstaluje edytor ponownie. Gdyby się nie udało, usuń ten folder i spróbuj jeszcze raz."
+          fi
+          TODO=(${MODS[@]+"${MODS[@]}"})
+          set -- install --version "$V"
+          [ -n "$CS" ] && set -- "$@" --changeset "$CS"
+          set -- "$@" --architecture "$ARCH"
+        fi
+        for M in ${TODO[@]+"${TODO[@]}"}; do set -- "$@" -m "$M"; done
+        [ ${#TODO[@]} -gt 0 ] && set -- "$@" --childModules
+        echo "→ Unity Hub ($ARCH): $*"
+        "$HUB" -- --headless "$@" --errors </dev/null
+        RC=$?
+        if [ ! -x "$ED/Unity.app/Contents/MacOS/Unity" ]; then
+          echo "✘ Unity Hub zakończył pracę (kod $RC), ale w $ED nie ma edytora Unity $V." >&2
+          exit 1
+        fi
+        if [ $RC -ne 0 ] && ! codesign --verify --strict "$ED/Unity.app" 2>/dev/null; then
+          echo "✘ Unity Hub zakończył się kodem $RC, a edytor w $ED jest niepełny (podpis Unity.app się nie zgadza). Usuń ten folder i spróbuj ponownie." >&2
+          exit 1
+        fi
+        cmcr_unity_read
+        MISS=""
+        for M in ${MODS[@]+"${MODS[@]}"}; do
+          P="$(cmcr_unity_need "$M")"
+          [ -z "$P" ] || MISS="$MISS $(printf '%s' "$P" | tr '\n' ' ')"
+        done
+        MISS="$(printf '%s' "$MISS" | sed 's/  */ /g; s/ $//')"
+        if [ -n "$MISS" ]; then
+          echo "✘ Unity $V jest, ale brakuje:$MISS (kod Unity Hub $RC) – ponowna instalacja doinstaluje brakujące części." >&2
+          exit 1
+        fi
+        cmcr_unity_mark
+        [ $RC -eq 0 ] || echo "Uwaga: Unity Hub zakończył się kodem $RC, ale edytor i moduły są na miejscu."
+        echo "✔ Unity $V ($ARCH) w $ED${MODS[0]+, moduły: ${MODS[*]}}"
         """#)
     }
 
+    /// Adds modules to an editor that is already installed; a line (6000.6) means its newest version on the Mac.
     public static func unityInstallModules(version: String, modules: [String]) -> RemoteScript {
-        unityHub(["install-modules", "--version", version] + modules.flatMap { ["-m", $0] } + ["--childModules"])
+        let args = (modules.flatMap { ["-m", $0] } + ["--childModules"]).map(shQuote).joined(separator: " ")
+        return RemoteScript(#"""
+        \#(unityHubFind)
+        \#(unityEditorsFolder)
+        \#(unityInstalledVersion(version))
+        "$HUB" -- --headless 'install-modules' '--version' "$V" \#(args) --errors </dev/null
+        """#)
     }
 
     public static func androidSDK(unityVersion: String, apiLevels: [String]) -> RemoteScript {
         let packages = ["platform-tools"] + apiLevels.map { "platforms;android-\($0)" }
         return RemoteScript(#"""
-        BASE="/Applications/Unity/Hub/Editor/"\#(shQuote(unityVersion))"/PlaybackEngines/AndroidPlayer"
+        APPS="${CMCR_APPS_DIR:-/Applications}"; HUB="$APPS/Unity Hub.app/Contents/MacOS/Unity Hub"
+        \#(unityEditorsFolder)
+        \#(unityInstalledVersion(unityVersion))
+        BASE="$IP/$V/PlaybackEngines/AndroidPlayer"
         SDKM="$BASE/SDK/cmdline-tools/latest/bin/sdkmanager"
         if [ ! -x "$SDKM" ]; then
           L="$(ls -d "$BASE"/SDK/cmdline-tools/*/bin/sdkmanager 2>/dev/null)"
@@ -647,114 +833,7 @@ public enum Scripts {
         """#)
     }
 
-    // MARK: - Software updates
-
-    public static func listUpdates() -> RemoteScript {
-        RemoteScript("softwareupdate --list 2>&1")
-    }
-
-    /// Installs (or downloads) the updates offered by `softwareupdate --list`, label by label. Upgrades to a
-    /// new major macOS version are skipped unless `allowMajorUpgrade` is set – `--all` would install them too.
-    /// With `restart`, when a selected update needs one (`Action: restart`), the FileVault unlock is armed
-    /// first (`cmcr_arm_authrestart`), so the Mac does not stop at the unlock screen after updating.
-    public static func installUpdates(restart: Bool, recommendedOnly: Bool, downloadOnly: Bool,
-                                      allowMajorUpgrade: Bool = false) -> RemoteScript {
-        RemoteScript(#"""
-        \#(fileVaultArmFunction)
-        RESTART=\#(restart ? 1 : 0); REC=\#(recommendedOnly ? 1 : 0); DL=\#(downloadOnly ? 1 : 0); MAJOR=\#(allowMajorUpgrade ? 1 : 0)
-        CUR="$(sw_vers -productVersion 2>/dev/null)"; CUR="${CUR%%.*}"
-        echo "→ softwareupdate --list"
-        softwareupdate --list > "$CMCR_TMP/updates" 2>&1; LIST_RC=$?
-        LABELS=(); SKIPPED=""; LABEL=""; NEEDS_RESTART=0; LISTED=0
-        while IFS= read -r line; do
-          case "$line" in
-            "* Label: "*) LABEL="${line#\* Label: }"; LISTED=1 ;;
-            *"Title: "*)
-              [ -n "$LABEL" ] || continue
-              TITLE="${line#*Title: }"; TITLE="${TITLE%%,*}"
-              VER="$(printf '%s\n' "$line" | sed -n 's/.*Version: \([^,]*\),.*/\1/p')"
-              OK=1
-              if [ $REC = 1 ]; then case "$line" in *"Recommended: YES"*) ;; *) OK=0 ;; esac; fi
-              case "$TITLE" in
-                macOS*) if [ $MAJOR = 0 ] && [ -n "$CUR" ] && [ -n "$VER" ] && [ "${VER%%.*}" != "$CUR" ]; then
-                          OK=0; SKIPPED="$SKIPPED${SKIPPED:+, }$TITLE"
-                        fi ;;
-              esac
-              if [ $OK = 1 ]; then
-                LABELS+=("$LABEL")
-                case "$line" in *"Action: restart"*) NEEDS_RESTART=1 ;; esac
-              fi
-              LABEL="" ;;
-          esac
-        done < "$CMCR_TMP/updates"
-        if [ -n "$SKIPPED" ]; then
-          echo "↷ Pominięto przejście na nową wersję systemu: $SKIPPED (wymaga zaznaczenia „Pozwól na nową wersję macOS”)."
-        fi
-        if [ ${#LABELS[@]} -eq 0 ]; then
-          # Nothing to install only when the list says so (or every listed update was skipped above); an empty
-          # answer is a failed list (no network, Apple's server unreachable), not "no updates".
-          if [ $LISTED = 1 ] || { [ $LIST_RC = 0 ] && grep -q "No new software available" "$CMCR_TMP/updates"; }; then
-            echo "✔ Brak aktualizacji do zainstalowania."; exit 0
-          fi
-          echo "✘ Nie udało się pobrać listy aktualizacji (softwareupdate --list, kod $LIST_RC) – nic nie zainstalowano:" >&2
-          grep -v '^ *$' "$CMCR_TMP/updates" | tail -n 20 | sed 's/^/  /' >&2
-          exit 1
-        fi
-        if [ $DL = 1 ]; then ARGS=(--download); else ARGS=(--install); fi
-        ARGS+=("${LABELS[@]}")
-        if [ $DL = 0 ]; then ARGS+=(--agree-to-license); [ $RESTART = 1 ] && ARGS+=(--restart); fi
-        printf '→ %s\n' "${LABELS[@]}"
-        # Armed only when a restart really follows: fdesetup cannot disarm, the key would wait for any later restart.
-        ARMED=0
-        if [ $DL = 0 ] && [ $RESTART = 1 ] && [ $NEEDS_RESTART = 1 ]; then
-          cmcr_arm_authrestart "przy restarcie po aktualizacji" && [ "$(fdesetup isactive 2>/dev/null)" = "true" ] && ARMED=1
-        fi
-        if [ "$(uname -m)" = "arm64" ] && [ -n "$CMCR_PW" ]; then
-          # Apple Silicon requires the credentials of a volume owner (Secure Token) for OS updates.
-          GUID="$(dscl . -read "/Users/$CMCR_ADMIN_USER" GeneratedUID 2>/dev/null | awk '{print $2}')"
-          if [ -n "$GUID" ]; then
-            VO="$(diskutil apfs listUsers / 2>/dev/null | awk -v g="$GUID" 'index($0, g) {f = 1; next} /^[|]? *\+--/ {f = 0} f && /Volume Owner:/ {print $NF; exit}')"
-            if [ "$VO" = "No" ]; then
-              echo "⚠︎ Konto $CMCR_ADMIN_USER nie jest właścicielem woluminu (brak Secure Token) – aktualizacja macOS może się nie udać. Użyj konta administratora z Secure Token." >&2
-            fi
-          fi
-          printf '%s\n' "$CMCR_PW" | softwareupdate "${ARGS[@]}" --user "$CMCR_ADMIN_USER" --stdinpass 2>&1
-        else
-          softwareupdate "${ARGS[@]}" 2>&1
-        fi
-        RC=$?
-        if [ $RC -ne 0 ] && [ $ARMED = 1 ]; then
-          echo "⚠︎ Aktualizacja się nie powiodła, więc restartu nie było – jednorazowe odblokowanie FileVault zostaje uzbrojone do najbliższego restartu (fdesetup nie pozwala go cofnąć)." >&2
-        fi
-        exit $RC
-        """#, asRoot: true)
-    }
-
-    /// softwareupdate lists the history oldest first; the column header stays and the 40 newest follow, newest first.
-    public static func updateHistory(limit: Int = 40) -> RemoteScript {
-        RemoteScript(#"""
-        softwareupdate --history 2>&1 | awk -v max=\#(max(1, limit)) '
-          NR <= 2 && /^(Display Name|-)/ { print; next }
-          { a[++n] = $0 }
-          END {
-            stop = n > max ? n - max : 0
-            for (i = n; i > stop; i--) print a[i]
-            if (stop > 0) printf "… pominięto starsze wpisy: %d (pokazano %d najnowszych)\n", stop, max
-          }'
-        """#)
-    }
-
-    /// mas ≥ 4 runs sudo itself; `with_askpass` supplies the askpass and DISPLAY sudo needs without a tty.
-    /// Updates apps bought with the Apple ID signed into the App Store on the admin account.
-    public static func masUpgrade() -> RemoteScript {
-        RemoteScript(#"""
-        if ! command -v mas >/dev/null 2>&1; then
-          echo "Brak narzędzia mas (App Store CLI). Zainstaluj: brew install mas" >&2; exit 2
-        fi
-        mas outdated
-        with_askpass mas upgrade
-        """#)
-    }
+    // Software updates (`softwareupdate`): see Scripts+Updates.swift.
 
     // MARK: - Files (cmcr-push / cmcr-pull)
 

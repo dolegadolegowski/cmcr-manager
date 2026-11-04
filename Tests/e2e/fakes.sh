@@ -162,6 +162,48 @@ pmset() {
   return 0
 }
 
+# Detached update runs (Scripts+Updates.swift) keep their state here instead of /Library/Application Support/CMCR, and
+# wait only a moment for the restart a fake install never brings (real sudo resets both).
+export CMCR_SU_STATE_DIR="${CMCR_E2E_WORK:-/tmp/cmcr-e2e-state}/softwareupdate"
+# $CMCR_E2E_WORK/su.restart_wait: a longer wait for the restart (seconds; default 1).
+CMCR_SU_RESTART_WAIT="$(cat "${CMCR_E2E_WORK:-/nonexistent}/su.restart_wait" 2>/dev/null || echo 1)"
+export CMCR_SU_RESTART_WAIT
+
+# An install or download of the fake softwareupdate. Control files in $CMCR_E2E_WORK:
+#   softwareupdate.slow – seconds of "Downloading: N%" progress first (one line a second);
+#   softwareupdate.fail – printed instead of success, exit code 1 (e.g. "Failed to queue update and restart.").
+_e2e_su_run() {
+  local w="${CMCR_E2E_WORK:-/nonexistent}" n i
+  if [ -e "$w/softwareupdate.slow" ]; then
+    n="$(cat "$w/softwareupdate.slow")"
+    for ((i = 1; i <= n; i++)); do echo "Downloading: $((i * 100 / n)).00%"; sleep 1; done
+  fi
+  if [ -e "$w/softwareupdate.fail" ]; then cat "$w/softwareupdate.fail"; return 1; fi
+  echo "Done."
+}
+
+# kern.boottime and the system version from $CMCR_E2E_WORK/boottime and sw_vers.version / sw_vers.build when present:
+# a suite "restarts" the Mac into a new system by changing them.
+sysctl() {
+  if [ "$*" = "-n kern.boottime" ] && [ -s "${CMCR_E2E_WORK:-/nonexistent}/boottime" ]; then
+    echo "{ sec = $(cat "$CMCR_E2E_WORK/boottime"), usec = 0 } Mon Jan  1 00:00:00 2026"; return 0
+  fi
+  command sysctl "$@"
+}
+sw_vers() {
+  local w="${CMCR_E2E_WORK:-/nonexistent}"
+  case "${1:-}" in
+    -productVersion) [ -s "$w/sw_vers.version" ] && { cat "$w/sw_vers.version"; return 0; } ;;
+    -buildVersion) [ -s "$w/sw_vers.build" ] && { cat "$w/sw_vers.build"; return 0; } ;;
+  esac
+  command sw_vers "$@"
+}
+# `log show` prints $CMCR_E2E_WORK/log.show (what the system log says about a failed update).
+log() {
+  if [ "${1:-}" = show ]; then cat "${CMCR_E2E_WORK:-/nonexistent}/log.show" 2>/dev/null; return 0; fi
+  command log "$@"
+}
+
 softwareupdate() {
   _e2e_log "softwareupdate $*"
   case " $* " in
@@ -185,7 +227,7 @@ EOF
       ;;
     *" --stdinpass "*)
       local pw; IFS= read -r pw
-      if [ "$pw" = "${CMCR_E2E_PASSWORD:-}" ]; then _e2e_log "softwareupdate stdinpass ok"; echo "Installing (fake)…"; echo "Done."
+      if [ "$pw" = "${CMCR_E2E_PASSWORD:-}" ]; then _e2e_log "softwareupdate stdinpass ok"; echo "Installing (fake)…"; _e2e_su_run
       else echo "Authentication failed" >&2; return 1; fi ;;
     *" --history "*)
       # Oldest first, as the real softwareupdate. Control file in $CMCR_E2E_WORK: history.count (number of entries).
@@ -193,7 +235,7 @@ EOF
       echo "Display Name   Version   Date"; echo "------------   -------   ----"
       for ((i = 1; i < n; i++)); do echo "Stara aktualizacja $i  1.$i      01.01.2020"; done
       echo "macOS Testowy  99.0      01.01.2026" ;;
-    *) echo "Done (fake)." ;;
+    *) echo "Installing (fake)…"; _e2e_su_run ;;
   esac
 }
 
@@ -339,11 +381,20 @@ stat() {
   fi
   command stat "$@"
 }
-# fake-no-volume-owner: the current user is listed as a crypto user that is not a volume owner.
+# `diskutil apfs listUsers`: the current user is a volume owner (whatever the account running the tests really is),
+# unless a control file in $CMCR_E2E_WORK says otherwise:
+#   fake-no-volume-owner – listed as a cryptographic user that is not a volume owner;
+#   fake-volume-owner-unlisted – not a cryptographic user at all (no Secure Token).
 diskutil() {
-  if [ "${1:-} ${2:-}" = "apfs listUsers" ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/fake-no-volume-owner" ]; then
-    local g; g="$(command dscl . -read "/Users/$(id -un)" GeneratedUID | awk '{print $2}')"
-    printf 'Cryptographic users for disk3s1s1 (2 found)\n|\n+-- %s\n|   Type: Local Open Directory User\n|   Volume Owner: No\n|\n+-- EBC6C064-0000-11AA-AA11-00306543ECAC\n    Type: Personal Recovery User\n    Volume Owner: Yes\n' "$g"
+  if [ "${1:-} ${2:-}" = "apfs listUsers" ]; then
+    local w="${CMCR_E2E_WORK:-/nonexistent}" g owner=Yes
+    g="$(command dscl . -read "/Users/$(id -un)" GeneratedUID | awk '{print $2}')"
+    [ -e "$w/fake-no-volume-owner" ] && owner=No
+    printf 'Cryptographic users for disk3s1s1 (2 found)\n|\n'
+    if [ ! -e "$w/fake-volume-owner-unlisted" ]; then
+      printf '+-- %s\n|   Type: Local Open Directory User\n|   Volume Owner: %s\n|\n' "$g" "$owner"
+    fi
+    printf '+-- EBC6C064-0000-11AA-AA11-00306543ECAC\n    Type: Personal Recovery User\n    Volume Owner: Yes\n'
     return 0
   fi
   case "${1:-} ${2:-}" in
@@ -442,6 +493,7 @@ ps() {
   return $rc
 }
 export -f _e2e_log _e2e_fake_png _e2e_notice _e2e_is_notice sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer tar ps \
+  _e2e_su_run sysctl sw_vers log \
   chown systemsetup scutil dseditgroup visudo spctl defaults brew mas osascript fdesetup stat diskutil dscl \
   createhomedir networksetup 2>/dev/null
 
@@ -857,3 +909,90 @@ lsappinfo() {
   esac
 }
 export -f lsappinfo 2>/dev/null
+
+# --- Unity Hub (Tests/e2e/suites/unity.sh) ---------------------------------------------------------------
+# The suite puts an executable "Unity Hub" into $CMCR_APPS_DIR/Unity Hub.app that calls this function (it sees the
+# fakes through BASH_ENV). Like the real Hub in headless mode it installs editors into
+# $CMCR_APPS_DIR/Unity/Hub/Editor/<version>: an ad-hoc signed Unity.app, modules.json with every module of the release
+# (id, parent, selected) and, for the Android parts, sdkmanager, NDK and OpenJDK/bin/java. A module comes with every
+# module under it (--childModules). Control files in $CMCR_E2E_WORK: unity-hub.fail (install and install-modules fail,
+# nothing installed), unity-hub.rc1 (they install but end with code 1, like Hub's HUBX-520), unity-hub.nomodules (the
+# editor without the modules), unity-hub.nochildren (the modules without the ones under them), unity-hub.broken (code 1
+# and a Unity.app whose signature no longer matches, like an unpacking that stopped half-way).
+_e2e_unity_tree() { # "id:parent" of every module, as in modules.json of Unity 6000.6
+  printf '%s\n' android: android-open-jdk-17.0.18+8:android android-sdk-ndk-tools:android \
+    android-ndk-r27c:android-sdk-ndk-tools ios: webgl: documentation:
+}
+_e2e_unity_add() { # DIR MODULE – MODULE and, without unity-hub.nochildren, every module under it
+  echo "$2" >> "$1/.e2e-modules"
+  [ -e "${CMCR_E2E_WORK:-/nonexistent}/unity-hub.nochildren" ] && return 0
+  local c
+  for c in $(_e2e_unity_tree | awk -F: -v p="$2" '$2 == p {print $1}'); do _e2e_unity_add "$1" "$c"; done
+}
+_e2e_unity_write() { # DIR – modules.json as Hub writes it, and the files of the Android parts installed
+  local d="$1" a="$1/PlaybackEngines/AndroidPlayer"
+  _e2e_unity_tree | awk -F: -v list="$d/.e2e-modules" '
+    BEGIN { while ((getline m < list) > 0) have[m] = 1; print "[" }
+    { printf "%s  {\"id\": \"%s\", \"parent\": \"%s\", \"selected\": %s, \"eula\": null}", (NR > 1 ? ",\n" : ""), $1, $2,
+             ($1 in have) ? "true" : "false" }
+    END { print "\n]" }' > "$d/modules.json"
+  if grep -qxF android-sdk-ndk-tools "$d/.e2e-modules"; then
+    mkdir -p "$a/SDK/cmdline-tools/16.0/bin" "$a/NDK"
+    printf '#!/bin/bash\n_e2e_log "sdkmanager $*"\n' > "$a/SDK/cmdline-tools/16.0/bin/sdkmanager"
+    chmod +x "$a/SDK/cmdline-tools/16.0/bin/sdkmanager"
+  fi
+  if grep -qxF android-open-jdk-17.0.18+8 "$d/.e2e-modules"; then
+    mkdir -p "$a/OpenJDK/bin"; printf '#!/bin/sh\n' > "$a/OpenJDK/bin/java"; chmod +x "$a/OpenJDK/bin/java"
+  fi
+}
+_e2e_unity_editor() { # DIR – an ad-hoc signed Unity.app, like Hub unpacks it
+  mkdir -p "$1/Unity.app/Contents/MacOS" || return 1
+  cp /bin/sleep "$1/Unity.app/Contents/MacOS/Unity"
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Unity</string>
+<key>CFBundleIdentifier</key><string>com.unity3d.UnityEditor5.x</string><key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>\n' > "$1/Unity.app/Contents/Info.plist"
+  codesign --force --sign - "$1/Unity.app" >/dev/null 2>&1
+}
+_e2e_unity_hub() {
+  local w="${CMCR_E2E_WORK:-/nonexistent}" ip="${CMCR_APPS_DIR:-/nonexistent}/Unity/Hub/Editor"
+  [ "${1:-}" = -- ] && shift
+  [ "${1:-}" = --headless ] && shift
+  _e2e_log "unity-hub $*"
+  local cmd="${1:-}"; shift
+  local v="" m="" mods="" d
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --version|-v) v="$2"; shift 2 ;;
+      --changeset|-c|--architecture|-a) shift 2 ;;
+      -m|--module) mods="$mods $2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  case "$cmd" in
+    install-path|ip) echo "$ip" ;;
+    editors|e)
+      for d in "$ip"/*/; do [ -x "$d/Unity.app/Contents/MacOS/Unity" ] && echo "$(basename "$d") (atrapa) installed at ${d}Unity.app"; done ;;
+    install|i|install-modules|im)
+      if [ -e "$w/unity-hub.fail" ]; then
+        echo "Failed to execute the command due the following, please see '-- --headless help' for assistance."
+        echo "Error: download failed (atrapa)"; return 1
+      fi
+      d="$ip/$v"
+      if [ "$cmd" = install ] || [ "$cmd" = i ]; then
+        _e2e_unity_editor "$d" || return 1
+        : >> "$d/.e2e-modules"
+      elif [ ! -x "$d/Unity.app/Contents/MacOS/Unity" ]; then
+        echo "Error: No editor found for version \"$v\"."; return 1
+      fi
+      [ -e "$w/unity-hub.nomodules" ] || for m in $mods; do _e2e_unity_add "$d" "$m"; done
+      _e2e_unity_write "$d"
+      if [ -e "$w/unity-hub.broken" ]; then
+        echo "<!-- zmienione po podpisaniu -->" >> "$d/Unity.app/Contents/Info.plist"
+        echo "Error: extraction failed (atrapa)"; return 1
+      fi
+      echo "Editor installed successfully (atrapa)."
+      [ -e "$w/unity-hub.rc1" ] && return 1
+      return 0 ;;
+    *) echo "Error: '$cmd' is not a Hub command."; return 1 ;;
+  esac
+}

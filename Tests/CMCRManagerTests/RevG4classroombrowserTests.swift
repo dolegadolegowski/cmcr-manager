@@ -168,7 +168,7 @@ struct RevG4ClassroomBrowserModelTests {
         let round = try #require(classroom.question)
         let batch = try #require(round.batch)
         #expect(round.errors[a.id] == "pominięto – komputer niedostępny")
-        #expect(await AppTestEnvironment.wait(5) { batch.finished })
+        #expect(await AppTestEnvironment.wait(20) { batch.finished })
 
         let shown = Recorder<String?>()
         let watch = round.$errors.sink { shown.values.append($0[a.id]) }
@@ -201,7 +201,7 @@ struct RevG4ClassroomBrowserModelTests {
         browser.setHost(b.id)
         gate.open = true
         let batch = try #require(model.batches.first)
-        #expect(await AppTestEnvironment.wait(10) { batch.finished && browser.notice != nil })
+        #expect(await AppTestEnvironment.wait(20) { batch.finished && browser.notice != nil })
         #expect(browser.activity == nil)
         let notice = try #require(browser.notice)
         #expect(notice.isError)

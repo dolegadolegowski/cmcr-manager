@@ -551,8 +551,9 @@ struct P2CancelBeforeTheMarkerTests {
         #expect(text.contains("Polecenie nie zostało uruchomione"), "\(text)")
         #expect(!text.contains("zatrzymać"))
         // A remote stop would log in to the silent listener and wait for ConnectTimeout (30 s here) and
-        // OperationTimeout.cancel (30 s); 15 s leaves room for a busy CI runner (3.6 s seen on GitHub Actions).
-        #expect(Date().timeIntervalSince(start) < 15, "bez próby łączenia się, by zatrzymać polecenie")
+        // OperationTimeout.cancel (30 s); 25 s stays below that and leaves room for a busy CI runner (3.6 s seen on
+        // GitHub Actions, up to 17.6 s for the same wait in SessionStartTests on macos-15-intel).
+        #expect(Date().timeIntervalSince(start) < 25, "bez próby łączenia się, by zatrzymać polecenie")
     }
 }
 

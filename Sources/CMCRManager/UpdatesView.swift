@@ -102,7 +102,7 @@ struct UpdatesView: View {
         Section {
             Toggle(isOn: $restart) {
                 Text("Uruchom ponownie, jeśli to potrzebne")
-                Text("Część aktualizacji wymaga restartu – zalogowani uczniowie stracą niezapisaną pracę.")
+                Text("Aktualizację macOS instaluje dopiero restart, który wykonuje softwareupdate – bez tego zostanie tylko pobrana. Zalogowani uczniowie zostaną wylogowani i stracą niezapisaną pracę.")
             }
             .help("softwareupdate -R")
             Toggle(isOn: $recommendedOnly) {
@@ -115,12 +115,20 @@ struct UpdatesView: View {
                 Text("Bez tego instalowane są tylko poprawki obecnej wersji – przejście np. z macOS 26 na 27 jest pomijane.")
             }
             HStack(spacing: 10) {
+                TargetButton(title: "Stan instalacji", icon: "list.bullet.clipboard", prominent: false) {
+                    let targets = model.selectedMachines
+                    // Only watching: every Mac at once.
+                    model.runBatch("Stan instalacji aktualizacji", on: targets, maxParallel: max(1, targets.count)) { m, job in
+                        await Operations.followUpdate(on: m, password: model.password(for: m), settings: model.sshSettings,
+                                                      handle: job.handle, maxCapture: AppModel.jobCapture,
+                                                      onOutput: OutputSink(job).callback)
+                    }
+                }
+                .help("Postęp lub wynik ostatniej instalacji uruchomionej z tej aplikacji – także po zerwanym połączeniu i po restarcie komputera. „Przerwij” kończy tylko śledzenie.")
                 Spacer()
                 TargetButton(title: "Tylko pobierz", icon: "arrow.down.circle", prominent: false) {
-                    model.runScript("softwareupdate --download", on: model.selectedMachines) { _ in
-                        Scripts.installUpdates(restart: false, recommendedOnly: recommendedOnly, downloadOnly: true,
-                                               allowMajorUpgrade: allowMajor)
-                    }
+                    runInstall("softwareupdate --download", restart: false, recommendedOnly: recommendedOnly,
+                               downloadOnly: true, allowMajor: allowMajor)
                 }
                 TargetButton(title: "Zainstaluj aktualizacje", icon: "arrow.triangle.2.circlepath") {
                     confirmInstall()
@@ -129,24 +137,46 @@ struct UpdatesView: View {
         } header: {
             Label("Instalacja aktualizacji macOS", systemImage: "arrow.down.app")
         } footer: {
-            FormSectionNote("Komputery z procesorem Apple wymagają do instalacji hasła administratora – aplikacja poda je sama.")
+            FormSectionNote("Na komputerach z procesorem Apple instalację macOS zatwierdza konto administratora z Secure Token (właściciel woluminu) – aplikacja poda jego hasło sama. Instalacja trwa na iMacu niezależnie od połączenia: po jego zerwaniu aplikacja łączy się ponownie, a po restarcie sprawdza wersję systemu.")
                 .help("softwareupdate --user/--stdinpass")
+        }
+    }
+
+    /// Updates run detached on the iMacs and are followed again after a lost connection (`Operations.installUpdates`).
+    /// „Równoległe operacje” limits only how many start at a time: a Mac's slot is free again as soon as its install is
+    /// going, not when it has finished – with the restart that can take an hour, and the last Macs would start that late
+    /// (or never, if the app is quit).
+    func runInstall(_ title: String, restart: Bool, recommendedOnly: Bool, downloadOnly: Bool, allowMajor: Bool,
+                    onResult: (@MainActor (Machine, CommandResult) -> Void)? = nil) {
+        let targets = model.selectedMachines
+        let launches = HostGate(limit: max(1, model.settings.maxParallel))
+        model.runBatch(title, on: targets, maxParallel: max(1, targets.count)) { m, job in
+            guard await launches.acquire("launch", handle: job.handle) else { return .cancelledResult }
+            let r = await Operations.installUpdates(restart: restart, recommendedOnly: recommendedOnly,
+                                                    downloadOnly: downloadOnly, allowMajorUpgrade: allowMajor, on: m,
+                                                    password: model.password(for: m), settings: model.sshSettings,
+                                                    handle: job.handle, maxCapture: AppModel.jobCapture,
+                                                    launched: { launches.release("launch") },
+                                                    onOutput: OutputSink(job).callback)
+            onResult?(m, r)
+            return r
         }
     }
 
     func confirmInstall() {
         let r = restart, rec = recommendedOnly, major = allowMajor
         var message = "Aktualizacje macOS zostaną zainstalowane \(Polish.onComputers(model.actionTargets.count))."
-        if r { message += " Komputery uruchomią się ponownie, jeśli aktualizacja tego wymaga – zalogowani uczniowie stracą niezapisaną pracę." }
+        if r {
+            message += " Komputery uruchomią się ponownie, jeśli aktualizacja tego wymaga – macOS najpierw wyloguje zalogowanych "
+                + "uczniów (stracą niezapisaną pracę); aplikacja, której nie da się zamknąć, wstrzyma restart."
+        }
         if major { message += " Uwaga: także przejście na nową wersję macOS (długa instalacja i restart)." }
         confirm = ConfirmRequest(
             title: major ? "Zainstalować aktualizacje i nową wersję macOS?" : "Zainstalować aktualizacje macOS?",
             message: message,
             button: "Zainstaluj", destructive: r || major) {
-            model.runScript("softwareupdate --install\(r ? " --restart" : "")", on: model.selectedMachines,
-                            script: { _ in
-                                Scripts.installUpdates(restart: r, recommendedOnly: rec, downloadOnly: false, allowMajorUpgrade: major)
-                            }) { m, result in
+            runInstall("softwareupdate --install\(r ? " --restart" : "")", restart: r, recommendedOnly: rec,
+                       downloadOnly: false, allowMajor: major) { m, result in
                 // Installed: the list and the sidebar badge must not keep offering them (AUDIT APL-15) – but what the
                 // script skipped is still pending (AUDIT REV-27).
                 if result.succeeded {
@@ -191,10 +221,14 @@ struct UpdatesView: View {
 }
 
 extension UpdateInfo {
+    /// How `Scripts.installUpdates` reports an intermediate macOS version it left out (followed by the label and „ – ”).
+    static let supersededPrefix = "↷ Pominięto wersję pośrednią: "
+
     /// What is still offered after a successful run of `Scripts.installUpdates`. The script installs only the labels
     /// it prints as „→ label”: without „Pozwól na nową wersję macOS” it skips a new major macOS („↷ Pominięto…”),
     /// with „Tylko zalecane” the optional updates, and it also succeeds when nothing was left to install. So only the
-    /// installed labels leave the list (AUDIT APL-15, REV-27); nil when nothing is pending any more.
+    /// installed labels leave the list (AUDIT APL-15, REV-27), and so do intermediate macOS versions the script left
+    /// out because it installed a newer one; nil when nothing is pending any more.
     func remaining(afterInstall output: String, recommendedOnly: Bool) -> UpdateInfo? {
         switch check {
         case .upToDate: return self
@@ -206,7 +240,13 @@ extension UpdateInfo {
                !lines.contains(where: { $0.hasPrefix("↷ ") }) {
                 return nil
             }
+            // An intermediate macOS version left out for the newest one is not pending any more either.
+            let superseded = lines.compactMap { line -> String? in
+                guard line.hasPrefix(Self.supersededPrefix), let end = line.range(of: " – ") else { return nil }
+                return String(line[line.index(line.startIndex, offsetBy: Self.supersededPrefix.count)..<end.lowerBound])
+            }
             let installed = Set(lines.filter { $0.hasPrefix("→ ") }.map { $0.dropFirst(2).trimmingCharacters(in: .whitespaces) })
+                .union(superseded)
             // The check's labels in the order of its titles: Parsers.softwareUpdates gives one title per label.
             let labels = raw.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { $0.hasPrefix("* Label:") }
