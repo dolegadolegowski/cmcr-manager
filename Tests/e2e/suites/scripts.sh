@@ -326,8 +326,11 @@ expect_not "softwareupdate z restartem bez FileVault: nic nie uzbrojono" "$(fake
 # FileVault: an update that restarts the Mac arms the one-time unlock first – and only then.
 touch "$WORK/fake-filevault"
 clear_fakelog
+# The fake softwareupdate never restarts the Mac: the run waits for the restart, then says it did not come (code 6). The
+# wait counts from softwareupdate's end and the log is read every 2 s: 6 s leave time for the waiting message.
+echo 6 > "$WORK/su.restart_wait"
 out="$(ctlpw _builder install-updates 1 --major --restart)"; code=$?
-# The fake softwareupdate never restarts the Mac: the run waits for the restart, then says it did not come (code 6).
+rm -f "$WORK/su.restart_wait"
 expect_code "softwareupdate z restartem i FileVault: restart nie nastąpił – kod 6" "$code" 6 "$out"
 expect "softwareupdate z restartem i FileVault: zainstalowane, czeka na restart" "$out" "Done." "czekam, aż komputer uruchomi się ponownie" "nie uruchomił się ponownie"
 expect "softwareupdate z restartem i FileVault: odblokowanie uzbrojone" "$(fakelog)" \
