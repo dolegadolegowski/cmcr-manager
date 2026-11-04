@@ -17,13 +17,18 @@ enum ScriptCommands {
     nonisolated static let specs: [String: ModuleSpec] = [
         "install": ModuleSpec(flags: ["--root", "--allow-unsigned"], parallel: true),
         "install-url": ModuleSpec(flags: ["--root", "--allow-unsigned"], values: ["--sha256"], maxPositional: 2, parallel: true),
+        "unity": UnityCLI.spec,
     ]
 
     /// Exit status, or nil when `command` is not one of these (`args` without the command word).
     static func run(_ command: String, _ args: [String]) async -> Int32? {
         guard let spec = specs[command] else { return nil }
         let a = ModuleArguments.parse(command, args, spec)
-        return command == "install" ? await install(a) : await installURL(a)
+        switch command {
+        case "install": return await install(a)
+        case "unity": return await UnityCLI.run(a)
+        default: return await installURL(a)
+        }
     }
 
     nonisolated static let installerExtensions: Set<String> = ["pkg", "mpkg", "dmg", "zip", "app"]
