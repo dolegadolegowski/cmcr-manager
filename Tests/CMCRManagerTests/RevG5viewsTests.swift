@@ -108,6 +108,23 @@ import Testing
                                recommendedOnly: false) == nil)
     }
 
+    /// Of several macOS versions the script installs only the newest; the intermediate one it left out is not pending.
+    @Test func anIntermediateMacOSVersionLeftOutForTheNewestLeavesTheList() throws {
+        let raw = """
+        * Label: macOS Tahoe 27.1-27B12
+        \tTitle: macOS Tahoe 27.1, Version: 27.1, Size: 1KiB, Recommended: YES, Action: restart,
+        * Label: macOS Tahoe 27.2-27C5
+        \tTitle: macOS Tahoe 27.2, Version: 27.2, Size: 1KiB, Recommended: YES, Action: restart,
+        * Label: Narzędzie-1.0
+        \tTitle: Narzędzie dodatkowe, Version: 1.0, Size: 12KiB,
+        """
+        let info = UpdateInfo(check: .available(Parsers.softwareUpdates(raw)), raw: raw)
+        let output = "→ softwareupdate --list\n\(UpdateInfo.supersededPrefix)macOS Tahoe 27.1-27B12 – od razu instaluję "
+            + "najnowszą: macOS Tahoe 27.2-27C5.\n→ macOS Tahoe 27.2-27C5\nDone.\n"
+        let left = try #require(info.remaining(afterInstall: output, recommendedOnly: true))
+        #expect(left.titles == ["Narzędzie dodatkowe"])
+    }
+
     @Test func nothingInstalledLeavesTheListAsItWas() throws {
         let raw = "* Label: macOS Tahoe 27.1-27B12\n\tTitle: macOS Tahoe 27.1, Version: 27.1, Size: 1KiB, Recommended: YES,\n"
         let info = UpdateInfo(check: .available(Parsers.softwareUpdates(raw)), raw: raw)

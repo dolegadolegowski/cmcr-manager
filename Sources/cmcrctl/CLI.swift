@@ -47,6 +47,8 @@ Aktualizacje macOS
                                            instalacja (--restart: z ponownym uruchomieniem,
                                            --download: tylko pobierz, --recommended: tylko zalecane,
                                            --major: także nowa wersja macOS, po potwierdzeniu)
+  updates status KOMP                      postęp lub wynik ostatniej instalacji (śledzi ją do końca;
+                                           Ctrl-C kończy tylko śledzenie)
   updates history KOMP                     historia instalacji
 
 Sesja i zasilanie
@@ -601,7 +603,7 @@ struct CLI: Sendable {
     // MARK: - Updates
 
     func updates() async -> Int32 {
-        let use = "Użycie: cmcrctl updates list|install|history KOMP"
+        let use = "Użycie: cmcrctl updates list|install|status|history KOMP"
         guard let sub = args[1] else { usageError(use) }
         switch sub {
         case "list":
@@ -646,10 +648,42 @@ struct CLI: Sendable {
                     ? "  (cmcrctl: dodaj --major, aby zainstalować także nową wersję macOS)" : nil
             }
             logAction(list)
-            return await runScript(on: list, note: major ? nil : hint) { _ in
-                Scripts.installUpdates(restart: restart, recommendedOnly: recommended, downloadOnly: download,
-                                       allowMajorUpgrade: major)
+            // Runs detached on the iMac and is followed again after a lost connection, also across the restart that
+            // installs it (Operations.installUpdates); Ctrl-C stops it on the iMac. -j (default: the app's number of
+            // parallel operations) limits only how many installs start at a time – each one is then followed to its
+            // end, restart included, without holding a slot.
+            let ssh = sshSettings()
+            let launches = HostGate(limit: max(1, args.jobs ?? settings.maxParallel))
+            let codes = await runHosts(list, jobs: max(1, list.count), prefixLines: prefixLines) { io in
+                let h = io.host
+                io.out(header(h))
+                return await Interruption.shared.job(on: h) { handle in
+                    guard await launches.acquire("launch", handle: handle) else { return io.report(.cancelledResult) }
+                    let r = await Operations.installUpdates(restart: restart, recommendedOnly: recommended,
+                                                            downloadOnly: download, allowMajorUpgrade: major, on: h,
+                                                            password: Keychain.password(for: h), settings: ssh,
+                                                            handle: handle, launched: { launches.release("launch") },
+                                                            onOutput: io.stream)
+                    let code = io.report(r)
+                    if let text = major ? nil : hint(h, r) { io.err(text) }
+                    return code
+                }
             }
+            return combine(codes)
+        case "status":
+            // Follows the last run started from the app or cmcrctl; Ctrl-C ends only the watching.
+            args.expect("updates status", options: Self.parallel, positional: 3)
+            let list = targets(args[2])
+            let ssh = sshSettings()
+            let codes = await runHosts(list, jobs: args.jobs ?? max(1, list.count), prefixLines: prefixLines) { io in
+                let h = io.host
+                io.out(header(h))
+                return await Interruption.shared.job(on: h) { handle in
+                    io.report(await Operations.followUpdate(on: h, password: Keychain.password(for: h), settings: ssh,
+                                                            handle: handle, onOutput: io.stream))
+                }
+            }
+            return combine(codes)
         case "history":
             args.expect("updates history", options: Self.parallel, positional: 3)
             let list = targets(args[2])
