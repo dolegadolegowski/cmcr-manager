@@ -420,6 +420,9 @@ public struct SetupCommandLine: Sendable {
       --rosetta                 zainstaluj Rosettę 2
       --updates check|download|auto
       --fix-firewall            wyłącz „Blokuj wszystkie połączenia przychodzące”
+      --no-screen-agent         nie instaluj usługi podglądu ekranu (CMCR Screen Agent); domyślnie
+                                setup najpierw ją instaluje lub aktualizuje (--screen-agent), poza
+                                --verify i --dry-run; skryptu z pliku (setup-script) to nie dotyczy
       --verify                  tylko sprawdź (nic nie zmienia); --dry-run pokazuje też polecenia
     """
 
@@ -482,6 +485,11 @@ public struct SetupCommandLine: Sendable {
                 }
                 options.updates = u
             case "--fix-firewall": options.fixFirewall = true
+            // Not a flag of the bash script: `cmcrctl setup` installs the agent itself before the script runs
+            // (SetupOptions.screenAgent). Always on by default, whatever the app last chose – the agent is what the
+            // screen preview needs, and installing the same version again changes nothing.
+            case "--screen-agent": options.screenAgent = true
+            case "--no-screen-agent": options.screenAgent = false
             case "--verify": mode = .verify
             case "--dry-run": mode = .dryRun
             default:

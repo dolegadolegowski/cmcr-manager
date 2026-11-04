@@ -9,11 +9,13 @@ import Foundation
 /// for one script, `job` for the file, install and lesson operations that take a ProcessHandle: exec, push, pull,
 /// clean, open-app, quit-app, open-url, kill, uninstall, brew, updates install, message, logout, power, install,
 /// install-url, mkdir, rm, rename, get, collect, lock, unlock, ask, schedule set/clear, power-later, power-cancel,
-/// rename-computer, lesson and setup (and `ls ŚCIEŻKA KOMP` and updates history, which share runScript; updates status
-/// too, where an interruption stops only the watching – the update goes on). Their
+/// rename-computer, lesson, screen-agent install|permission|remove and setup (and `ls ŚCIEŻKA KOMP` and updates
+/// history, which share runScript; updates status too, where an interruption stops only the watching – the update
+/// goes on). Their
 /// scripts get a job id and output relays, so a connection lost to a sleeping MacBook no longer kills them either –
 /// as in the app. Commands that only read (status, updates list, readiness, filevault, app-version, schedule show,
-/// exists, `ls nr`, apps, screenshot, screen-watch, report, wake) are not jobs: Ctrl-C ends them at once.
+/// exists, `ls nr`, apps, screenshot, screen-watch, screen-agent status, report, wake) are not jobs: Ctrl-C ends them
+/// at once.
 ///
 /// Nothing exits from inside a job (AUDIT REV-35): the interrupted jobs return their cancelled results, so every
 /// host's output – with how the stop went („▸ Zatrzymano polecenie na komputerze.”, or why it may still run there)
