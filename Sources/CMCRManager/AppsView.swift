@@ -8,22 +8,20 @@ struct AppsView: View {
     @ViewState private var appArguments = ""
     @ViewState private var urlToOpen = ""
     @ViewState private var showSystem = false
-    @ViewState private var installedFilter = ""
-    @ViewState private var installedSelection: String?
     @ViewState private var collapsed: Set<UUID> = []
     @ViewState private var confirm: ConfirmRequest?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             TargetHeader(section: .apps,
-                         subtitle: "Uruchamianie i zamykanie aplikacji u osoby zalogowanej przy komputerze, otwieranie stron i plików, lista zainstalowanych aplikacji.")
+                         subtitle: "Uruchamianie i zamykanie aplikacji u osoby zalogowanej przy komputerze, otwieranie stron i plików, lista zainstalowanych aplikacji i ich odinstalowywanie.")
                 .alignedWithGroupedForm()
                 .padding([.horizontal, .top], 20)
             Form {
                 bulkSection
                 openSection
                 runningSection
-                installedSection
+                InstalledAppsSection()
                 if let batch = model.lastBatch[.apps] {
                     Section {
                         BatchResultsView(batch: batch)
@@ -114,13 +112,9 @@ struct AppsView: View {
     }
 
     var knownAppNames: [String] {
-        let paths = model.selectedMachines.flatMap { model.installedApps[$0.id] ?? [] }
-        let names = Set(paths.map(Self.appName))
+        let apps = model.selectedMachines.flatMap { model.installedApps[$0.id]?.apps ?? [] }.filter { $0.kind != .unity }
+        let names = Set(apps.map(\.name))
         return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-    }
-
-    static func appName(_ path: String) -> String {
-        ((path as NSString).lastPathComponent as NSString).deletingPathExtension
     }
 
     // MARK: Open a web page or a file
@@ -284,158 +278,6 @@ struct AppsView: View {
                                  button: "Wymuś zamknięcie", targets: [m]) {
             model.kill(app, on: m, force: true)
         }
-    }
-
-    // MARK: Installed apps
-
-    var installedSection: some View {
-        let checked = model.selectedMachines.filter { model.installedApps[$0.id] != nil }.count
-        let loading = model.selectedMachines.filter { model.installedAppsLoading.contains($0.id) }.count
-        let failed = model.selectedMachines.compactMap { m in model.installedAppsErrors[m.id].map { (m.name, $0) } }
-        let rows = installedRows
-        let filter = installedFilter.trimmingCharacters(in: .whitespaces)
-        let shown = filter.isEmpty ? rows : rows.filter { Self.appName($0.path).localizedStandardContains(filter) }
-        let selected = shown.first { $0.id == installedSelection }
-        return Section {
-            FormActionRow("Aplikacje w folderach Aplikacje",
-                          caption: loading > 0
-                              ? "Wczytywanie listy \(Polish.onComputers(loading))…"
-                              : checked == 0
-                              ? "Pobierz listę, aby zobaczyć, na ilu komputerach jest każda aplikacja."
-                              : "Sprawdzono \(Polish.computers(checked)). Pomarańczowa liczba – aplikacji brakuje na części z nich.") {
-                TargetButton(title: checked == 0 ? "Pobierz listę" : "Odśwież listę",
-                             icon: "arrow.down.circle", prominent: false) {
-                    model.refreshInstalledApps(model.selectedMachines)
-                }
-            }
-            // Macs whose list could not be read say why, instead of quietly missing from the counts (AUDIT WSP-06).
-            ForEach(failed.prefix(4), id: \.0) { name, error in
-                Label("\(name): \(error)", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                    .font(.callout)
-            }
-            if failed.count > 4 {
-                Text("… i \(Polish.computers(failed.count - 4)) z błędem").font(.callout).foregroundStyle(.secondary)
-            }
-            if !rows.isEmpty {
-                SearchField(text: $installedFilter, prompt: "Szukaj aplikacji")
-                    .accessibilityLabel("Szukaj aplikacji")
-                installedTable(shown, checked: checked, filter: filter)
-                    .frame(height: 300)
-                HStack(spacing: 10) {
-                    Button(role: .destructive) {
-                        if let selected { confirmUninstall(selected) }
-                    } label: {
-                        Label("Odinstaluj…", systemImage: "trash")
-                            .destructiveLabel()
-                    }
-                    .disabled(selected.map(Self.canUninstall) != true || model.actionTargets.isEmpty)
-                    .help(selected.map { Self.canUninstall($0)
-                        ? "Usuń \(Self.appName($0.path)) z folderu Aplikacje na zaznaczonych komputerach (z potwierdzeniem)"
-                        : "Aplikacji systemowych i spoza folderu Aplikacje nie można tu odinstalować." }
-                        ?? "Zaznacz aplikację na liście.")
-                    Divider().frame(height: 18)
-                    Text(selected.map { "Zaznaczona: \(Self.appName($0.path))" } ?? "Zaznacz aplikację na liście.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 12)
-                    Button {
-                        if let selected { model.launchApp(selected.path, on: model.selectedMachines) }
-                    } label: {
-                        Label("Uruchom", systemImage: "play.fill")
-                    }
-                    .disabled(selected == nil || model.actionTargets.isEmpty)
-                    .help(selected.map { "Uruchom \(Self.appName($0.path)) na zaznaczonych komputerach" }
-                          ?? "Zaznacz aplikację na liście.")
-                }
-            }
-        } header: {
-            Label("Zainstalowane aplikacje", systemImage: "square.grid.2x2")
-        }
-    }
-
-    func installedTable(_ shown: [InstalledRow], checked: Int, filter: String) -> some View {
-        Table(shown, selection: $installedSelection) {
-            TableColumn("Aplikacja") { row in
-                HStack(spacing: 8) {
-                    Image(nsImage: AppIcons.icon(forBundlePath: row.path))
-                        .resizable()
-                        .frame(width: 18, height: 18)
-                        .accessibilityHidden(true)
-                    Text(Self.appName(row.path))
-                        .lineLimit(1)
-                }
-                .help(row.path)
-            }
-            .width(min: 150, ideal: 220)
-            TableColumn("Zainstalowana") { row in
-                Text("na \(row.count) z \(checked)")
-                    .monospacedDigit()
-                    .foregroundStyle(row.count == checked ? Color.secondary : Color.orange)
-                    .help("Zainstalowana \(Polish.onComputers(row.count)) z \(checked) sprawdzonych")
-            }
-            .width(min: 90, ideal: 100, max: 130)
-            TableColumn("Folder") { row in
-                Text((row.path as NSString).deletingLastPathComponent)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(row.path)
-            }
-            .width(min: 120, ideal: 220)
-        }
-        .tableStyle(.bordered(alternatesRowBackgrounds: true))
-        .contextMenu(forSelectionType: String.self) { ids in
-            if let row = shown.first(where: { ids.contains($0.id) }) {
-                Button { model.launchApp(row.path, on: model.selectedMachines) } label: {
-                    Label("Uruchom na zaznaczonych komputerach", systemImage: "play.fill")
-                }
-                .disabled(model.actionTargets.isEmpty)
-                if Self.canUninstall(row) {
-                    Divider()
-                    Button(role: .destructive) { confirmUninstall(row) } label: {
-                        Label("Odinstaluj…", systemImage: "trash")
-                    }
-                    .disabled(model.actionTargets.isEmpty)
-                }
-            }
-        }
-        .overlay {
-            if shown.isEmpty {
-                ContentUnavailableView.search(text: filter)
-            }
-        }
-        .accessibilityLabel("Zainstalowane aplikacje")
-    }
-
-    func confirmUninstall(_ row: InstalledRow) {
-        let name = Self.appName(row.path)
-        confirm = ConfirmRequest(
-            title: "Odinstalować \(name)?",
-            message: "Aplikacja \((row.path as NSString).lastPathComponent) zostanie usunięta z \(Polish.ofComputers(model.actionTargets.count)).",
-            button: "Odinstaluj") {
-            model.uninstall(row.path, on: model.selectedMachines)
-        }
-    }
-
-    /// Only apps in /Applications can be removed from here (system apps are protected anyway).
-    static func canUninstall(_ row: InstalledRow) -> Bool { row.path.hasPrefix("/Applications/") }
-
-    struct InstalledRow: Identifiable {
-        let path: String
-        let count: Int
-        var id: String { path }
-    }
-
-    var installedRows: [InstalledRow] {
-        var counts: [String: Int] = [:]
-        for m in model.selectedMachines {
-            for p in model.installedApps[m.id] ?? [] { counts[p, default: 0] += 1 }
-        }
-        return counts.map { InstalledRow(path: $0.key, count: $0.value) }
-            .sorted { ($0.path as NSString).lastPathComponent.localizedCaseInsensitiveCompare(($1.path as NSString).lastPathComponent) == .orderedAscending }
     }
 }
 

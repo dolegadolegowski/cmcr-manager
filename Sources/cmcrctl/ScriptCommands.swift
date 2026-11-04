@@ -101,12 +101,16 @@ enum ScriptCommands {
     }
 
     /// `_builder` only: the remote exit code is kept, the e2e suites check the codes of the script builders.
-    static func runRaw(_ script: RemoteScript, _ spec: String) async -> Int32 {
+    static func runRaw(_ script: RemoteScript, _ spec: String, render: Bool = false) async -> Int32 {
         var status: Int32 = 0
         for h in legacyCLI.targets(spec) {
             Console.out("\(h.name):")
+            let renderer = UninstallReport.StreamRenderer()
             let r = await SSH.run(script, on: h, password: Keychain.password(for: h), settings: sshSettings,
-                                  onOutput: Console.printer)
+                                  onOutput: render ? renderer.wrap(Console.printer) : Console.printer)
+            if render {
+                for channel in [OutputChannel.stdout, .stderr] { Console.write(channel, renderer.finish(channel)) }
+            }
             status = max(status, rawCode(r))
         }
         return status
@@ -154,7 +158,12 @@ enum ScriptCommands {
             let term = flag("--term")
             let wait = option("--wait", 10)
             script = Scripts.quitApp(arg(0), force: force, terminateIfRunning: term, wait: wait)
-        case "uninstall": script = Scripts.uninstallApp(arg(0))
+        case "uninstall":
+            // _builder uninstall HOST TARGET… [--dry-run] [--with-package-files] – output as cmcrctl uninstall shows it.
+            let dry = flag("--dry-run"), pkg = flag("--with-package-files")
+            guard !a.isEmpty else { fail("Podaj aplikacje do odinstalowania.") }
+            return await runRaw(Scripts.uninstallApps(a, studentUser: settings.studentUser, dryRun: dry, packageFiles: pkg),
+                                spec, render: true)
         case "logout": script = Scripts.logoutUser(force: force, wait: option("--wait", 30))
         case "message": script = Scripts.message(title: arg(0), text: arg(1), asDialog: !flag("--notify"))
         case "power":
