@@ -275,13 +275,14 @@ import Testing
     }
 
     /// The limit counts the time without contact, not the whole following: after a long download followed without a
-    /// break, the Mac going down to install is waited for again.
+    /// break, the Mac going down to install is waited for again. The follow lasts well over the limit and the outage
+    /// well under it (two attempts 0.05 s apart against 2 s), so a slow CI runner keeps the margin.
     @Test func theGiveUpTimeCountsFromTheLastContact() async {
         let fake = FakeRemote([Self.broken(), Self.broken("Downloading: 100%\n"), Self.offline, Self.offline,
                                Self.ended(0, "✔ Komputer uruchomił się ponownie z nowym systemem\n")])
-        fake.durations = [1: 0.35]
+        fake.durations = [1: 3.0]
         let r = await Operations.installUpdates(Self.script, run: "run-1",
-                                                policy: UpdateFollowPolicy(delays: [0.05], giveUpAfter: 0.25),
+                                                policy: UpdateFollowPolicy(delays: [0.05], giveUpAfter: 2.0),
                                                 handle: nil, onOutput: nil, remote: fake.remote)
         #expect(r.succeeded)
         #expect(fake.scripts.count == 5)

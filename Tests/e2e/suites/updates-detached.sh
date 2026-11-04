@@ -61,7 +61,7 @@ fi
 
 section "Aktualizacje macOS – druga instalacja dołącza do trwającej"
 su_reset
-echo 5 > "$WORK/softwareupdate.slow"
+echo 8 > "$WORK/softwareupdate.slow"
 CMCR_PASSWORD="$PASSWORD" "$CTL" updates install 1 >"$SUD/first.out" 2>&1 &
 su_pid=$!
 su_first_running() { grep -q "Downloading:" "$SUD/first.out" 2>/dev/null; }
@@ -79,9 +79,10 @@ else
 fi
 
 section "Aktualizacje macOS – druga instalacja śledzi dołączoną po zerwanym połączeniu"
-# The joining job follows the run it joined (its id comes with CMCR:SU-RUN), not the one it would have started.
+# The joining job follows the run it joined (its id comes with CMCR:SU-RUN), not the one it would have started. The
+# first run downloads long enough for the second to join on a slow CI runner.
 su_reset
-echo 8 > "$WORK/softwareupdate.slow"
+echo 12 > "$WORK/softwareupdate.slow"
 CMCR_PASSWORD="$PASSWORD" "$CTL" updates install 1 >"$SUD/a.out" 2>&1 &
 su_a=$!
 su_a_running() { grep -q "Downloading:" "$SUD/a.out" 2>/dev/null; }
@@ -111,7 +112,7 @@ fi
 
 section "Aktualizacje macOS – przerwanie dołączonej instalacji zatrzymuje ją na komputerze"
 su_reset
-echo 8 > "$WORK/softwareupdate.slow"
+echo 12 > "$WORK/softwareupdate.slow"
 CMCR_PASSWORD="$PASSWORD" "$CTL" updates install 1 >"$SUD/a.out" 2>&1 &
 su_a=$!
 if su_wait 20 su_a_running; then
@@ -141,7 +142,7 @@ fi
 
 section "Aktualizacje macOS – instalacja nie dołącza do samego pobierania"
 su_reset
-echo 6 > "$WORK/softwareupdate.slow"
+echo 10 > "$WORK/softwareupdate.slow"
 CMCR_PASSWORD="$PASSWORD" "$CTL" updates install 1 --download >"$SUD/dl.out" 2>&1 &
 su_a=$!
 su_dl_running() { grep -q "Downloading:" "$SUD/dl.out" 2>/dev/null; }

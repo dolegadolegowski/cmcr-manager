@@ -327,8 +327,9 @@ expect_not "softwareupdate z restartem bez FileVault: nic nie uzbrojono" "$(fake
 touch "$WORK/fake-filevault"
 clear_fakelog
 # The fake softwareupdate never restarts the Mac: the run waits for the restart, then says it did not come (code 6). The
-# wait counts from softwareupdate's end and the log is read every 2 s: 6 s leave time for the waiting message.
-echo 6 > "$WORK/su.restart_wait"
+# wait counts from softwareupdate's end and the log is read every 2 s: 10 s leave time for the waiting message, also on
+# a slow CI runner.
+echo 10 > "$WORK/su.restart_wait"
 out="$(ctlpw _builder install-updates 1 --major --restart)"; code=$?
 rm -f "$WORK/su.restart_wait"
 expect_code "softwareupdate z restartem i FileVault: restart nie nastąpił – kod 6" "$code" 6 "$out"
