@@ -12,7 +12,7 @@ Natywna aplikacja okienkowa macOS (SwiftUI) do zdalnego zarządzania pracownią 
 | **Przeglądarka plików** | Przeglądanie jednego iMaca jak w Finderze (ikony, sortowanie, szukanie, ukryte pliki, tryb administratora): pobieranie zaznaczonych elementów, wysyłanie przeciągnięciem z Findera, nowy folder, zmiana nazwy, usuwanie z potwierdzeniem; kliknięcie innego komputera na liście pokazuje ten sam folder na nim |
 | **Aplikacje** | Lista uruchomionych aplikacji zalogowanego użytkownika; uruchamianie (z argumentami), zamykanie i wymuszanie zamknięcia na jednym lub wszystkich iMacach; otwieranie URL/plików; lista zainstalowanych i odinstalowywanie |
 | **Instalacja** | `.pkg`, `.dmg`, `.zip`, `.app` z tego Maca lub pobierane z URL (`https://`, albo `file://` z dysku iMaca) bezpośrednio na iMacach, ze sprawdzeniem podpisu i notaryzacji Apple; Homebrew (formuły i `--cask`), instalacja Homebrew i Oracle JDK; Unity Hub headless (edytor + moduły) i Android SDK (`sdkmanager`) — wg notes.md |
-| **Aktualizacje** | `softwareupdate` (lista, pobieranie, instalacja, restart; na Apple Silicon z `--user/--stdinpass`), historia, `brew upgrade`, `mas upgrade` |
+| **Aktualizacje** | `softwareupdate` (lista, pobieranie, instalacja, restart; na Apple Silicon z `--user/--stdinpass`; działa na iMacu niezależnie od połączenia, stan instalacji), historia, `brew upgrade`, `mas upgrade` |
 | **Podgląd ekranów** | Ekrany zalogowanych uczniów na żywo, z nazwą użytkownika i aplikacją na pierwszym planie; układ dopasowany do okna lub stała liczba kolumn, powiększanie (spacja, strzałki); osobne okno **Ściana ekranów** (⇧⌘E, także na pełnym ekranie drugiego monitora) i okna pojedynczych komputerów; z kafelka: wiadomość, uśpienie ekranu, Udostępnianie ekranu (VNC) — tylko do odczytu, z ograniczeniami (niżej) |
 | **Zajęcia** | „Rozpocznij zajęcia” i „Zakończ zajęcia” jednym kliknięciem (budzenie, materiały, aplikacje, powitanie / zbieranie prac, porządki, wylogowanie, uśpienie), tryb uwagi (blokada ekranów z komunikatem), pytania do uczniów z odpowiedziami |
 | **Sesja i zasilanie** | Wiadomość (okno/powiadomienie, szablony), wylogowanie, uśpienie ekranu/komputera, restart i wyłączenie (także z opóźnieniem i ostrzeżeniem), Wake-on-LAN, harmonogram zasilania (`pmset repeat`) |
@@ -137,6 +137,7 @@ Pola wyboru na liście komputerów (środkowa kolumna) wyznaczają cel operacji 
 cmcrctl status                                  # stan wszystkich komputerów
 cmcrctl exec "df -h /" 1-8 -j 8 --prefix        # polecenie na imac01…imac08 naraz
 cmcrctl updates install all --restart --yes     # aktualizacje macOS z restartem
+cmcrctl updates status all                      # postęp lub wynik ostatniej instalacji
 cmcrctl message "Przerwa" "Za 5 minut koniec zajęć" all
 ```
 
@@ -159,6 +160,17 @@ cmcrctl message "Przerwa" "Za 5 minut koniec zajęć" all
 | restart/wyłączenie za N min | `cmcrctl power-later restart\|shutdown\|sleep N KOMP [--warn "…"]`, `cmcrctl power-cancel KOMP` |
 | nazwy komputerów (z listy; `--name` tylko dla jednego komputera) | `cmcrctl rename-computer KOMP [--name "…"] [--dry-run] [--update-list]` (lub `rename KOMP …`) |
 | wersja aplikacji, FileVault, raport | `cmcrctl app-version "Nazwa" [KOMP]`, `cmcrctl filevault [KOMP]`, `cmcrctl report plik.csv` |
+
+## Aktualizacje macOS
+
+- **Instalacja działa na iMacu niezależnie od połączenia.** `softwareupdate` działa na iMacu w tle (stan i dziennik: `/Library/Application Support/CMCR/softwareupdate/`), a sesja SSH tylko śledzi jego dziennik. Gdy połączenie się zerwie, aplikacja łączy się ponownie i śledzi tę samą instalację, także przez restart, który ją instaluje (czeka do 75 min, aż iMac znów odpowie). Najczęstsza przyczyna zerwania: kilkanaście iMaców pobiera naraz po kilka GB, a SSH zrywa połączenie po ok. 15 s bez odpowiedzi (`ServerAliveInterval=5`, `ServerAliveCountMax=3`); wspólne połączenie (ControlMaster) kończy wtedy wszystkie sesje do iMaca kodem 255 bez komunikatu. Przy wielu komputerach pomaga **Buforowanie zawartości** (Content Caching) na jednym Macu w sieci.
+- Ponowne „Zainstaluj aktualizacje” na komputerze, na którym instalacja trwa, pokazuje jej postęp zamiast uruchamiać drugą. **Stan instalacji** (`cmcrctl updates status KOMP`) pokazuje postęp lub wynik ostatniej instalacji, także po zamknięciu aplikacji. „Przerwij” przy instalacji zatrzymuje ją na iMacu, przy „Stan instalacji” kończy tylko śledzenie.
+- **Tylko najnowsza wersja macOS.** Gdy lista proponuje kilka wersji systemu (np. poprawkę obecnej i nową wersję przy „Pozwól na nową wersję macOS”), instalowana jest tylko najnowsza – `softwareupdate` pobrałby i zainstalował najpierw wersje pośrednie.
+- **Apple silicon:** instalację macOS zatwierdza właściciel woluminu (konto z Secure Token); aplikacja podaje hasło konta administratora (`--user`/`--stdinpass`). Konto bez Secure Token jest wykrywane przed pobraniem – nadaj mu token przy komputerze: `sudo sysadminctl -secureTokenOn ADMIN -password - -adminUser KONTO_Z_TOKENEM -adminPassword -`.
+- **Aktualizację instaluje restart wykonany przez `softwareupdate`.** Zwykły restart (także z aplikacji) uruchamia stary system, więc bez „Uruchom ponownie, jeśli to potrzebne” aktualizacja macOS zostaje tylko pobrana i przygotowana. Po restarcie raport podaje wersję systemu przed i po.
+- **Zalogowany uczeń może wstrzymać restart.** Przy zalogowanym użytkowniku macOS instaluje aktualizację po wylogowaniu: zamyka aplikacje, wylogowuje, potem restartuje. Aplikacja z niezapisaną pracą to wstrzymuje – `softwareupdate` kończy się wtedy „Done.”, a komputer czeka. Raport zgłasza to po 5 min („Aktualizacja czeka na wylogowanie”); najpewniej wylogować uczniów przed instalacją (Sesja i zasilanie › Wyloguj natychmiast…).
+- **„Failed to queue update and restart”** – macOS nie przyjął zlecenia instalacji pobranej już aktualizacji. Apple nie dokumentuje przyczyn; raport pokazuje wpis z dziennika systemu („Queue for post-logout failed: …”) i co zrobić: wylogować użytkownika albo uruchomić komputer ponownie i powtórzyć instalację (pobrana aktualizacja zostaje).
+- **Bez MDM nie da się** zatwierdzić instalacji bez hasła właściciela woluminu ani wymusić jej, gdy macOS odmawia – wtedy zostaje instalacja przy komputerze (Ustawienia systemowe › Ogólne › Uaktualnienia). Apple przeniósł zarządzanie aktualizacjami do MDM z deklaracjami (DDM, `softwareupdate.enforcement.specific`, macOS 14+, z Bootstrap Token); dawne polecenia MDM (ScheduleOSUpdate) są od macOS 26 przestarzałe i w macOS 27 nie działają.
 
 ## Jak to działa i bezpieczeństwo
 
