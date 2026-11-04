@@ -67,7 +67,7 @@ struct PowerView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                TargetButton(title: "Wyślij wiadomość", icon: "paperplane.fill") {
+                TargetButton(title: "Wyślij wiadomość", icon: "text.bubble") {
                     let t = title, m = text, d = asDialog
                     model.runScript("Wiadomość: \(m.prefix(40))", on: model.selectedMachines, section: .power) { _ in
                         Scripts.message(title: t, text: m, asDialog: d)
@@ -96,10 +96,8 @@ struct PowerView: View {
             }
             PowerActionRow(title: "Wylogowanie", icon: "rectangle.portrait.and.arrow.right",
                            caption: "Jak „Wyloguj” w menu Apple – aplikacje zapytają ucznia o zapisanie zmian.") {
-                TargetButton(title: "Wyloguj", icon: "rectangle.portrait.and.arrow.right", prominent: false) {
-                    model.runScript("Wylogowanie (z pytaniem o zapis)", on: model.selectedMachines, section: .power) { _ in
-                        Scripts.logoutUser(force: false)
-                    }
+                TargetButton(title: "Wyloguj…", icon: "rectangle.portrait.and.arrow.right", prominent: false) {
+                    request = PowerRequest(kind: .gentleLogout, machines: model.selectedMachines)
                 }
             }
             PowerActionRow(title: "Natychmiastowe wylogowanie", icon: "rectangle.portrait.and.arrow.right.fill",
@@ -129,7 +127,7 @@ struct PowerView: View {
             } label: {
                 Label {
                     Text("Kiedy uśpić, uruchomić ponownie lub wyłączyć")
-                    Text(delay == 0 ? "Od razu po potwierdzeniu." : "Do tego czasu możesz to odwołać na dole tej sekcji.")
+                    Text(delay == 0 ? "Od razu po potwierdzeniu." : "Do tego czasu możesz to odwołać na dole tego działu.")
                 } icon: {
                     FormRowIcon("clock")
                 }
@@ -144,15 +142,15 @@ struct PowerView: View {
                     }
                 }
             }
-            PowerActionRow(title: "Uśpienie", icon: "moon.zzz",
+            PowerActionRow(title: "Uśpienie", icon: "powersleep",
                            caption: "Komputery zasną – obudzisz je przyciskiem „Obudź”.") {
-                TargetButton(title: "Uśpij…", icon: "moon.zzz", prominent: false) {
+                TargetButton(title: "Uśpij…", icon: "powersleep", prominent: false) {
                     request = PowerRequest(kind: .sleep, machines: model.selectedMachines, delay: delay, warn: warnUsers)
                 }
             }
-            PowerActionRow(title: "Ponowne uruchomienie", icon: "arrow.clockwise.circle",
+            PowerActionRow(title: "Ponowne uruchomienie", icon: "restart",
                            caption: "Zalogowani uczniowie stracą niezapisane prace.") {
-                CriticalTargetButton(title: "Uruchom ponownie…", icon: "arrow.clockwise.circle") {
+                CriticalTargetButton(title: "Uruchom ponownie…", icon: "restart") {
                     request = PowerRequest(kind: .restart, machines: model.selectedMachines, delay: delay, warn: warnUsers)
                 }
             }
@@ -232,7 +230,8 @@ struct PowerActionRow<Action: View>: View {
 // MARK: - Confirmation sheet
 
 struct PowerRequest: Identifiable {
-    enum Kind { case logout, sleep, restart, shutdown }
+    /// `gentleLogout` is „Wyloguj” from the Apple menu (the apps ask to save); `logout` ends the sessions at once.
+    enum Kind { case gentleLogout, logout, sleep, restart, shutdown }
 
     let id = UUID()
     let kind: Kind
@@ -242,7 +241,7 @@ struct PowerRequest: Identifiable {
 
     var action: PowerAction? {
         switch kind {
-        case .logout: return nil
+        case .gentleLogout, .logout: return nil
         case .sleep: return .sleep
         case .restart: return .restart
         case .shutdown: return .shutdown
@@ -251,6 +250,7 @@ struct PowerRequest: Identifiable {
 
     var verb: String {
         switch kind {
+        case .gentleLogout: return "Wyloguj"
         case .logout: return "Wyloguj natychmiast"
         case .sleep: return "Uśpij"
         case .restart: return "Uruchom ponownie"
@@ -262,10 +262,44 @@ struct PowerRequest: Identifiable {
     func question(_ n: Int) -> String {
         let what = Polish.computers(n)
         switch kind {
-        case .logout: return "Wylogować uczniów \(Polish.onComputers(n))?"
+        case .gentleLogout, .logout: return "Wylogować uczniów \(Polish.onComputers(n))?"
         case .sleep: return "Uśpić \(what)?"
         case .restart: return "Uruchomić ponownie \(what)?"
         case .shutdown: return "Wyłączyć \(what)?"
+        }
+    }
+
+    /// Can make students lose unsaved work (the confirmation button is red, a repeat is confirmed as destructive).
+    var isDestructive: Bool { kind != .sleep && kind != .gentleLogout }
+
+    /// Starts the confirmed action. Every target is handed to the batch: Macs left out because a student is logged in
+    /// become skipped jobs, and the batch remembers the confirmation, so „Powtórz na nieudanych” asks again.
+    @MainActor
+    func start(model: AppModel, classroom: ClassroomModel, skipLoggedIn: Bool) {
+        let skip = skipLoggedIn ? Set(machines.filter { !model.status($0).loggedInUsers.isEmpty }.map(\.id)) : []
+        let confirmation = BatchConfirmation(button: verb, destructive: isDestructive)
+        model.perform(skipping: skip, reason: .loggedInUser, confirmation: confirmation) {
+            switch kind {
+            case .gentleLogout:
+                model.runScript("Wylogowanie (z pytaniem o zapis)", on: machines, section: .power) { _ in
+                    Scripts.logoutUser(force: false)
+                }
+            case .logout:
+                model.runScript("Wylogowanie użytkownika", on: machines, section: .power) { _ in Scripts.logoutUser() }
+            case .sleep, .restart, .shutdown:
+                guard let action else { return }
+                classroom.delayedPower(model, action, minutes: delay, warning: warning(for: action), machines)
+            }
+        }
+    }
+
+    /// The message shown on the students' screens before a delayed action (nil: none).
+    func warning(for action: PowerAction) -> String? {
+        guard delay > 0 && warn else { return nil }
+        switch action {
+        case .restart: return "Komputer zostanie uruchomiony ponownie za \(delay) min. Zapisz swoją pracę."
+        case .shutdown: return "Komputer zostanie wyłączony za \(delay) min. Zapisz swoją pracę."
+        default: return "Komputer zostanie uśpiony za \(delay) min. Zapisz swoją pracę."
         }
     }
 }
@@ -284,7 +318,7 @@ struct PowerConfirmSheet: View {
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: icon)
                     .font(.system(size: 34))
-                    .foregroundStyle(request.kind == .sleep ? Color.accentColor : .red)
+                    .foregroundStyle(request.isDestructive ? Color.red : .accentColor)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 6) {
                     Text(request.question(effective.count)).font(.headline)
@@ -299,8 +333,7 @@ struct PowerConfirmSheet: View {
                     .frame(height: min(220, CGFloat(request.machines.count) * 26 + 10))
             }
             if request.kind == .restart && fileVaultCount > 0 {
-                Label("FileVault jest włączony \(Polish.onComputers(fileVaultCount)). Po ponownym uruchomieniu pojawi się ekran odblokowania dysku – dopóki ktoś nie wpisze hasła przy komputerze, nie połączysz się z nim (ani podglądem, ani budzeniem przez sieć).",
-                      systemImage: "lock.shield")
+                Label(fileVaultWarning, systemImage: "lock.doc")
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -321,13 +354,13 @@ struct PowerConfirmSheet: View {
                 Button("Anuluj", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 // Never the default action: Return must not restart a classroom.
-                Button(role: request.kind == .sleep ? nil : .destructive) {
+                Button(role: request.isDestructive ? .destructive : nil) {
                     perform()
                     dismiss()
                 } label: {
                     Text("\(request.verb) (\(effective.count))")
                 }
-                .tint(request.kind == .sleep ? nil : .red)
+                .tint(request.isDestructive ? .red : nil)
                 .buttonStyle(.borderedProminent)
                 .disabled(effective.isEmpty || (needsAcknowledgement && !understood))
             }
@@ -341,7 +374,7 @@ struct PowerConfirmSheet: View {
 
     private func row(_ m: Machine) -> some View {
         let reachability = model.status(m).reachability
-        let user = model.status(m).consoleUser
+        let user = model.status(m).loggedInText
         let unreachable = model.willSkip(m)
         let skipped = unreachable || (skipLoggedIn && user != nil)
         return HStack(spacing: 8) {
@@ -351,13 +384,13 @@ struct PowerConfirmSheet: View {
                 .strikethrough(skipped)
             Spacer()
             if unreachable {
-                Text("pominięty – \(model.knownReachability(m).label)")
+                Text("pominięty – \(model.knownReachability(m).displayName.lowercased())")
                     .foregroundStyle(.secondary)
             } else {
                 if request.kind == .restart, classroom.fileVault[m.id] == true {
-                    Label("FileVault", systemImage: "lock.shield")
+                    Label("FileVault", systemImage: "lock.doc")
                         .foregroundStyle(.orange)
-                        .help("Po ponownym uruchomieniu komputer zatrzyma się na ekranie odblokowania dysku.")
+                        .help(Self.fileVaultHelp(autoUnlock: classroom.fileVaultAutoUnlock[m.id]))
                 }
                 if let user {
                     Label(skipped ? "\(user) – pominięty" : "zalogowany: \(user)", systemImage: "person.fill")
@@ -374,15 +407,18 @@ struct PowerConfirmSheet: View {
 
     var icon: String {
         switch request.kind {
-        case .logout: return "rectangle.portrait.and.arrow.right"
-        case .sleep: return "moon.zzz.fill"
-        case .restart: return "arrow.clockwise.circle.fill"
+        case .gentleLogout, .logout: return "rectangle.portrait.and.arrow.right"
+        case .sleep: return "powersleep"
+        case .restart: return "restart.circle.fill"
         case .shutdown: return "power.circle.fill"
         }
     }
 
     var subtitle: String {
         if request.kind == .logout { return "Sesje zostaną zakończone natychmiast – aplikacje nie zapytają o zapisanie zmian." }
+        if request.kind == .gentleLogout {
+            return "Jak „Wyloguj” w menu Apple – aplikacje zapytają uczniów o zapisanie zmian, więc wylogowanie może chwilę potrwać."
+        }
         if request.delay > 0 {
             return "Za \(request.delay) min\(request.warn ? ", po wcześniejszym komunikacie na ekranie" : ""). Do tego czasu możesz to odwołać przyciskiem „Odwołaj” (Zaplanowane na później)."
         }
@@ -393,42 +429,51 @@ struct PowerConfirmSheet: View {
     /// Macs the action really reaches: unreachable ones are skipped as in the header ("Pomiń niedostępne").
     var reached: [Machine] { request.machines.filter { !model.willSkip($0) } }
 
-    var loggedIn: Int { reached.filter { model.status($0).consoleUser != nil }.count }
+    var loggedIn: Int { reached.filter { !model.status($0).loggedInUsers.isEmpty }.count }
 
     var fileVaultCount: Int { reached.filter { classroom.fileVault[$0.id] == true }.count }
 
+    /// The restart arms the one-time FileVault unlock where macOS supports it (`cmcr_arm_authrestart`), so the
+    /// unlock screen is only the fallback there (AUDIT KOM-12).
+    var fileVaultWarning: String {
+        let fv = reached.filter { classroom.fileVault[$0.id] == true }
+        return Self.fileVaultWarning(count: fv.count, autoUnlock: fv.filter { classroom.fileVaultAutoUnlock[$0.id] == true }.count)
+    }
+
+    /// `count` Macs with FileVault, `autoUnlock` of them can arm the one-time unlock. When only some can, the warning
+    /// says how many of each – the badges in the list tell which (AUDIT REV-26).
+    static func fileVaultWarning(count: Int, autoUnlock: Int) -> String {
+        let lead = "FileVault jest włączony \(Polish.onComputers(count))."
+        let locked = "dopóki ktoś nie wpisze hasła przy komputerze, nie połączysz się z nim (ani podglądem, ani budzeniem przez sieć)."
+        if autoUnlock >= count {
+            return lead + " Aplikacja uzbroi jednorazowe odblokowanie dysku (fdesetup authrestart), więc komputery powinny "
+                + "uruchomić się bez hasła FileVault. Jeśli konto administratora nie może odblokować dysku, zatrzymają się "
+                + "na ekranie odblokowania – wtedy nie połączysz się z nimi, dopóki ktoś nie wpisze hasła przy komputerze."
+        }
+        if autoUnlock == 0 { return lead + " Po ponownym uruchomieniu pojawi się ekran odblokowania dysku – " + locked }
+        return lead + " \(Polish.onComputers(autoUnlock).capitalizedFirst) aplikacja uzbroi jednorazowe odblokowanie dysku "
+            + "(fdesetup authrestart), więc tam restart powinien obyć się bez hasła FileVault. "
+            + "\(Polish.onComputers(count - autoUnlock).capitalizedFirst) po ponownym uruchomieniu pojawi się ekran "
+            + "odblokowania dysku – " + locked + " Który komputer jak się uruchomi – w podpowiedzi oznaczenia „FileVault” na liście."
+    }
+
+    /// Tooltip of a Mac's „FileVault” badge: the same answer as the warning below the list (AUDIT KOM-12, REV-26).
+    static func fileVaultHelp(autoUnlock: Bool?) -> String {
+        guard autoUnlock == true else { return "Po ponownym uruchomieniu komputer zatrzyma się na ekranie odblokowania dysku." }
+        return "Aplikacja uzbroi jednorazowe odblokowanie dysku (fdesetup authrestart), więc ten komputer powinien uruchomić "
+            + "się bez hasła FileVault. Jeśli się nie uda, zatrzyma się na ekranie odblokowania dysku."
+    }
+
     var needsAcknowledgement: Bool {
-        request.kind != .sleep && request.delay == 0 && effective.filter { model.status($0).consoleUser != nil }.count >= 5
+        request.isDestructive && request.delay == 0 && effective.filter { !model.status($0).loggedInUsers.isEmpty }.count >= 5
     }
 
     var effective: [Machine] {
-        skipLoggedIn ? reached.filter { model.status($0).consoleUser == nil } : reached
-    }
-
-    /// What is handed to the batch: unreachable Macs stay in it (as skipped jobs, so they can be retried).
-    var targets: [Machine] {
-        skipLoggedIn ? request.machines.filter { model.status($0).consoleUser == nil } : request.machines
+        skipLoggedIn ? reached.filter { model.status($0).loggedInUsers.isEmpty } : reached
     }
 
     func perform() {
-        let list = targets
         guard !effective.isEmpty else { return }
-        switch request.kind {
-        case .logout:
-            model.runScript("Wylogowanie użytkownika", on: list, section: .power) { _ in Scripts.logoutUser() }
-        case .sleep, .restart, .shutdown:
-            guard let action = request.action else { return }
-            let warning: String?
-            if request.delay > 0 && request.warn {
-                switch action {
-                case .restart: warning = "Komputer zostanie uruchomiony ponownie za \(request.delay) min. Zapisz swoją pracę."
-                case .shutdown: warning = "Komputer zostanie wyłączony za \(request.delay) min. Zapisz swoją pracę."
-                default: warning = "Komputer zostanie uśpiony za \(request.delay) min. Zapisz swoją pracę."
-                }
-            } else {
-                warning = nil
-            }
-            classroom.delayedPower(model, action, minutes: request.delay, warning: warning, list)
-        }
+        request.start(model: model, classroom: classroom, skipLoggedIn: skipLoggedIn)
     }
 }

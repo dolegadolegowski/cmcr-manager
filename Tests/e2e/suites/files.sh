@@ -212,3 +212,55 @@ expect "collect: pusty folder" "$out" "nic do zebrania"
   && pass "collect: pusty folder nie tworzy folderu hosta" || fail "collect: pusty folder" "$(ls -laR "$WORK/zebrane-puste")"
 out="$(ctl collect 1 --from "$WORK/nie ma" --to "$WORK/zebrane-brak")"; code=$?
 expect "collect: brak folderu źródłowego" "$out" "Brak folderu"
+
+section "Pliki z iMaców mają kwarantannę na Macu nauczyciela (AUDIT DOD-01)"
+mkdir -p "$WORK/remote/Public/cmcr/qtn"
+printf '#!/bin/sh\necho uczen\n' > "$WORK/remote/Public/cmcr/qtn/projekt.command"
+chmod +x "$WORK/remote/Public/cmcr/qtn/projekt.command"
+rm -rf "$WORK/local/127.0.0.1"
+out="$(ctl pull 1)"
+if xattr -p com.apple.quarantine "$WORK/local/127.0.0.1/qtn/projekt.command" >/dev/null 2>&1; then
+  pass "pull: plik ucznia z kwarantanną"
+else
+  fail "pull: plik ucznia bez kwarantanny" "$out"
+fi
+rm -rf "$WORK/remote/Public/cmcr/qtn"
+
+section "Wysyłane archiwum w /tmp iMaca jest prywatne i nie zostaje po błędzie (AUDIT PLI-02)"
+: > "$WORK/tar.mode"
+mkdir -p "$WORK/local/all"
+echo "materiał" > "$WORK/local/all/pli02.txt"
+out="$(ctlpw push 1 --root)"; code=$?
+expect_code "push: kod 0" "$code" 0 "$out"
+expect "push: archiwum w /tmp ma uprawnienia 600" "$(cat "$WORK/tar.mode")" "tar-mode 600 /tmp/cmcr-up-"
+expect_not "push: archiwum nie jest czytelne dla innych" "$(cat "$WORK/tar.mode")" "tar-mode 644"
+rm -f "$WORK/tar.mode" "$WORK/local/all/pli02.txt" "$WORK/remote/Public/cmcr/pli02.txt"
+before="$(ls /tmp/cmcr-up-*.tar 2>/dev/null | sort)"
+printf 'x' > "$WORK/pli02.pkg"
+out="$(ctl install "$WORK/pli02.pkg" 1 --allow-unsigned)"; code=$?
+expect "install bez hasła administratora: błąd" "$out" "Brak hasła administratora"
+after="$(ls /tmp/cmcr-up-*.tar 2>/dev/null | sort)"
+[ "$before" = "$after" ] && pass "install bez hasła: archiwum usunięte z /tmp" \
+  || fail "install bez hasła: archiwum zostało w /tmp" "$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))"
+rm -f "$WORK/pli02.pkg"
+
+section "Folder ucznia z {student} w ustawieniach (AUDIT PLI-03)"
+cp "$WORK/config/settings.json" "$WORK/settings.json.pli03"
+python3 - "$WORK/config/settings.json" "$WORK/remote/{student}/cmcr-pli03" <<'PY'
+import json, sys
+p = sys.argv[1]; s = json.load(open(p)); s["sharedFolder"] = sys.argv[2]; json.dump(s, open(p, "w"))
+PY
+mkdir -p "$WORK/remote/$ME" "$WORK/local/all"
+echo "materiał" > "$WORK/local/all/pli03.txt"
+out="$(ctlpw push 1 --root)"; code=$?
+expect_code "push z {student}: kod 0" "$code" 0 "$out"
+[ -f "$WORK/remote/$ME/cmcr-pli03/pli03.txt" ] && pass "push z {student}: plik w folderze konta ucznia" \
+  || fail "push z {student}: brak pliku w folderze ucznia" "$out $(ls -laR "$WORK/remote" 2>&1 | head -30)"
+[ ! -e "$WORK/remote/{student}" ] && pass "push z {student}: bez folderu o nazwie {student}" || fail "push: utworzono folder {student}"
+echo "praca" > "$WORK/remote/$ME/cmcr-pli03/praca-pli03.txt"
+rm -rf "$WORK/local/127.0.0.1"
+out="$(ctl pull 1)"; code=$?
+expect_code "pull z {student}: kod 0" "$code" 0 "$out"
+[ -f "$WORK/local/127.0.0.1/praca-pli03.txt" ] && pass "pull z {student}: praca pobrana" || fail "pull z {student}: brak pracy" "$out"
+cp "$WORK/settings.json.pli03" "$WORK/config/settings.json"
+rm -rf "$WORK/remote/{student}" "$WORK/remote/$ME/cmcr-pli03" "$WORK/local/all/pli03.txt" "$WORK/local/127.0.0.1"

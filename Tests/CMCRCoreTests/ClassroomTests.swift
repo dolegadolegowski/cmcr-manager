@@ -139,7 +139,7 @@ import Testing
     let header = rows[0], row = rows[1]
     func value(_ title: String) -> String { row[header.firstIndex(of: title)!] }
     #expect(value("Nazwa") == "imac01")
-    #expect(value("Stan") == "online")
+    #expect(value("Stan") == "Włączony")
     #expect(value("macOS") == "26.1 25B1")
     #expect(value("MAC") == "00:11:22:33:44:55")
     #expect(value("Wolne miejsce (GB)") == "10")
@@ -192,6 +192,16 @@ import Testing
 
 // MARK: - Lesson routines and configuration
 
+/// AUDIT PLI-03: the student folder may contain {student} (as its caption in Konfiguracja says); every user of
+/// the folder gets the account filled in.
+@Test func theStudentFolderHasTheAccountFilledIn() {
+    var settings = AppSettings()
+    settings.studentUser = "uczen"
+    settings.sharedFolder = "/Users/{student}/Public/cmcr"
+    #expect(settings.studentFolder == "/Users/uczen/Public/cmcr")
+    #expect(LessonPlan.start(LessonStartConfig(), settings: settings).materialsDestination == "/Users/uczen/Public/cmcr")
+}
+
 @Test func lessonPlansFollowTheConfiguration() {
     var start = LessonStartConfig()
     start.sendMaterials = true
@@ -243,6 +253,26 @@ import Testing
                                    onStep: { i, st in states.add(i, st) })
     #expect(r.succeeded)
     #expect(states.all == [StepRecord(index: 0, state: .skipped("nie zebrano prac – folder pozostawiono"))])
+}
+
+/// AUDIT ZAJ-03: materials that could not be read or packed fail their step (the lesson is not „Gotowe”); only
+/// an empty folder skips it.
+@Test func materialsThatCouldNotBeSentFailTheStep() async {
+    var plan = LessonPlan.start(LessonStartConfig(), settings: AppSettings())
+    plan.steps = [.materials]
+    let host = LessonRunner.Host(machine: Machine(name: "x", address: "192.0.2.1", user: "admin"), password: nil, macs: [])
+    let ssh = SSHSettings(askpassPath: "/usr/bin/false")
+    let failed = StepRecorder()
+    let r = await LessonRunner.run(plan, on: host, ssh: ssh, materials: nil,
+                                   materialsProblem: "Folder z materiałami nie istnieje: /nie/ma",
+                                   onStep: { i, st in failed.add(i, st) })
+    #expect(!r.succeeded)
+    #expect(r.stderrText.contains("Folder z materiałami nie istnieje"))
+    #expect(failed.all.last == StepRecord(index: 0, state: .failed("Folder z materiałami nie istnieje: /nie/ma")))
+    let empty = StepRecorder()
+    let e = await LessonRunner.run(plan, on: host, ssh: ssh, materials: nil, onStep: { i, st in empty.add(i, st) })
+    #expect(e.succeeded)
+    #expect(empty.all.last == StepRecord(index: 0, state: .skipped("folder z materiałami jest pusty")))
 }
 
 private struct StepRecord: Equatable {
@@ -438,5 +468,32 @@ private func osacompile(_ source: String, language: String) -> String? {
     for buttons in [[], ["Tak", "Nie \"może\""]] {
         let apple = Scripts.askAppleScript(title: tricky, prompt: tricky, buttons: buttons, timeoutSeconds: 30)
         #expect(osacompile(apple, language: "AppleScript") == nil, "\(buttons)")
+    }
+}
+
+/// lesson-materials-cwd (AUDIT CLI-01): the materials are never the current directory.
+@Suite struct LessonMaterialsTests {
+    @Test func emptyRelativeMissingAndFileSettingsAreErrors() throws {
+        for setting in ["", "   ", "materialy", "."] {
+            guard case .failure = LessonMaterials.items(in: setting) else {
+                Issue.record("„\(setting)” nie może wskazywać katalogu bieżącego")
+                continue
+            }
+        }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cmcr-mat-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        guard case .failure(let missing) = LessonMaterials.items(in: dir.appendingPathComponent("brak").path) else {
+            Issue.record("nieistniejący folder"); return
+        }
+        #expect(missing.message.contains("nie istnieje"))
+        try Data("x".utf8).write(to: dir.appendingPathComponent("Karta 10.txt"))
+        try Data("x".utf8).write(to: dir.appendingPathComponent("Karta 2.txt"))
+        try Data("x".utf8).write(to: dir.appendingPathComponent(".DS_Store"))
+        let items = try LessonMaterials.items(in: dir.path).get()
+        #expect(items.map(\.lastPathComponent) == ["Karta 2.txt", "Karta 10.txt"])
+        guard case .failure = LessonMaterials.items(in: dir.appendingPathComponent("Karta 2.txt").path) else {
+            Issue.record("plik zamiast folderu"); return
+        }
     }
 }

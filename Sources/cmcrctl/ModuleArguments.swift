@@ -136,6 +136,8 @@ func commandHelp(_ command: String, spec: ModuleSpec? = nil) -> String {
             let body = trimmed.hasPrefix("cmcrctl ") ? String(trimmed.dropFirst("cmcrctl ".count)) : trimmed
             guard line.hasPrefix(" "), body == command || body.hasPrefix(command + " ") else { i += 1; continue }
             let indent = line.prefix { $0 == " " }.count
+            // Lines of the core commands lack the "cmcrctl " the help adds: their continuation lines move with it.
+            let shift = trimmed.hasPrefix("cmcrctl ") ? 0 : "cmcrctl ".count
             lines.append("  cmcrctl " + body)
             i += 1
             // Continuation lines: indented deeper, not another command.
@@ -144,7 +146,7 @@ func commandHelp(_ command: String, spec: ModuleSpec? = nil) -> String {
                 let nextIndent = next.prefix { $0 == " " }.count
                 let nextTrimmed = next.trimmingCharacters(in: .whitespaces)
                 guard !nextTrimmed.isEmpty, nextIndent > indent + 2, !nextTrimmed.hasPrefix("cmcrctl ") else { break }
-                lines.append("  " + String(repeating: " ", count: max(0, nextIndent - indent)) + nextTrimmed)
+                lines.append("  " + String(repeating: " ", count: max(0, nextIndent - indent) + shift) + nextTrimmed)
                 i += 1
             }
         }

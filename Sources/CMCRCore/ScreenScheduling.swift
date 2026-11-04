@@ -94,11 +94,12 @@ public enum ScreenSchedule {
     }
 }
 
-/// Remembers which console user was told about the observation, per Mac, for one observation session.
+/// Remembers which login session was told about the observation, per Mac, for one observation session.
 ///
 /// A session lasts while the Mac is observed somewhere in the app; after `grace` seconds without any
-/// observer it ends, and the next preview notifies the user again. A different console user is always
-/// notified (the capture script compares the user with `notifiedUser`).
+/// observer it ends, and the next preview notifies the user again. Another login – a different account, or the
+/// same shared account after logging out and in – is always notified (the capture script compares its login
+/// session with `notifiedUser`, AUDIT ZAJ-04).
 public struct ObservationLedger: Sendable {
     public var grace: TimeInterval
     private var notified: [UUID: String] = [:]
@@ -109,7 +110,11 @@ public struct ObservationLedger: Sendable {
 
     public func notifiedUser(_ host: UUID) -> String? { notified[host] }
 
-    public mutating func recordNotified(_ host: UUID, user: String) { notified[host] = user }
+    /// `session` as the capture script reported it (`NOTIFIED user session`).
+    public mutating func recordNotified(_ host: UUID, session: String) { notified[host] = session }
+
+    /// Nobody is logged in any more: whoever logs in next is told again.
+    public mutating func forgetNotified(_ host: UUID) { notified[host] = nil }
 
     /// True the first time `user` is seen on `host` in this session (for the audit log).
     public mutating func shouldLog(_ host: UUID, user: String) -> Bool {

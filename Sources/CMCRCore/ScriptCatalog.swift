@@ -39,6 +39,7 @@ public enum ScriptCatalog {
             Sample(name: "quitApp(path)", script: Scripts.quitApp("/Applications/\(a).app", force: true)),
             Sample(name: "killProcess", script: Scripts.killProcess(12345, force: false)),
             Sample(name: "killProcess(force)", script: Scripts.killProcess(1, force: true)),
+            Sample(name: "killProcess(bundle)", script: Scripts.killProcess(12345, force: true, bundlePath: "/Applications/\(a).app")),
             Sample(name: "uninstallApp", script: Scripts.uninstallApp("/Applications/\(a).app")),
             Sample(name: "installPayload", script: Scripts.installPayload(remoteTar: "/tmp/\(a).tar")),
             Sample(name: "installFromURL", script: Scripts.installFromURL("https://example.com/\(a).dmg?x=1&y=2")),

@@ -73,6 +73,22 @@ func fail(_ message: String, code: Int32 = ExitCode.failure) -> Never {
     exit(code)
 }
 
+/// Records a command that changes something on the Macs (or reads the students' files) in the actions log shared
+/// with the app, in its format „cmcrctl <polecenie> → imac01, imac02” (AUDIT ZAD-14). Called after the
+/// confirmation, before anything runs; commands that only read are not logged.
+func logAction(_ hosts: [Machine]) {
+    guard !hosts.isEmpty else { return }
+    let what = "cmcrctl " + CommandLineLog.describe(Array(CommandLine.arguments.dropFirst()))
+    ConfigStore.log(CommandLineLog.line(what, hosts: hosts.map(\.name)))
+}
+
+/// Saves the host list; a failed write ends the command with the reason instead of a success message (AUDIT KON-03).
+func saveHostsOrFail(_ hosts: [Machine]) {
+    if let problem = ConfigStore.saveHosts(hosts) {
+        fail("✘ \(problem)\nLista komputerów nie została zmieniona.")
+    }
+}
+
 func usageError(_ message: String) -> Never {
     Console.err(message)
     Console.err("Pomoc: cmcrctl --help")
@@ -153,15 +169,19 @@ final class HostIO: @unchecked Sendable {
     func out(_ text: String) { write(.stdout, Data((text + "\n").utf8)) }
     func err(_ text: String) { write(.stderr, Data((text + "\n").utf8)) }
 
-    /// Prints the failure explanation (if any) and returns the code to report for this host.
+    /// Prints the failure explanation (if any) and returns the code to report for this host. `passThrough` (exec)
+    /// returns the command's own exit code – only when the command ended by itself on a Mac that answered: ssh's 255
+    /// for a connection that failed or broke off under a running command („Połączenie zostało przerwane…”) is not the
+    /// command's code, and is reported as 1 (AUDIT REV-51).
     @discardableResult
     func report(_ r: CommandResult, passThrough: Bool = false) -> Int32 {
         if r.succeeded { return ExitCode.success }
-        err("✘ \(host.name): \(SSH.diagnose(r).1)")
+        let (reach, message) = SSH.diagnose(r)
+        err("✘ \(host.name): \(message)")
         if !r.started, HostTrust.refusal(r) != nil {
             err("  W terminalu: cmcrctl trust \(host.name) – pokaże odcisk klucza i zapyta o zaufanie.")
         }
-        if passThrough, r.exitCode > 0 { return r.exitCode }
+        if passThrough, reach == .online, r.exitCode > 0 { return r.exitCode }
         return ExitCode.failure
     }
 
@@ -176,14 +196,23 @@ final class HostIO: @unchecked Sendable {
 }
 
 /// Runs `body` for every host with at most `jobs` hosts at a time; returns the per-host codes in host order.
+/// After Ctrl-C (Interruption) no further host is started: the running ones finish with their output, and the hosts
+/// left out are listed below it (AUDIT REV-35).
 func runHosts(_ targets: [Machine], jobs: Int, prefixLines: Bool,
               _ body: @escaping @Sendable (HostIO) async -> Int32) async -> [Int32] {
     let sink = OrderedOutput(count: targets.count)
     let limit = max(1, jobs)
-    return await withTaskGroup(of: (Int, Int32).self) { group in
+    let (codes, notStarted) = await withTaskGroup(of: (Int, Int32).self) { group in
         var codes = Array(repeating: ExitCode.success, count: targets.count)
+        var notStarted: [Machine] = []
         for (i, host) in targets.enumerated() {
             if i >= limit, let (done, code) = await group.next() { codes[done] = code }
+            if Interruption.shared.isInterrupted {
+                notStarted.append(host)
+                codes[i] = ExitCode.failure
+                sink.finish(i)
+                continue
+            }
             let io = HostIO(host: host, index: i, sink: sink, prefixLines: prefixLines)
             group.addTask {
                 let code = await body(io)
@@ -193,8 +222,10 @@ func runHosts(_ targets: [Machine], jobs: Int, prefixLines: Bool,
             }
         }
         for await (done, code) in group { codes[done] = code }
-        return codes
+        return (codes, notStarted)
     }
+    Interruption.shared.reportNotStarted(notStarted)
+    return codes
 }
 
 /// Pads to a column width counted in characters (`%-12@` ignores the width for objects).

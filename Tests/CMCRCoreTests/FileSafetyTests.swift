@@ -186,6 +186,57 @@ import Testing
         }
     }
 
+    /// gatekeeper-override-in-name (AUDIT APL-01): spctl prints the item's path, so a file named „…override=…” must
+    /// not look like a Mac with Gatekeeper switched off – that path checks only the Developer ID, not notarization.
+    @Test func aFileNamedOverrideIsStillCheckedForNotarization() throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pkg = dir.appendingPathComponent("Setup override=1.pkg")
+        try Data("x".utf8).write(to: pkg)
+        // Gatekeeper on, a Developer ID package without notarization; pkgutil alone would accept the signature.
+        let fakes = """
+        spctl() { local last; for last in "$@"; do :; done; printf '%s: rejected\\nsource=Unnotarized Developer ID\\norigin=Developer ID Installer: Ktoś (X)\\n' "$last" >&2; return 3; }
+        pkgutil() { printf '   Status: signed by a developer certificate issued by Apple for distribution\\n   1. Developer ID Installer: Ktoś (X)\\n'; }
+
+        """
+        let check = "cmcr_verify_signature \(shQuote(pkg.path)) install"
+        let (rc, out, err) = try Self.bash("CMCR_ALLOW_UNSIGNED=0\n" + Scripts.installLibrary + "\n" + fakes + check, tmp: dir)
+        #expect(rc == 1, "\(out)\(err)")
+        #expect(err.contains("bez notaryzacji"), "\(err)")
+        #expect(!out.contains("Gatekeeper wyłączony"), "\(out)")
+        // A line break in the name would make a line of its own that starts with "override=".
+        let forged = dir.appendingPathComponent("Setup\noverride=1.pkg")
+        try Data("x".utf8).write(to: forged)
+        let (rc2, out2, err2) = try Self.bash("CMCR_ALLOW_UNSIGNED=0\n" + Scripts.installLibrary + "\n" + fakes
+                                              + "cmcr_verify_signature \(shQuote(forged.path)) install", tmp: dir)
+        #expect(rc2 == 1 && !out2.contains("Gatekeeper wyłączony"), "\(out2)\(err2)")
+    }
+
+    /// rename-link-race (AUDIT PLI-01): renaming runs as root in the student's folder; a link the student plants at
+    /// the new name after the check must not make mv move the file into the linked folder (e.g. /Library/…).
+    @Test func renameNeverMovesIntoALinkPlantedAtTheNewName() throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fm = FileManager.default
+        let folder = dir.appendingPathComponent("student/Public/cmcr")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let victim = dir.appendingPathComponent("LaunchDaemons")
+        try fm.createDirectory(at: victim, withIntermediateDirectories: true)
+        try Data("<plist/>".utf8).write(to: folder.appendingPathComponent("praca.plist"))
+        // The race, made deterministic: the link appears between the script's check and mv.
+        let plant = "mv() { /bin/ln -s \(shQuote(victim.path)) ./nowa; command mv \"$@\"; }\n"
+        let body = Scripts.renameItem(folder.appendingPathComponent("praca.plist").path, to: "nowa", asRoot: false).body
+        let (rc, out, err) = try Self.bash(plant + body, tmp: dir)
+        #expect(!fm.fileExists(atPath: victim.appendingPathComponent("praca.plist").path),
+                "plik przeniesiono przez dowiązanie: \(out)\(err)")
+        #expect(fm.fileExists(atPath: folder.appendingPathComponent("praca.plist").path))
+        #expect(rc != 0)
+        // A plain rename still works.
+        let ok = Scripts.renameItem(folder.appendingPathComponent("praca.plist").path, to: "praca2.plist", asRoot: false).body
+        let (rc2, out2, err2) = try Self.bash(ok, tmp: dir)
+        #expect(rc2 == 0 && fm.fileExists(atPath: folder.appendingPathComponent("praca2.plist").path), "\(out2)\(err2)")
+    }
+
     @Test func fileScriptsUsePinnedFolders() {
         let push = Scripts.pushFinalize(remoteTar: "/tmp/x.tar", destination: "/Users/student/Public/cmcr", owner: "student",
                                         mode: "777", asRoot: true).body

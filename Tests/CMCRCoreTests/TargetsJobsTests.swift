@@ -222,13 +222,14 @@ private func record(_ host: String, batch: UUID, start: Date, state: String = "s
     try JobHistory.write(record("imac03", batch: b2, start: now.addingTimeInterval(-60)), output: nil, in: dir)
     try JobHistory.write(record("imac04", batch: UUID(), start: old), output: "stare\n", in: dir)
 
+    // The 200-day-old record is not listed even before the purge (AUDIT ZAD-05).
     let all = JobHistory.load(in: dir)
-    #expect(all.count == 4)
+    #expect(all.count == 3)
     #expect(all.first!.finishedAt >= all.last!.finishedAt)
     #expect(JobHistory.load(limit: 2, in: dir).count == 2)
 
     let batches = JobHistory.batches(all)
-    #expect(batches.count == 3)
+    #expect(batches.count == 2)
     #expect(batches[0].id == b1)
     #expect(batches[0].records.map(\.host) == ["imac01", "imac02"])
     #expect(batches[0].succeeded == 1 && batches[0].failed == 1)
@@ -238,7 +239,9 @@ private func record(_ host: String, batch: UUID, start: Date, state: String = "s
     // No output written for imac03 → file does not exist, record still listed.
     #expect(!FileManager.default.fileExists(atPath: JobHistory.outputURL(for: batches[1].records[0], in: dir)!.path))
 
+    #expect(FileManager.default.fileExists(atPath: JobHistory.monthFile(for: old, in: dir).path))
     JobHistory.purge(olderThan: 90, now: now, in: dir)
+    #expect(!FileManager.default.fileExists(atPath: JobHistory.monthFile(for: old, in: dir).path))
     let left = JobHistory.load(in: dir)
     #expect(left.count == 3)
     #expect(!left.contains { $0.host == "imac04" })

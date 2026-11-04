@@ -62,6 +62,46 @@ import Testing
     }
 }
 
+/// AUDIT KON-04: the app's list and the one cmcrctl wrote meanwhile are merged by entry, nothing is undone.
+@Suite struct HostListMergeTests {
+    let a = Machine(name: "imac01", address: "imac01.local", user: "admin")
+    let b = Machine(name: "imac02", address: "imac02.local", user: "admin")
+    let c = Machine(name: "imac03", address: "imac03.local", user: "admin")
+
+    @Test func changesOnDifferentEntriesAreBothKept() {
+        var mine = [a, b, c]
+        mine[0].macAddress = "aa:bb:cc:dd:ee:ff"            // the app filled in a MAC
+        var theirs = [a, b, c]
+        theirs[1].address = "pracownia02.local"             // cmcrctl rename-computer --update-list
+        let added = Machine(name: "imac16", address: "imac16.local", user: "admin")
+        theirs.append(added)                                // cmcrctl hosts add
+        let merged = Machine.merge(base: [a, b, c], mine: mine, theirs: theirs)
+        #expect(merged.map(\.name) == ["imac01", "imac02", "imac03", "imac16"])
+        #expect(merged[0].macAddress == "aa:bb:cc:dd:ee:ff")
+        #expect(merged[1].address == "pracownia02.local")
+    }
+
+    @Test func removalsOnOneSideAreKeptUnlessTheOtherSideChangedTheEntry() {
+        var changed = b
+        changed.port = 2222
+        // Removed by cmcrctl, untouched in the app: removed.
+        #expect(Machine.merge(base: [a, b, c], mine: [a, b, c], theirs: [a, c]).map(\.name) == ["imac01", "imac03"])
+        // Removed in the app, untouched by cmcrctl: removed.
+        #expect(Machine.merge(base: [a, b, c], mine: [a, c], theirs: [a, b, c]).map(\.name) == ["imac01", "imac03"])
+        // Removed on one side, changed on the other: kept (nothing is lost).
+        #expect(Machine.merge(base: [a, b, c], mine: [a, changed, c], theirs: [a, c]).map(\.port) == [22, 2222, 22])
+        #expect(Machine.merge(base: [a, b, c], mine: [a, c], theirs: [a, changed, c]).map(\.name) == ["imac01", "imac02", "imac03"])
+    }
+
+    @Test func anEntryChangedOnBothSidesKeepsTheAppsVersion() {
+        var mine = b, theirs = b
+        mine.port = 2201
+        theirs.port = 2202
+        #expect(Machine.merge(base: [b], mine: [mine], theirs: [theirs]) == [mine])
+        #expect(Machine.merge(base: [b], mine: [b], theirs: [theirs]) == [theirs])
+    }
+}
+
 @Suite struct AppSettingsTests {
     @Test func emptyJSONGivesDefaults() throws {
         let s = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
@@ -81,7 +121,9 @@ import Testing
         let s = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
         #expect(s.studentUser == "uczen")
         #expect(s.maxParallel == 3)
-        #expect(!s.notifyOnObserve)
+        // AUDIT KON-06: an old file that turned the notice off no longer does – the student is always told.
+        #expect(s.notifyOnObserve)
+        #expect(ScreenCaptureOptions(settings: s).notify)
         #expect(s.screenshotQuality == AppSettings().screenshotQuality)
         #expect(s.sharedFolder == AppSettings().sharedFolder)
     }
@@ -133,6 +175,26 @@ import Testing
 }
 
 @Suite struct HostStatusTests {
+    /// background-sessions (AUDIT DOD-04): a student's session left running after "Switch User" counts as logged in.
+    @Test func backgroundSessionsCountAsLoggedIn() {
+        var st = HostStatus()
+        st.info = Parsers.keyValues("console=\nsessions=uczen2\n")
+        #expect(st.consoleUser == nil)
+        #expect(st.loggedInUsers == ["uczen2"])
+        #expect(st.loggedInText == "uczen2 (w tle)")
+        st.info = Parsers.keyValues("console=uczen\nsessions=uczen,uczen2\n")
+        #expect(st.loggedInUsers == ["uczen", "uczen2"])
+        #expect(st.loggedInText == "uczen, uczen2 (w tle)")
+        st.info = Parsers.keyValues("console=uczen\n")          // a status from an older version
+        #expect(st.loggedInUsers == ["uczen"])
+        st.info = Parsers.keyValues("console=\nsessions=\n")
+        #expect(st.loggedInUsers.isEmpty && st.loggedInText == nil)
+        var online = st
+        online.reachability = .online
+        online.info = Parsers.keyValues("console=\nsessions=uczen2\n")
+        #expect(HostStatusFilter.withUser.accepts(online))
+    }
+
     @Test func derivedFields() {
         var st = HostStatus()
         st.info = Parsers.keyValues("os=15.1\nconsole=\nmac=aa:bb:cc:dd:ee:ff\ndisk=1048576000 524288000\nadmin=yes\nboot=0\n")

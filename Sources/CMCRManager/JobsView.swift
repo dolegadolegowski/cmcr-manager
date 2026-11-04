@@ -156,7 +156,8 @@ struct JobsView: View {
                 if FileManager.default.fileExists(atPath: url.path) {
                     NSWorkspace.shared.open(url)
                 } else {
-                    NSSound.beep()
+                    model.reportFailure("Dziennik działań jest jeszcze pusty",
+                                        hint: "Plik \(url.path) powstanie przy pierwszym działaniu na komputerach.")
                 }
             } label: {
                 Label("Otwórz dziennik działań", systemImage: "doc.text")
@@ -319,11 +320,13 @@ struct BatchDetailView: View {
 
     var exportMenu: some View {
         Menu {
-            Button("Kopiuj wyniki wszystkich komputerów") {
+            Button {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(BatchExport.text(batch), forType: .string)
+            } label: {
+                Label("Kopiuj wyniki wszystkich komputerów", systemImage: "doc.on.doc")
             }
-            Button("Zapisz do pliku…") { BatchExport.save(batch) }
+            Button { BatchExport.save(batch) } label: { Label("Zapisz do pliku…", systemImage: "square.and.arrow.up") }
         } label: {
             Label("Eksportuj", systemImage: "square.and.arrow.up")
         }
@@ -360,16 +363,25 @@ struct BatchDetailView: View {
         .contextMenu(forSelectionType: UUID.self) { ids in
             let jobs = batch.jobs.filter { ids.contains($0.id) }
             if !jobs.isEmpty {
-                Button("Zaznacz na liście komputerów") { model.selection = Set(jobs.map(\.machine.id)) }
+                Button {
+                    model.selection = Set(jobs.map(\.machine.id)).intersection(model.machines.map(\.id))
+                } label: {
+                    Label("Zaznacz na liście komputerów", systemImage: "checkmark.square")
+                }
                 if batch.finished, batch.rerun != nil {
                     let suffix = batch.confirmation == nil ? "" : "…"
-                    Button("Powtórz \(jobs.count == 1 ? "na \(jobs[0].machine.name)" : Polish.onComputers(jobs.count))\(suffix)") {
+                    Button {
                         model.retry(batch, on: jobs.map(\.machine))
+                    } label: {
+                        Label("Powtórz \(jobs.count == 1 ? "na \(jobs[0].machine.name)" : Polish.onComputers(jobs.count))\(suffix)",
+                              systemImage: "arrow.counterclockwise")
                     }
                 }
-                Button("Kopiuj wynik") {
+                Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(jobs.map(\.fullOutput).joined(separator: "\n"), forType: .string)
+                } label: {
+                    Label("Kopiuj wynik", systemImage: "doc.on.doc")
                 }
             }
         }
@@ -585,7 +597,7 @@ struct HistoryDetailView: View {
                 Button {
                     model.selection = Set(existing.map(\.id))
                 } label: {
-                    Label("Zaznacz nieudane", systemImage: "checklist")
+                    Label("Zaznacz nieudane", systemImage: "checkmark.square")
                 }
                 .disabled(existing.isEmpty)
                 .help("Zaznacza na liście komputery, na których działanie się nie udało")
@@ -630,6 +642,7 @@ extension Job.State {
 
 // MARK: - Export
 
+@MainActor
 enum BatchExport {
     static func text(_ batch: Batch) -> String {
         var s = "\(batch.title)\nRozpoczęto: \(batch.createdAt.formatted(date: .abbreviated, time: .standard))\n\n"
@@ -663,7 +676,7 @@ enum BatchExport {
         do {
             try text.write(to: url, atomically: true, encoding: .utf8)
         } catch {
-            NSSound.beep()
+            AppModel.shared?.reportFailure("Nie udało się zapisać wyników", error)
         }
     }
 }

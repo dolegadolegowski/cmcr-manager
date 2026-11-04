@@ -28,7 +28,7 @@ struct HostTrustSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: review.hasChangedKey ? "exclamationmark.shield.fill" : "lock.shield")
+                Image(systemName: review.hasChangedKey ? "exclamationmark.shield.fill" : "key.viewfinder")
                     .font(.system(size: 34))
                     .foregroundStyle(review.hasChangedKey ? Color.orange : Color.accentColor)
                     .accessibilityHidden(true)
@@ -122,10 +122,10 @@ struct HostTrustSheet: View {
             ProgressView().controlSize(.small)
         } else {
             switch e.state {
-            case .new?: Label("nowy klucz", systemImage: "key").font(.callout)
+            case .new?: Label("nowy klucz", systemImage: "key.viewfinder").font(.callout)
             case .changed?: Label("ZMIENIONY", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.callout)
             case .trusted?: Label("już zaufany", systemImage: "checkmark.shield").foregroundStyle(.secondary).font(.callout)
-            case nil: Label("brak połączenia", systemImage: "wifi.slash").foregroundStyle(.secondary).font(.callout)
+            case nil: Label("brak połączenia", systemImage: "moon.zzz.fill").foregroundStyle(.secondary).font(.callout)
             }
         }
     }

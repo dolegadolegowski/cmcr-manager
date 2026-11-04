@@ -99,3 +99,49 @@ done
 [ -z "$leaked" ] && pass "8 KiB: brak komunikatów mm_send_fd w wyniku" || fail "8 KiB: komunikaty ssh w wyniku dla:$leaked"
 [ -z "$retried" ] && pass "8 KiB: polecenia przeszły przez wspólne połączenie bez ponawiania" \
   || fail "8 KiB: ponowne próby dla:$retried"
+
+section "Wpisy komputerów, które ssh odczytałby jako opcję (AUDIT KON-01)"
+DASH="$WORK/cfg-dash"
+mkdir -p "$DASH"
+cp "$WORK/config/settings.json" "$DASH/settings.json"
+rm -f "$WORK"/dash-pwned*
+cat > "$DASH/hosts.json" <<JSON
+[
+ {"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","name":"imac01","address":"127.0.0.1","user":"-oProxyCommand=touch $WORK/dash-pwned","port":$PORT},
+ {"id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","name":"imac02","address":"-oProxyCommand=touch $WORK/dash-pwned","user":"$ME","port":$PORT}
+]
+JSON
+dctl() { CMCR_CONFIG_DIR="$DASH" "$CTL" "$@" 2>&1; }
+out="$(dctl trust 1 --dry-run)"
+expect "trust: wpis z „-” odrzucony z polskim komunikatem" "$out" "Niepoprawny wpis komputera"
+out="$(dctl status 1)"; code=$?
+expect "status: wpis z „-” odrzucony" "$out" "Niepoprawny wpis komputera"
+expect_code "status: kod 1 dla odrzuconego wpisu" "$code" 1 "$out"
+out="$(dctl exec 'echo nie-powinno' 2)"
+expect_not "exec: adres z „-” – polecenie nie wykonane" "$out" "nie-powinno"
+out="$(dctl go 1)"; code=$?
+expect "go: wpis z „-” odrzucony przed uruchomieniem ssh" "$out" "Niepoprawny wpis komputera"
+if ls "$WORK"/dash-pwned* >/dev/null 2>&1; then
+  fail "ProxyCommand z listy komputerów został wykonany na Macu nauczyciela" "$(ls "$WORK"/dash-pwned*)"
+else
+  pass "żadne polecenie z listy komputerów nie uruchomiło się lokalnie (ProxyCommand)"
+fi
+
+section "Udostępnianie ekranu przez tunel SSH ze sprawdzeniem klucza (AUDIT DOD-02)"
+out="$(ctl __vnc-tunnel 1)"; code=$?
+expect_code "tunel VNC: kod 0 dla zaufanego komputera" "$code" 0 "$out"
+vport="$(printf '%s\n' "$out" | sed -n 's/^CMCR:TUNNEL port=//p' | head -1)"
+if [ -n "$vport" ] && nc -z 127.0.0.1 "$vport" 2>/dev/null; then pass "tunel VNC: lokalny port nasłuchuje ($vport)"
+else fail "tunel VNC: brak lokalnego portu" "$out"; fi
+expect "tunel VNC: adres przez tunel" "$out" "vnc://$ME@127.0.0.1:$vport"
+# The tunnel waits (linger) for Screen Sharing to connect; close it now, so its session does not outlive the suite.
+[ -n "$vport" ] && pkill -f -- "-L 127.0.0.1:$vport:127.0.0.1:5900" 2>/dev/null
+for _ in $(seq 1 50); do nc -z 127.0.0.1 "$vport" 2>/dev/null || break; sleep 0.1; done
+KH_SAVE="$WORK/known_hosts.dod02"
+cp "$WORK/known_hosts" "$KH_SAVE"
+ctl __forget-host-key 1 >/dev/null
+out="$(ctl __vnc-tunnel 1)"; code=$?
+expect_code "tunel VNC: niezaufany klucz – kod 1" "$code" 1 "$out"
+expect "tunel VNC: niezaufany klucz – odmowa przed logowaniem" "$out" "nie jest jeszcze zaufany"
+expect_not "tunel VNC: niezaufany klucz – brak adresu vnc://" "$out" "vnc://"
+cp "$KH_SAVE" "$WORK/known_hosts"

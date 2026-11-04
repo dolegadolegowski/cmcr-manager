@@ -4,14 +4,18 @@ import Foundation
 /// `cmcrctl` commands for lesson routines, attention mode, energy schedule, names and reports.
 enum ClassroomCLI {
     static let usage = """
-    Zajęcia, zasilanie i raporty:
-      cmcrctl lesson start|end KOMP [--no-wait] [--yes]   scenariusz zajęć zapisany w aplikacji (classroom.json)
+    Zajęcia, zasilanie i raporty
+      cmcrctl lesson start|end KOMP [--no-wait] [--yes]   scenariusz zajęć zapisany w aplikacji (classroom.json);
+                                                      komputery obsługiwane naraz, jak w aplikacji
       cmcrctl lock KOMP [--message "…"] [--mode automatic|lockScreen|overlay] [--minutes N]
       cmcrctl unlock KOMP                             zdejmij blokadę ekranu
       cmcrctl ask "pytanie" KOMP [--buttons "Tak,Nie"] [--timeout sekundy]
+                                                      bez --timeout: czas na odpowiedź zapisany w aplikacji
       cmcrctl schedule show [KOMP]                    harmonogram zasilania (bez KOMP: wszystkie)
       cmcrctl schedule set|clear KOMP [--on MTWRF@07:45] [--off MTWRF@16:30]
                        [--on-type wakeorpoweron|wake] [--off-type sleep|shutdown] [--no-autorestart] [--no-womp]
+                                                      bez --on/--off: harmonogram i zasady zapisane w aplikacji
+                                                      (classroom.json); --on/--off: tylko podane zdarzenia
       cmcrctl rename KOMP [--name "Nazwa"] [--dry-run] [--update-list] [--yes]
                                                       nazwy z listy; --name tylko dla jednego komputera
       cmcrctl rename-computer KOMP [--name "Nazwa"] [--dry-run] [--update-list] [--yes]
@@ -40,6 +44,16 @@ enum ClassroomCLI {
         "report": ModuleSpec(maxPositional: 1),
     ]
 
+    /// classroom.json as saved in the app (lesson scenarios, energy schedule, attention mode, question timeout). A
+    /// damaged file, whose values fall back to the defaults – e.g. the built-in schedule for `schedule set` – is
+    /// reported before the command runs, like settings.json in main.swift (AUDIT REV-37). Only the commands that use
+    /// the file read it: the others neither warn about it nor make a backup copy of it.
+    static func loadConfig() -> ClassroomConfig {
+        let config = ClassroomStore.loadConfig()
+        if let issue = ClassroomStore.loadIssue { Console.err("⚠ \(issue)") }
+        return config
+    }
+
     /// Runs a classroom command (`rawArgs` without the command word).
     static func run(_ command: String, _ rawArgs: [String], settings: AppSettings, ssh: SSHSettings) async -> Int32 {
         let a = ModuleArguments.parse(command, rawArgs, specs[command] ?? ModuleSpec())
@@ -50,11 +64,14 @@ enum ClassroomCLI {
             guard let kind = a[0], kind == "start" || kind == "end" else {
                 use("Użycie: cmcrctl lesson start|end KOMP [--no-wait]")
             }
-            return await lesson(start: kind == "start", hosts: ModuleHosts.changing(a[1], "lesson \(kind)"),
+            // Read before the hosts: a damaged file is reported before „Wykonać na wszystkich?” (AUDIT REV-46), as
+            // in lock, ask and schedule set.
+            let config = loadConfig()
+            return await lesson(start: kind == "start", config: config, hosts: ModuleHosts.changing(a[1], "lesson \(kind)"),
                                 wait: !a.has("--no-wait"), yes: a.yes, settings: settings, ssh: ssh)
 
         case "lock":
-            let config = ClassroomStore.loadConfig()
+            let config = loadConfig()
             let message = a.value("--message") ?? config.lockMessage
             let mode: AttentionMode
             if let raw = a.value("--mode") {
@@ -83,8 +100,12 @@ enum ClassroomCLI {
             guard buttons.count <= ClassroomConfig.maxQuestionButtons else {
                 use("Okno pytania mieści najwyżej \(ClassroomConfig.maxQuestionButtons) przyciski.")
             }
-            let seconds = a.int("--timeout", in: 5...3600) ?? 120
+            // As in the app: „Czekaj na odpowiedź” from classroom.json unless --timeout says otherwise.
+            let seconds = a.int("--timeout", in: 5...3600)
+                ?? min(3600, max(1, loadConfig().questionTimeoutMinutes) * 60)
             let list = ModuleHosts.changing(a[1], command)
+            Console.err("Czas na odpowiedź: " + (seconds % 60 == 0 ? "\(seconds / 60) min" : "\(seconds) s"))
+            logAction(list)
             return await ask(question, buttons: buttons, seconds: seconds, hosts: list, ssh: ssh)
 
         case "schedule":
@@ -96,9 +117,12 @@ enum ClassroomCLI {
             }
             switch action {
             case "set":
-                let schedule = parseSchedule(a)
+                // The schedule and the power policy saved in the app (classroom.json); the options change them.
+                let config = loadConfig()
+                let schedule = parseSchedule(a, saved: config.schedule)
                 let list = ModuleHosts.changing(a[1], "schedule set")
-                let autoRestart = !a.has("--no-autorestart"), wake = !a.has("--no-womp")
+                let autoRestart = config.autoRestartAfterPowerLoss && !a.has("--no-autorestart")
+                let wake = config.wakeOnLAN && !a.has("--no-womp")
                 return await runEach(list, a, ssh: ssh, timeout: 60) { _ in
                     Scripts.applyEnergySchedule(schedule, autoRestart: autoRestart, wakeOnLAN: wake)
                 }
@@ -193,28 +217,33 @@ enum ClassroomCLI {
             }
 
         case "report":
-            return await inventoryReport(to: a[0], hosts: ConfigStore.loadHosts(), ssh: ssh)
+            // The list every other command uses (an unreadable hosts.json is reported, never copied or repaired here).
+            legacyCLI.warnIfDefaultHosts()
+            return await inventoryReport(to: a[0], hosts: legacyCLI.hosts, ssh: ssh)
 
         default:
             use(usage)
         }
     }
 
-    /// `schedule set` options → schedule; a usage error (exit 2) for anything invalid.
-    static func parseSchedule(_ a: ModuleArguments) -> EnergySchedule {
+    /// `schedule set` options → schedule; a usage error (exit 2) for anything invalid. Without --on/--off it is
+    /// the schedule saved in the app (`saved`); with them, only the events given. --on-type/--off-type change the
+    /// saved types.
+    static func parseSchedule(_ a: ModuleArguments, saved: EnergySchedule) -> EnergySchedule {
         func use(_ text: String) -> Never { moduleUsageError(a.command, text) }
-        var s = EnergySchedule()
-        if let on = a.value("--on") {
+        var s = saved
+        let on = a.value("--on"), off = a.value("--off")
+        if on != nil || off != nil {
+            s.powerOnEnabled = on != nil
+            s.powerOffEnabled = off != nil
+        }
+        if let on {
             guard let parsed = parseEvent(on) else { use("Niepoprawne --on (np. MTWRF@07:45).") }
             (s.onDays, s.onTime) = parsed
-        } else if a.value("--off") != nil {
-            s.powerOnEnabled = false
         }
-        if let off = a.value("--off") {
+        if let off {
             guard let parsed = parseEvent(off) else { use("Niepoprawne --off (np. MTWRF@16:30).") }
             (s.offDays, s.offTime) = parsed
-        } else if a.value("--on") != nil {
-            s.powerOffEnabled = false
         }
         if let t = a.value("--on-type") {
             guard let v = EnergySchedule.OnType(rawValue: t) else { use("--on-type: wakeorpoweron lub wake") }
@@ -224,7 +253,9 @@ enum ClassroomCLI {
             guard let v = EnergySchedule.OffType(rawValue: t) else { use("--off-type: sleep lub shutdown") }
             s.offType = v
         }
-        if let e = s.validationError { use(e) }
+        if let e = s.validationError {
+            use(on == nil && off == nil ? "Harmonogram zapisany w aplikacji: \(e) Podaj --on lub --off." : e)
+        }
         return s
     }
 
@@ -238,14 +269,21 @@ enum ClassroomCLI {
     }
 
     /// Asks all Macs at once; answers are printed as they arrive. Students type the answers, so they are escaped.
+    /// Every question is a registered job: Ctrl-C closes the dialogs on the iMacs too, as „Przerwij” in the app
+    /// (AUDIT REV-36); of the scripts' output only how that went is shown („imac01: ▸ Zatrzymano polecenie…”).
     static func ask(_ question: String, buttons: [String], seconds: Int, hosts: [Machine], ssh: SSHSettings) async -> Int32 {
         let script = Scripts.ask(title: "Pytanie od nauczyciela", prompt: question, buttons: buttons, timeoutSeconds: seconds)
         var status = ExitCode.success
         await withTaskGroup(of: (Machine, CommandResult).self) { group in
             for h in hosts {
                 let pw = Keychain.password(for: h)
+                let stopNotes: @Sendable (OutputChannel, Data) -> Void = { channel, data in
+                    guard channel == .stderr, data.starts(with: Data("▸ ".utf8)) else { return }
+                    Console.write(.stderr, Data("\(h.name): ".utf8) + data)
+                }
                 group.addTask {
-                    (h, await SSH.run(script, on: h, password: pw, settings: ssh, timeout: TimeInterval(seconds + 60)))
+                    (h, await Interruption.shared.run(script, on: h, password: pw, settings: ssh,
+                                                      timeout: TimeInterval(seconds + 60), onOutput: stopNotes))
                 }
             }
             for await (h, r) in group {
@@ -275,11 +313,49 @@ enum ClassroomCLI {
         }
         var planned: [(host: Machine, name: String, localHostName: String)] = []
         var invalid = false
+        // The names the other Macs on the list have: their .local addresses and their names on the list (cmcrctl
+        // reads no names from the iMacs).
+        let taken = RenamePlan.namesTaken(by: legacyCLI.hosts, renaming: Set(targets.map(\.id)))
+        let renames = targets.map {
+            RenamePlan.Rename(machine: $0, localHostName: ComputerNames.localHostName(from: a.value("--name") ?? $0.name))
+        }
+        let stillHeld = RenamePlan.namesStillHeld(renames)
+        // The Macs whose new names are wrong whatever the order – the same rule as the app (RenamePlan.rejections),
+        // known for all of them before the first advice, which gives no order through one of them (AUDIT REV-64).
+        let rejected = RenamePlan.rejections(renames, taken: taken)
         for h in targets {
             let name = a.value("--name") ?? h.name
             let lhn = ComputerNames.localHostName(from: name)
-            guard ComputerNames.isValidLocalHostName(lhn) else {
+            switch rejected[h.id] {
+            case .invalid?:
                 Console.err("\(h.name): niepoprawna nazwa „\(name)”.")
+                invalid = true
+                continue
+            case .taken(let owner)?:
+                // Bonjour would rename this Mac (imac04-2) and the updated list would point at the other one (AUDIT
+                // KOM-15, REV-33): the same rule as the app's „Zmień nazwy komputerów” (RenamePlan.namesTaken, REV-58).
+                Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma już \(owner) z listy komputerów "
+                            + "(dwa komputery nie mogą mieć tego samego adresu w sieci).")
+                invalid = true
+                continue
+            case .repeated?:
+                // A name two of the renamed Macs would get – reported for each of them and before the order below, as
+                // in the app (taken, repeated, still held): advice about the order cannot be completed while two Macs
+                // want one name (AUDIT REV-62).
+                Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres powtarza się "
+                            + "(dwa komputery nie mogą mieć tego samego adresu w sieci).")
+                invalid = true
+                continue
+            case nil:
+                break
+            }
+            // The address of another Mac renamed here, which gives it up only with its own rename – a renumbering or a
+            // swap: the same Bonjour conflict (AUDIT REV-52). The advice gives the whole order (AUDIT REV-54, REV-61),
+            // or the wrong names to correct first when the order runs through them (AUDIT REV-64).
+            if let other = stillHeld[h.id] {
+                Console.err("\(h.name): „\(name)” → \(lhn).local – ten adres ma teraz \(other.name) (\(other.address)), którego "
+                            + "nazwa też jest zmieniana (macOS nadałby wtedy jednemu z nich inny adres). "
+                            + RenamePlan.advice(for: h, stillHeld: stillHeld, rejected: rejected, in: .cmcrctl))
                 invalid = true
                 continue
             }
@@ -291,28 +367,44 @@ enum ClassroomCLI {
         var hosts = a.has("--update-list") ? legacyCLI.editableHosts() : []
         CLI.confirm("Zmienić nazwę komputera (ComputerName, LocalHostName, HostName) na: \(ModuleHosts.names(targets))? "
                     + "Adres .local każdego z nich zmieni się według nowej nazwy.", yes: a.yes)
+        logAction(targets)
         var status = ExitCode.success
+        var notStarted: [Machine] = []
         for p in planned {
+            // After Ctrl-C the remaining Macs keep their names (AUDIT REV-36).
+            if Interruption.shared.isInterrupted {
+                notStarted.append(p.host)
+                status = ExitCode.failure
+                continue
+            }
             Console.out("\(p.host.name):")
-            let r = await SSH.run(Scripts.renameComputer(computerName: p.name, localHostName: p.localHostName), on: p.host,
-                                  password: Keychain.password(for: p.host), settings: ssh, timeout: 60,
-                                  onOutput: Console.printer)
+            // A registered job: Ctrl-C stops the rename on the iMac too (Interruption).
+            let r = await Interruption.shared.run(Scripts.renameComputer(computerName: p.name, localHostName: p.localHostName),
+                                                  on: p.host, password: Keychain.password(for: p.host), settings: ssh,
+                                                  timeout: 60, onOutput: Console.printer)
             if report(r) != ExitCode.success { status = ExitCode.failure }
             if r.succeeded, a.has("--update-list"), let i = hosts.firstIndex(where: { $0.id == p.host.id }) {
+                let before = hosts[i]
                 hosts[i].name = p.name
                 if let address = ComputerNames.addressAfterRename(hosts[i].address, localHostName: p.localHostName) {
                     hosts[i].address = address
                 }
-                ConfigStore.saveHosts(hosts)
+                saveHostsOrFail(hosts)
                 Console.out("Zaktualizowano listę komputerów: \(hosts[i].name) → \(hosts[i].address)")
+                // The Mac keeps its host keys: trust them under the new address too, as the app does – otherwise
+                // every later connection is refused as an unknown Mac (AUDIT KOM-07, REV-01).
+                if hosts[i].address != before.address,
+                   await HostTrust.carryTrust(from: before, to: hosts[i], settings: ssh) {
+                    Console.out("Zaufany klucz SSH obowiązuje także pod nowym adresem \(hosts[i].address).")
+                }
             }
         }
+        Interruption.shared.reportNotStarted(notStarted)
         return status
     }
 
-    static func lesson(start: Bool, hosts: [Machine], wait: Bool, yes: Bool, settings: AppSettings,
-                       ssh: SSHSettings) async -> Int32 {
-        let config = ClassroomStore.loadConfig()
+    static func lesson(start: Bool, config: ClassroomConfig, hosts: [Machine], wait: Bool, yes: Bool,
+                       settings: AppSettings, ssh: SSHSettings) async -> Int32 {
         let plan = start ? LessonPlan.start(config.start, settings: settings) : LessonPlan.end(config.end, settings: settings)
         guard !plan.steps.isEmpty else {
             moduleUsageError("lesson", "Scenariusz nie ma żadnych kroków (ustaw je w aplikacji: Zajęcia).")
@@ -329,23 +421,58 @@ enum ClassroomCLI {
         }
         var payload: URL?
         if plan.steps.contains(.materials) {
-            let dir = URL(fileURLWithPath: expandTilde(config.start.materialsFolder), isDirectory: true)
-            let items = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
-                .filter { $0.lastPathComponent != ".DS_Store" }
-            if !items.isEmpty, case .success(let url) = await Payload.make(items) { payload = url }
+            // Never the current directory (an empty setting) and never silently nothing: stop before any step runs.
+            switch LessonMaterials.items(in: config.start.materialsFolder) {
+            case .failure(let problem):
+                fail("✘ Materiały: \(problem.message) Nic nie zostało uruchomione.")
+            case .success(let items) where !items.isEmpty:
+                // A job of its own: Ctrl-C stops the packing and removes the archive (AUDIT REV-44).
+                switch await Interruption.shared.pack(items) {
+                case .success(let url): payload = url
+                case .failure where Interruption.shared.isInterrupted:
+                    Console.err("✘ Materiały: przerwano pakowanie plików. Nic nie zostało uruchomione.")
+                    return ExitCode.failure
+                case .failure(let error): fail("✘ Materiały: nie udało się ich spakować (\(error.localizedDescription)). Nic nie zostało uruchomione.")
+                }
+            case .success:
+                Console.out("Folder z materiałami jest pusty – krok „Wyślij materiały” zostanie pominięty.")
+            }
         }
-        defer { if let payload { try? FileManager.default.removeItem(at: payload) } }
+        defer { if let payload { Interruption.shared.discard(payload) } }
+        logAction(hosts)
 
-        func host(_ h: Machine) -> LessonRunner.Host {
-            LessonRunner.Host(machine: h, password: Keychain.password(for: h), macs: h.macAddress.isEmpty ? [] : [h.macAddress])
+        // As in the app: Wake-on-LAN for the same MACs (status-cache.json), every Mac at once – packets go out to all
+        // first, each Mac then only waits for itself – and the other steps share the usual number of connections
+        // (ConcurrencyLimiter, „Komputery obsługiwane naraz”). Output stays in list order.
+        let snapshots = ClassroomStore.loadSnapshots()
+        let targets = hosts.map { h -> LessonRunner.Host in
+            let info = snapshots[h.id]?.info ?? [:]
+            return LessonRunner.Host(machine: h, password: Keychain.password(for: h),
+                                     macs: WakeOnLAN.candidateMACs(listed: h.macAddress, lastStatus: info),
+                                     extraBroadcasts: WakeOnLAN.lastSeenBroadcasts(info))
         }
-        var status = ExitCode.success
+        let parallel = max(1, settings.maxParallel)
+        func runAll(_ range: Range<Int>, materials: URL?, limiter: ConcurrencyLimiter?, jobs: Int) async -> [Int32] {
+            await runHosts(hosts, jobs: jobs, prefixLines: false) { io in
+                io.out("== \(io.host.name)")
+                // A registered job: Ctrl-C stops the step running on the iMac and skips the rest (AUDIT REV-36).
+                let r = await Interruption.shared.job(on: io.host) { handle in
+                    await LessonRunner.run(plan, on: targets[io.index], ssh: ssh, materials: materials, range: range,
+                                           limiter: limiter, handle: handle, onOutput: io.stream)
+                }
+                if r.cancelled { return io.report(r) }
+                guard r.succeeded else {
+                    io.write(.stderr, r.stderr)
+                    return ExitCode.failure
+                }
+                return ExitCode.success
+            }
+        }
         var first = 0
         if plan.steps.first == .warn {
-            for h in hosts {
-                Console.out("== \(h.name)")
-                _ = await LessonRunner.run(plan, on: host(h), ssh: ssh, materials: nil, range: 0..<1, onOutput: Console.printer)
-            }
+            _ = await runAll(0..<1, materials: nil, limiter: nil, jobs: parallel)
+            // Interrupted during the warning: the other steps do not start (Ctrl-C during the pause ends at once).
+            if Interruption.shared.isInterrupted { return ExitCode.failure }
             if wait {
                 let secs = max(1, plan.end.warnMinutes) * 60
                 Console.out("Czekam \(secs / 60) min przed kolejnymi krokami…")
@@ -354,16 +481,16 @@ enum ClassroomCLI {
             first = 1
         }
         guard first < plan.steps.count else { return ExitCode.success }
-        for h in hosts {
-            Console.out("== \(h.name)")
-            let r = await LessonRunner.run(plan, on: host(h), ssh: ssh, materials: payload, range: first..<plan.steps.count,
-                                           onOutput: Console.printer)
-            if !r.succeeded {
-                Console.write(.stderr, r.stderr)
-                status = ExitCode.failure
+        let waking = plan.steps[first...].contains(.wake)
+        if waking {
+            for t in targets {
+                for mac in t.macs { _ = try? WakeOnLAN.wake(mac: mac, extraBroadcasts: t.extraBroadcasts) }
             }
         }
-        return status
+        let codes = await runAll(first..<plan.steps.count, materials: payload,
+                                 limiter: waking ? ConcurrencyLimiter(limit: parallel) : nil,
+                                 jobs: waking ? hosts.count : parallel)
+        return codes.allSatisfy { $0 == ExitCode.success } ? ExitCode.success : ExitCode.failure
     }
 
     static func inventoryReport(to path: String?, hosts: [Machine], ssh: SSHSettings) async -> Int32 {

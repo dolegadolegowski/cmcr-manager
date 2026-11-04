@@ -61,7 +61,7 @@ struct EnergyScheduleSection: View {
                     Text("Włącz ponownie po zaniku zasilania")
                     Text("Przydatne, gdy listwy zasilające są wyłączane na noc.")
                 } icon: {
-                    FormRowIcon("bolt.circle")
+                    FormRowIcon("powerplug")
                 }
             }
             .help("Ustawienie systemowe pmset autorestart")
@@ -70,7 +70,7 @@ struct EnergyScheduleSection: View {
                     Text("Budź przez sieć (Wake-on-LAN)")
                     Text("Pozwala budzić uśpione komputery przyciskiem „Obudź”.")
                 } icon: {
-                    FormRowIcon("network")
+                    FormRowIcon("dot.radiowaves.left.and.right")
                 }
             }
             .help("Opcja „Budź przy dostępie do sieci” (pmset womp)")
@@ -88,14 +88,15 @@ struct EnergyScheduleSection: View {
                 }
             }
             HStack(spacing: 12) {
+                // Destructive on the left, set apart from the safe actions (AUDIT UI-24).
+                CriticalTargetButton(title: "Usuń harmonogram…", icon: "calendar.badge.minus") {
+                    confirmClear = true
+                }
+                Spacer(minLength: 8)
                 TargetButton(title: "Sprawdź obecny", icon: "calendar", prominent: false) {
                     classroom.loadSchedules(model, model.selectedMachines)
                 }
                 .help("Odczytaj harmonogram zapisany teraz na zaznaczonych komputerach")
-                Spacer(minLength: 8)
-                CriticalTargetButton(title: "Usuń harmonogram…", icon: "calendar.badge.minus") {
-                    confirmClear = true
-                }
                 TargetButton(title: "Zastosuj harmonogram", icon: "calendar.badge.checkmark") {
                     classroom.applySchedule(model, model.selectedMachines)
                 }

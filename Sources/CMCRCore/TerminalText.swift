@@ -6,8 +6,8 @@ import Foundation
 /// names a file `a␛]0;…␇␛[2J` could hide or forge `cmcrctl` output. These helpers make such characters
 /// visible instead; Polish letters and every other printable character stay as they are.
 ///
-/// The app shows remote text in SwiftUI views, which never interpret escape sequences, so only the command
-/// line uses this.
+/// SwiftUI views do not interpret escape sequences, but they do apply the bidirectional overrides, so the app
+/// uses `escape` too for names from the iMacs (`RemoteEntry.displayName`) and for the action log.
 public enum TerminalText {
     /// One-line display form of a single value (a name, a path, an answer): line breaks, tabs, carriage
     /// returns and other C0/DEL/C1 control characters become `\n`, `\t`, `\r`, `\x1B`…, the bidirectional
@@ -27,6 +27,22 @@ public enum TerminalText {
             case 0x0D: append("\\r")
             case 0x00...0x1F, 0x7F...0x9F: append(String(format: "\\x%02X", scalar.value))
             case 0x202A...0x202E, 0x2066...0x2069: append(String(format: "\\u{%04X}", scalar.value))
+            default: out.append(scalar)
+            }
+        }
+        return String(out)
+    }
+
+    /// Output shown in the app's job log keeps its layout (line breaks, tabs, progress lines), but the
+    /// bidirectional overrides – which SwiftUI applies, so `praca\u{202E}fdp.command` would read as a PDF – are
+    /// made visible as `<U+202E>`.
+    public static func visibleDirectionOverrides(_ text: String) -> String {
+        guard text.unicodeScalars.contains(where: { (0x202A...0x202E).contains($0.value) || (0x2066...0x2069).contains($0.value) })
+        else { return text }
+        var out = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars {
+            switch scalar.value {
+            case 0x202A...0x202E, 0x2066...0x2069: out.append(contentsOf: String(format: "<U+%04X>", scalar.value).unicodeScalars)
             default: out.append(scalar)
             }
         }

@@ -6,6 +6,14 @@ import Foundation
 // arguments are usage errors, a missing host list selects every Mac only at a terminal, disruptive commands
 // ask for confirmation (`--yes` without a terminal), and the exit code is 0, 1 or 2.
 
+/// Test hooks that weaken a safeguard (`screen-watch --notified-user` skips the student's notice) work only in the
+/// e2e harness (Tests/e2e/run.sh): an isolated configuration, as `_builder` requires (CMCR_CONFIG_DIR), and the
+/// harness's throw-away Keychain service – a teacher's own CMCR_CONFIG_DIR is not enough.
+var inTestHarness: Bool {
+    let env = ProcessInfo.processInfo.environment
+    return !(env["CMCR_CONFIG_DIR"] ?? "").isEmpty && (env["CMCR_KEYCHAIN_SERVICE"] ?? "").hasPrefix("pl.cmcr.manager.e2e-")
+}
+
 /// `--root`/`--force` of `_builder`, the e2e test hook, which reads them from the raw command line.
 let rawArguments = Array(CommandLine.arguments.dropFirst())
 var root: Bool { rawArguments.contains("--root") }
@@ -64,11 +72,13 @@ func eachHost(_ list: [Machine], _ a: ModuleArguments, header: Bool = true,
 }
 
 /// One remote script per host (see `eachHost`).
+/// Every caller changes something on the Macs: the run is recorded in the actions log first.
 func runEach(_ list: [Machine], _ a: ModuleArguments, ssh: SSHSettings, timeout: TimeInterval? = nil,
              _ script: @escaping @Sendable (Machine) -> RemoteScript) async -> Int32 {
-    await eachHost(list, a) { io in
-        let r = await SSH.run(script(io.host), on: io.host, password: Keychain.password(for: io.host), settings: ssh,
-                              timeout: timeout, onOutput: io.stream)
+    logAction(list)
+    return await eachHost(list, a) { io in
+        let r = await Interruption.shared.run(script(io.host), on: io.host, password: Keychain.password(for: io.host),
+                                              settings: ssh, timeout: timeout, onOutput: io.stream)
         return io.report(r)
     }
 }
@@ -76,7 +86,9 @@ func runEach(_ list: [Machine], _ a: ModuleArguments, ssh: SSHSettings, timeout:
 /// Commands contributed by feature modules, dispatched before the main argument parser.
 enum ExtraCommands {
     static var usage: String {
-        [ScriptCommands.usage, SetupCommands.usage, BrowseCLI.usage, ClassroomCLI.usage, screenWatchUsage, SelfUpdateCommand.usage].joined(separator: "\n")
+        // The classroom commands have a heading of their own: a blank line before it, like before every section.
+        [ScriptCommands.usage, SetupCommands.usage, BrowseCLI.usage, "\n" + ClassroomCLI.usage, screenWatchUsage,
+         SelfUpdateCommand.usage].joined(separator: "\n")
     }
 
     /// Commands parsed with `ModuleArguments` (setup, setup-script and readiness have their own parser and help).
@@ -158,7 +170,7 @@ enum ExtraCommands {
     }
 }
 
-var fullUsage: String { usage + "\nInstalacja i inne\n" + ExtraCommands.usage }
+var fullUsage: String { usage + "\n\nInstalacja i inne\n" + ExtraCommands.usage }
 
 let screenWatchUsage = """
   cmcrctl screen-watch nr katalog [--frames N] [--interval S] [--size PX] [--display main|all|N]

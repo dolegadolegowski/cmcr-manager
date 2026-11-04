@@ -113,7 +113,7 @@ struct ActivityToolbarButton: View {
             showing.toggle()
         } label: {
             if running > 0 {
-                Label("W toku: \(running)", systemImage: "arrow.triangle.2.circlepath")
+                Label("W toku: \(running)", systemImage: "hourglass")
             } else {
                 Label("Aktywność", systemImage: "list.bullet.rectangle")
             }
@@ -331,8 +331,11 @@ struct PasswordBanner: View {
     /// itself, and the dashboard shows it above its table only (not across the inspector).
     static let notAbove: Set<AppSection> = [.setup, .dashboard]
 
+    /// Only when some Mac really has no password: a lab where every iMac has its own one needs no shared password
+    /// (AUDIT KON-09).
     static func isNeeded(_ model: AppModel) -> Bool {
         !model.hasSharedPassword && (ProcessInfo.processInfo.environment["CMCR_PASSWORD"] ?? "").isEmpty
+            && model.machines.contains { $0.usesSharedPassword || model.ownPasswordMissing($0) }
     }
 }
 
@@ -391,7 +394,7 @@ struct GroupMembershipMenu: View {
         }
         if let newGroup {
             if !model.groups.isEmpty { Divider() }
-            Button("Nowa grupa…", action: newGroup)
+            Button(action: newGroup) { Label("Nowa grupa…", systemImage: "plus") }
         } else if model.groups.isEmpty {
             Text("Brak grup – utwórz je w Konfiguracji › Komputery")
         }

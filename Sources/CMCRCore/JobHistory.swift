@@ -173,14 +173,38 @@ public enum JobHistory {
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(output.utf8).write(to: url, options: .atomic)
         }
-        let line = try encodeLine(record)
-        let file = monthFile(for: record.finishedAt, in: dir)
-        if let h = try? FileHandle(forWritingTo: file) {
-            defer { try? h.close() }
-            try h.seekToEnd()
-            try h.write(contentsOf: line)
-        } else {
-            try line.write(to: file, options: .atomic)
+        try append(try encodeLine(record), to: monthFile(for: record.finishedAt, in: dir))
+    }
+
+    struct AppendError: LocalizedError {
+        let file: URL
+        let code: Int32
+        var errorDescription: String? { "nie można dopisać do \(file.path): \(String(cString: strerror(code)))" }
+    }
+
+    /// Appends one line to a month file, creating it when it does not exist yet. An existing file is never replaced:
+    /// a file that cannot be opened (e.g. no write permission in a shared CMCR_CONFIG_DIR) is reported instead of
+    /// being swapped for a new one with this line only, which lost the whole month of history (AUDIT ZAD-04).
+    static func append(_ line: Data, to file: URL) throws {
+        let fd = Darwin.open(file.path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o644)
+        guard fd >= 0 else { throw AppendError(file: file, code: errno) }
+        defer { Darwin.close(fd) }
+        try line.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+            guard let base = buffer.baseAddress else { return }
+            var offset = 0
+            while offset < buffer.count {
+                let n = Darwin.write(fd, base + offset, buffer.count - offset)
+                if n < 0 && errno == EINTR { continue }
+                guard n > 0 else { throw AppendError(file: file, code: n < 0 ? errno : EIO) }
+                offset += n
+            }
+        }
+    }
+
+    /// Waits until every record queued so far is on disk (before the app quits).
+    public static func waitForPendingWrites() async {
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            queue.async { done.resume() }
         }
     }
 
@@ -198,18 +222,42 @@ public enum JobHistory {
         }
     }
 
-    /// Newest records first, at most `limit`, reading month files from the newest.
-    public static func load(limit: Int = 3000, in dir: URL = directory) -> [JobRecord] {
+    /// Days the history is kept (`purge`, run at the app's start).
+    public static let keptDays = 90
+
+    /// Start of the oldest day whose batches keep their output: `purge` deletes the output folders of earlier days.
+    static func oldestKeptDay(olderThan days: Int, now: Date) -> Date? {
+        Calendar.current.date(byAdding: .day, value: -days, to: now).map { Calendar.current.startOfDay(for: $0) }
+    }
+
+    /// Newest records first, reading month files from the newest. Batches started before the kept period are left
+    /// out even while their month file still exists (`purge` removes a month file only once the whole month is
+    /// older, but the outputs day by day), and `limit` counts whole batches: the oldest batch loaded is never cut
+    /// short, so its number of Macs and „Zaznacz nieudane” stay right (AUDIT ZAD-05).
+    public static func load(limit: Int = 3000, in dir: URL = directory, now: Date = Date()) -> [JobRecord] {
         let files = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.lastPathComponent.hasPrefix("jobs-") && $0.pathExtension == "jsonl" }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
+        let oldest = oldestKeptDay(olderThan: keptDays, now: now) ?? .distantPast
         var result: [JobRecord] = []
+        var full = false
         for f in files {
             guard let data = try? Data(contentsOf: f) else { continue }
-            result += decodeLines(data).sorted { $0.finishedAt > $1.finishedAt }
-            if result.count >= limit { break }
+            result += decodeLines(data).filter { $0.batchStartedAt >= oldest }
+            // One more (older) month file once the limit is reached: a batch running over the end of a month has
+            // its first records there.
+            if full { break }
+            full = result.count >= limit
         }
-        return Array(result.sorted { $0.finishedAt > $1.finishedAt }.prefix(limit))
+        let sorted = result.sorted { $0.finishedAt > $1.finishedAt }
+        let sizes = Dictionary(grouping: sorted, by: \.batchID).mapValues(\.count)
+        var kept = Set<UUID>()
+        var count = 0
+        for r in sorted where count < limit && !kept.contains(r.batchID) {
+            kept.insert(r.batchID)
+            count += sizes[r.batchID] ?? 0
+        }
+        return sorted.filter { kept.contains($0.batchID) }
     }
 
     /// Groups records into batches, newest first.

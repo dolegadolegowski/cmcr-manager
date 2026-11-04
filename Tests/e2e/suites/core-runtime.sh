@@ -147,6 +147,16 @@ out="$(ctl status 1)"; code=$?
 expect "zapomnij klucz: bez zaufanego klucza połączenie odrzucone" "$out" "nie jest jeszcze zaufany" "cmcrctl trust imac01"
 expect_code "zapomnij klucz: kod 1" "$code" 1 "$out"
 expect_not "zapomnij klucz: klucz nie został przyjęty sam" "$(cat "$WORK/known_hosts" 2>/dev/null)" "[127.0.0.1]:$PORT"
+# A failed write to the action log (full disk; here a file size limit) must not abort the program (AUDIT WSP-01).
+python3 -c 'print("x" * 4000)' >> "$WORK/config/actions.log"
+out="$( (ulimit -f 1; trap '' XFSZ; "$CTL" trust 1 --yes) 2>&1)"; code=$?
+if [ "$code" -ge 128 ] || contains "" "$out" "NSFileHandleOperationException"; then
+  fail "dziennik działań: błąd zapisu przerwał program (kod $code)" "$out"
+else
+  pass "dziennik działań: błąd zapisu nie przerywa programu"
+fi
+expect "dziennik działań: zaufanie zapisane mimo błędu dziennika" "$out" "imac01: zaufano"
+out="$(ctl __forget-host-key 1)"
 out="$(ctl trust 1 --yes)"
 expect "zaufaj: odcisk klucza i zapis" "$out" "nowy klucz" "SHA256:" "imac01: zaufano"
 out="$(ctl status 1)"

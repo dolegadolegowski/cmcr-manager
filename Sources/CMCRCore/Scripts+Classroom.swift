@@ -40,7 +40,7 @@ public extension Scripts {
           fi
           if [ -z "$USED" ]; then
             if [ "$MODE" = lockScreen ]; then
-              echo "✘ Blokada systemowa (LockScreen) nie uruchomiła się na tym Macu – wybierz tryb „Komunikat na pełnym ekranie”." >&2; exit 1
+              echo "✘ Blokada systemowa (LockScreen) nie uruchomiła się na tym iMacu – wybierz tryb „Komunikat na pełnym ekranie”." >&2; exit 1
             fi
             echo "⚠︎ LockScreen niedostępny – używam komunikatu na pełnym ekranie."
           fi
@@ -71,9 +71,9 @@ public extension Scripts {
         if [ "$USED" = overlay ] && [ "$OVERLAY_STATE" != active ]; then
           echo "CMCR:LOCKWARN:inactive"
           if [ "$OVERLAY_STATE" = inactive ]; then
-            echo "⚠︎ Komunikat zakrywa ekran, ale macOS nie oddał mu klawiatury – do pierwszego kliknięcia w komunikat uczeń może przełączać aplikacje (⌘⇥) i pisać w aplikacji pod spodem. Pełną blokadę daje tryb „Blokada systemowa (LockScreen)”, jeśli działa na tym Macu."
+            echo "⚠︎ Komunikat zakrywa ekran, ale macOS nie oddał mu klawiatury – do pierwszego kliknięcia w komunikat uczeń może przełączać aplikacje (⌘⇥) i pisać w aplikacji pod spodem. Pełną blokadę daje tryb „Blokada systemowa (LockScreen)”, jeśli działa na tym iMacu."
           else
-            echo "⚠︎ Komunikat zakrywa ekran, ale nie udało się potwierdzić, że przejął klawiaturę – uczeń może przełączać aplikacje (⌘⇥). Pełną blokadę daje tryb „Blokada systemowa (LockScreen)”, jeśli działa na tym Macu."
+            echo "⚠︎ Komunikat zakrywa ekran, ale nie udało się potwierdzić, że przejął klawiaturę – uczeń może przełączać aplikacje (⌘⇥). Pełną blokadę daje tryb „Blokada systemowa (LockScreen)”, jeśli działa na tym iMacu."
           fi
         fi
         if [ "$USED" = lockscreen ]; then KIND="blokada systemowa"; else KIND="komunikat na pełnym ekranie"; fi
@@ -232,10 +232,14 @@ public extension Scripts {
         var warn = ""
         if let warning, !warning.isEmpty {
             let apple = "activate\ndisplay dialog \(appleScriptLiteral(warning)) with title \"Komunikat od nauczyciela\" buttons {\"OK\"} default button \"OK\" with icon caution giving up after \(max(60, secs))"
+            // The warning reaches only the session at the screen now; the teacher's result says when nobody got it.
             warn = #"""
             if [ -n "$CONSOLE_USER" ]; then
               echo \#(Data(apple.utf8).base64EncodedString()) | base64 -D | as_console_user /bin/sh -c 'S="$(cat)"; /usr/bin/osascript -e "$S" </dev/null >/dev/null 2>&1 &' \
                 && echo "Ostrzeżenie wyświetlone użytkownikowi $CONSOLE_USER."
+            else
+              BG="$(cmcr_gui_sessions | awk -v a="$CMCR_ADMIN_USER" 'NF && $2 != a {print $2}' | paste -sd, -)"
+              echo "⚠︎ Nikt nie jest zalogowany przy ekranie – ostrzeżenia nie wyświetlono${BG:+ (sesja w tle: $BG)}. Nie zobaczy go też nikt, kto zaloguje się przed czasem."
             fi
             """#
         }
@@ -254,7 +258,7 @@ public extension Scripts {
         \#(arm)
         \#(warn)
         ( trap '' HUP; exec /bin/bash --noprofile --norc -c 'sleep "$1"; case "$2" in restart) shutdown -r now ;; shutdown) shutdown -h now ;; sleep) pmset sleepnow ;; esac' "$TAG" \#(secs) \#(verb) ) </dev/null >/dev/null 2>&1 &
-        echo "✔ \#(action.label): za \#(max(0, minutes)) min (ok. $(date -v+\#(secs)S +%H:%M)). Można to anulować przyciskiem „Anuluj zaplanowane”."
+        echo "✔ \#(action.label): za \#(max(0, minutes)) min (ok. $(date -v+\#(secs)S +%H:%M)). Można to odwołać: Sesja i zasilanie › Zaplanowane na później › „Odwołaj” (w terminalu: cmcrctl power-cancel)."
         """#, asRoot: true)
     }
 
@@ -286,18 +290,26 @@ public extension Scripts {
 
     // MARK: - Energy schedule
 
-    /// `pmset repeat …` plus the optional power policy (restart after power loss, wake for network access).
+    /// `pmset repeat …` plus the power policy (restart after power loss, wake for network access). Both switches
+    /// set the iMac's state either way: off switches the setting off (`pmset -a … 0`), it does not leave it as it was.
     static func applyEnergySchedule(_ schedule: EnergySchedule, autoRestart: Bool, wakeOnLAN: Bool) -> RemoteScript {
         guard let args = schedule.pmsetArguments else {
             return RemoteScript("echo \(shQuote("✘ " + (schedule.validationError ?? "Niepoprawny harmonogram."))) >&2; exit 2")
         }
+        let restartDone = autoRestart ? "✔ Włączanie po zaniku zasilania: tak" : "✔ Włączanie po zaniku zasilania: nie"
+        let wakeDone = wakeOnLAN ? "✔ Budzenie przez sieć (Wake-on-LAN): tak"
+            : "✔ Budzenie przez sieć (Wake-on-LAN): wyłączone – przycisk „Obudź” nie obudzi tego iMaca."
         return RemoteScript(#"""
         pmset \#(args.map(shQuote).joined(separator: " ")) || { echo "✘ pmset nie przyjął harmonogramu." >&2; exit 1; }
         echo \#(shQuote("✔ Harmonogram: " + schedule.summary))
-        \#(autoRestart ? "pmset -a autorestart 1 && echo '✔ Włączanie po zaniku zasilania: tak'" : ":")
-        \#(wakeOnLAN ? "pmset -a womp 1 && echo '✔ Budzenie przez sieć (Wake-on-LAN): tak'" : ":")
+        RC=0
+        if pmset -a autorestart \#(autoRestart ? 1 : 0); then echo \#(shQuote(restartDone))
+        else echo "✘ pmset nie zmienił ustawienia „Włączanie po zaniku zasilania” (autorestart)." >&2; RC=1; fi
+        if pmset -a womp \#(wakeOnLAN ? 1 : 0); then echo \#(shQuote(wakeDone))
+        else echo "✘ pmset nie zmienił ustawienia „Budzenie przez sieć” (womp)." >&2; RC=1; fi
         echo "CMCR:SCHED"; pmset -g sched 2>&1
         echo "CMCR:POLICY"; pmset -g 2>/dev/null | awk '$1=="autorestart"||$1=="womp"||$1=="sleep"||$1=="displaysleep"{print $1"="$2}'
+        exit $RC
         """#, asRoot: true)
     }
 
@@ -375,16 +387,34 @@ public extension Scripts {
 
     /// Quits (SIGTERM) every application of the logged-in user started from an Applications folder, including
     /// the apps macOS 13+ runs from the system cryptex (Safari).
+    /// With nobody at the screen it does not report success: code 3 (nobody logged in, the lesson step is
+    /// skipped), or code 1 when a student's session runs in the background – its apps stay open.
     static func quitAllApps() -> RemoteScript {
         RemoteScript(#"""
-        if [ -z "$CONSOLE_USER" ]; then echo "Nikt nie jest zalogowany – nie ma czego zamykać."; exit 0; fi
-        PIDS="$(ps -axww -o pid=,user=,comm= | awk -v u="$CONSOLE_USER" '$2 == u {
+        if [ -z "$CONSOLE_USER" ]; then
+          \#(backgroundSessionCheck(what: "jej aplikacji nie zamknięto"))
+          echo "CMCR:NOUSER"; echo "Nikt nie jest zalogowany – nie ma czego zamykać."; exit \#(ScriptCode.noConsoleUser)
+        fi
+        PIDS="$(cmcr_ps -axww -o pid=,user=,comm= | awk -v u="$CONSOLE_USER" '$2 == u {
           p = $0; sub(/^ *[0-9]+ +[^ ]+ +/, "", p)
           if (p ~ /^(\/Applications\/|\/System\/Applications\/|\/System\/Volumes\/Preboot\/Cryptexes\/App\/System\/Applications\/|\/System\/Cryptexes\/App\/System\/Applications\/|\/Users\/[^\/]+\/Applications\/)/ && p ~ /\.app\/Contents\/MacOS\/[^\/]+$/ && p !~ /\.app\/.*\.app\//) print $1
         }')"
         if [ -z "$PIDS" ]; then echo "Brak otwartych aplikacji."; exit 0; fi
         asroot kill -TERM $PIDS && echo "✔ Zamknięto aplikacje użytkownika $CONSOLE_USER (PID: $(echo $PIDS))."
         """#)
+    }
+
+    /// For scripts that act in the session at the screen, when there is none: a session left in the background
+    /// after "Switch User" (other than the administrator's own) is reported with `what` and code 1, since nothing
+    /// was done there. The administrator's background session is not the students' (as in `logoutUser`).
+    internal static func backgroundSessionCheck(what: String) -> String {
+        #"""
+        BG="$(cmcr_gui_sessions | awk -v a="$CMCR_ADMIN_USER" 'NF && $2 != a {print $2}' | paste -sd, -)"
+        if [ -n "$BG" ]; then
+          echo "✘ Na ekranie jest okno logowania, a w tle działa sesja: $BG – \#(what) (zamknie je dopiero wylogowanie, np. „Wyloguj natychmiast”)." >&2
+          exit 1
+        fi
+        """#
     }
 
     /// Cheap reachability probe used while waiting for a Mac to wake up.

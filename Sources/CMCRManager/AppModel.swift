@@ -79,6 +79,9 @@ final class Job: ObservableObject, Identifiable, @unchecked Sendable {
     /// Digest of the whole output taken before the in-memory log was cut to its tail (`trimAfterArchive`).
     private(set) var trimmedOutputDigest: String?
 
+    /// Error output streamed into the log (from any thread): that part of the result's stderr is not added again.
+    let streamedErrors = StreamedErrors()
+
     // `output` is served straight from the bounded buffer: a second published copy would make every
     // append copy the whole log (copy-on-write).
     private var log = BoundedText(limit: Job.maxOutput)
@@ -178,7 +181,15 @@ final class Batch: ObservableObject, Identifiable, @unchecked Sendable {
 
     var duration: TimeInterval { (finishedAt ?? Date()).timeIntervalSince(createdAt) }
 
-    func cancel() { jobs.forEach { $0.handle.cancel() } }
+    /// Called once by `cancel()`: a batch that is one part of something larger (a lesson routine) stops all of it.
+    var onCancel: (() -> Void)?
+
+    func cancel() {
+        jobs.forEach { $0.handle.cancel() }
+        let hook = onCancel
+        onCancel = nil
+        hook?()
+    }
 }
 
 struct HostApps {
@@ -189,9 +200,15 @@ struct HostApps {
 }
 
 struct UpdateInfo {
-    var titles: [String] = []
+    var check: Parsers.SoftwareUpdateCheck
     var raw = ""
     var checkedAt = Date()
+
+    /// Updates offered by softwareupdate; empty also when the check failed.
+    var titles: [String] {
+        if case .available(let t) = check { return t }
+        return []
+    }
 }
 
 /// Forwards process output into a job's log; the job coalesces it before it reaches the UI.
@@ -206,9 +223,62 @@ final class OutputSink: @unchecked Sendable {
         { [self] channel, data in
             let text = channel == .stdout ? out.decode(data) : err.decode(data)
             guard !text.isEmpty else { return }
-            job?.receive(text)
+            if channel == .stderr { job?.streamedErrors.record(text) }
+            job?.receive(TerminalText.visibleDirectionOverrides(text))      // names from the iMacs (AUDIT DOD-13)
         }
     }
+}
+
+/// Error output a job streamed into its log (recorded from any thread; only the last `limit` characters are kept).
+/// The job's result repeats it in its stderr, and may add a message of its own that was never streamed – a local
+/// step that failed after the remote part, such as unpacking „Zbierz prace” on a full disk.
+final class StreamedErrors: @unchecked Sendable {
+    private let lock = NSLock()
+    private var text = ""
+    private var bytes = 0
+    private var cut = false
+    static let limit = Job.maxOutput
+
+    func record(_ s: String) {
+        lock.withLock {
+            text += s
+            bytes += s.utf8.count
+            if bytes > 2 * Self.limit {
+                text = String(text.suffix(Self.limit))
+                bytes = text.utf8.count
+                cut = true
+            }
+        }
+    }
+
+    /// The part of `stderr` (a result's error output, trimmed) the log does not have yet: nothing when it was all
+    /// streamed (AUDIT ZAD-10), what follows the streamed text, or – when it was never streamed – all of it
+    /// (AUDIT REV-12).
+    func missing(from stderr: String) -> String {
+        let (seen, wasCut) = lock.withLock { (text.trimmingCharacters(in: .whitespacesAndNewlines), cut) }
+        guard !seen.isEmpty, !stderr.isEmpty else { return stderr }
+        if seen.contains(stderr) || (wasCut && stderr.hasSuffix(seen)) { return "" }
+        if stderr.hasPrefix(seen) {
+            return String(stderr.dropFirst(seen.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return stderr
+    }
+
+    /// Frees the recorded text once the job's result is in.
+    func discard() {
+        lock.withLock {
+            text = ""
+            bytes = 0
+            cut = false
+        }
+    }
+}
+
+/// A message for an alert: what failed and why.
+struct AppNotice: Identifiable, Equatable {
+    let id = UUID()
+    let title: String
+    let message: String
 }
 
 enum OwnerChoice: String, CaseIterable, Identifiable {
@@ -229,23 +299,33 @@ enum OwnerChoice: String, CaseIterable, Identifiable {
 final class AppModel: ObservableObject {
     @Published var machines: [Machine] {
         didSet {
-            ConfigStore.saveHosts(machines)
+            if !applyingSavedHosts {
+                // cmcrctl may have changed hosts.json meanwhile: its changes are merged in, not overwritten.
+                let saved = ConfigStore.syncHosts(machines)
+                reportSaveProblem(saved.problem, in: "hosts.json")
+                if let issue = saved.issue, !configIssues.contains(issue) { configIssues.append(issue) }
+                if saved.hosts != machines { applySavedHosts(saved.hosts) }
+            }
             pruneSelection()
             closeStaleConnections(oldMachines: oldValue)
         }
     }
+    private var applyingSavedHosts = false
     @Published var settings: AppSettings {
         didSet {
             if settings != oldValue {
-                ConfigStore.saveSettings(settings)
+                reportSaveProblem(ConfigStore.saveSettings(settings), in: "settings.json")
                 closeStaleConnections(oldSettings: oldValue)
             }
         }
     }
-    /// Problems found while loading hosts.json/settings.json (shown once at start).
+    /// Problems with hosts.json/settings.json (found at start or by a save) and classroom.json; shown once, by the
+    /// window the user works in (ConfigIssuesNotice).
     @Published var configIssues: [String] = []
     /// A password could not be saved in (or removed from) the Keychain; shown as an alert.
     @Published var keychainError: String?
+    /// A problem to tell the user about in an alert (an action could not be done, a file could not be saved).
+    @Published var notice: AppNotice?
     @Published var statuses: [UUID: HostStatus] = [:] {
         didSet { rememberSettledReachability() }
     }
@@ -253,6 +333,23 @@ final class AppModel: ObservableObject {
         didSet { if selection != oldValue { TargetUIState.selection = selection } }
     }
     @Published var section: AppSection? = .dashboard
+    /// The Mac whose details the inspector shows: the one clicked in the host list or the Komputery table, or else
+    /// the only checked one.
+    var inspectedMachine: Machine? {
+        if highlightedMachines.count == 1, let id = highlightedMachines.first, let m = machine(id) { return m }
+        if highlightedMachines.isEmpty, selection.count == 1, let id = selection.first { return machine(id) }
+        return nil
+    }
+
+    /// Rows highlighted (clicked) in the host list or the Komputery table – not the checked targets. In the file browser one clicked Mac
+    /// shows the same folder on that Mac (README, AUDIT PLI-23), even when several Macs are checked.
+    @Published var highlightedMachines: Set<UUID> = [] {
+        didSet {
+            guard highlightedMachines != oldValue, section == .browser, highlightedMachines.count == 1,
+                  let id = highlightedMachines.first, machine(id) != nil else { return }
+            files.browser.setHost(id)
+        }
+    }
     @Published var batches: [Batch] = []
     @Published var lastBatch: [AppSection: Batch] = [:]
     /// Jobs started and not finished yet (stored, so that the sidebar badge and Dock badge stay current).
@@ -291,6 +388,10 @@ final class AppModel: ObservableObject {
     var toastTask: Task<Void, Never>?
     @Published var runningApps: [UUID: HostApps] = [:]
     @Published var installedApps: [UUID: [String]] = [:]
+    /// Lists being read now, and why the last reading of a Mac failed (AUDIT WSP-06, UI-07).
+    @Published var runningAppsLoading: Set<UUID> = []
+    @Published var installedAppsLoading: Set<UUID> = []
+    @Published var installedAppsErrors: [UUID: String] = [:]
     @Published var updates: [UUID: UpdateInfo] = [:]
     @Published var hasSharedPassword = false
 
@@ -331,15 +432,94 @@ final class AppModel: ObservableObject {
 
     func status(_ m: Machine) -> HostStatus { statuses[m.id] ?? HostStatus() }
 
-    func password(for m: Machine) -> String? { Keychain.password(for: m) }
+    /// The password of the Mac as the host list has it now: a copy kept by a job or a sheet may still say "shared
+    /// password" after the teacher set an own one (or the other way round).
+    func password(for m: Machine) -> String? { Keychain.password(for: current(m)) }
 
     func machine(_ id: UUID) -> Machine? { machines.first { $0.id == id } }
+
+    /// The current host list entry of `m` (address, port, account, password choice), or `m` itself once removed.
+    func current(_ m: Machine) -> Machine { machine(m.id) ?? m }
+
+    /// Shows the host list as it was saved (merged with changes made by cmcrctl) without saving it again.
+    private func applySavedHosts(_ hosts: [Machine]) {
+        applyingSavedHosts = true
+        defer { applyingSavedHosts = false }
+        machines = hosts
+    }
+
+    /// Takes over what other programs changed while the app was in the background (AUDIT KON-04): the host list
+    /// written by cmcrctl and passwords set or removed with `cmcrctl password` (the Keychain cache would keep
+    /// serving the old ones until the next start).
+    func syncWithOtherPrograms() {
+        Keychain.invalidateCache()
+        hasSharedPassword = Keychain.exists(Keychain.sharedAccount)
+        if let hosts = ConfigStore.hostsChangedOutside(keeping: machines), hosts != machines {
+            machines = hosts
+        }
+    }
+
+    /// Opens windows from code that has no SwiftUI environment (notifications); set by the first window.
+    var openWindowAction: OpenWindowAction?
+    private var backgroundRefresh: Task<Void, Never>?
+
+    /// One refresh of the overview every 2 minutes for the whole app, whichever window is open – also with only the
+    /// Screen Wall left on a projector (AUDIT WSP-03). Later calls (another window) change nothing.
+    func startBackgroundRefresh() {
+        guard backgroundRefresh == nil else { return }
+        ClassroomModel.shared.attach(self)
+        refreshStatus()
+        backgroundRefresh = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 120 * 1_000_000_000)
+                self?.refreshStatus(quietly: true)
+            }
+        }
+    }
+
+    /// The save error last shown for each file, so a folder that stays read-only does not raise an alert on every
+    /// keystroke – nor again for one file whenever another one was saved or failed in between.
+    private var shownSaveProblems: [String: String] = [:]
+
+    /// Tells the user once that `file` – hosts.json, settings.json or classroom.json – could not be saved (AUDIT
+    /// KON-03, REV-75): the table, the settings, the lesson scenarios and the power schedule would otherwise look
+    /// saved, and the changes would be gone after the next start.
+    func reportSaveProblem(_ problem: String?, in file: String) {
+        defer { shownSaveProblems[file] = problem }
+        guard let problem, problem != shownSaveProblems[file] else { return }
+        notice = AppNotice(
+            title: "Nie udało się zapisać konfiguracji",
+            message: problem + "\n\nZmiany obowiązują do zamknięcia aplikacji, ale nie zostaną zachowane. "
+                + "Sprawdź uprawnienia folderu konfiguracji i wolne miejsce na dysku.")
+    }
 
     func setSharedPassword(_ pw: String) {
         let saved = Keychain.set(pw, for: Keychain.sharedAccount)
         hasSharedPassword = saved ? !pw.isEmpty : Keychain.exists(Keychain.sharedAccount)
         if !saved { keychainError = Self.keychainFailure(removing: pw.isEmpty) }
         if saved && !pw.isEmpty { recheckAfterCredentialChange(machines) }
+    }
+
+    /// Says in an alert what could not be done and why, instead of only a beep (AUDIT UI-14).
+    func reportFailure(_ title: String, _ error: Error? = nil, hint: String = "") {
+        let reason = error.map { $0.localizedDescription } ?? ""
+        notice = AppNotice(title: title, message: [reason, hint].filter { !$0.isEmpty }.joined(separator: "\n\n"))
+    }
+
+    /// An own password the Keychain does not have (a list imported from another Mac, a failed save): such a Mac
+    /// quietly uses the shared password (AUDIT KON-12). Checked without reading the secret.
+    func ownPasswordMissing(_ m: Machine) -> Bool {
+        !m.usesSharedPassword && !Keychain.exists(Keychain.account(for: m))
+    }
+
+    /// Replaces the whole host list (a file, the generator) and removes from the Keychain the own passwords of the
+    /// entries that are gone – they could not be removed from the app afterwards (AUDIT KON-15).
+    func replaceHostList(with hosts: [Machine]) {
+        let kept = Set(hosts.map(\.id))
+        for m in machines where !kept.contains(m.id) && !m.usesSharedPassword { setPassword("", for: m) }
+        machines = hosts
+        selection.formIntersection(kept)
+        refreshStatus()
     }
 
     func setPassword(_ pw: String, for m: Machine) {
@@ -422,32 +602,46 @@ final class AppModel: ObservableObject {
     private func execute(_ job: Job, in batch: Batch,
                          operation: @MainActor (Machine, Job) async -> CommandResult) async {
         defer {
+            job.streamedErrors.discard()
             batch.completed += 1
             runningJobCount -= 1
             archive(job, in: batch)
         }
         if job.handle.isCancelled {
             job.state = .cancelled
-            job.summary = "Anulowano"
+            job.summary = "Przerwano"
             return
         }
         job.state = .running
         job.startedAt = Date()
         let r = await operation(job.machine, job)
+        let cancelled = r.cancelled || job.handle.isCancelled
+        // The local ssh ends at once; the stop on the iMac runs after it. The job counts as running until that stop
+        // is done, and its result goes into the summary and the history (AUDIT ZAD-03).
+        if cancelled { await job.handle.cancellationFinished() }
         job.flushIncoming()
         job.finishedAt = Date()
-        job.exitCode = r.exitCode
-        if r.cancelled || job.handle.isCancelled {
+        // Only a command that ended by itself has an exit code of its own; a stopped or timed-out one would show the
+        // local ssh's status or -1 in the history (AUDIT ZAD-16).
+        job.exitCode = cancelled || r.timedOut ? nil : r.exitCode
+        if cancelled {
             job.state = .cancelled
-            job.summary = "Anulowano"
+            job.summary = RemoteCancelOutcome.mayStillRun(in: job.output)
+                ? "Przerwano – polecenie może nadal działać na komputerze" : "Przerwano"
         } else if r.succeeded {
             job.state = .succeeded
             job.summary = job.lastLine.isEmpty ? "OK" : job.lastLine
         } else {
             job.state = .failed
             let (reach, message) = SSH.diagnose(r)
-            let stderr = r.stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !stderr.isEmpty && !job.output.contains(stderr) { job.append(stderr + "\n") }
+            // A connection that failed or broke off under the command ends with ssh's own 255 (or a refusal's code):
+            // the command may still be running on the Mac and has no exit code of its own, so the history and the
+            // exports show the connection error, not „kod 255” (AUDIT REV-51, ZAD-16).
+            if reach != .online { job.exitCode = nil }
+            // Streamed error output is in the log already; adding it again doubled it (AUDIT ZAD-10). What the result
+            // has beyond it (a local step that failed afterwards) is the reason of the failure (AUDIT REV-12).
+            let missing = job.streamedErrors.missing(from: r.stderrText.trimmingCharacters(in: .whitespacesAndNewlines))
+            if !missing.isEmpty && !job.output.contains(missing) { job.append(missing + "\n") }
             let detail = message.hasPrefix("Polecenie zakończone") && !job.lastLine.isEmpty
                 ? "\(job.lastLine) (kod \(r.exitCode))" : message
             job.summary = detail
@@ -456,9 +650,20 @@ final class AppModel: ObservableObject {
                 var st = statuses[job.machine.id] ?? HostStatus()
                 st.reachability = reach
                 st.message = message
+                if reach == .offline { Self.forgetStudents(in: &st) }
                 statuses[job.machine.id] = st
             }
         }
+    }
+
+    /// A Mac that is off has nobody at it: the list, the details, searches and confirmations do not show the student
+    /// from before (KOM-04) – after a status check as after an action that found it off (AUDIT REV-74). After any
+    /// other failure (the status script ran too long on a busy Mac, sshd refused a session for a moment, a login
+    /// failed until the password is fixed) the Mac may still take the next action, so the last known users stay:
+    /// „Pomiń komputery z zalogowanym uczniem” must still leave it out of a restart or logout (AUDIT REV-11).
+    private static func forgetStudents(in st: inout HostStatus) {
+        st.info["console"] = nil
+        st.info["sessions"] = nil
     }
 
     /// Output kept per job result; the job log itself is capped separately (Job.maxOutput).
@@ -488,7 +693,7 @@ final class AppModel: ObservableObject {
     func clearFinishedBatches() {
         batches.removeAll { $0.finished }
         lastBatch = lastBatch.filter { !$0.value.finished }
-        if let id = focusedBatchID, !batches.contains(where: { $0.id == id }) { focusedBatchID = nil }
+        // The shown batch stays shown: it is in the history now (AUDIT ZAD-11).
     }
 
     // MARK: - Status
@@ -540,7 +745,8 @@ final class AppModel: ObservableObject {
                     }
                     group.addTask {
                         if probeFirst.contains(m.id) {
-                            let answers = await SSH.portAnswers(m, settings: ss) == true
+                            // nil: the probe cannot tell (ProxyJump, nc failed) – check fully (AUDIT DOD-10).
+                            let answers = await SSH.portAnswers(m, settings: ss) != false
                             guard await self.finishPortProbe(m, answered: answers) else { return }
                         }
                         let r = await SSH.run(Scripts.status(), on: m, password: pw, settings: ss, timeout: timeout)
@@ -594,6 +800,7 @@ final class AppModel: ObservableObject {
             st.message = message
             st.info = statuses[m.id]?.info ?? [:]
             if reach == .offline {
+                Self.forgetStudents(in: &st)
                 // Full background checks after 2, 4, 8 and then every 10 min (minus slack for the 2 min timer).
                 let n = (offlineStreak[m.id] ?? 0) + 1
                 offlineStreak[m.id] = n
@@ -615,6 +822,7 @@ final class AppModel: ObservableObject {
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
+                self?.syncWithOtherPrograms()
                 guard let self, Date().timeIntervalSince(self.lastQuietRefresh) > 120 else { return }
                 self.nextQuietProbe = [:]
                 self.refreshStatus(quietly: true)
@@ -695,15 +903,31 @@ final class AppModel: ObservableObject {
             NSWorkspace.shared.open(url)
             ConfigStore.log("Sesja SSH (Terminal) → \(m.name)")
         } catch {
-            NSSound.beep()
+            reportFailure("Nie udało się otworzyć sesji SSH w Terminalu", error)
         }
     }
 
-    /// Opens the built-in Screen Sharing app (VNC) – full remote view/control, if enabled on the Mac.
+    /// Opens the built-in Screen Sharing app (VNC) – full remote view/control, if enabled on the Mac – through an
+    /// ssh tunnel with the strict host key check (`SSH.screenSharingTunnel`): a device answering to the Mac's
+    /// `.local` name never gets the administrator's name or password.
     func openScreenSharing(_ m: Machine) {
-        if let url = URL(string: "vnc://\(m.user)@\(m.address)") {
-            NSWorkspace.shared.open(url)
-            ConfigStore.log("Udostępnianie ekranu (VNC) → \(m.name)")
+        let host = current(m)
+        if let message = SSH.refusalMessage(for: host) {
+            notice = AppNotice(title: "Nie można połączyć z \(host.name)", message: message)
+            return
+        }
+        showToast(ActionToast(message: "Łączenie z \(host.name) przez szyfrowany tunel SSH…", icon: "lock.shield"))
+        let ss = sshSettings, pw = password(for: host)
+        Task {
+            switch await SSH.screenSharingTunnel(to: host, password: pw, settings: ss) {
+            case .success(let port):
+                if let url = SSH.screenSharingURL(user: host.user, localPort: port) { NSWorkspace.shared.open(url) }
+                ConfigStore.log("Udostępnianie ekranu (VNC, tunel SSH) → \(host.name)")
+            case .failure(let r):
+                notice = AppNotice(title: "Nie można połączyć z \(host.name)",
+                                   message: SSH.diagnose(r).1 + " Udostępnianie ekranu łączy się tylko przez SSH, "
+                                       + "więc działa wyłącznie z komputerami o zaufanym kluczu.")
+            }
         }
     }
 
@@ -725,7 +949,7 @@ final class AppModel: ObservableObject {
         let dest = settings.resolve(destination)
         let payload = SharedPayload(items)
         runBatch("Wysyłanie \(items.count) el. → \(dest)", on: targets, operation: { m, job in
-            await payload.use { url in
+            await payload.use(handle: job.handle) { url in
                 await Operations.push(payload: url, to: m, destination: dest, owner: owner, mode: mode,
                                       asRoot: asRoot, password: self.password(for: m),
                                       settings: self.sshSettings, handle: job.handle,
@@ -737,7 +961,7 @@ final class AppModel: ObservableObject {
     /// cmcr-push convention: `<local>/all/*` and `<local>/<host>/*` → shared folder on each host.
     func pushConvention(on targets: [Machine], includeAll: Bool) {
         let base = settings.localFolder
-        let dest = settings.sharedFolder
+        let dest = settings.studentFolder
         let owner = settings.studentUser
         runBatch("cmcr-push → \(dest)", on: targets) { m, job in
             let items = Operations.conventionItems(base: base, host: m, includeAll: includeAll)
@@ -746,7 +970,7 @@ final class AppModel: ObservableObject {
                 return CommandResult(exitCode: 0)
             }
             job.note("Elementy: \(items.map(\.lastPathComponent).joined(separator: ", "))")
-            switch await Payload.make(items) {
+            switch await Payload.make(items, handle: job.handle) {
             case .failure(let e):
                 return .failure(e.localizedDescription)
             case .success(let payload):
@@ -775,7 +999,8 @@ final class AppModel: ObservableObject {
             let url = try Operations.prepareLocalFolders(base: settings.localFolder, hosts: machines)
             NSWorkspace.shared.open(url)
         } catch {
-            NSSound.beep()
+            reportFailure("Nie udało się przygotować folderów all i komputerów", error,
+                          hint: "Sprawdź folder na tym Macu w Konfiguracji › Ustawienia.")
         }
     }
 
@@ -790,6 +1015,7 @@ final class AppModel: ObservableObject {
     func refreshRunningApps(_ targets: [Machine]) {
         let ss = sshSettings
         let jobs = targets.map { ($0, password(for: $0)) }
+        runningAppsLoading.formUnion(targets.map(\.id))
         Task {
             await withTaskGroup(of: Void.self) { group in
                 for (m, pw) in jobs {
@@ -797,6 +1023,7 @@ final class AppModel: ObservableObject {
                         let r = await SSH.run(Scripts.runningApps(), on: m, password: pw, settings: ss,
                                               timeout: OperationTimeout.list)
                         await MainActor.run {
+                            self.runningAppsLoading.remove(m.id)
                             if r.succeeded {
                                 let parsed = Parsers.runningApps(r.stdoutText)
                                 self.runningApps[m.id] = HostApps(user: parsed.user, apps: parsed.apps)
@@ -813,6 +1040,7 @@ final class AppModel: ObservableObject {
     func refreshInstalledApps(_ targets: [Machine]) {
         let ss = sshSettings
         let jobs = targets.map { ($0, password(for: $0)) }
+        installedAppsLoading.formUnion(targets.map(\.id))
         Task {
             await withTaskGroup(of: Void.self) { group in
                 for (m, pw) in jobs {
@@ -820,7 +1048,13 @@ final class AppModel: ObservableObject {
                         let r = await SSH.run(Scripts.installedApps(), on: m, password: pw, settings: ss,
                                               timeout: OperationTimeout.list)
                         await MainActor.run {
-                            if r.succeeded { self.installedApps[m.id] = Parsers.lines(r.stdoutText) }
+                            self.installedAppsLoading.remove(m.id)
+                            if r.succeeded {
+                                self.installedApps[m.id] = Parsers.lines(r.stdoutText)
+                                self.installedAppsErrors[m.id] = nil
+                            } else {
+                                self.installedAppsErrors[m.id] = SSH.diagnose(r).1
+                            }
                         }
                     }
                 }
@@ -843,12 +1077,13 @@ final class AppModel: ObservableObject {
 
     func kill(_ app: RunningApp, on m: Machine, force: Bool) {
         runScript("\(force ? "Wymuś zamknięcie" : "Zamknij"): \(app.name) (PID \(app.pid))", on: [m],
-                  script: { _ in force ? Scripts.killProcess(app.pid, force: true) : Scripts.quitApp(app.bundlePath, force: false) }) { m, _ in
+                  script: { _ in force ? Scripts.killProcess(app.pid, force: true, bundlePath: app.bundlePath) : Scripts.quitApp(app.bundlePath, force: false) }) { m, _ in
             self.scheduleAppsRefresh(m)
         }
     }
 
     func openURL(_ url: String, on targets: [Machine]) {
+        let url = url.trimmingCharacters(in: .whitespacesAndNewlines)        // AUDIT APL-12
         runScript("Otwórz: \(url)", on: targets) { _ in Scripts.openURL(url) }
     }
 
@@ -873,7 +1108,7 @@ final class AppModel: ObservableObject {
         let payload = SharedPayload(items)
         let allowUnsigned = installAllowUnsigned
         runBatch("Instalacja: \(items.map(\.lastPathComponent).joined(separator: ", "))", on: targets, operation: { m, job in
-            await payload.use { url in
+            await payload.use(handle: job.handle) { url in
                 await Operations.install(payload: url, on: m, allowUnsigned: allowUnsigned, password: self.password(for: m),
                                          settings: self.sshSettings, handle: job.handle,
                                          onOutput: OutputSink(job).callback)
@@ -886,8 +1121,10 @@ final class AppModel: ObservableObject {
     func checkUpdates(_ targets: [Machine]) {
         runScript("Sprawdzanie aktualizacji macOS", on: targets, timeout: OperationTimeout.updateList,
                   script: { _ in Scripts.listUpdates() }) { m, r in
-            if r.succeeded || !r.stdout.isEmpty {
-                self.updates[m.id] = UpdateInfo(titles: Parsers.softwareUpdates(r.stdoutText), raw: r.stdoutText)
+            // A cancelled check keeps the previous answer; a failed one replaces it, so an old "up to date" never
+            // stays on screen after softwareupdate could not reach Apple's server.
+            if !r.cancelled {
+                self.updates[m.id] = UpdateInfo(check: Parsers.softwareUpdateCheck(r), raw: r.stdoutText)
             }
         }
     }
@@ -905,8 +1142,15 @@ final class AppModel: ObservableObject {
     // MARK: - Setup
 
     func distributeKey(_ targets: [Machine]) {
-        guard let key = SSHKeys.currentPrivateKey(settings: settings), let pub = SSHKeys.publicKey(for: key) else {
-            NSSound.beep()
+        guard let key = SSHKeys.currentPrivateKey(settings: settings) else {
+            notice = AppNotice(title: "Brak klucza logowania",
+                               message: "Utwórz klucz w Konfiguracji › Dostęp i hasła albo wybierz istniejący w Ustawieniach › Połączenie.")
+            return
+        }
+        guard let pub = SSHKeys.publicKey(for: key) else {
+            notice = AppNotice(title: "Brak klucza publicznego",
+                               message: "Obok klucza \(key.path) nie ma pliku \(key.lastPathComponent).pub, więc nie ma czego rozesłać. "
+                                   + "Odtworzysz go w Terminalu: ssh-keygen -y -f \(key.path) > \(key.path).pub")
             return
         }
         runScript("Dystrybucja klucza SSH (\(key.lastPathComponent).pub)", on: targets, includeUnreachable: true,

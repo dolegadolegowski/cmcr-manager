@@ -148,13 +148,22 @@ extension ScreenIssue {
         return false
     }
 
-    var displaySymbol: String { isOffline ? "moon.zzz" : symbol }
+    var displaySymbol: String { isOffline ? "moon.zzz.fill" : symbol }
 
     /// Plain-language explanation on the tile (the technical one stays in the tooltip).
     var displayMessage: String { isOffline ? "Może być wyłączony, uśpiony albo poza siecią." : message }
 }
 
 extension ScreenFreshness {
+    /// A shape of its own for each state, not only a colour (AUDIT UI-19).
+    var symbol: String {
+        switch self {
+        case .fresh: return "circle.fill"
+        case .stale: return "clock.badge.exclamationmark"
+        case .old: return "exclamationmark.circle.fill"
+        }
+    }
+
     var color: Color {
         switch self {
         case .fresh: return .green
@@ -265,7 +274,8 @@ struct FreshnessBadge: View {
         } else if feed.phase == .connecting && feed.image == nil {
             EmptyView()
         } else if let fresh = feed.freshness(at: now), let t = feed.confirmedAt {
-            badge("circle.fill", ageText(now.timeIntervalSince(t)), fresh.color)
+            badge(fresh.symbol, ageText(now.timeIntervalSince(t)), fresh.color)
+                .accessibilityLabel(fresh == .fresh ? "Obraz aktualny" : "Obraz nieaktualny")
                 .help(fresh == .fresh ? "Obraz aktualny (odświeżany co \(feed.interval) s)."
                       : "Obraz nieaktualny – ostatnie potwierdzenie \(t.formatted(date: .omitted, time: .standard)).")
         }
@@ -273,7 +283,7 @@ struct FreshnessBadge: View {
 
     private func badge(_ symbol: String, _ text: String, _ color: Color) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: symbol).font(.system(size: 7)).foregroundStyle(color)
+            Image(systemName: symbol).font(.system(size: symbol == "circle.fill" ? 7 : 9)).foregroundStyle(color)
             Text(text).font(.caption2.monospacedDigit())
         }
         .padding(.horizontal, 7)
@@ -316,7 +326,7 @@ struct ScreenActions {
 
     func save(_ feed: ScreenFeed, of m: Machine) {
         guard let image = feed.image, let data = ScreenImage.encode(image) else {
-            NSSound.beep()
+            model.reportFailure("Brak obrazu do zapisania", hint: "Poczekaj, aż pojawi się obraz ekranu \(m.name).")
             return
         }
         let f = DateFormatter()
@@ -326,7 +336,7 @@ struct ScreenActions {
         do {
             try data.write(to: url)
         } catch {
-            NSSound.beep()
+            model.reportFailure("Nie udało się zapisać zrzutu ekranu", error)
         }
     }
 }
@@ -337,15 +347,21 @@ enum MainWindow {
     /// Shows the main window (opening a new one when it was closed).
     @MainActor static func bringToFront(_ openWindow: OpenWindowAction) {
         NSApp.activate(ignoringOtherApps: true)
-        let candidates = NSApp.windows.filter {
-            $0.canBecomeMain && !ScreenWindowRegistry.contains($0) && ($0.isVisible || $0.isMiniaturized)
-        }
-        if let main = candidates.first(where: { $0.identifier?.rawValue.hasPrefix(id) == true }) ?? candidates.first {
+        if let main = NSApp.windows.first(where: {
+            isMain(identifier: $0.identifier?.rawValue, shown: $0.isVisible || $0.isMiniaturized)
+        }) {
             if main.isMiniaturized { main.deminiaturize(nil) }
             main.makeKeyAndOrderFront(nil)
         } else {
             openWindow(id: id)
         }
+    }
+
+    /// A window of the main WindowGroup ("main-AppWindow-1") that is on screen or in the Dock. No other window stands
+    /// in for it: with the main window closed, the Settings window or a screen window must not be brought forward
+    /// instead – the section change would stay invisible (AUDIT KON-10, REV-23).
+    static func isMain(identifier: String?, shown: Bool) -> Bool {
+        shown && identifier?.hasPrefix(id) == true
     }
 }
 
@@ -407,7 +423,7 @@ struct ScreenMoreMenuItems: View {
 
     var body: some View {
         Button { actions.refresh([machine]) } label: { Label("Odśwież teraz", systemImage: "arrow.clockwise") }
-        Button { actions.save(feed, of: machine) } label: { Label("Zapisz zrzut ekranu…", systemImage: "square.and.arrow.down") }
+        Button { actions.save(feed, of: machine) } label: { Label("Zapisz zrzut ekranu…", systemImage: "square.and.arrow.up") }
             .disabled(feed.image == nil)
         ScreenDisplayPicker(machine: machine, feed: feed, center: actions.center)
         Divider()
@@ -461,6 +477,11 @@ struct ScreenTile: View {
 
     private var actions: ScreenActions { ScreenActions(model: model, center: center, openWindow: openWindow) }
 
+    /// The selection mark sits in the corner of the hover action bar and would cover (and take the clicks of) its first
+    /// button, „Powiększ”: while the pointer is on the tile the bar has the corner and the accent border still marks
+    /// the selection (AUDIT REV-29).
+    static func showsSelectionMark(isSelected: Bool, hovering: Bool) -> Bool { isSelected && !hovering }
+
     var body: some View {
         ScreenPicture(feed: feed)
             .overlay(alignment: .bottom) { if showLabels { labels } }
@@ -480,6 +501,19 @@ struct ScreenTile: View {
                 TimelineView(.periodic(from: .now, by: 2)) { context in
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(borderColor(at: context.date), lineWidth: borderWidth)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                // Selected tiles carry a mark, not only a coloured border (AUDIT UI-19).
+                if Self.showsSelectionMark(isSelected: isSelected, hovering: hovering) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, Color.accentColor)
+                        .font(.title3)
+                        .padding(6)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                        .accessibilityHidden(true)
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))

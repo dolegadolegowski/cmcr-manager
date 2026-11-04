@@ -8,10 +8,11 @@ struct HostInspector: View {
     @ObservedObject private var classroom = ClassroomModel.shared
 
     var body: some View {
-        if model.selection.count == 1, let id = model.selection.first, let m = model.machine(id) {
+        if let m = model.inspectedMachine {
             details(m)
         } else {
-            ContentUnavailableView(model.selection.isEmpty ? "Nie zaznaczono komputera" : "Zaznaczone: \(Polish.computers(model.selection.count))",
+            let n = max(model.highlightedMachines.count, model.selection.count)
+            ContentUnavailableView(n == 0 ? "Nie wybrano komputera" : "Wybrane: \(Polish.computers(n))",
                                    systemImage: "info.circle",
                                    description: Text("Kliknij jeden komputer w tabeli, aby zobaczyć jego szczegóły i notatki."))
         }
@@ -67,7 +68,7 @@ struct HostInspector: View {
                     Gauge(value: total - free, in: 0...total) {
                         Text("Zajęte")
                     } currentValueLabel: {
-                        Text(String(format: "%.0f GB wolne z %.0f GB", free, total))
+                        Text(String(format: "Wolne: %.0f z %.0f GB", free, total))
                     }
                     .tint(free < DashboardRow.lowDiskGB ? .orange : .accentColor)
                 }
@@ -84,9 +85,9 @@ struct HostInspector: View {
             Section("Bezpieczeństwo i zasilanie") {
                 LabeledContent("Szyfrowanie dysku") {
                     switch st.fileVaultOn ?? classroom.fileVault[m.id] {
-                    case .some(true): Label("włączony", systemImage: "lock.shield").foregroundStyle(.orange)
-                    case .some(false): Text("wyłączony")
-                    case .none: Text("nie sprawdzono").foregroundStyle(.secondary)
+                    case .some(true): Label("włączone (FileVault)", systemImage: "lock.doc").foregroundStyle(.orange)
+                    case .some(false): Text("wyłączone")
+                    case .none: Text(classroom.fileVaultErrors[m.id] ?? "nie sprawdzono").foregroundStyle(.secondary)
                     }
                 }
                 LabeledContent("Harmonogram zasilania") {
@@ -127,7 +128,7 @@ struct HostInspector: View {
                                 help: "Wyślij sygnał budzenia (Wake-on-LAN) – działa, gdy komputer jest uśpiony") { model.wake([m]) }
                 InspectorAction(title: "Odśwież stan", icon: "arrow.clockwise",
                                 help: "Sprawdź jeszcze raz ten komputer") { model.refreshStatus([m]) }
-                InspectorAction(title: "Otwórz w Terminalu", icon: "terminal",
+                InspectorAction(title: "Sesja SSH w Terminalu", icon: "terminal",
                                 help: "Sesja SSH w aplikacji Terminal (dla zaawansowanych)") { model.openTerminal(m) }
             }
         }
@@ -135,9 +136,24 @@ struct HostInspector: View {
     }
 
     func scheduleText(_ m: Machine) -> String {
-        guard let info = classroom.schedules[m.id] else { return "nie sprawdzono" }
-        if let e = info.error { return e }
-        return info.events.isEmpty ? "brak" : info.events.map(\.text).joined(separator: "\n")
+        Self.scheduleText(checked: classroom.schedules[m.id], status: model.status(m))
+    }
+
+    /// The answer of „Sprawdź teraz” first. Until then the regular status already tells the repeating events
+    /// (AUDIT KOM-10): pmset's lines joined with "; ", shown in the same Polish words as after the check. The status
+    /// always reports the key, so an empty value means no schedule („brak”); only a status without it (none yet,
+    /// or from an older version) is „nie sprawdzono” (AUDIT REV-21).
+    static func scheduleText(checked info: ScheduleInfo?, status: HostStatus) -> String {
+        if let info {
+            if let e = info.error { return e }
+            return info.events.isEmpty ? "brak" : info.events.map(\.text).joined(separator: "\n")
+        }
+        guard let raw = status.info["power_schedule"] else { return "nie sprawdzono" }
+        if raw.isEmpty { return "brak" }
+        let lines = raw.replacingOccurrences(of: "; ", with: "\n")
+        let events = PowerScheduleParser.repeating("Repeating power events:\n" + lines)
+        // A line pmset words differently than expected is shown as it is rather than dropped.
+        return events.isEmpty ? lines : events.map(\.text).joined(separator: "\n")
     }
 
     func notes(_ m: Machine) -> Binding<String> {
@@ -229,12 +245,25 @@ struct RenameComputersSheet: View {
                 }
                 .width(min: 120, ideal: 150)
                 TableColumn("Nowy adres") { $e in
-                    if !ComputerNames.isValidLocalHostName(e.localHostName) {
+                    if isUnchanged(e) {
+                        Text("\(e.localHostName).local").font(.body.monospaced()).foregroundStyle(.secondary)
+                    } else if !ComputerNames.isValidLocalHostName(e.localHostName) {
                         Label("niepoprawna nazwa", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                    } else if let owner = takenBy[e.localHostName.lowercased()] {
+                        Label("\(e.localHostName).local ma już \(owner)", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                            .help("Ten adres ma już inny komputer z listy – dwa komputery nie mogą mieć tego samego adresu w sieci")
                     } else if duplicates.contains(e.localHostName.lowercased()) {
                         Label("\(e.localHostName).local powtarza się", systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red)
                             .help("Dwa komputery nie mogą mieć tego samego adresu w sieci")
+                    } else if let held = Self.stillHeldText(localHostName: e.localHostName, holders: holders[e.id] ?? [],
+                                                            readNames: classroom.names.mapValues(\.localHostName)) {
+                        // The whole order, the same as cmcrctl gives (AUDIT REV-63).
+                        Label(held.label, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                            .help(held.reason + " " + RenamePlan.advice(for: e.machine, holders: holders, newNames: newNames,
+                                                                        rejected: rejected, in: .app))
                     } else {
                         Text("\(e.localHostName).local").font(.body.monospaced())
                             .foregroundStyle(isUnchanged(e) ? .secondary : .primary)
@@ -263,8 +292,8 @@ struct RenameComputersSheet: View {
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(changes.isEmpty || !duplicates.isEmpty
-                          || entries.contains { !ComputerNames.isValidLocalHostName($0.localHostName) })
+                .disabled(changes.isEmpty || !duplicates.isEmpty || !stillHeld.isEmpty
+                          || changes.contains { !ComputerNames.isValidLocalHostName($0.localHostName) })
             }
         }
         .padding(20)
@@ -278,14 +307,78 @@ struct RenameComputersSheet: View {
 
     var changes: [Entry] { entries.filter { !isUnchanged($0) } }
 
-    /// `.local` names (lowercased) given to more than one of the Macs; Bonjour would rename the extra ones.
-    var duplicates: Set<String> {
-        var seen: Set<String> = [], twice: Set<String> = []
-        for e in entries {
-            let name = e.localHostName.lowercased()
-            if !seen.insert(name).inserted { twice.insert(name) }
+    /// `.local` names (lowercased) given to more than one of the Macs, or already used by another Mac on the list;
+    /// Bonjour would rename the extra ones (imac04-2) and the updated list would point at the other Mac. The same rule
+    /// as `cmcrctl rename KOMP` (RenamePlan.repeatedNames, AUDIT REV-62).
+    var duplicates: Set<String> { conflicts.duplicates }
+
+    /// `.local` names of the Macs that are not renamed here (from their addresses, their names on the list and the
+    /// names read from them), with the Mac that has the name (AUDIT KOM-15, REV-58).
+    var takenBy: [String: String] { conflicts.taken }
+
+    var conflicts: (taken: [String: String], duplicates: Set<String>) {
+        Self.conflicts(entries: entries, unchanged: Set(entries.filter(isUnchanged).map(\.id)), machines: model.machines,
+                       readNames: classroom.names.mapValues(\.localHostName))
+    }
+
+    /// A checked Mac whose names are already the new ones is not renamed (only `changes` are), so it keeps its
+    /// address, its name on the list and the name read from it: those stay taken for the others (AUDIT REV-71).
+    static func conflicts(entries: [Entry], unchanged: Set<UUID>, machines: [Machine],
+                          readNames: [UUID: String]) -> (taken: [String: String], duplicates: Set<String>) {
+        let renamed = entries.filter { !unchanged.contains($0.id) }
+        let taken = namesTaken(by: machines, renaming: Set(renamed.map(\.id)), readNames: readNames)
+        let duplicates = RenamePlan.repeatedNames(renamed.map(\.localHostName))
+            .union(Set(renamed.map { $0.localHostName.lowercased() }).intersection(taken.keys))
+        return (taken, duplicates)
+    }
+
+    /// Renamed Macs whose new `.local` name another Mac renamed here still has now (its address, its name on the list
+    /// or the name read from it, AUDIT REV-69), with that Mac: a renumbering or a swap, renamed one Mac at a time
+    /// (AUDIT REV-52, REV-63). The renames run at once.
+    var stillHeld: [UUID: Machine] { holders.compactMapValues(\.first) }
+
+    /// The red row and the reason in its tooltip for a Mac whose new `.local` name other Macs renamed here still have
+    /// (`holders`, in the order of the selected Macs). A Mac that has the name as its `.local` address or as the
+    /// LocalHostName read from it is named first: macOS would give one of the two another address. A Mac that has it
+    /// only as its name on the list has no such address – the step waits for it because the list would have two Macs
+    /// with that name if its rename failed (AUDIT REV-73). nil when no Mac still has the name.
+    static func stillHeldText(localHostName: String, holders: [Machine],
+                              readNames: [UUID: String]) -> (label: String, reason: String)? {
+        let name = localHostName.lowercased()
+        if let other = holders.first(where: {
+            $0.address.lowercased() == "\(name).local" || readNames[$0.id]?.lowercased() == name
+        }) {
+            return ("\(localHostName).local ma jeszcze \(other.name)",
+                    "Ten adres ma teraz \(other.name), którego nazwa też jest zmieniana – macOS nadałby jednemu z nich inny adres.")
         }
-        return twice
+        guard let other = holders.first else { return nil }
+        return ("„\(other.name)” jest jeszcze na liście",
+                "Na liście jest jeszcze komputer „\(other.name)” (\(other.address)), którego nazwa też jest zmieniana – gdyby "
+                + "jego zmiana się nie udała, lista miałaby dwa komputery o tej nazwie.")
+    }
+
+    /// Every renamed Mac that still has the new name of each Mac: the advice on the order waits for all of them
+    /// (RenamePlan.holders, AUDIT REV-69).
+    var holders: [UUID: [Machine]] {
+        RenamePlan.holders(changes.map { RenamePlan.Rename(machine: $0.machine, localHostName: $0.localHostName) },
+                           currentNames: classroom.names.mapValues(\.localHostName))
+    }
+
+    /// Macs whose new names are wrong whatever the order (invalid, taken, repeated – the rows above in red): the
+    /// advice gives no order through one of them, it names them to correct first (AUDIT REV-64).
+    var rejected: [UUID: RenamePlan.Rejection] {
+        RenamePlan.rejections(changes.map { RenamePlan.Rename(machine: $0.machine, localHostName: $0.localHostName) },
+                              taken: takenBy)
+    }
+
+    /// The name typed for each Mac, for the advice on the order.
+    var newNames: [UUID: String] {
+        Dictionary(entries.map { ($0.id, $0.newName.trimmingCharacters(in: .whitespaces)) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// The same rule as `cmcrctl rename KOMP` (AUDIT REV-58); the app also knows the names read from the iMacs.
+    static func namesTaken(by machines: [Machine], renaming: Set<UUID>, readNames: [UUID: String]) -> [String: String] {
+        RenamePlan.namesTaken(by: machines, renaming: renaming, readNames: readNames)
     }
 
     func isUnchanged(_ e: Entry) -> Bool {
@@ -307,6 +400,10 @@ struct RenameComputersSheet: View {
                         .help("Możliwy konflikt nazw w sieci (macOS dopisał numer)")
                 }
             }
+        } else if let error = classroom.nameErrors[e.id] {
+            Label("nie odczytano", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .help(error)
         } else {
             Text(model.status(e.machine).reachability == .online ? "sprawdzanie…" : "niedostępny")
                 .foregroundStyle(.secondary)
@@ -421,7 +518,7 @@ struct AppVersionsSheet: View {
 
     func summary(_ r: AppVersionsResult) -> String {
         let all = rows(r)
-        if !r.pending.isEmpty { return "Sprawdzanie… (\(r.pending.count) pozostało)" }
+        if !r.pending.isEmpty { return "Sprawdzanie… (pozostało: \(r.pending.count))" }
         let missing = all.filter { $0.state == .missing }.count
         let different = all.filter { $0.state == .different }.count
         var parts: [String] = []

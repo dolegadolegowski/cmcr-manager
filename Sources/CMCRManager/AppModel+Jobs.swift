@@ -88,6 +88,7 @@ extension AppModel {
     func pruneSelection() {
         let ids = Set(machines.map(\.id))
         if !selection.isSubset(of: ids) { selection.formIntersection(ids) }
+        if !highlightedMachines.isSubset(of: ids) { highlightedMachines.formIntersection(ids) }
     }
 
     var groups: [String] { HostGroups.all(in: machines) }
@@ -97,8 +98,10 @@ extension AppModel {
         selection = adding ? selection.union(ids) : ids
     }
 
+    /// The Macs that are on – during a refresh by their last known state, so ⇧⌘O never empties the selection
+    /// just because every Mac is being checked again (AUDIT KOM-05).
     func selectOnline() {
-        selection = Set(machines.filter { status($0).reachability == .online }.map(\.id))
+        selection = Set(machines.filter { knownReachability($0) == .online }.map(\.id))
     }
 
     func invertSelection() {
@@ -133,7 +136,16 @@ extension AppModel {
 
     /// Repeats `batch` on `hosts`. A batch that had to be confirmed (restart, log out, wipe a folder…) is
     /// confirmed again with the hosts and their logged-in users listed, never re-run straight away.
-    func retry(_ batch: Batch, on hosts: [Machine]) {
+    func retry(_ batch: Batch, on requested: [Machine]) {
+        // The batch kept the Macs as they were when it started; a repeat uses the host list as it is now (a fixed
+        // address, port or own password) and leaves out Macs removed from the list meanwhile.
+        let hosts = requested.compactMap { machine($0.id) }
+        let removed = requested.count - hosts.count
+        if removed > 0 {
+            let participle = Polish.plural(removed, "usunięty", "usunięte", "usuniętych")
+            showToast(ActionToast(message: "Pominięto \(Polish.computers(removed)) \(participle) z listy komputerów.",
+                                  icon: "exclamationmark.triangle.fill"))
+        }
         guard let rerun = batch.rerun, !hosts.isEmpty else { return }
         guard let confirmation = batch.confirmation else {
             rerun(hosts)
@@ -212,7 +224,7 @@ extension AppModel {
 
     /// Selects the hosts where the batch did not succeed.
     func selectProblems(of batch: Batch) {
-        let ids = Set(batch.problemMachines.map(\.id))
+        let ids = Set(batch.problemMachines.map(\.id)).intersection(machines.map(\.id))
         if !ids.isEmpty { selection = ids }
     }
 
@@ -307,19 +319,28 @@ final class SharedPayload: @unchecked Sendable {
         let items: [URL]
         var file: URL?
         var building: Task<Result<URL, PayloadFailure>, Never>?
+        /// Stops tar once every job waiting for the archive was interrupted (AUDIT WSP-04).
+        var buildHandle = ProcessHandle()
+        /// Jobs waiting for the archive being packed, with their handles (nil: cannot be interrupted).
+        var waiters: [UUID: ProcessHandle?] = [:]
         var users = 0
         var discardWhenIdle = false
 
         init(_ items: [URL]) { self.items = items }
 
-        func acquire() async -> Result<URL, PayloadFailure> {
+        func acquire(_ handle: ProcessHandle?) async -> Result<URL, PayloadFailure> {
             users += 1
             discardWhenIdle = false
             if let file, FileManager.default.fileExists(atPath: file.path) { return .success(file) }
+            let id = UUID()
+            waiters[id] = handle
+            defer { waiters[id] = nil }
             if let building { return await building.value }
             let items = self.items
+            if buildHandle.isCancelled { buildHandle = ProcessHandle() }
+            let packing = buildHandle
             let task = Task { () -> Result<URL, PayloadFailure> in
-                switch await Payload.make(items) {
+                switch await Payload.make(items, handle: packing) {
                 case .success(let url): return .success(url)
                 case .failure(let error): return .failure(PayloadFailure(message: error.localizedDescription))
                 }
@@ -329,6 +350,12 @@ final class SharedPayload: @unchecked Sendable {
             building = nil
             if case .success(let url) = result { file = url }
             return result
+        }
+
+        /// A job was interrupted: when every job still waiting for the archive is, packing stops.
+        func waiterCancelled() {
+            guard building != nil, !waiters.isEmpty, waiters.values.allSatisfy({ $0?.isCancelled == true }) else { return }
+            buildHandle.cancel()
         }
 
         func release() {
@@ -354,9 +381,24 @@ final class SharedPayload: @unchecked Sendable {
 
     init(_ items: [URL]) { store = Store(items) }
 
+    /// The archive for one job; an interrupted job does not wait for the packing to finish.
     @MainActor
-    func use(_ body: @MainActor (URL) async -> CommandResult) async -> CommandResult {
-        switch await store.acquire() {
+    private func acquire(for handle: ProcessHandle?) async -> Result<URL, PayloadFailure> {
+        let store = self.store
+        let token = handle?.addCancelAction { await store.waiterCancelled() }
+        let result = await store.acquire(handle)
+        if let token { handle?.removeCancelAction(token) }
+        return result
+    }
+
+    @MainActor
+    func use(handle: ProcessHandle? = nil, _ body: @MainActor (URL) async -> CommandResult) async -> CommandResult {
+        let acquired = await acquire(for: handle)
+        if handle?.isCancelled == true {
+            await store.release()
+            return .cancelledResult
+        }
+        switch acquired {
         case .failure(let failure):
             await store.release()
             return .failure(failure.message)
@@ -370,8 +412,14 @@ final class SharedPayload: @unchecked Sendable {
     /// Like `use`, but a packing failure does not stop the job: `body` gets nil and the reason (a lesson then
     /// skips only its materials step and still wakes the Mac, opens apps and greets).
     @MainActor
-    func useIfAvailable(_ body: @MainActor (URL?, String?) async -> CommandResult) async -> CommandResult {
-        switch await store.acquire() {
+    func useIfAvailable(handle: ProcessHandle? = nil,
+                        _ body: @MainActor (URL?, String?) async -> CommandResult) async -> CommandResult {
+        let acquired = await acquire(for: handle)
+        if handle?.isCancelled == true {
+            await store.release()
+            return .cancelledResult
+        }
+        switch acquired {
         case .failure(let failure):
             await store.release()
             return await body(nil, failure.message)
@@ -397,7 +445,11 @@ enum JobNotifier {
             let id = UUID(uuidString: response.notification.request.identifier)
             DispatchQueue.main.async {
                 NSApp.activate(ignoringOtherApps: true)
-                MainActor.assumeIsolated { AppModel.shared?.showJobs(id) }
+                MainActor.assumeIsolated {
+                    // The main window may be closed while the app goes on with the jobs (AUDIT WSP-05).
+                    if let open = AppModel.shared?.openWindowAction { MainWindow.bringToFront(open) }
+                    AppModel.shared?.showJobs(id)
+                }
             }
             completionHandler()
         }
@@ -405,19 +457,32 @@ enum JobNotifier {
 
     private static let router = Router()
 
+    /// Set at launch, so that clicking a notification from an earlier run is handled too.
+    static func installDelegate() {
+        guard isAvailable else { return }
+        UNUserNotificationCenter.current().delegate = router
+    }
+
     /// UNUserNotificationCenter needs an app bundle; the bare `swift run` executable has none.
     static var isAvailable: Bool {
         Bundle.main.bundleIdentifier != nil && Bundle.main.bundleURL.pathExtension == "app"
     }
 
+    /// „Gotowe na 3 komputerach · błąd na 2 komputerach”; no „Gotowe na 0 komputerach” when nothing worked (AUDIT ZAD-08).
+    static func body(for batch: Batch) -> String {
+        var parts: [String] = []
+        if batch.succeeded > 0 { parts.append("Gotowe \(Polish.onComputers(batch.succeeded))") }
+        if batch.failed > 0 { parts.append("błąd \(Polish.onComputers(batch.failed))") }
+        if batch.skipped > 0 { parts.append("pominięto: \(Polish.computers(batch.skipped))") }
+        if batch.cancelled > 0 { parts.append("przerwano \(Polish.onComputers(batch.cancelled))") }
+        let text = parts.joined(separator: " · ")
+        return text.isEmpty ? "" : text.prefix(1).uppercased() + text.dropFirst()
+    }
+
     static func post(_ batch: Batch) {
         guard isAvailable else { return }
         let title = batch.failed > 0 ? "Zakończono z błędami: \(batch.title)" : "Zakończono: \(batch.title)"
-        var parts = ["Gotowe \(Polish.onComputers(batch.succeeded))"]
-        if batch.failed > 0 { parts.append("błędy: \(batch.failed)") }
-        if batch.skipped > 0 { parts.append("pominięto: \(batch.skipped)") }
-        if batch.cancelled > 0 { parts.append("przerwano: \(batch.cancelled)") }
-        let body = parts.joined(separator: " · ")
+        let body = body(for: batch)
         let id = batch.id.uuidString
         let center = UNUserNotificationCenter.current()
         center.delegate = router
@@ -458,8 +523,8 @@ extension AppModel {
         }
         return QuitQuestion(
             title: "\(Polish.plural(n, "Trwa", "Trwają", "Trwa")) \(Polish.jobs(n)) na iMacach",
-            message: "Zakończenie aplikacji przerwie połączenia – wysyłanie plików i instalacje mogą pozostać "
-                + "niedokończone. Zamknięcie samego okna nie przerywa zadań.",
+            message: "Zakończenie aplikacji przerwie zadania i zatrzyma polecenia na iMacach – wysyłanie plików "
+                + "i instalacje pozostaną niedokończone. Zamknięcie samego okna nie przerywa zadań.",
             quitButton: "Przerwij zadania i zakończ")
     }
 
@@ -486,6 +551,41 @@ extension AppModel {
         ClassroomModel.shared.run?.cancel()
         batches.forEach { $0.cancel() }
     }
+
+    /// How long quitting waits for the iMacs to stop their commands and for the history to be saved.
+    nonisolated static let quitWaitLimit: TimeInterval = 15
+
+    /// Stops all work and waits, at most `limit`, until the iMacs were told to stop their commands (the remote
+    /// stop runs in the background and would die with the app), the stopped jobs are archived and the history
+    /// is on disk (AUDIT ZAD-02).
+    func stopAllWorkBeforeQuitting(limit: TimeInterval = AppModel.quitWaitLimit) async {
+        let open = batches.filter { !$0.finished }
+        stopAllWork()
+        let handles = open.flatMap { $0.jobs.map(\.handle) }
+        let stopping = Task.detached {
+            await withTaskGroup(of: Void.self) { group in
+                for h in handles { group.addTask { await h.cancellationFinished() } }
+            }
+        }
+        let deadline = Date().addingTimeInterval(limit)
+        let stopped = QuitProgress()
+        Task.detached {
+            await stopping.value
+            stopped.markDone()
+        }
+        while Date() < deadline, !(stopped.isDone && open.allSatisfy(\.finished)) {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        await JobHistory.waitForPendingWrites()
+    }
+}
+
+/// Set once the remote stops started by quitting are done.
+private final class QuitProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func markDone() { lock.withLock { done = true } }
+    var isDone: Bool { lock.withLock { done } }
 }
 
 extension AppDelegate {
@@ -494,8 +594,8 @@ extension AppDelegate {
         guard let model = AppModel.shared else { return .terminateNow }
         let updating = Updater.shared.isQuittingForUpdate
         guard let question = model.quitQuestion(quittingForUpdate: updating) else {
-            if updating { model.stopAllWork() }
-            return .terminateNow
+            guard updating, model.hasRunningWork else { return .terminateNow }
+            return Self.quitAfterStopping(model)
         }
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -505,7 +605,16 @@ extension AppDelegate {
         let quit = alert.addButton(withTitle: question.quitButton)
         quit.hasDestructiveAction = true
         guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
-        model.stopAllWork()
-        return .terminateNow
+        return Self.quitAfterStopping(model)
+    }
+
+    /// Quits once the iMacs were told to stop and the history is saved (at most `AppModel.quitWaitLimit`).
+    @MainActor
+    private static func quitAfterStopping(_ model: AppModel) -> NSApplication.TerminateReply {
+        Task { @MainActor in
+            await model.stopAllWorkBeforeQuitting()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }

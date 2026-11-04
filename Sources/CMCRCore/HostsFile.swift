@@ -23,7 +23,7 @@ public extension ConfigStore {
 
     static func decodeHosts(_ data: Data) throws -> [Machine] {
         do {
-            return try JSONDecoder().decode([Machine].self, from: data)
+            return Machine.withUniqueIDs(try JSONDecoder().decode([Machine].self, from: data)).hosts
         } catch let error as DecodingError {
             throw HostsFileError(reason: describe(error))
         }

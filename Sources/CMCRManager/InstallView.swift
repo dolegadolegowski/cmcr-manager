@@ -34,7 +34,7 @@ struct InstallView: View {
                     Section {
                         BatchResultsView(batch: batch)
                     } header: {
-                        Label("Wynik ostatniej operacji", systemImage: "list.bullet.rectangle")
+                        Label("Wynik ostatniego działania", systemImage: "list.bullet.rectangle")
                     }
                     .id(batch.id)
                 }
@@ -52,7 +52,7 @@ struct InstallView: View {
             FileListEditor(items: $model.installItems,
                            placeholder: "Przeciągnij tutaj instalatory (.pkg, .dmg, .zip) lub aplikacje (.app) albo użyj „Dodaj…”.")
             HStack(spacing: 12) {
-                Text("Aplikacje trafią do folderu Programy na każdym komputerze.")
+                Text("Aplikacje trafią do folderu Aplikacje na każdym komputerze.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .help(".pkg → instalator systemowy, .dmg → zamontowanie i instalacja pakietu lub skopiowanie aplikacji, .zip → rozpakowanie, .app → skopiowanie do /Applications (z usunięciem kwarantanny). Instalacja z uprawnieniami administratora.")
@@ -88,12 +88,14 @@ struct InstallView: View {
         Section {
             TextField("Adres instalatora", text: $downloadURL, prompt: Text("https://…/Instalator.pkg"))
             HStack(spacing: 12) {
-                Text("Każdy komputer pobierze plik sam – wygodne przy dużych instalatorach (.pkg, .dmg lub .zip). Tylko adresy https://.")
+                Text("Każdy komputer pobierze plik sam – wygodne przy dużych instalatorach (.pkg, .dmg lub .zip). Tylko adresy https:// (albo file:// – plik, który już jest na iMacu).")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 12)
                 TargetButton(title: "Pobierz i zainstaluj", icon: "arrow.down.app") {
-                    let url = downloadURL, allowUnsigned = model.installAllowUnsigned
+                    // A pasted address often has a space or a line break around it (AUDIT APL-12).
+                    let url = downloadURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let allowUnsigned = model.installAllowUnsigned
                     model.runScript("Instalacja z URL: \((url as NSString).lastPathComponent)", on: model.selectedMachines) { _ in
                         Scripts.installFromURL(url, allowUnsigned: allowUnsigned)
                     }
@@ -107,14 +109,17 @@ struct InstallView: View {
 
     // MARK: Homebrew
 
-    var brewArguments: String {
-        brewName.split(separator: " ").map { shQuote(String($0)) }.joined(separator: " ")
+    /// Names separated by spaces or commas, as the field's example shows (AUDIT APL-13).
+    var brewArguments: String { Self.brewArguments(brewName) }
+
+    static func brewArguments(_ names: String) -> String {
+        names.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map { shQuote(String($0)) }.joined(separator: " ")
     }
 
     var brewSection: some View {
         Section {
             TextField("Nazwa pakietu", text: $brewName, prompt: Text("np. google-chrome, visual-studio-code"))
-                .help("Nazwy pakietów Homebrew, oddzielone spacjami (np. google-chrome, visual-studio-code, unity-hub, oracle-jdk)")
+                .help("Nazwy pakietów Homebrew, oddzielone spacjami lub przecinkami (np. google-chrome, visual-studio-code, unity-hub, oracle-jdk)")
             Picker(selection: $brewCask) {
                 Text("Aplikacja").tag(true)
                 Text("Narzędzie Terminala").tag(false)
@@ -181,8 +186,9 @@ struct InstallView: View {
             FormActionRow("Edytor Unity",
                           caption: "Instaluje edytor w podanej wersji razem z zaznaczonymi modułami.") {
                 TargetButton(title: "Pokaż zainstalowane", icon: "list.bullet", prominent: false) {
-                    model.runScript("Unity Hub: editors --all", on: model.selectedMachines) { _ in
-                        Scripts.unityHub(["editors", "--all"])
+                    // --installed: only the editors on the iMac (--all also lists every release in the Hub, APL-14).
+                    model.runScript("Unity Hub: editors --installed", on: model.selectedMachines) { _ in
+                        Scripts.unityHub(["editors", "--installed"])
                     }
                 }
                 TargetButton(title: "Zainstaluj edytor", icon: "square.and.arrow.down") {
@@ -212,7 +218,7 @@ struct InstallView: View {
             .font(.body.monospacedDigit())
             FormActionRow("Android SDK",
                           caption: "Narzędzia do budowania gier na Androida – w podanych wersjach API, dla edytora Unity z modułem Android.") {
-                TargetButton(title: "Zainstaluj Android SDK", icon: "iphone.gen2", prominent: false) {
+                TargetButton(title: "Zainstaluj Android SDK", icon: "cpu", prominent: false) {
                     let v = unityVersion
                     let apis = androidAPIs.split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
                     model.runScript("sdkmanager API \(apis.joined(separator: ","))", on: model.selectedMachines) { _ in

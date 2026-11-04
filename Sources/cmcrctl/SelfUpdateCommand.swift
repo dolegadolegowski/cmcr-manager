@@ -99,7 +99,9 @@ enum SelfUpdateCommand {
         case .success(.available(let c)):
             print("Dostępna nowa wersja \(c.version) (zainstalowana: \(installed)).")
             if !c.notes.isEmpty { print("\n\(c.notes)\n") }
-            print("Instalacja: cmcrctl app-update install" + (app == defaultApp ? "" : " --app \(shQuote(app.path))"))
+            // A test version is found only with --beta (without it only /releases/latest is read), so the hint keeps it.
+            print("Instalacja: cmcrctl app-update install" + (beta ? " --beta" : "")
+                  + (app == defaultApp ? "" : " --app \(shQuote(app.path))"))
             return 0
         }
     }

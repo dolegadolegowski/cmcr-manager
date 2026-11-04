@@ -127,7 +127,7 @@ struct RemoteFolderPicker: View {
                     .labelStyle(.iconOnly)
                 Spacer(minLength: 8)
                 Toggle(isOn: $browser.showHidden) {
-                    Label("Ukryte pliki", systemImage: browser.showHidden ? "eye" : "eye.slash")
+                    Label("Ukryte pliki", systemImage: "eye.slash")
                 }
                 .toggleStyle(.button)
                 .labelStyle(.titleAndIcon)

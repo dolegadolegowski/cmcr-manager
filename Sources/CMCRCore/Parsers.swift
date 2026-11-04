@@ -70,6 +70,32 @@ public enum Parsers {
         if let l = lastLabel { titles.append(l) }
         return titles
     }
+
+    /// What `softwareupdate --list 2>&1` answered. A system counts as up to date only when softwareupdate said so
+    /// ("No new software available"): a timeout, a server that cannot be reached or an answer without a list is
+    /// a failed check, not "no updates".
+    public enum SoftwareUpdateCheck: Equatable, Sendable {
+        case upToDate
+        case available([String])
+        case failed(String)
+    }
+
+    public static func softwareUpdateCheck(_ r: CommandResult) -> SoftwareUpdateCheck {
+        let text = r.stdoutText
+        let titles = softwareUpdates(text)
+        if !titles.isEmpty { return .available(titles) }
+        if r.succeeded && text.contains("No new software available") { return .upToDate }
+        let header: Set<String> = ["Software Update Tool", "Finding available software"]
+        let answer = lines(text).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !header.contains($0) }
+        let said = answer.suffix(3).joined(separator: " ")
+        if r.cancelled { return .failed("Anulowano.") }
+        if r.timedOut && r.started {
+            return .failed("softwareupdate nie odpowiedział w wyznaczonym czasie" + (said.isEmpty ? "." : ": \(said)"))
+        }
+        if !said.isEmpty { return .failed("Odpowiedź softwareupdate: \(said)") }
+        if !r.succeeded { return .failed(SSH.diagnose(r).1) }
+        return .failed("softwareupdate nie zwrócił listy aktualizacji.")
+    }
 }
 
 public enum WakeOnLAN {

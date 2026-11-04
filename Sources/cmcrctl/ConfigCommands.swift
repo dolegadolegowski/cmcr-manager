@@ -51,7 +51,7 @@ extension CLI {
             fail("Komputer \(dup.name) (\(dup.destination)) już jest na liście.", code: ExitCode.usage)
         }
         let added = Machine(name: name, address: address, user: user, port: port, macAddress: mac)
-        ConfigStore.saveHosts(hosts + [added])
+        saveHostsOrFail(hosts + [added])
         Console.out("Dodano \(added.name) (\(added.destination)\(port == 22 ? "" : ", port \(port)")).")
         return ExitCode.success
     }
@@ -68,7 +68,7 @@ extension CLI {
         guard let i = list.firstIndex(where: { $0.id == host.id }) else { return ExitCode.failure }
         if let port { list[i].port = port }
         if let mac { list[i].macAddress = mac }
-        ConfigStore.saveHosts(list)
+        saveHostsOrFail(list)
         let h = list[i]
         Console.out("Zapisano \(h.name): port \(h.port), MAC \(h.macAddress.isEmpty ? "—" : h.macAddress).")
         return ExitCode.success
@@ -94,7 +94,7 @@ extension CLI {
         let gone = targets(args[2])
         confirm("Usunąć z listy: \(names(gone))? Na samych iMacach nic się nie zmieni.")
         let ids = Set(gone.map(\.id))
-        ConfigStore.saveHosts(hosts.filter { !ids.contains($0.id) })
+        saveHostsOrFail(hosts.filter { !ids.contains($0.id) })
         Console.out("Usunięto z listy: \(gone.map(\.name).joined(separator: ", ")).")
         return ExitCode.success
     }
@@ -103,7 +103,9 @@ extension CLI {
     func hostsGenerate() -> Int32 {
         args.expect("hosts generate", options: ["--start", "--count", "--digits", "--domain", "--replace", "--append"],
                     positional: 3)
-        let prefix = checked(args[2] ?? "imac", .sshPart, "Niepoprawny prefiks")
+        // The prefix starts every generated name as well as every address and account, so it must pass both checks
+        // (a comma would make the names impossible to select: it separates the Macs in KOMP).
+        let prefix = checked(checked(args[2] ?? "imac", .name, "Niepoprawny prefiks"), .sshPart, "Niepoprawny prefiks")
         let start = args.int("--start", in: 0...999) ?? 1
         let count = args.int("--count", in: 1...250) ?? 15
         let digits = args.int("--digits", in: 1...4) ?? 2
@@ -119,12 +121,19 @@ extension CLI {
             confirm(hostsProblem == nil
                     ? "Zastąpić obecną listę (\(hosts.count)) wygenerowanymi wpisami (\(generated.count))?"
                     : "Zastąpić nieczytelny plik \(hostsPath) wygenerowanymi wpisami (\(generated.count))?")
-            ConfigStore.saveHosts(generated)
+            // Like the app, a damaged hosts.json is never lost: its entries, MACs and groups stay in a copy.
+            if hostsProblem != nil {
+                guard let backup = ConfigStore.backupHostsFile() else {
+                    fail("✘ Nie można zachować kopii \(hostsPath) – lista komputerów nie została zmieniona.")
+                }
+                Console.out("Oryginał zachowano jako \(backup.path).")
+            }
+            saveHostsOrFail(generated)
             Console.out("Lista komputerów zastąpiona.")
         } else if append {
             let existing = Set(hosts.map { $0.address.lowercased() })
             let new = generated.filter { !existing.contains($0.address.lowercased()) }
-            ConfigStore.saveHosts(hosts + new)
+            saveHostsOrFail(hosts + new)
             Console.out("Dopisano \(plural(new.count, "komputer", "komputery", "komputerów")) (pominięto już obecne).")
         } else {
             Console.out("To tylko podgląd – dodaj --replace (zastąp listę) lub --append (dopisz brakujące).")
@@ -175,7 +184,7 @@ extension CLI {
         guard let i = hosts.firstIndex(where: { $0.id == host.id }) else { return }
         var list = hosts
         list[i].usesSharedPassword = shared
-        ConfigStore.saveHosts(list)
+        saveHostsOrFail(list)
     }
 
     /// First line of stdin; on a terminal read without echo (and asked twice).

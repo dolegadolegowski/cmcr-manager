@@ -53,7 +53,7 @@ struct DashboardView: View {
             if PasswordBanner.isNeeded(model) { PasswordBanner() }
             VStack(alignment: .leading, spacing: 14) {
                 TargetHeader(section: .dashboard,
-                             subtitle: "Kliknij kafelek, aby zaznaczyć pasujące komputery. Dwukrotne kliknięcie wiersza pokazuje szczegóły komputera.")
+                             subtitle: "Kliknij kafelek, aby zaznaczyć pasujące komputery. Kliknięcie wiersza pokazuje jego szczegóły w panelu (⌥⌘I) i nie zmienia zaznaczenia.")
                 tiles
                 VStack(alignment: .leading, spacing: 6) {
                     table
@@ -64,7 +64,7 @@ struct DashboardView: View {
         }
         .inspector(isPresented: $showInspector) {
             HostInspector()
-                .inspectorColumnWidth(min: 260, ideal: 310, max: 420)
+                .inspectorColumnWidth(min: 240, ideal: 280, max: 420)
         }
         .toolbar {
             ToolbarItemGroup {
@@ -75,7 +75,7 @@ struct DashboardView: View {
                     Label("Szczegóły", systemImage: "info.circle")
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
-                .help(showInspector ? "Ukryj panel szczegółów (⌥⌘I)" : "Pokaż szczegóły i notatki zaznaczonego komputera (⌥⌘I)")
+                .help(showInspector ? "Ukryj panel szczegółów (⌥⌘I)" : "Pokaż szczegóły i notatki klikniętego komputera (⌥⌘I)")
                 moreMenu
             }
         }
@@ -119,7 +119,7 @@ struct DashboardView: View {
                 Button {
                     targets.machines.forEach(model.openTerminal)
                 } label: {
-                    Label("Otwórz w Terminalu (dla zaawansowanych)", systemImage: "terminal")
+                    Label("Sesja SSH w Terminalu (dla zaawansowanych)", systemImage: "terminal")
                 }
                 .help("Sesja SSH w aplikacji Terminal.\(targets.note)")
                 Button {
@@ -133,7 +133,7 @@ struct DashboardView: View {
                 Button {
                     classroom.exportInventory(model)
                 } label: {
-                    Label("Zapisz raport o komputerach (CSV)…", systemImage: "tablecells")
+                    Label("Zapisz raport o komputerach (CSV)…", systemImage: "square.and.arrow.up")
                 }
                 Button {
                     showVersions = true
@@ -151,10 +151,12 @@ struct DashboardView: View {
 
     var tiles: some View {
         let rows = self.rows
-        let online = rows.filter { $0.status.reachability == .online }
-        let offline = rows.filter { $0.status.reachability == .offline }
-        let users = rows.filter { !$0.user.isEmpty && $0.status.reachability == .online }
-        let problems = rows.filter { [.authFailed, .error].contains($0.status.reachability) }
+        // While the Macs are checked again the tiles keep their last known state (AUDIT KOM-05).
+        let known = { (row: DashboardRow) in model.knownReachability(row.machine) }
+        let online = rows.filter { known($0) == .online }
+        let offline = rows.filter { known($0) == .offline }
+        let users = rows.filter { !$0.user.isEmpty && known($0) == .online }
+        let problems = rows.filter { [.authFailed, .error].contains(known($0)) }
         let lowDisk = rows.filter(\.lowDisk)
         let all = Group {
             tile("Włączone", "\(online.count) z \(rows.count)", "checkmark", .green, online,
@@ -180,10 +182,12 @@ struct DashboardView: View {
     func tile(_ title: String, _ value: String, _ icon: String, _ color: Color, _ rows: [DashboardRow],
               help: String) -> some View {
         let ids = Set(rows.map(\.id))
+        // A tile without Macs selects nothing: clicking it must not clear the checked Macs (AUDIT KOM-08).
         return StatTile(title: title, value: value, icon: icon, color: color,
                         active: !ids.isEmpty && ids == model.selection, help: help) {
-            model.selection = ids
+            if !ids.isEmpty { model.selection = ids }
         }
+        .disabled(ids.isEmpty)
     }
 
     /// When the overview was last checked; it refreshes by itself every 2 minutes.
@@ -225,23 +229,29 @@ struct DashboardView: View {
     typealias Column = TableColumnContent<DashboardRow, KeyPathComparator<DashboardRow>>
 
     var table: some View {
-        Table(rows.sorted(using: sortOrder), selection: $model.selection, sortOrder: $sortOrder,
+        // Clicking a row only highlights it (as in the host list): the checked Macs, the targets of every action,
+        // stay as they are (AUDIT KOM-09).
+        Table(rows.sorted(using: sortOrder), selection: $model.highlightedMachines, sortOrder: $sortOrder,
               columnCustomization: $columns) {
             mainColumns
             detailColumns
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
-            if let id = ids.first, let m = model.machine(id) {
-                Button("Pokaż szczegóły") {
-                    model.selection = [id]
+            // Right-clicking a selected row hands over every selected Mac: the menu acts on all of them.
+            if ids.count == 1, let id = ids.first {
+                Button {
+                    model.highlightedMachines = [id]
                     showInspector = true
+                } label: {
+                    Label("Pokaż szczegóły", systemImage: "info.circle")
                 }
                 Divider()
-                MachineContextMenu(machine: m)
             }
+            if !ids.isEmpty { MachineContextMenu(ids: ids) }
         } primaryAction: { ids in
-            if let id = ids.first {
-                model.selection = [id]
+            // Double-click or Return on one row shows its details.
+            if ids.count == 1, let id = ids.first {
+                model.highlightedMachines = [id]
                 showInspector = true
             }
         }
@@ -252,37 +262,42 @@ struct DashboardView: View {
         TableColumn("Komputer", value: \.name) { row in
             Text(row.name).fontWeight(.medium).lineLimit(1)
         }
-        .width(min: 60, ideal: 75)
+        .width(min: 60, ideal: 65)
         .customizationID("name")
         TableColumn("Stan", value: \.stateRank) { row in
             HStack(spacing: 5) {
                 StatusDot(reachability: row.status.reachability)
                 Text(row.status.reachability.displayName).lineLimit(1)
                 if row.locked {
-                    Image(systemName: "lock.fill")
+                    Image(systemName: "lock.display")
                         .foregroundStyle(.secondary)
                         .help("Ekran zablokowany (tryb uwagi)")
                         .accessibilityLabel("Ekran zablokowany")
                 }
             }
         }
-        .width(min: 95, ideal: 115)
+        .width(min: 80, ideal: 105)
         .customizationID("state")
         TableColumn("Zalogowany", value: \.user) { row in
             Text(row.user.isEmpty ? "—" : row.user).lineLimit(1)
         }
-        .width(min: 70, ideal: 85)
+        .width(min: 60, ideal: 70)
         .customizationID("user")
         TableColumn("Wolne miejsce", value: \.freeGB) { row in
             DiskCell(status: row.status)
         }
-        .width(min: 90, ideal: 100)
+        .width(min: 55, ideal: 65)
         .customizationID("disk")
+        // With the details panel open (it shows the disk and macOS of the clicked Mac) these two give way, so
+        // the table fits a 1180 pt window without scrolling sideways (AUDIT UI-13); a column the user showed or
+        // hid explicitly stays as chosen.
+        .defaultVisibility(showInspector ? .hidden : .automatic)
         TableColumn("macOS", value: \.os) { row in
             Text(row.os.isEmpty ? "—" : row.os)
         }
-        .width(min: 45, ideal: 55)
+        .width(min: 45, ideal: 50)
         .customizationID("os")
+        .defaultVisibility(showInspector ? .hidden : .automatic)
     }
 
     /// Hidden at first, so the default columns (with Uwagi) fit a 1180 pt window; the inspector shows all of these,
@@ -331,7 +346,7 @@ struct DashboardView: View {
                 .foregroundStyle(row.status.message.isEmpty ? Color.secondary : Color.orange)
                 .help(row.note)
         }
-        .width(min: 80)
+        .width(min: 60, ideal: 60)
         .customizationID("notes")
     }
 
@@ -411,14 +426,28 @@ struct DiskCell: View {
 
     var body: some View {
         if let free = status.freeDiskGB, let total = status.totalDiskGB, total > 0 {
-            HStack(spacing: 6) {
-                Gauge(value: max(0, total - free), in: 0...total) { EmptyView() }
-                    .gaugeStyle(.accessoryLinearCapacity)
-                    .tint(free < DashboardRow.lowDiskGB ? .orange : .accentColor)
-                    .frame(width: 44)
-                Text(String(format: "%.0f GB", free))
-                    .monospacedDigit()
-                    .foregroundStyle(free < DashboardRow.lowDiskGB ? .orange : .primary)
+            let low = free < DashboardRow.lowDiskGB
+            let text = Text(String(format: "%.0f GB", free))
+                .monospacedDigit()
+                .foregroundStyle(low ? .orange : .primary)
+            // Low disk space is marked by a shape too, not only the colour (AUDIT UI-19).
+            let mark = Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityLabel("Mało miejsca")
+            // In a narrow column (details panel open in a small window) the gauge gives way (AUDIT UI-13).
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    Gauge(value: max(0, total - free), in: 0...total) { EmptyView() }
+                        .gaugeStyle(.accessoryLinearCapacity)
+                        .tint(low ? .orange : .accentColor)
+                        .frame(width: 44)
+                    text
+                    if low { mark }
+                }
+                HStack(spacing: 4) {
+                    text
+                    if low { mark }
+                }
             }
             .help(String(format: "Wolne %.0f z %.0f GB", free, total))
         } else {

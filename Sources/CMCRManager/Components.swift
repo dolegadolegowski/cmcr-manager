@@ -22,20 +22,8 @@ extension Reachability {
         case .offline: return "moon.zzz.fill"
         case .authFailed: return "key.slash"
         case .error: return "exclamationmark.triangle.fill"
-        case .checking: return "arrow.triangle.2.circlepath"
+        case .checking: return "hourglass"
         case .unknown: return "circle.dashed"
-        }
-    }
-
-    /// State in plain words for the window (the CLI keeps the short `label`).
-    var displayName: String {
-        switch self {
-        case .online: return "Włączony"
-        case .offline: return "Niedostępny"
-        case .authFailed: return "Błąd logowania"
-        case .error: return "Błąd połączenia"
-        case .checking: return "Sprawdzanie…"
-        case .unknown: return "Nie sprawdzono"
         }
     }
 
@@ -316,9 +304,10 @@ struct ConfirmSheet: View {
     /// From this many Macs on, a destructive action needs an explicit "Rozumiem".
     static let acknowledgeFrom = 5
 
-    var withUser: [Machine] { targets.filter { model.status($0).consoleUser != nil } }
+    /// Macs with a student's session – at the screen or in the background ("Przełącz użytkownika").
+    var withUser: [Machine] { targets.filter { !model.status($0).loggedInUsers.isEmpty } }
     var effective: [Machine] {
-        skipLoggedIn ? targets.filter { model.status($0).consoleUser == nil } : targets
+        skipLoggedIn ? targets.filter { model.status($0).loggedInUsers.isEmpty } : targets
     }
     var needsAcknowledgement: Bool { request.destructive && effective.count >= Self.acknowledgeFrom }
 
@@ -387,7 +376,7 @@ struct ConfirmSheet: View {
 
     func row(_ m: Machine) -> some View {
         let reachability = model.status(m).reachability
-        let user = model.status(m).consoleUser
+        let user = model.status(m).loggedInText
         let skipped = skipLoggedIn && user != nil
         return HStack(spacing: 8) {
             StatusDot(reachability: reachability)
@@ -430,7 +419,7 @@ extension Job.State {
     var symbol: String {
         switch self {
         case .queued: return "clock"
-        case .running: return "arrow.triangle.2.circlepath"
+        case .running: return "hourglass"
         case .succeeded: return "checkmark.circle.fill"
         case .failed: return "xmark.octagon.fill"
         case .cancelled: return "stop.circle"
@@ -550,7 +539,7 @@ struct BatchActions: View {
             }
             if !batch.problemMachines.isEmpty {
                 Button { model.selectProblems(of: batch) } label: {
-                    Label("Zaznacz nieudane", systemImage: "checklist")
+                    Label("Zaznacz nieudane", systemImage: "checkmark.square")
                 }
                 .help("Zaznacza na liście komputery, na których działanie się nie udało lub zostało pominięte")
             }
@@ -915,7 +904,7 @@ struct FileListEditor: View {
                 Button {
                     items.removeAll()
                 } label: {
-                    Label("Wyczyść listę", systemImage: "xmark.circle")
+                    Label("Wyczyść listę", systemImage: "eraser")
                 }
                 .disabled(items.isEmpty)
                 .help("Usuwa wszystkie pozycje z listy (pliki na dysku zostają)")

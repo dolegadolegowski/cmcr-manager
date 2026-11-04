@@ -44,7 +44,7 @@ enum ScreenWallSource: String, CaseIterable, Identifiable {
         switch self {
         case .all: return "desktopcomputer"
         case .selected: return "checklist"
-        case .online: return "power"
+        case .online: return "checkmark.circle"
         case .withUser: return "person.crop.rectangle"
         }
     }
@@ -158,7 +158,12 @@ struct ScreenWallView: View {
             if window !== w { window = w }
         }
         .sheet(isPresented: $composing) { MessageComposer(targets: selectedMachines) }
+        .noticeAlert(showsToasts: true)
         .onChange(of: list.map(\.id)) { _, ids in selection.formIntersection(ids) }
+        .task {
+            if model.openWindowAction == nil { model.openWindowAction = openWindow }
+            model.startBackgroundRefresh()
+        }
         .frame(minWidth: 640, minHeight: 420)
     }
 
@@ -206,7 +211,10 @@ struct ScreenWallView: View {
             Menu {
                 ScreenLayoutPicker(layout: $layout, inline: true)
                 Divider()
-                Toggle("Pokaż podpisy na ekranach", isOn: $showLabels)
+                // The layouts above have icons: so has the switch, not a menu with and without icons (AUDIT UI-30).
+                Toggle(isOn: $showLabels) {
+                    Label("Pokaż podpisy na ekranach", systemImage: "text.below.photo")
+                }
             } label: {
                 Label("Widok", systemImage: layout.symbol)
                     .labelStyle(.titleAndIcon)
@@ -227,7 +235,7 @@ struct ScreenWallView: View {
             Button {
                 (window ?? NSApp.keyWindow)?.toggleFullScreen(nil)
             } label: {
-                Label("Pełny ekran", systemImage: "arrow.up.left.and.arrow.down.right.rectangle")
+                Label("Pełny ekran", systemImage: "arrow.up.left.and.arrow.down.right")
                     .labelStyle(.titleAndIcon)
             }
             .help("Pełny ekran – np. na drugim monitorze lub projektorze (⌃⌘F)")
@@ -273,13 +281,16 @@ struct ScreenWindowView: View {
     let machineID: UUID?
 
     var body: some View {
-        if let id = machineID, let m = model.machine(id) {
-            ScreenWindowContent(machine: m, feed: center.feed(for: m.id))
-        } else {
-            ContentUnavailableView("Nie ma takiego komputera", systemImage: "desktopcomputer.trianglebadge.exclamationmark",
-                                   description: Text("Ten komputer usunięto z listy w Konfiguracji."))
-                .frame(minWidth: 420, minHeight: 300)
+        Group {
+            if let id = machineID, let m = model.machine(id) {
+                ScreenWindowContent(machine: m, feed: center.feed(for: m.id))
+            } else {
+                ContentUnavailableView("Nie ma takiego komputera", systemImage: "desktopcomputer.trianglebadge.exclamationmark",
+                                       description: Text("Ten komputer usunięto z listy w Konfiguracji."))
+                    .frame(minWidth: 420, minHeight: 300)
+            }
         }
+        .noticeAlert(showsToasts: true)
     }
 }
 
@@ -398,7 +409,7 @@ struct ScreenCommands: Commands {
         CommandGroup(before: .windowArrangement) {
             OpenScreenWallButton()
                 .keyboardShortcut("e", modifiers: [.command, .shift])
-            Toggle("Wstrzymaj podgląd ekranów", isOn: $center.paused)
+            Toggle(isOn: $center.paused) { Label("Wstrzymaj podgląd ekranów", systemImage: "pause.circle") }
                 .keyboardShortcut("p", modifiers: [.command, .option])
             Divider()
         }
@@ -411,8 +422,10 @@ struct OpenScreenWindowMenuItem: View {
     let machine: Machine
 
     var body: some View {
-        Button("Podgląd ekranu w nowym oknie") {
+        Button {
             openWindow(id: ScreenWindowView.windowID, value: machine.id)
+        } label: {
+            Label("Podgląd ekranu w nowym oknie", systemImage: "macwindow.badge.plus")
         }
     }
 }

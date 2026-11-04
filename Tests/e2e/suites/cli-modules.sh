@@ -21,6 +21,9 @@ EOF
 mm() { CMCR_CONFIG_DIR="$MM" CMCR_PASSWORD="$PASSWORD" "$CTL" "$@" 2>&1; }
 # At a terminal (stdin, stdout and stderr on a pty).
 mm_tty() { CMCR_CONFIG_DIR="$MM" CMCR_PASSWORD="$PASSWORD" script -q /dev/null "$CTL" "$@" </dev/null 2>&1; }
+# At a terminal, answering „t” to the question about all Macs.
+# (Typed after the question: what script(1) passes on before the program reads is lost.)
+mm_tty_yes() { (sleep 1; printf 't\n'; sleep 2) | CMCR_CONFIG_DIR="$MM" CMCR_PASSWORD="$PASSWORD" script -q /dev/null "$CTL" "$@" 2>&1; }
 delayed_power() { pgrep -U "$(id -u)" -f cmcr-delayed-power 2>/dev/null; }
 # Bytes a terminal would interpret: C0 controls other than tab/LF (CR LF from the pty is fine), DEL, C1 (C2 80–9F),
 # and bidi overrides (U+202A–U+202E, U+2066–U+2069) that reorder what is shown.
@@ -136,6 +139,8 @@ expect_code "filevault (tylko odczyt) bez komputerów: kod 0" "$code" 0 "$out"
 [ "$(printf '%s\n' "$out" | grep -c 'FileVault')" = 3 ] && pass "filevault bez komputerów: wszystkie trzy" \
   || fail "filevault bez komputerów: liczba wyników" "$out"
 out="$(mm_tty unlock)"
+expect "unlock bez komputerów w terminalu: pytanie, bez odpowiedzi nic się nie dzieje" "$out" "Wykonać na wszystkich?" "Przerwano"
+out="$(mm_tty_yes unlock)"
 expect "unlock bez komputerów w terminalu: informacja i wszystkie komputery" "$out" \
   "Nie podano komputerów – unlock na wszystkich: imac01, imac02, imac03 (3 komputery)" "imac03:"
 
@@ -256,3 +261,26 @@ bad="$(term_unsafe "$out")"
 rm -f "$WORK/ask.answer"
 rm -rf "$TD"
 stop_delayed_power
+
+section "cmcrctl lesson start – folder materiałów nigdy nie jest katalogiem bieżącym (AUDIT CLI-01)"
+cp "$MM/classroom.json" "$WORK/classroom.cli01.json"
+cat > "$MM/classroom.json" <<'JSON'
+{"start": {"wake": false, "sendMaterials": true, "materialsFolder": "", "destination": "sharedFolder",
+           "openApps": false, "greet": false}}
+JSON
+mkdir -p "$WORK/cli01-cwd"
+echo "tajne" > "$WORK/cli01-cwd/TAJNE-nauczyciela.txt"
+rm -f "$WORK/remote/Public/cmcr/TAJNE-nauczyciela.txt"
+out="$(cd "$WORK/cli01-cwd" && mm lesson start 1)"; code=$?
+expect "lesson start: brak folderu materiałów – czytelny błąd" "$out" "Nie wybrano folderu z materiałami"
+expect_code "lesson start: kod 1 bez folderu materiałów" "$code" 1 "$out"
+[ ! -e "$WORK/remote/Public/cmcr/TAJNE-nauczyciela.txt" ] && pass "lesson start: pliki z katalogu bieżącego nie trafiły do ucznia" \
+  || fail "lesson start: wysłano uczniom pliki z katalogu bieżącego" "$(ls -la "$WORK/remote/Public/cmcr")"
+python3 - "$MM/classroom.json" "$WORK/cli01-nie-ma" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["start"]["materialsFolder"] = sys.argv[2]; json.dump(c, open(sys.argv[1], "w"))
+PY
+out="$(cd "$WORK/cli01-cwd" && mm lesson start 1)"; code=$?
+expect "lesson start: nieistniejący folder materiałów – czytelny błąd" "$out" "Folder z materiałami nie istnieje"
+expect_code "lesson start: kod 1 przy nieistniejącym folderze" "$code" 1 "$out"
+cp "$WORK/classroom.cli01.json" "$MM/classroom.json"

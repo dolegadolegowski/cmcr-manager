@@ -64,3 +64,15 @@ public enum HostEntry {
         return bytes.map { String(format: "%02x", $0) }.joined(separator: ":")
     }
 }
+
+public extension Machine {
+    /// Why ssh and scp must not be started for this entry, in Polish, or nil when it is fine. A hosts.json entry can
+    /// come from an imported or hand-edited file: an account such as `-oProxyCommand=…` would be read by ssh as an
+    /// option and run a command on this Mac, a space or `@` would move the destination elsewhere.
+    var sshEntryProblem: String? {
+        if let p = HostEntry.problem(user, as: .sshPart) { return "konto administratora – \(p)" }
+        if let p = HostEntry.problem(address, as: .sshPart) { return "adres – \(p)" }
+        if !HostValidation.portRange.contains(port) { return "port \(port) spoza zakresu 1–65535" }
+        return nil
+    }
+}

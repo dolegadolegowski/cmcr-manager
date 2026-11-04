@@ -756,12 +756,23 @@ public enum UpdateInstaller {
         }
     }
 
+    /// Appends its input to the file given as $1 with the rights of whoever runs it, or reads it into nothing when
+    /// that file cannot be opened – so the writer never stops on a broken pipe.
+    static let logSinkScript = #"cat >> "$1" 2>/dev/null || exec cat >/dev/null"#
+
     /// `do shell script … with administrator privileges` that starts the helper as root in the background.
     public static func privilegedAppleScript(_ request: Request, prompt: String) -> String {
         let b64 = Data(helperScript.utf8).base64EncodedString()
-        let command = "/bin/bash -c \"$(echo \(b64) | /usr/bin/base64 -D)\" cmcr-updater "
+        let helper = "/bin/bash -c \"$(echo \(b64) | /usr/bin/base64 -D)\" cmcr-updater "
             + request.arguments.map(shQuote).joined(separator: " ")
-            + " >> \(shQuote(logURL.path)) 2>&1 &"
+        // Root never opens the log: it lies in the user's ~/Library, where it could be swapped for a link to a
+        // system file between `openLog()` and the end of the password dialog, and root's shell would follow it
+        // (AUDIT PRZ-09). The output goes through a pipe to a process with the user's rights, which appends it.
+        // SIGPIPE is ignored, so a log that cannot be written never stops the installation half-way.
+        let uid = request.uid
+        let sink = "/bin/launchctl asuser \(uid) /usr/bin/sudo -u '#\(uid)' -- /bin/sh -c \(shQuote(logSinkScript)) "
+            + "cmcr-log \(shQuote(logURL.path))"
+        let command = "{ trap '' PIPE; \(helper) 2>&1 | \(sink); } >/dev/null 2>&1 &"
         return "do shell script \(appleScriptString(command)) with prompt \(appleScriptString(prompt)) with administrator privileges"
     }
 
@@ -770,7 +781,7 @@ public enum UpdateInstaller {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
         guard let h = FileHandle(forWritingAtPath: url.path) else { throw UpdateError.helperFailed("nie można otworzyć \(url.path)") }
-        h.seekToEndOfFile()
+        _ = try? h.seekToEnd()
         return h
     }
 
@@ -876,7 +887,7 @@ public enum UpdateInstaller {
     cp "$NEW/Contents/Resources/bin/cmcrctl" "$WORK/cmcrctl" 2>/dev/null
 
     # 3. Swap. Afterwards $NEW holds the previous version, which becomes the backup.
-    swap "$NEW" "$DST" || die "nie można podmienić aplikacji (Ustawienia › Prywatność i ochrona › Zarządzanie aplikacjami?)"
+    swap "$NEW" "$DST" || die "nie można podmienić aplikacji (Ustawienia systemowe › Prywatność i ochrona › Zarządzanie aplikacjami?)"
     mv "$NEW" "$OLD" || log "uwaga: kopia zapasowa pozostaje w $NEW"
     [ -d "$OLD" ] || OLD="$NEW"
     touch "$DST"

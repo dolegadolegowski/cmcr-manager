@@ -83,7 +83,7 @@ public enum HostStatusFilter: String, CaseIterable, Identifiable, Sendable {
         case .all: return true
         case .online: return status.reachability == .online
         case .offline: return status.reachability == .offline || status.reachability == .unknown
-        case .withUser: return status.consoleUser != nil && status.reachability == .online
+        case .withUser: return !status.loggedInUsers.isEmpty && status.reachability == .online
         case .attention: return status.reachability == .authFailed || status.reachability == .error
         }
     }

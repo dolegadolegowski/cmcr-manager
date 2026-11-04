@@ -31,7 +31,7 @@ private struct FilesPage: View {
                     Section {
                         BatchResultsView(batch: batch)
                     } header: {
-                        Label("Wynik ostatniej operacji", systemImage: "list.bullet.rectangle")
+                        Label("Wynik ostatniego działania", systemImage: "list.bullet.rectangle")
                     }
                     .id(batch.id)
                 }
@@ -77,7 +77,7 @@ private struct FilesPage: View {
                 .help("Przeglądaj foldery na komputerze ucznia i wskaż, dokąd mają trafić pliki")
             }
             if RemotePaths.usesConsoleUser(state.destination) {
-                Label("Pliki trafią do osoby zalogowanej na danym komputerze; komputery, na których nikt nie jest zalogowany, zostaną pominięte.",
+                Label("Pliki trafią do osoby zalogowanej na danym komputerze; na komputerach, na których nikt nie jest zalogowany, wysyłanie zakończy się błędem.",
                       systemImage: "info.circle")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -347,7 +347,7 @@ private struct FilesPage: View {
         let shared = RemotePaths.friendlyName(model.settings.sharedFolder, settings: model.settings).title
         return Section {
             FormActionRow("Foldery na tym Macu",
-                          caption: "\(local)/all – dla wszystkich komputerów, \(local)/<nazwa komputera> – tylko dla niego.") {
+                          caption: "\(local)/all – dla wszystkich komputerów, \(local)/<adres komputera, np. imac04.local> – tylko dla niego.") {
                 Button {
                     model.prepareLocalFolders()
                 } label: {
@@ -371,7 +371,7 @@ private struct FilesPage: View {
                 }
             }
             FormActionRow("Pobierz z: \(shared)",
-                          caption: "Jak cmcr-pull: do \(local)/<nazwa komputera>; pliki o tych samych nazwach zostaną zastąpione.") {
+                          caption: "Jak cmcr-pull: do \(local)/<adres komputera>; pliki o tych samych nazwach zostaną zastąpione.") {
                 TargetButton(title: "Pobierz", icon: "arrow.down.circle", prominent: false) {
                     model.pullFiles(source: model.settings.sharedFolder, localBase: model.settings.localFolder,
                                     asRoot: false, on: targets)

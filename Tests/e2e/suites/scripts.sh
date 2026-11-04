@@ -389,3 +389,19 @@ expect_code "prepare-shared: /users (inna wielkość liter) – kod 2" "$code" 2
 out="$(ctlpw _builder prepare-shared 1 "$WORK/shared/x" "cmcr-e2e-brak-konta")"; code=$?
 expect "prepare-shared: nieistniejące konto" "$out" "nie istnieje"
 fi
+
+section "Aplikacje o nazwach spoza ASCII (AUDIT APL-03)"
+mkdir -p "$WORK/Żółw Test.app/Contents/MacOS"
+cp /bin/sleep "$WORK/Żółw Test.app/Contents/MacOS/Żółw Test"
+codesign --force --sign - "$WORK/Żółw Test.app/Contents/MacOS/Żółw Test" >/dev/null 2>&1
+"$WORK/Żółw Test.app/Contents/MacOS/Żółw Test" 300 &
+ZOLW=$!
+disown "$ZOLW" 2>/dev/null
+sleep 0.5
+out="$(ctl apps 1)"
+expect "apps: nazwa z polskimi znakami czytelna" "$out" "Żółw Test.app"
+out="$(ctlpw quit-app "Żółw Test" 1)"
+sleep 0.5
+if kill -0 "$ZOLW" 2>/dev/null; then fail "quit-app: aplikacja z polską nazwą nadal działa" "$out"; kill "$ZOLW"
+else pass "quit-app: aplikacja z polską nazwą zamknięta"; fi
+expect_not "quit-app: nie udaje, że aplikacja nie działa" "$out" "nie jest uruchomiona"

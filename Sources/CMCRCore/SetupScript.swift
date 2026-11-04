@@ -88,8 +88,10 @@ public struct SetupOptions: Codable, Equatable, Sendable {
             return (0...23).contains(h) && (0...59).contains(m)
         }
         if scheduleMode == .set {
-            if scheduleDays.isEmpty || !scheduleDays.allSatisfy({ "MTWRFSU".contains($0) }) {
-                return "Harmonogram: wybierz co najmniej jeden dzień."
+            if scheduleDays.isEmpty { return "Harmonogram: wybierz co najmniej jeden dzień." }
+            if !scheduleDays.allSatisfy({ "MTWRFSU".contains($0) }) {
+                // Days typed on the cmcrctl command line (AUDIT PRZ-10); the app only offers valid ones.
+                return "Harmonogram: dni to wielkie litery M T W R F S U (pn, wt, śr, cz, pt, so, nd), np. MTWRF."
             }
             if !validTime(scheduleOn) { return "Harmonogram: godzina włączenia w formacie GG:MM." }
             if !scheduleOff.isEmpty && !validTime(scheduleOff) { return "Harmonogram: godzina wyłączenia w formacie GG:MM." }
@@ -156,7 +158,7 @@ public enum SetupScript {
 
     /// The shared folder must live in a home folder or /Users/Shared (the script refuses anything else).
     public static func sharedFolderProblem(_ settings: AppSettings) -> String? {
-        let path = settings.resolve(settings.sharedFolder)
+        let path = settings.studentFolder
         if path.contains("..") || path.contains("/./") || path.contains("{") {
             return "Folder współdzielony „\(path)” zawiera niedozwolone elementy (.., ./ lub {…})."
         }
@@ -201,7 +203,7 @@ public enum SetupScript {
     public static func arguments(_ o: SetupOptions, host: Machine, settings: AppSettings,
                                  publicKey: String?, mode: Mode) -> [String] {
         var a = ["--admin", host.user, "--student", settings.studentUser,
-                 "--shared-folder", settings.resolve(settings.sharedFolder), "--no-guide"]
+                 "--shared-folder", settings.studentFolder, "--no-guide"]
         if o.installKey, let key = publicKey?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
             a += ["--pubkey", key]
         }
@@ -269,7 +271,7 @@ public enum SetupScript {
         OPT_PUBKEYS=\(q(key))
         OPT_ADMIN=''
         OPT_STUDENT=\(q(settings.studentUser))
-        OPT_SHARED=\(q(settings.resolve(settings.sharedFolder)))
+        OPT_SHARED=\(q(settings.studentFolder))
         OPT_SHARED_MODE='777'
         OPT_SHARED_ACL=\(b(o.sharedACL))
         OPT_SSH_ACL=\(b(o.restrictSSH))
@@ -376,6 +378,8 @@ func polishCount(_ n: Int, _ one: String, _ few: String, _ many: String) -> Stri
 
 /// Parsed command line of `cmcrctl setup` and `cmcrctl setup-script`.
 public struct SetupCommandLine: Sendable {
+    /// Options that change the configuration (not the key or the mode): `readiness` only checks, so it refuses them.
+    public var configurationFlags: [String] = []
     public struct ParseError: LocalizedError, Sendable {
         public let message: String
         public var errorDescription: String? { message }
@@ -395,7 +399,9 @@ public struct SetupCommandLine: Sendable {
       --key-from WZORCE         ogranicz klucz do adresów, np. 192.168.1.0/24
       --no-ssh-acl              nie ograniczaj SSH do administratorów
       --no-ssh-tuning           bez ustawień sshd (keepalive)
-      --ssh-key-only            SSH wyłącznie kluczem (wyłącza logowanie hasłem)
+      --ssh-key-only            SSH wyłącznie kluczem (wyłącza logowanie hasłem); bez tej opcji jak
+                                „Zdalne logowanie tylko kluczem” w aplikacji, --no-ssh-key-only
+                                włącza logowanie hasłem z powrotem
       --no-shared-acl           folder ucznia bez dziedziczonych uprawnień ACL
       --enable-vnc              włącz Udostępnianie ekranu dla administratorów
       --sudo-nopasswd           sudo bez hasła (niezalecane); --no-sudo-nopasswd usuwa
@@ -403,10 +409,11 @@ public struct SetupCommandLine: Sendable {
                                 w pliku: nazwa konta administratora)
       --no-wol                  nie zmieniaj Wake-on-LAN
       --no-sleep                komputer nie usypia się
-      --display-sleep MIN       uśpienie ekranu po MIN minutach
+      --display-sleep MIN       uśpienie ekranu po MIN minutach (0 – nigdy)
       --autorestart             włącz po zaniku zasilania
       --power-schedule "MTWRF 07:30 17:00 [shutdown|sleep]" | off
-      --rosetta                 zainstaluj Rosetta 2
+                                harmonogram włączania/wyłączania; dni: M T W R F S U (pn–nd)
+      --rosetta                 zainstaluj Rosettę 2
       --updates check|download|auto
       --fix-firewall            wyłącz „Blokuj wszystkie połączenia przychodzące”
       --verify                  tylko sprawdź (nic nie zmienia); --dry-run pokazuje też polecenia
@@ -414,7 +421,13 @@ public struct SetupCommandLine: Sendable {
 
     public init() {}
 
-    public init(parsing arguments: [String]) throws {
+    /// `saved`: the options last chosen in the app (setup-options.json). Only „SSH wyłącznie kluczem” is taken from
+    /// them: it has no „bez zmian” state, so without it the script rewrites the sshd settings without
+    /// „PasswordAuthentication no” and logging in with a password silently comes back (AUDIT PRZ-11).
+    /// `--ssh-key-only`/`--no-ssh-key-only` choose explicitly; every other option keeps its command-line default.
+    public init(parsing arguments: [String], saved: SetupOptions = SetupOptions.load()) throws {
+        options.sshKeyOnly = saved.sshKeyOnly
+        var keyOnlyGiven = false
         var i = 0
         func value(_ flag: String) throws -> String {
             guard i + 1 < arguments.count else { throw ParseError(message: "Opcja \(flag) wymaga wartości.") }
@@ -423,6 +436,9 @@ public struct SetupCommandLine: Sendable {
         }
         while i < arguments.count {
             let a = arguments[i]
+            if a.hasPrefix("-"), !["--no-key", "--pubkey", "--pubkey-file", "--verify", "--dry-run"].contains(a) {
+                configurationFlags.append(a)
+            }
             switch a {
             case "--no-key": options.installKey = false
             case "--pubkey": publicKey = try value(a)
@@ -435,7 +451,12 @@ public struct SetupCommandLine: Sendable {
             case "--key-from": options.keyFrom = try value(a)
             case "--no-ssh-acl": options.restrictSSH = false
             case "--no-ssh-tuning": options.sshKeepAlive = false
-            case "--ssh-key-only": options.sshKeyOnly = true
+            case "--ssh-key-only":
+                options.sshKeyOnly = true
+                keyOnlyGiven = true
+            case "--no-ssh-key-only":
+                options.sshKeyOnly = false
+                keyOnlyGiven = true
             case "--no-shared-acl": options.sharedACL = false
             case "--enable-vnc": options.enableVNC = true
             case "--sudo-nopasswd": options.sudo = .passwordless
@@ -464,6 +485,12 @@ public struct SetupCommandLine: Sendable {
                 positional.append(a)
             }
             i += 1
+        }
+        if options.sshKeyOnly && !keyOnlyGiven && !options.installKey {
+            // The toggle's name as the app shows it (SetupOptionsSheet), so the teacher can find it (AUDIT REV-10).
+            throw ParseError(message: "W aplikacji (Przygotowanie iMaców) włączono „Zdalne logowanie tylko kluczem”, a to "
+                             + "wymaga instalacji klucza – usuń --no-key albo dodaj --no-ssh-key-only (logowanie hasłem "
+                             + "zostanie wtedy włączone ponownie).")
         }
         if let problem = options.validationError() { throw ParseError(message: problem) }
     }

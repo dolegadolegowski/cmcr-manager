@@ -10,46 +10,53 @@ KOMP – wybór komputerów: all | numer z nazwy (4 → imac04) | lista (1,3,7) 
        | pozycja na liście (@2) | nazwa, adres lub konto (imac04, imac04.local).
 Bez KOMP polecenia, które tylko odczytują (status, readiness, filevault, app-version, schedule show),
 działają na wszystkich komputerach; polecenia, które coś zmieniają (exec, open-app, quit-app, lock,
-lesson, install…) – tylko w terminalu (z informacją, na których), a w skryptach wymagają podania KOMP,
-np. all. rename (nazwy komputerów) zawsze wymaga KOMP.
+lesson, install, trust…) – tylko w terminalu, po pytaniu „Wykonać na wszystkich?” (--yes na nie nie odpowiada),
+a w skryptach wymagają podania KOMP, np. all. rename (nazwy komputerów) zawsze wymaga KOMP.
 cmcrctl POLECENIE --help – pomoc jednego polecenia (niczego nie wykonuje).
 
 Stan i polecenia
   list                                     lista komputerów
   status [KOMP] [--json]                   stan komputerów (równolegle); zapamiętuje adresy MAC
-  exec "polecenie" [KOMP] [--root]         cmcr-exec: wykonaj polecenie
+  exec "polecenie" [KOMP] [--root]         cmcr-exec: wykonaj polecenie (jako root z rm -r, shutdown, diskutil…
+                                           – w terminalu po potwierdzeniu)
   go nr                                    cmcr-go: interaktywna sesja ssh
   render "polecenie" [--root]              pokaż skrypt wykonywany zdalnie
 
 Pliki
-  push KOMP [--root]                       cmcr-push: ~/Public/cmcr/{all,<host>}/* → folder ucznia
+  push KOMP [--root]                       cmcr-push: ~/Public/cmcr/{all,<host>}/* → folder ucznia; bez --root
+                                           właścicielem plików jest konto administratora, z --root – uczeń
+                                           (jak „Wyślij” w aplikacji)
   pull KOMP [--root]                       cmcr-pull: folder ucznia → ~/Public/cmcr/<host>
-  ls ŚCIEŻKA KOMP [--root]                 zawartość folderu ({console} = zalogowany użytkownik)
+  ls ŚCIEŻKA KOMP [--root]                 zawartość folderu ({student} = konto ucznia, {console} = zalogowany
+                                           użytkownik)
   clean ŚCIEŻKA KOMP                       usuń zawartość folderu (/Users/<konto>/…, /tmp, /Volumes)
 
 Aplikacje
   apps nr                                  uruchomione aplikacje użytkownika
   open-app "Nazwa" [KOMP]                  uruchom aplikację u zalogowanego użytkownika
-  quit-app "Nazwa" [KOMP] [--force]        zamknij aplikację (--force: natychmiast)
+  quit-app "Nazwa" [KOMP] [--force]        zamknij aplikację (--force: natychmiast, po potwierdzeniu)
   open-url ADRES KOMP                      otwórz stronę lub plik u zalogowanego użytkownika
-  kill PID KOMP [--force]                  zakończ proces (--force: SIGKILL)
+  kill PID nr [--force]                    zakończ proces na jednym komputerze (--force: SIGKILL)
   uninstall /Applications/X.app KOMP       usuń aplikację
   brew "argumenty" KOMP                    Homebrew, np.: cmcrctl brew "install --cask firefox" all
   screenshot nr plik.jpg                   zrzut ekranu zalogowanego użytkownika
 
 Aktualizacje macOS
   updates list KOMP                        dostępne aktualizacje (równolegle)
-  updates install KOMP [--restart] [--download] [--recommended]
+  updates install KOMP [--restart] [--download] [--recommended] [--major]
                                            instalacja (--restart: z ponownym uruchomieniem,
-                                           --download: tylko pobierz, --recommended: tylko zalecane)
+                                           --download: tylko pobierz, --recommended: tylko zalecane,
+                                           --major: także nowa wersja macOS, po potwierdzeniu)
   updates history KOMP                     historia instalacji
 
 Sesja i zasilanie
   message "tytuł" "treść" KOMP [--notification]   okno z wiadomością (lub powiadomienie)
-  logout KOMP                              wyloguj zalogowanego użytkownika
+  logout KOMP [--force]                    poproś o wylogowanie (aplikacje mogą zapytać o zapis);
+                                           --force: wyloguj natychmiast (także sesje w tle)
   power restart|shutdown|sleep|display-sleep KOMP
                                            uruchom ponownie | wyłącz | uśpij | uśpij ekran
-  wake KOMP [--dry-run]                    obudź przez sieć (Wake-on-LAN, wymaga adresu MAC)
+  wake KOMP [--wait] [--dry-run]           obudź przez sieć (Wake-on-LAN, wymaga adresu MAC; najpierw MAC
+                                           karty Ethernet); --wait: czekaj do 3 min, aż komputery odpowiedzą
 
 Konfiguracja
   hosts [list]                             komputery ze szczegółami (port, MAC, hasło)
@@ -62,22 +69,25 @@ Konfiguracja
   password clear [--host nr]               usuń zapisane hasło
   password status                          czy hasła są zapisane
 \(CLI.trustUsage)
-  selftest                                sprawdź składnię wszystkich skryptów zdalnych (bash -n)
+  selftest                                 sprawdź składnię wszystkich skryptów zdalnych (bash -n)
 
 Opcje
-  -j N, --jobs N    ile komputerów obsługiwać naraz (domyślnie 1; status i updates list: \(AppSettings().maxParallel)
-                    lub „Równoległe operacje” z ustawień); wyniki zawsze w kolejności listy
+  -j N, --jobs N    ile komputerów obsługiwać naraz (domyślnie 1; status i updates list: „Komputery obsługiwane
+                    naraz” z Konfiguracja › Ustawienia, domyślnie \(AppSettings().maxParallel)); wyniki zawsze w kolejności listy
   --prefix          poprzedź każdy wiersz wyniku nazwą komputera, np. [imac04]
                     (-j i --prefix: polecenia z argumentem KOMP, poza wake, hosts remove, lesson,
-                    rename, setup, readiness i ask – ask pyta wszystkie komputery naraz)
+                    rename, setup, readiness, trust i ask – ask pyta wszystkie komputery naraz)
   --root            wykonaj jako root (sudo z hasłem administratora)
   --yes, -y         nie pytaj o potwierdzenie (wymagane bez terminala dla restartu, wylogowania, usuwania,
-                    power-later, zakończenia zajęć, zmiany nazw komputerów, collect --clean)
+                    quit-app --force, power-later, zakończenia zajęć, zmiany nazw komputerów, collect --clean)
   --                koniec opcji – dalsze argumenty dosłownie
 
 Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie (także opcja,
 której polecenie nie używa, lub nadmiarowy argument – wtedy nic nie jest wykonywane);
-exec zwraca kod zdalnego polecenia (najwyższy z kilku komputerów), screen-watch – także 3–6.
+exec zwraca kod zdalnego polecenia (najwyższy z kilku komputerów; nieudane lub zerwane połączenie – 1),
+screen-watch – także 3–6;
+130 – przerwano: Ctrl-C zatrzymuje także na iMacach każde polecenie, które coś na nich zmienia, i nie uruchamia go
+już na kolejnych; ponowne Ctrl-C kończy od razu.
 
 W terminalu znaki sterujące w wynikach z iMaców (np. sekwencje ESC w nazwach plików) są pokazywane
 jako ^[, ^M…; wynik przekierowany do pliku lub potoku (… | cat) pozostaje dosłowny.
@@ -107,6 +117,12 @@ struct CLI: Sendable {
     /// Options of commands that run on several Macs through `runHosts`.
     static let parallel: Set<String> = ["-j", "--prefix"]
 
+    /// Core commands that accept `parallel` (their help describes -j and --prefix).
+    static let parallelCommands: Set<String> = [
+        "status", "exec", "push", "pull", "ls", "clean", "open-app", "quit-app", "open-url", "uninstall", "brew",
+        "updates", "message", "logout", "power",
+    ]
+
     var root: Bool { args.has("--root") }
     var force: Bool { args.has("--force") }
     var prefixLines: Bool { args.has("--prefix") }
@@ -117,7 +133,10 @@ struct CLI: Sendable {
             return ExitCode.success
         }
         if args.has("--help") || args.has("-h") || command == "help" {
-            Console.out(fullUsage)
+            // `cmcrctl POLECENIE --help` (or `help POLECENIE`): that command's help; `cmcrctl help`: everything.
+            let topic = command == "help" ? args[1] : command
+            Console.out(topic.map { commandHelp($0, spec: Self.parallelCommands.contains($0) ? ModuleSpec(parallel: true) : nil) }
+                        ?? fullUsage)
             return ExitCode.success
         }
         switch command {
@@ -141,7 +160,7 @@ struct CLI: Sendable {
         case "message": return await message()
         case "logout": return await logout()
         case "power": return await power()
-        case "wake": return wake()
+        case "wake": return await wake()
         case "hosts": return hostsCommand()
         case "password": return password()
         case "trust": return await trust()
@@ -186,8 +205,12 @@ struct CLI: Sendable {
         }
     }
 
-    /// exec, open-app and quit-app keep cmcr-exec's "no list = every Mac", but only at a terminal and announced
-    /// there. In a script a dropped argument – an unquoted `#3` is a comment – must not widen the command to the lab.
+    /// exec, open-app, quit-app and trust keep cmcr-exec's "no list = every Mac", but only at a terminal, announced
+    /// and asked there. In a script a dropped argument – an unquoted `#3` is a comment – must not widen the command to
+    /// the lab: without a terminal it is an error, and a script started from Terminal (it inherits the terminal) gets
+    /// the question too, which `--yes` does not answer – only the person at the keyboard can. trust asks as well: its
+    /// own confirmation is answered by `--yes`, so `trust $NR --yes` with an empty $NR would otherwise trust every new
+    /// key of the lab without a question (AUDIT REV-32).
     func targetsOrAllAtTerminal(_ spec: String?, command: String) -> [Machine] {
         guard spec == nil else { return targets(spec) }
         guard isatty(STDIN_FILENO) != 0 else {
@@ -196,7 +219,17 @@ struct CLI: Sendable {
         }
         let list = targets(nil, defaultAll: true)
         Console.err("Nie podano komputerów – \(command) na wszystkich: \(names(list)).")
+        guard Self.askAtTerminal("Wykonać na wszystkich? [t/N] ") else {
+            fail("Przerwano – nic nie zostało wykonane. W skryptach podaj komputery, np. all albo 4.")
+        }
         return list
+    }
+
+    /// A question at the terminal that only the person at the keyboard answers (`--yes` does not): true for „t”.
+    static func askAtTerminal(_ question: String) -> Bool {
+        Console.err(question, terminator: "")
+        let answer = (readLine() ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["t", "tak", "y", "yes"].contains(answer)
     }
 
     func single(_ spec: String?, usage text: String) -> Machine {
@@ -218,7 +251,7 @@ struct CLI: Sendable {
             usageError("\(question)\nTo polecenie wymaga potwierdzenia – dodaj --yes.")
         }
         Console.err("\(question) Kontynuować? [t/N] ", terminator: "")
-        let answer = (readLine() ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+        let answer = (readLine() ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard ["t", "tak", "y", "yes"].contains(answer) else { fail("Przerwano.") }
     }
 
@@ -229,17 +262,23 @@ struct CLI: Sendable {
 
     func header(_ host: Machine) -> String { "== \(host.name) (\(host.destination)) ==" }
 
-    /// Streams one remote script per host under a header; the common shape of most commands.
+    /// Streams one remote script per host under a header; the common shape of most commands. `note` may add a
+    /// hint for the terminal under a host's result – below the reason of a failure (AUDIT REV-38) – e.g. the
+    /// cmcrctl option for what the script skipped.
     func runScript(on list: [Machine], jobs: Int? = nil, passThrough: Bool = false,
                    header makeHeader: (@Sendable (Machine) -> String)? = nil,
+                   note: (@Sendable (Machine, CommandResult) -> String?)? = nil,
                    _ script: @escaping @Sendable (Machine) -> RemoteScript) async -> Int32 {
         let ssh = sshSettings()
         let defaultHeader = header
         let codes = await runHosts(list, jobs: jobs ?? args.jobs ?? 1, prefixLines: prefixLines) { io in
             io.out(makeHeader?(io.host) ?? defaultHeader(io.host))
-            let r = await SSH.run(script(io.host), on: io.host, password: Keychain.password(for: io.host),
-                                  settings: ssh, onOutput: io.stream)
-            return io.report(r, passThrough: passThrough)
+            // A registered job: Ctrl-C stops it on the iMac too (Interruption).
+            let r = await Interruption.shared.run(script(io.host), on: io.host, password: Keychain.password(for: io.host),
+                                                  settings: ssh, onOutput: io.stream)
+            let code = io.report(r, passThrough: passThrough)
+            if let text = note?(io.host, r) { io.err(text) }
+            return code
         }
         return combine(codes, passThrough: passThrough)
     }
@@ -323,12 +362,15 @@ struct CLI: Sendable {
         return combine(codes)
     }
 
-    /// Like the app: a MAC address reported by a running Mac is stored for Wake-on-LAN when none is set.
+    /// Like the app: a MAC address reported by a running Mac is stored for Wake-on-LAN when none is set – that of the
+    /// wired port when the Mac has one (`HostStatus.mac`), not of the default route, which may be Wi-Fi.
     func rememberMACs(_ list: [Machine], _ results: [CommandResult?], quiet: Bool) {
         var learned: [(host: Machine, mac: String)] = []
         for (h, r) in zip(list, results) where h.macAddress.isEmpty {
-            guard let r, r.succeeded, let mac = Parsers.keyValues(r.stdoutText)["mac"].flatMap(HostEntry.normalizedMAC)
-            else { continue }
+            guard let r, r.succeeded else { continue }
+            var status = HostStatus()
+            status.info = Parsers.keyValues(r.stdoutText)
+            guard let mac = status.mac.flatMap(HostEntry.normalizedMAC) else { continue }
             learned.append((h, mac))
         }
         guard !learned.isEmpty else { return }
@@ -347,8 +389,11 @@ struct CLI: Sendable {
             }
         }
         guard !updated.isEmpty else { return }
-        ConfigStore.saveHosts(current)
-        if !quiet { Console.err("Zapisano adres MAC (Wake-on-LAN): \(updated.joined(separator: ", "))") }
+        if let problem = ConfigStore.saveHosts(current) {
+            Console.err("Nie zapisano adresu MAC (Wake-on-LAN): \(problem)")
+        } else if !quiet {
+            Console.err("Zapisano adres MAC (Wake-on-LAN): \(updated.joined(separator: ", "))")
+        }
     }
 
     func exec() async -> Int32 {
@@ -356,6 +401,18 @@ struct CLI: Sendable {
         guard let command = args[1] else { usageError("Podaj polecenie.") }
         let list = targetsOrAllAtTerminal(args[2], command: "exec")
         let asRoot = root
+        // As in the app (Polecenia): a root command that deletes folders, restarts, formats… is confirmed – at the
+        // terminal; scripts keep working as before and only get the warning.
+        let risks = CommandRisk.risks(in: command)
+        if CommandRisk.usesRoot(command, asRoot: asRoot), !risks.isEmpty {
+            let what = "Polecenie zawiera: \(risks.joined(separator: ", "))."
+            if isatty(STDIN_FILENO) != 0 {
+                confirm("\(what) Uruchomić je jako root na: \(names(list))?")
+            } else if !args.yes {
+                Console.err("Uwaga: p" + what.dropFirst() + " Wykonywane jako root na: \(names(list)).")
+            }
+        }
+        logAction(list)
         return await runScript(on: list, passThrough: true, header: { "Running command on \($0.destination) ..." }) { _ in
             RemoteScript(command, asRoot: asRoot)
         }
@@ -364,6 +421,7 @@ struct CLI: Sendable {
     func go() -> Never {
         args.expect("go", positional: 2)
         let h = single(args[1], usage: "Podaj numer komputera.")
+        if let message = SSH.refusalMessage(for: h) { fail(message) }
         let argv = ["ssh"] + SSH.interactiveArguments(for: h, settings: sshSettings())
         let cargs = argv.map { strdup($0) } + [nil]
         execv(SSH.sshPath, cargs)
@@ -378,21 +436,26 @@ struct CLI: Sendable {
         let list = targets(args[1])
         let ssh = sshSettings()
         let s = settings, asRoot = root
+        logAction(list)
         let codes = await runHosts(list, jobs: args.jobs ?? 1, prefixLines: prefixLines) { io in
             let h = io.host
             let items = Operations.conventionItems(base: s.localFolder, host: h)
             io.out("Pushing to \(h.destination) ... (\(plural(items.count, "element", "elementy", "elementów")))")
             if items.isEmpty { return ExitCode.success }
-            switch await Payload.make(items) {
-            case .failure(let e):
-                io.err("✘ \(h.name): \(e.localizedDescription)")
-                return ExitCode.failure
-            case .success(let payload):
-                defer { try? FileManager.default.removeItem(at: payload) }
-                let r = await Operations.push(payload: payload, to: h, destination: s.sharedFolder,
-                                              owner: asRoot ? s.studentUser : "", mode: "777", asRoot: asRoot,
-                                              password: Keychain.password(for: h), settings: ssh, onOutput: io.stream)
-                return io.report(r)
+            // A registered job: Ctrl-C stops the packing, the upload or the unpacking on the iMac (Interruption).
+            return await Interruption.shared.job(on: h) { handle in
+                switch await Payload.make(items, handle: handle) {
+                case .failure(let e):
+                    io.err("✘ \(h.name): \(e.localizedDescription)")
+                    return ExitCode.failure
+                case .success(let payload):
+                    defer { try? FileManager.default.removeItem(at: payload) }
+                    let r = await Operations.push(payload: payload, to: h, destination: s.studentFolder,
+                                                  owner: asRoot ? s.studentUser : "", mode: "777", asRoot: asRoot,
+                                                  password: Keychain.password(for: h), settings: ssh, handle: handle,
+                                                  onOutput: io.stream)
+                    return io.report(r)
+                }
             }
         }
         return combine(codes)
@@ -404,12 +467,16 @@ struct CLI: Sendable {
         let list = targets(args[1])
         let ssh = sshSettings()
         let s = settings, asRoot = root
+        logAction(list)
         let codes = await runHosts(list, jobs: args.jobs ?? 1, prefixLines: prefixLines) { io in
             let h = io.host
             io.out("Pulling from \(h.destination) ...")
             let dest = URL(fileURLWithPath: expandTilde(s.localFolder)).appendingPathComponent(h.folderKey)
-            let r = await Operations.pull(source: s.sharedFolder, from: h, into: dest, asRoot: asRoot,
-                                          password: Keychain.password(for: h), settings: ssh, onOutput: io.stream)
+            let r = await Interruption.shared.job(on: h) { handle in
+                await Operations.pull(source: s.studentFolder, from: h, into: dest, asRoot: asRoot,
+                                      password: Keychain.password(for: h), settings: ssh, handle: handle,
+                                      onOutput: io.stream)
+            }
             return io.report(r)
         }
         return combine(codes)
@@ -417,7 +484,8 @@ struct CLI: Sendable {
 
     func listFolder() async -> Int32 {
         args.expect("ls", options: Self.parallel.union(["--root"]), positional: 3)
-        guard let path = args[1] else { usageError("Użycie: cmcrctl ls ŚCIEŻKA KOMP [--root]") }
+        // {student} as in every other path option (collect --from, rm, get…); {console} is resolved on the iMac.
+        guard let path = args[1].map(settings.resolve) else { usageError("Użycie: cmcrctl ls ŚCIEŻKA KOMP [--root]") }
         let list = targets(args[2])
         let asRoot = root
         return await runScript(on: list) { _ in Scripts.listFolder(path, asRoot: asRoot) }
@@ -425,9 +493,10 @@ struct CLI: Sendable {
 
     func clean() async -> Int32 {
         args.expect("clean", options: Self.parallel, positional: 3)
-        guard let path = args[1] else { usageError("Użycie: cmcrctl clean ŚCIEŻKA KOMP") }
+        guard let path = args[1].map(settings.resolve) else { usageError("Użycie: cmcrctl clean ŚCIEŻKA KOMP") }
         let list = targets(args[2])
         confirm("Usunąć całą zawartość folderu \(path) na: \(names(list))?")
+        logAction(list)
         return await runScript(on: list) { _ in Scripts.cleanFolder(path) }
     }
 
@@ -455,6 +524,12 @@ struct CLI: Sendable {
         guard let app = args[1] else { usageError("Podaj nazwę aplikacji.") }
         let list = targetsOrAllAtTerminal(args[2], command: open ? "open-app" : "quit-app")
         let hard = force
+        // As in the app („Wymuś zamknięcie…”): killing the app loses the students' unsaved work.
+        if !open && hard {
+            confirm("Wymusić zamknięcie „\(app)” na: \(names(list))? Aplikacja zostanie natychmiast zakończona – "
+                    + "niezapisana praca uczniów przepadnie.")
+        }
+        logAction(list)
         return await runScript(on: list, header: { "\($0.name):" }) { _ in
             open ? Scripts.launchApp(app) : Scripts.quitApp(app, force: hard)
         }
@@ -464,15 +539,20 @@ struct CLI: Sendable {
         args.expect("open-url", options: Self.parallel, positional: 3)
         guard let url = args[1] else { usageError("Użycie: cmcrctl open-url ADRES KOMP") }
         let list = targets(args[2])
+        logAction(list)
         return await runScript(on: list) { _ in Scripts.openURL(url) }
     }
 
+    /// A PID means something on one Mac only (like the app, which kills a process on the Mac its list came from):
+    /// the same number on the other Macs is some other process, e.g. a student's app with unsaved work.
     func kill() async -> Int32 {
-        args.expect("kill", options: Self.parallel.union(["--force"]), positional: 3)
-        guard let raw = args[1], let pid = Int(raw), pid > 1 else { usageError("Użycie: cmcrctl kill PID KOMP [--force]") }
-        let list = targets(args[2])
+        let use = "Użycie: cmcrctl kill PID nr [--force]"
+        args.expect("kill", options: ["--force"], positional: 3)
+        guard let raw = args[1], let pid = Int(raw), pid > 1 else { usageError(use) }
+        let h = single(args[2], usage: use)
         let hard = force
-        return await runScript(on: list) { _ in Scripts.killProcess(pid, force: hard) }
+        logAction([h])
+        return await runScript(on: [h]) { _ in Scripts.killProcess(pid, force: hard) }
     }
 
     func uninstall() async -> Int32 {
@@ -480,6 +560,7 @@ struct CLI: Sendable {
         guard let path = args[1] else { usageError("Użycie: cmcrctl uninstall /Applications/Nazwa.app KOMP") }
         let list = targets(args[2])
         confirm("Usunąć \(path) na: \(names(list))?")
+        logAction(list)
         return await runScript(on: list) { _ in Scripts.uninstallApp(path) }
     }
 
@@ -489,6 +570,7 @@ struct CLI: Sendable {
             usageError("Użycie: cmcrctl brew \"argumenty\" KOMP, np. cmcrctl brew \"install --cask firefox\" all")
         }
         let list = targets(args[2])
+        logAction(list)
         return await runScript(on: list) { _ in Scripts.brew(arguments) }
     }
 
@@ -499,7 +581,14 @@ struct CLI: Sendable {
         let shot = await Operations.screenshot(of: h, maxSize: settings.screenshotMaxSize, settings: settings,
                                                notify: settings.notifyOnObserve, password: Keychain.password(for: h),
                                                sshSettings: sshSettings())
+        // The actions log, as for the app's preview: whose screen was seen and whether the user was notified.
+        let logPrefix = "Podgląd ekranu (cmcrctl screenshot) → \(h.name)"
+        if case .notifyFailed(let user, let detail) = shot.issue {
+            ConfigStore.log("\(logPrefix): nie udało się powiadomić użytkownika \(user) (\(detail)) – obraz nie jest pobierany")
+        }
+        if let user = shot.notifiedUser { ConfigStore.log("\(logPrefix): powiadomiono użytkownika \(user)") }
         guard let data = shot.imageData else { fail(shot.message ?? "Błąd") }
+        ConfigStore.log("\(logPrefix) (użytkownik \(shot.user ?? "?"))")
         do {
             try data.write(to: URL(fileURLWithPath: expandTilde(file)))
         } catch {
@@ -523,29 +612,43 @@ struct CLI: Sendable {
                 let h = io.host
                 let r = await SSH.run(Scripts.listUpdates(), on: h, password: Keychain.password(for: h), settings: ssh)
                 guard r.succeeded else { return io.report(r) }
-                let titles = Parsers.softwareUpdates(r.stdoutText)
-                if !titles.isEmpty {
+                switch Parsers.softwareUpdateCheck(r) {
+                case .available(let titles):
                     io.out("\(h.name): \(plural(titles.count, "aktualizacja", "aktualizacje", "aktualizacji"))")
                     for t in titles { io.out("  • \(TerminalText.escape(t, keepBackslash: true))") }
-                } else if r.stdoutText.contains("No new software available") {
+                case .upToDate:
                     io.out("\(h.name): brak aktualizacji")
-                } else {
-                    io.out("\(h.name): brak rozpoznanych aktualizacji, odpowiedź softwareupdate:")
+                case .failed:
+                    // Same rule as the app: without "No new software available" the check did not succeed.
+                    io.out("\(h.name): nie udało się sprawdzić aktualizacji, odpowiedź softwareupdate:")
                     for line in Parsers.lines(r.stdoutText) { io.out("  \(TerminalText.escape(line, keepBackslash: true))") }
+                    return ExitCode.failure
                 }
                 return ExitCode.success
             }
             return combine(codes)
         case "install":
-            args.expect("updates install", options: Self.parallel.union(["--restart", "--download", "--recommended"]),
-                        positional: 3)
+            args.expect("updates install",
+                        options: Self.parallel.union(["--restart", "--download", "--recommended", "--major"]), positional: 3)
             let list = targets(args[2])
             let restart = args.has("--restart"), download = args.has("--download"), recommended = args.has("--recommended")
-            if restart && !download {
-                confirm("Zainstalować aktualizacje z ponownym uruchomieniem na: \(names(list))? Zalogowani użytkownicy stracą niezapisane dane.")
+            // „Pozwól na nową wersję macOS” of the app: a new major version is installed only when asked for.
+            let major = args.has("--major")
+            if !download && (restart || major) {
+                confirm("Zainstalować aktualizacje" + (major ? " razem z nową wersją macOS (przejście na nowy system)" : "")
+                        + (restart ? " z ponownym uruchomieniem" : "") + " na: \(names(list))?"
+                        + (restart ? " Zalogowani użytkownicy stracą niezapisane dane." : "")
+                        + (major ? " Nowej wersji systemu nie da się potem cofnąć." : ""))
             }
-            return await runScript(on: list) { _ in
-                Scripts.installUpdates(restart: restart, recommendedOnly: recommended, downloadOnly: download)
+            // The script names the app's switch; at the terminal the same choice is --major.
+            let hint: @Sendable (Machine, CommandResult) -> String? = { _, r in
+                r.stdoutText.contains("Pominięto przejście na nową wersję systemu")
+                    ? "  (cmcrctl: dodaj --major, aby zainstalować także nową wersję macOS)" : nil
+            }
+            logAction(list)
+            return await runScript(on: list, note: major ? nil : hint) { _ in
+                Scripts.installUpdates(restart: restart, recommendedOnly: recommended, downloadOnly: download,
+                                       allowMajorUpgrade: major)
             }
         case "history":
             args.expect("updates history", options: Self.parallel, positional: 3)
@@ -565,14 +668,34 @@ struct CLI: Sendable {
         }
         let list = targets(args[3])
         let dialog = !args.has("--notification")
+        logAction(list)
         return await runScript(on: list) { _ in Scripts.message(title: title, text: text, asDialog: dialog) }
     }
 
+    /// Like the app's „Wyloguj”: loginwindow is asked to log out and apps may ask to save (or cancel). `--force` is
+    /// „Wyloguj natychmiast”: the sessions end at once (launchctl bootout), unsaved work is lost.
     func logout() async -> Int32 {
-        args.expect("logout", options: Self.parallel, positional: 2)
+        args.expect("logout", options: Self.parallel.union(["--force"]), positional: 2)
         let list = targets(args[1])
-        confirm("Wylogować użytkowników na: \(names(list))? Niezapisane dane przepadną.")
-        return await runScript(on: list) { _ in Scripts.logoutUser() }
+        let now = force
+        if now {
+            confirm("Wylogować natychmiast użytkowników na: \(names(list))? Niezapisane dane przepadną.")
+        } else {
+            confirm("Poprosić o wylogowanie użytkowników na: \(names(list))? Aplikacje mogą zapytać o zapisanie zmian "
+                    + "(albo wstrzymać wylogowanie).")
+        }
+        // When the request was refused or did not end every session, the script itself points to the app's „Wyloguj
+        // natychmiast”; at the terminal that is --force. Not for a Mac that was not reached (off, asleep, unknown key,
+        // wrong password, timeout): --force would fail the same way (AUDIT REV-38). The name is quoted for the shell.
+        let hint: @Sendable (Machine, CommandResult) -> String? = { h, r in
+            guard r.started, !r.cancelled, !r.timedOut, r.exitCode == 1, r.stderrText.contains("Wyloguj natychmiast") else {
+                return nil
+            }
+            return "  (cmcrctl \(CommandLineLog.describe(["logout", h.name, "--force"])) – wylogowanie natychmiastowe, "
+                + "niezapisane dane przepadną)"
+        }
+        logAction(list)
+        return await runScript(on: list, note: now ? nil : hint) { _ in Scripts.logoutUser(force: now) }
     }
 
     func power() async -> Int32 {
@@ -588,40 +711,83 @@ struct CLI: Sendable {
         if action != .displaySleep {
             confirm("\(action.label): \(names(list))? Zalogowani użytkownicy mogą stracić niezapisane dane.")
         }
+        logAction(list)
         return await runScript(on: list) { _ in Scripts.power(action) }
     }
 
-    func wake() -> Int32 {
-        args.expect("wake", options: ["--dry-run"], positional: 2)
+    /// Wake-on-LAN as in the app: packets for the Ethernet MAC the Mac reported last (status-cache.json of the app),
+    /// the MAC on the list and the default route's MAC, also to the broadcast of the subnet it was last seen in.
+    /// `--wait`: every Mac at once waits (up to 3 min, resending) until it answers over SSH.
+    func wake() async -> Int32 {
+        args.expect("wake", options: ["--dry-run", "--wait"], positional: 2)
         let list = targets(args[1])
-        let dryRun = args.has("--dry-run")
-        var code = ExitCode.success
-        for h in list {
-            guard !h.macAddress.isEmpty else {
-                Console.err("✘ \(h.name): brak adresu MAC – uruchom „cmcrctl status”, gdy komputer jest włączony, lub ustaw: cmcrctl hosts set \(h.name) --mac aa:bb:cc:dd:ee:ff.")
-                code = ExitCode.failure
-                continue
+        let dryRun = args.has("--dry-run"), wait = args.has("--wait")
+        if dryRun && wait { usageError("Opcja --wait nie działa z --dry-run (próba niczego nie wysyła).") }
+        if !dryRun { logAction(list) }
+        let snapshots = ClassroomStore.loadSnapshots()
+        func target(_ h: Machine) -> LessonRunner.Host {
+            let info = snapshots[h.id]?.info ?? [:]
+            return LessonRunner.Host(machine: h, password: Keychain.password(for: h),
+                                     macs: WakeOnLAN.candidateMACs(listed: h.macAddress, lastStatus: info),
+                                     extraBroadcasts: WakeOnLAN.lastSeenBroadcasts(info))
+        }
+        /// Sends the packets for one Mac; the line to print and whether it worked.
+        @Sendable func send(_ t: LessonRunner.Host) -> (String, Bool) {
+            let h = t.machine
+            guard !t.macs.isEmpty else {
+                let why = h.macAddress.isEmpty ? "brak adresu MAC" : "niepoprawny adres MAC „\(h.macAddress)”"
+                return ("✘ \(h.name): \(why) – uruchom „cmcrctl status”, gdy komputer jest włączony, lub ustaw: "
+                        + "cmcrctl hosts set \(h.name) --mac aa:bb:cc:dd:ee:ff.", false)
             }
-            guard let bytes = WakeOnLAN.parseMAC(h.macAddress) else {
-                Console.err("✘ \(h.name): niepoprawny adres MAC „\(h.macAddress)”.")
-                code = ExitCode.failure
-                continue
-            }
-            let mac = bytes.map { String(format: "%02x", $0) }.joined(separator: ":")
+            let extra = t.extraBroadcasts.isEmpty ? "" : " (także na \(t.extraBroadcasts.joined(separator: ", ")))"
             if dryRun {
-                Console.out("\(h.name): pakiet Wake-on-LAN dla \(mac) (próba – nic nie wysłano)")
-                continue
+                return ("\(h.name): pakiet Wake-on-LAN dla \(t.macs.joined(separator: ", "))\(extra) (próba – nic nie wysłano)", true)
             }
-            do {
-                for _ in 0..<3 { try WakeOnLAN.wake(mac: h.macAddress) }
-                Console.out("✔ \(h.name): wysłano pakiet Wake-on-LAN do \(mac)")
-            } catch {
-                Console.err("✘ \(h.name): \(error.localizedDescription)")
-                code = ExitCode.failure
+            var sent: [String] = []
+            var failure: String?
+            for mac in t.macs {
+                do {
+                    try WakeOnLAN.wake(mac: mac, extraBroadcasts: t.extraBroadcasts)
+                    sent.append(mac)
+                } catch {
+                    failure = error.localizedDescription
+                }
             }
+            guard !sent.isEmpty else { return ("✘ \(h.name): \(failure ?? "nie wysłano pakietu")", false) }
+            return ("✔ \(h.name): wysłano pakiet Wake-on-LAN do \(sent.joined(separator: ", "))\(extra)", true)
+        }
+        var code = ExitCode.success
+        if wait {
+            // Packets first for every Mac, then all of them wait at once (a Mac without a MAC may still be on).
+            let hosts = list.map(target)
+            let ssh = sshSettings()
+            let codes = await runHosts(list, jobs: max(1, list.count), prefixLines: false) { io in
+                let t = hosts[io.index]
+                if !t.macs.isEmpty {
+                    let (line, ok) = send(t)
+                    if ok { io.out(line) } else { io.err(line) }
+                }
+                switch await LessonRunner.wake(t, ssh: ssh, minutes: 3, handle: nil, onOutput: nil) {
+                case .done(let s):
+                    io.out("✔ \(t.machine.name): \(s)")
+                    return ExitCode.success
+                case .failed(let s), .skipped(let s):
+                    io.err("✘ \(t.machine.name): \(s)")
+                    return ExitCode.failure
+                default:
+                    return ExitCode.failure
+                }
+            }
+            return combine(codes)
+        }
+        for h in list {
+            let (line, ok) = send(target(h))
+            if ok { Console.out(line) } else { Console.err(line) }
+            if !ok { code = ExitCode.failure }
         }
         if code == ExitCode.success && !dryRun {
-            Console.err("Wake-on-LAN działa przy połączeniu Ethernet i włączonej opcji „Budź przy dostępie do sieci”.")
+            Console.err("Wake-on-LAN działa przy połączeniu Ethernet i włączonej opcji „Budź przy dostępie do sieci”; "
+                        + "--wait czeka, aż komputery odpowiedzą.")
         }
         return code
     }
@@ -634,10 +800,11 @@ struct CLI: Sendable {
         let problems = await ScriptCatalog.syntaxCheck(samples)
         for p in problems { Console.err("✘ \(p)") }
         guard problems.isEmpty else {
-            Console.err("selftest: \(problems.count) błędów składni w skryptach zdalnych.")
+            Console.err("selftest: \(Polish.count(problems.count, "błąd", "błędy", "błędów")) składni w skryptach zdalnych.")
             return ExitCode.failure
         }
-        Console.out("✔ selftest: \(samples.count) skryptów (treść, tryb użytkownika i root) – składnia bash poprawna.")
+        Console.out("✔ selftest: \(Polish.count(samples.count, "skrypt", "skrypty", "skryptów")) (treść, tryb użytkownika i root) "
+                    + "– składnia bash poprawna.")
         return ExitCode.success
     }
 }

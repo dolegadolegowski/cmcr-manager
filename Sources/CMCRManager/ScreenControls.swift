@@ -6,6 +6,7 @@ struct ScreenRestrictionsBar: View {
     enum Style { case full, short, icons }
 
     @EnvironmentObject var model: AppModel
+    @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
     var style = Style.full
 
@@ -26,11 +27,8 @@ struct ScreenRestrictionsBar: View {
         return HStack(spacing: short ? 12 : 16) {
             item("eye", short ? "Tylko podgląd" : "Tylko podgląd – bez sterowania",
                  "Aplikacja pokazuje obraz ekranu; nie może klikać ani pisać na komputerze ucznia.")
-            item(s.notifyOnObserve ? "bell.badge" : "bell.slash",
-                 s.notifyOnObserve ? (short ? "Z powiadomieniem" : "Uczeń dostaje powiadomienie") : "Bez powiadomienia",
-                 s.notifyOnObserve
-                    ? "Na początku podglądu uczeń widzi „Administrator rozpoczął podgląd Twojego ekranu” – raz na sesję podglądu i ponownie, gdy zaloguje się inna osoba."
-                    : "Uczeń nie jest powiadamiany o podglądzie.")
+            item("bell.badge", short ? "Z powiadomieniem" : "Uczeń dostaje powiadomienie",
+                 "Na początku podglądu uczeń widzi „Administrator rozpoczął podgląd Twojego ekranu” – raz na sesję podglądu i ponownie po każdym zalogowaniu. Obraz jest pobierany dopiero, gdy komunikat jest na odblokowanym ekranie.")
             item("person.badge.shield.checkmark",
                  s.observeOnlyStandardAccounts ? (short ? "Konta standardowe" : "Tylko konta standardowe")
                     : (short ? "Wszystkie konta" : "Także konta administratorów"),
@@ -45,13 +43,14 @@ struct ScreenRestrictionsBar: View {
                      "Największa szerokość miniatury; powiększony ekran może mieć do \(max(1600, s.screenshotMaxSize)) px.")
             }
             Spacer(minLength: 8)
+            // Straight to the preview settings: Konfiguracja opened on its first tab, far from them (AUDIT UI-16).
             Button(short ? "Zmień…" : "Zmień ograniczenia…") {
-                model.section = .setup
-                MainWindow.bringToFront(openWindow)
+                UserDefaults.standard.set(SettingsTab.screens.rawValue, forKey: SettingsTab.storageKey)
+                openSettings()
             }
             .buttonStyle(.link)
             .fixedSize()
-            .help("Ograniczenia podglądu ustawisz w Konfiguracji")
+            .help("Otwórz Ustawienia › Podgląd ekranów")
         }
     }
 
@@ -132,7 +131,7 @@ struct ScreenSizeSlider: View {
         Slider(value: $tileWidth, in: range) {
             Text("Rozmiar ekranów")
         } minimumValueLabel: {
-            Image(systemName: "square.grid.3x3").accessibilityLabel("Mniejsze")
+            Image(systemName: "rectangle.grid.3x2").accessibilityLabel("Mniejsze")
         } maximumValueLabel: {
             Image(systemName: "square").accessibilityLabel("Większe")
         }
@@ -165,7 +164,7 @@ struct MessageComposer: View {
                 Spacer()
                 Button("Anuluj", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button(action: send) { Label("Wyślij wiadomość", systemImage: "paperplane.fill") }
+                Button(action: send) { Label("Wyślij wiadomość", systemImage: "text.bubble") }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -195,6 +194,7 @@ struct ScreenBatchBanner: View {
 }
 
 private struct ScreenBatchBannerContent: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var batch: Batch
@@ -214,11 +214,11 @@ private struct ScreenBatchBannerContent: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Szczegóły") {
-                    model.section = .jobs
+                    model.showJobs(batch.id)                // this action, not the one viewed last (AUDIT UI-17)
                     MainWindow.bringToFront(openWindow)
                 }
                 .buttonStyle(.link)
-                .help("Pokaż wyniki w sekcji Zadania")
+                .help("Pokaż wyniki w dziale Zadania")
                 Button { hidden = batch.id } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
                     .help("Ukryj")
@@ -235,11 +235,11 @@ private struct ScreenBatchBannerContent: View {
                     content.background(.regularMaterial, in: Capsule())
                 }
             }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             .task(id: batch.finished) {
                 guard batch.finished else { return }
                 try? await Task.sleep(nanoseconds: 8_000_000_000)
-                withAnimation { hidden = batch.id }
+                withAnimation(reduceMotion ? nil : .default) { hidden = batch.id }
             }
         }
     }
