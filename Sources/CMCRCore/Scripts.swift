@@ -5,6 +5,8 @@ public enum ScriptCode {
     public static let noConsoleUser: Int32 = 3
     public static let observeDenied: Int32 = 4
     public static let captureFailed: Int32 = 5
+    /// CMCR Screen Agent is missing, does not answer or is not the installed one (docs/screen-agent.md).
+    public static let agentUnavailable: Int32 = 9
 }
 
 /// Builders for every remote operation. All user-provided values are embedded with `shQuote`.

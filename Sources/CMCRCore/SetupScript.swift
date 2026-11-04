@@ -36,6 +36,9 @@ public struct SetupOptions: Codable, Equatable, Sendable {
     public var rosetta = false
     public var updates: UpdatePolicy = .unchanged
     public var fixFirewall = false
+    /// Install or update CMCR Screen Agent (the screen preview service) before the setup script runs. App and
+    /// `cmcrctl setup` only – the bash script never sees it (the agent ships inside the app, not in the script).
+    public var screenAgent = true
 
     public init() {}
 
@@ -67,6 +70,7 @@ public struct SetupOptions: Codable, Equatable, Sendable {
         rosetta = v(.rosetta, d.rosetta)
         updates = v(.updates, d.updates)
         fixFirewall = v(.fixFirewall, d.fixFirewall)
+        screenAgent = v(.screenAgent, d.screenAgent)
     }
 
     /// Value of `--power-schedule`, or `nil` to leave the schedule as it is.

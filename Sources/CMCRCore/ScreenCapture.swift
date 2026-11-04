@@ -97,6 +97,14 @@ public enum ScreenIssue: Equatable, Sendable {
     case sudoPasswordWrong
     case sudoNotPermitted
     case captureFailed(String)
+    /// CMCR Screen Agent is not installed on this iMac (docs/screen-agent.md).
+    case agentMissing
+    /// The agent is installed but did not answer in the user's session, even after launchd restarted it (detail).
+    case agentDown(String)
+    /// Something other than the installed agent answered on its socket – no image is taken from it (detail).
+    case agentUntrusted(String)
+    /// The agent has no Screen Recording permission on this iMac yet.
+    case agentPermission
     /// The observation notice could not be shown to this user, so the screen is not captured (user, detail).
     case notifyFailed(String, String)
     case connection(Reachability, String)
@@ -124,7 +132,11 @@ public enum ScreenIssue: Equatable, Sendable {
         case .sudoPasswordMissing: return "Brak hasła administratora"
         case .sudoPasswordWrong: return "Błędne hasło administratora"
         case .sudoNotPermitted: return "Konto bez uprawnień sudo"
-        case .captureFailed: return "Brak uprawnienia do nagrywania ekranu"
+        case .captureFailed: return "Zrzut ekranu nieudany"
+        case .agentMissing: return "Brak usługi podglądu"
+        case .agentDown: return "Usługa podglądu nie odpowiada"
+        case .agentUntrusted: return "Niezaufana usługa podglądu"
+        case .agentPermission: return "Brak uprawnienia do nagrywania ekranu"
         case .notifyFailed: return "Nie udało się powiadomić ucznia"
         case .connection(let r, _): return r == .offline ? "Komputer nie odpowiada" : r == .authFailed ? "Odmowa dostępu" : "Błąd połączenia"
         case .other: return "Błąd podglądu"
@@ -146,8 +158,18 @@ public enum ScreenIssue: Equatable, Sendable {
         case .sudoNotPermitted:
             return "Konto, którym łączy się aplikacja, nie może używać sudo (nie jest administratorem tego iMaca)."
         case .captureFailed(let detail):
-            let base = "Zrzut ekranu nieudany. Na tym iMacu nadaj sesjom SSH uprawnienie „Nagrywanie ekranu i dźwięku systemowego”: Ustawienia systemowe › Prywatność i ochrona › „+” › /usr/libexec/sshd-keygen-wrapper (w nowszych macOS może być potrzebne także /usr/libexec/sshd-session). Konfiguracja › Przygotowanie iMaców pokazuje, czy działa."
+            let base = "Usługa podglądu nie zrobiła zrzutu ekranu."
             return detail.isEmpty ? base : "\(base) (\(detail))"
+        case .agentMissing:
+            return "Na tym iMacu nie ma usługi podglądu ekranu (\(ScreenAgentInfo.displayName)). Zainstaluj ją: Konfiguracja › Przygotowanie iMaców › Szybkie naprawy › Zainstaluj usługę podglądu (albo Skonfiguruj zaznaczone)."
+        case .agentDown(let detail):
+            let base = "Usługa podglądu (\(ScreenAgentInfo.displayName)) nie odpowiada w sesji zalogowanego użytkownika, także po ponownym uruchomieniu. Zainstaluj ją ponownie w Konfiguracja › Przygotowanie iMaców."
+            return detail.isEmpty ? base : "\(base) (\(detail))"
+        case .agentUntrusted(let detail):
+            let base = "Na gnieździe usługi podglądu odpowiada inny program niż zainstalowana usługa – obraz nie jest pobierany. Zainstaluj usługę ponownie w Konfiguracja › Przygotowanie iMaców."
+            return detail.isEmpty ? base : "\(base) (\(detail))"
+        case .agentPermission:
+            return "Usługa podglądu nie ma jeszcze uprawnienia do nagrywania ekranu. Przy tym iMacu: Ustawienia systemowe › Prywatność i ochrona › Nagrywanie ekranu i dźwięku systemowego › włącz „\(ScreenAgentInfo.displayName)”. Konfiguracja › Przygotowanie iMaców › „Poproś o uprawnienie” dodaje usługę do tej listy i pokazuje okno macOS przy komputerze."
         case .notifyFailed(let user, let detail):
             let base = "Na ekranie użytkownika \(user) nie udało się wyświetlić informacji o podglądzie, więc obraz nie jest pobierany. Kolejna próba przy następnym odświeżeniu."
             return detail.isEmpty ? base : "\(base) (\(detail))"
@@ -162,6 +184,9 @@ public enum ScreenIssue: Equatable, Sendable {
         case .userNotAllowed, .adminAccount: return "eye.slash"
         case .sudoPasswordMissing, .sudoPasswordWrong, .sudoNotPermitted: return "key.slash"
         case .captureFailed: return "rectangle.dashed.badge.record"
+        case .agentMissing, .agentDown: return "puzzlepiece.extension"
+        case .agentUntrusted: return "exclamationmark.shield"
+        case .agentPermission: return "rectangle.dashed.badge.record"
         case .notifyFailed: return "bell.slash"
         case .connection(let r, _): return r == .offline ? "wifi.slash" : "exclamationmark.triangle"
         case .other: return "exclamationmark.triangle"
@@ -174,7 +199,8 @@ public enum ScreenIssue: Equatable, Sendable {
         case .noUser: return ScriptCode.noConsoleUser
         case .userNotAllowed, .adminAccount: return ScriptCode.observeDenied
         case .sudoPasswordMissing, .sudoPasswordWrong, .sudoNotPermitted: return ScriptCode.captureSudoFailed
-        case .captureFailed: return ScriptCode.captureFailed
+        case .captureFailed, .agentPermission: return ScriptCode.captureFailed
+        case .agentMissing, .agentDown, .agentUntrusted: return ScriptCode.agentUnavailable
         case .notifyFailed: return ScriptCode.observeNotNotified
         case .connection, .other: return 1
         }
@@ -189,6 +215,10 @@ public enum ScreenIssue: Equatable, Sendable {
         case "sudo-wrong": self = .sudoPasswordWrong
         case "sudo-denied": self = .sudoNotPermitted
         case "capture": self = .captureFailed(detail)
+        case "agent-missing": self = .agentMissing
+        case "agent-down": self = .agentDown(detail)
+        case "agent-untrusted": self = .agentUntrusted(detail)
+        case "agent-perm": self = .agentPermission
         case "notify": self = .notifyFailed(user.isEmpty ? "?" : user, detail)
         case "error": self = .other(detail.isEmpty ? "Błąd skryptu podglądu." : detail)
         default: return nil
