@@ -135,6 +135,10 @@ if su_wait 20 su_a_running; then
   fi
   wait "$su_a" 2>/dev/null
   expect_not "przerwanie dołączonej: pierwsza nie dokończyła instalacji" "$(cat "$SUD/a.out")" "Done."
+  # The first job explains the stop it did not ask for, instead of a bare „kod 143”.
+  if grep -qE "Instalację przerwano|Instalacja została przerwana" "$SUD/a.out"; then
+    pass "przerwanie dołączonej: pierwsza wyjaśnia, że instalację przerwano"
+  else fail "przerwanie dołączonej: pierwsza bez wyjaśnienia" "$(cat "$SUD/a.out")"; fi
 else
   kill "$su_a" 2>/dev/null; wait "$su_a" 2>/dev/null
   fail "przerwanie dołączonej: pierwsza nie ruszyła" "$(cat "$SUD/a.out")"

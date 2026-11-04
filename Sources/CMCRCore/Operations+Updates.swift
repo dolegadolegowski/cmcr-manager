@@ -152,6 +152,13 @@ public extension Operations {
                                                 maxCapture: maxCapture))
     }
 
+    /// A started script ended by SIGTERM that this job did not send (the wrapper exits with 143): `cmcr_su_stop`, run by
+    /// another job that joined this run and was stopped, ends the run's whole process group, this session included.
+    static func stoppedFromElsewhere(_ r: CommandResult, handle: ProcessHandle?) -> Bool {
+        r.started && !r.cancelled && !r.timedOut && handle?.isCancelled != true
+            && (r.endCode == 143 || (r.endCode == nil && r.exitCode == 143))
+    }
+
     /// A started script whose session broke off under it: ssh's 255 without the script's own end (see `SSH.diagnose`).
     /// The script may still be running on the Mac.
     static func sessionBrokeOff(_ r: CommandResult) -> Bool {
@@ -198,6 +205,16 @@ public extension Operations {
         let (first, named) = await runFollowingMarker(script, first: true, remote: remote, onLaunch: launch,
                                                       onOutput: onOutput)
         launch.fire()
+        if stoppedFromElsewhere(first, handle: handle) {
+            // Another job's „Przerwij” stopped the run it joined – this one – together with this session: one more
+            // look says so, instead of a bare „kod 143”.
+            let (f, _) = await runFollowingMarker(Scripts.followUpdate(runID: named ?? run, replayLines: 1), first: false,
+                                                  remote: remote, onOutput: onOutput)
+            guard f.started, !f.cancelled else { return first }
+            var r = f
+            r.stdout = first.stdout + f.stdout
+            return r
+        }
         guard sessionBrokeOff(first) else { return first }
         onOutput?(.stderr, Data(("▸ Połączenie z komputerem zostało przerwane, ale instalacja trwa na nim dalej – "
                                  + "łączę się ponownie, aby śledzić jej postęp…\n").utf8))

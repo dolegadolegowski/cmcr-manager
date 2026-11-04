@@ -288,6 +288,26 @@ import Testing
         #expect(fake.scripts.count == 5)
     }
 
+    /// Another job that joined this run was stopped: this session ends with 143, and one more look says what happened.
+    @Test func aRunStoppedFromAnotherJobIsExplained() async {
+        let out = Collected()
+        let fake = FakeRemote([CommandResult(exitCode: 143, stdout: Data("CMCR:SU-RUN run-1\n→ macOS 27.2-26C1\n".utf8),
+                                             started: true),
+                               Self.ended(130, "CMCR:SU-RUN run-1\n✘ Instalację przerwano.\n")])
+        let r = await Operations.installUpdates(Self.script, run: "run-1", policy: Self.fast, handle: nil,
+                                                onOutput: out.output, remote: fake.remote)
+        #expect(r.exitCode == 130)
+        #expect(fake.scripts.count == 2)
+        #expect(fake.scripts[1].contains("RUN='run-1'"))
+        #expect(out.text.contains("Instalację przerwano."))
+        #expect(r.stdoutText == "→ macOS 27.2-26C1\n✘ Instalację przerwano.\n")
+        // This job's own „Przerwij”: no second look.
+        let handle = ProcessHandle()
+        handle.cancel()
+        #expect(!Operations.stoppedFromElsewhere(CommandResult(exitCode: 143, started: true), handle: handle))
+        #expect(!Operations.stoppedFromElsewhere(Self.ended(1, ""), handle: nil))
+    }
+
     final class Counter: @unchecked Sendable {
         private let lock = NSLock()
         private var n = 0
