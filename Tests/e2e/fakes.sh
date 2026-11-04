@@ -165,7 +165,9 @@ pmset() {
 # Detached update runs (Scripts+Updates.swift) keep their state here instead of /Library/Application Support/CMCR, and
 # wait only a moment for the restart a fake install never brings (real sudo resets both).
 export CMCR_SU_STATE_DIR="${CMCR_E2E_WORK:-/tmp/cmcr-e2e-state}/softwareupdate"
-export CMCR_SU_RESTART_WAIT="${CMCR_SU_RESTART_WAIT:-1}"
+# $CMCR_E2E_WORK/su.restart_wait: a longer wait for the restart (seconds; default 1).
+CMCR_SU_RESTART_WAIT="$(cat "${CMCR_E2E_WORK:-/nonexistent}/su.restart_wait" 2>/dev/null || echo 1)"
+export CMCR_SU_RESTART_WAIT
 
 # An install or download of the fake softwareupdate. Control files in $CMCR_E2E_WORK:
 #   softwareupdate.slow – seconds of "Downloading: N%" progress first (one line a second);
@@ -177,7 +179,7 @@ _e2e_su_run() {
     for ((i = 1; i <= n; i++)); do echo "Downloading: $((i * 100 / n)).00%"; sleep 1; done
   fi
   if [ -e "$w/softwareupdate.fail" ]; then cat "$w/softwareupdate.fail"; return 1; fi
-  echo "${1:-Done (fake).}"
+  echo "Done."
 }
 
 # kern.boottime and the system version from $CMCR_E2E_WORK/boottime and sw_vers.version / sw_vers.build when present:
@@ -225,7 +227,7 @@ EOF
       ;;
     *" --stdinpass "*)
       local pw; IFS= read -r pw
-      if [ "$pw" = "${CMCR_E2E_PASSWORD:-}" ]; then _e2e_log "softwareupdate stdinpass ok"; echo "Installing (fake)…"; _e2e_su_run "Done."
+      if [ "$pw" = "${CMCR_E2E_PASSWORD:-}" ]; then _e2e_log "softwareupdate stdinpass ok"; echo "Installing (fake)…"; _e2e_su_run
       else echo "Authentication failed" >&2; return 1; fi ;;
     *" --history "*)
       # Oldest first, as the real softwareupdate. Control file in $CMCR_E2E_WORK: history.count (number of entries).
@@ -233,7 +235,7 @@ EOF
       echo "Display Name   Version   Date"; echo "------------   -------   ----"
       for ((i = 1; i < n; i++)); do echo "Stara aktualizacja $i  1.$i      01.01.2020"; done
       echo "macOS Testowy  99.0      01.01.2026" ;;
-    *) _e2e_su_run ;;
+    *) echo "Installing (fake)…"; _e2e_su_run ;;
   esac
 }
 
@@ -379,11 +381,20 @@ stat() {
   fi
   command stat "$@"
 }
-# fake-no-volume-owner: the current user is listed as a crypto user that is not a volume owner.
+# `diskutil apfs listUsers`: the current user is a volume owner (whatever the account running the tests really is),
+# unless a control file in $CMCR_E2E_WORK says otherwise:
+#   fake-no-volume-owner – listed as a cryptographic user that is not a volume owner;
+#   fake-volume-owner-unlisted – not a cryptographic user at all (no Secure Token).
 diskutil() {
-  if [ "${1:-} ${2:-}" = "apfs listUsers" ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/fake-no-volume-owner" ]; then
-    local g; g="$(command dscl . -read "/Users/$(id -un)" GeneratedUID | awk '{print $2}')"
-    printf 'Cryptographic users for disk3s1s1 (2 found)\n|\n+-- %s\n|   Type: Local Open Directory User\n|   Volume Owner: No\n|\n+-- EBC6C064-0000-11AA-AA11-00306543ECAC\n    Type: Personal Recovery User\n    Volume Owner: Yes\n' "$g"
+  if [ "${1:-} ${2:-}" = "apfs listUsers" ]; then
+    local w="${CMCR_E2E_WORK:-/nonexistent}" g owner=Yes
+    g="$(command dscl . -read "/Users/$(id -un)" GeneratedUID | awk '{print $2}')"
+    [ -e "$w/fake-no-volume-owner" ] && owner=No
+    printf 'Cryptographic users for disk3s1s1 (2 found)\n|\n'
+    if [ ! -e "$w/fake-volume-owner-unlisted" ]; then
+      printf '+-- %s\n|   Type: Local Open Directory User\n|   Volume Owner: %s\n|\n' "$g" "$owner"
+    fi
+    printf '+-- EBC6C064-0000-11AA-AA11-00306543ECAC\n    Type: Personal Recovery User\n    Volume Owner: Yes\n'
     return 0
   fi
   case "${1:-} ${2:-}" in

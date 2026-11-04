@@ -10,7 +10,8 @@ mkdir -p "$SUD"
 su_reset() {
   rm -rf "$SU"
   rm -f "$WORK/softwareupdate.slow" "$WORK/softwareupdate.fail" "$WORK/softwareupdate.list" "$WORK/softwareupdate.list.rc" \
-    "$WORK/log.show" "$WORK/boottime" "$WORK/sw_vers.version" "$WORK/sw_vers.build"
+    "$WORK/log.show" "$WORK/boottime" "$WORK/sw_vers.version" "$WORK/sw_vers.build" "$WORK/su.restart_wait" \
+    "$WORK/fake-volume-owner-unlisted"
   clear_fakelog
 }
 su_wait() { # su_wait SECONDS COMMAND… – polls until the command succeeds
@@ -75,6 +76,90 @@ if su_wait 20 su_first_running; then
 else
   kill "$su_pid" 2>/dev/null; wait "$su_pid" 2>/dev/null
   fail "druga instalacja: pierwsza nie ruszyła" "$(cat "$SUD/first.out")"
+fi
+
+section "Aktualizacje macOS – druga instalacja śledzi dołączoną po zerwanym połączeniu"
+# The joining job follows the run it joined (its id comes with CMCR:SU-RUN), not the one it would have started.
+su_reset
+echo 8 > "$WORK/softwareupdate.slow"
+CMCR_PASSWORD="$PASSWORD" "$CTL" updates install 1 >"$SUD/a.out" 2>&1 &
+su_a=$!
+su_a_running() { grep -q "Downloading:" "$SUD/a.out" 2>/dev/null; }
+if su_wait 20 su_a_running; then
+  CMCR_PASSWORD="$PASSWORD" "$CTL" updates install 1 >"$SUD/b.out" 2>&1 &
+  su_b=$!
+  su_b_joined() { grep -q "trwa już" "$SUD/b.out" 2>/dev/null; }
+  if su_wait 20 su_b_joined; then
+    su_sock="$(find "$WORK/mux" -type s 2>/dev/null | head -n 1)"
+    ssh -S "$su_sock" -O exit cmcr-e2e >/dev/null 2>&1
+    wait "$su_b"; code=$?
+    out="$(cat "$SUD/b.out")"
+    expect_code "dołączona po zerwaniu: kod 0" "$code" 0 "$out"
+    expect "dołączona po zerwaniu: śledzi dołączoną instalację do końca" "$out" "instalacja trwa na nim dalej" "Done."
+    expect_not "dołączona po zerwaniu: bez szukania własnej instalacji" "$out" "Nie ma na komputerze śladu"
+    expect_not "dołączona po zerwaniu: znacznik usunięty z wyniku" "$out" "CMCR:SU-RUN"
+  else
+    kill "$su_b" 2>/dev/null; wait "$su_b" 2>/dev/null
+    fail "dołączona po zerwaniu: druga instalacja nie dołączyła" "$(cat "$SUD/b.out")"
+  fi
+  wait "$su_a"; code=$?
+  expect_code "dołączona po zerwaniu: pierwsza – kod 0" "$code" 0 "$(cat "$SUD/a.out")"
+else
+  kill "$su_a" 2>/dev/null; wait "$su_a" 2>/dev/null
+  fail "dołączona po zerwaniu: pierwsza nie ruszyła" "$(cat "$SUD/a.out")"
+fi
+
+section "Aktualizacje macOS – przerwanie dołączonej instalacji zatrzymuje ją na komputerze"
+su_reset
+echo 8 > "$WORK/softwareupdate.slow"
+CMCR_PASSWORD="$PASSWORD" "$CTL" updates install 1 >"$SUD/a.out" 2>&1 &
+su_a=$!
+if su_wait 20 su_a_running; then
+  CMCR_PASSWORD="$PASSWORD" "$CTL" updates install 1 >"$SUD/b.out" 2>&1 &
+  su_b=$!
+  if su_wait 20 su_b_joined; then
+    kill -INT "$su_b"
+    wait "$su_b"; code=$?
+    expect_code "przerwanie dołączonej: kod 130" "$code" 130 "$(cat "$SUD/b.out")"
+    su_a_ended() { ! kill -0 "$su_a" 2>/dev/null; }
+    su_wait 10 su_a_ended
+    run_pid="$(awk '{print $2}' "$SU/runner" 2>/dev/null)"
+    if [ -n "$run_pid" ] && kill -0 "$run_pid" 2>/dev/null; then fail "przerwanie dołączonej: instalacja nadal działa na komputerze" "$(ps -p "$run_pid")"
+    else pass "przerwanie dołączonej: instalacja zatrzymana na komputerze"; fi
+    out="$(ctl updates status 1)"
+    expect "przerwanie dołączonej: stan instalacji – przerwano" "$out" "Instalację przerwano."
+  else
+    kill "$su_b" 2>/dev/null; wait "$su_b" 2>/dev/null
+    fail "przerwanie dołączonej: druga instalacja nie dołączyła" "$(cat "$SUD/b.out")"
+  fi
+  wait "$su_a" 2>/dev/null
+  expect_not "przerwanie dołączonej: pierwsza nie dokończyła instalacji" "$(cat "$SUD/a.out")" "Done."
+else
+  kill "$su_a" 2>/dev/null; wait "$su_a" 2>/dev/null
+  fail "przerwanie dołączonej: pierwsza nie ruszyła" "$(cat "$SUD/a.out")"
+fi
+
+section "Aktualizacje macOS – instalacja nie dołącza do samego pobierania"
+su_reset
+echo 6 > "$WORK/softwareupdate.slow"
+CMCR_PASSWORD="$PASSWORD" "$CTL" updates install 1 --download >"$SUD/dl.out" 2>&1 &
+su_a=$!
+su_dl_running() { grep -q "Downloading:" "$SUD/dl.out" 2>/dev/null; }
+if su_wait 20 su_dl_running; then
+  out="$(ctlpw _builder install-updates 1 --restart)"; code=$?
+  expect_code "instalacja w trakcie pobierania: odmowa – kod 7" "$code" 7 "$out"
+  expect "instalacja w trakcie pobierania: co trwa i co zrobić" "$out" "trwa już pobieranie aktualizacji (bez instalacji)" \
+    "niczego nie zainstalowano"
+  expect_not "instalacja w trakcie pobierania: bez etykiet jak zainstalowanych" "$out" "→ Safari"
+  wait "$su_a"; code=$?
+  out="$(cat "$SUD/dl.out")"
+  expect_code "samo pobieranie: kod 0" "$code" 0 "$out"
+  expect "samo pobieranie: etykiety jako pobrane (↓), nie zainstalowane (→)" "$out" "↓ Safari99.1-99.1"
+  expect_not "samo pobieranie: bez „→ etykieta”" "$out" "→ Safari99.1-99.1"
+  expect_not "instalacja w trakcie pobierania: nic nie zainstalowano" "$(fakelog)" "softwareupdate --install"
+else
+  kill "$su_a" 2>/dev/null; wait "$su_a" 2>/dev/null
+  fail "samo pobieranie nie ruszyło" "$(cat "$SUD/dl.out")"
 fi
 
 section "Aktualizacje macOS – przerwanie (Ctrl-C) zatrzymuje instalację na komputerze"
@@ -144,6 +229,16 @@ section "Aktualizacje macOS – wynik po ponownym uruchomieniu"
 su_reset
 out="$(ctlpw _builder install-updates 1 --major --restart)"; code=$?
 expect_code "z restartem: fałszywy softwareupdate nie restartuje – kod 6" "$code" 6 "$out"
+# Followed again long after, the restart that did not come is reported at once, not after the whole wait again.
+echo 60 > "$WORK/su.restart_wait"
+sed -i '' "s/^finished=.*/finished=$(( $(date +%s) - 600 ))/" "$SU/state"
+su_t0=$SECONDS
+out="$(ctl updates status 1)"; code=$?
+expect_code "stan po czasie: restart, który nie nastąpił – kod 1" "$code" 1 "$out"
+expect "stan po czasie: od kiedy czeka" "$out" "nie uruchomił się ponownie od"
+[ $((SECONDS - su_t0)) -lt 20 ] && pass "stan po czasie: bez ponownego czekania" \
+  || fail "stan po czasie: czekał $((SECONDS - su_t0)) s" "$out"
+rm -f "$WORK/su.restart_wait"
 # The Mac "restarts" into the new system: another boot time and system version.
 echo 1234567890 > "$WORK/boottime"
 echo 99.1 > "$WORK/sw_vers.version"; echo 99A123 > "$WORK/sw_vers.build"
@@ -166,5 +261,13 @@ if [ "$(uname -m)" = arm64 ]; then
     "Nic nie pobrano" "sysadminctl -secureTokenOn"
   expect_not "bez Secure Token: softwareupdate --install nie uruchomiony" "$(fakelog)" "softwareupdate --install"
   rm -f "$WORK/fake-no-volume-owner"
+  # An account without a Secure Token is not even listed among the volume's cryptographic users.
+  su_reset
+  touch "$WORK/fake-volume-owner-unlisted"
+  out="$(ctlpw _builder install-updates 1 --major --restart)"; code=$?
+  expect_code "konto spoza listy właścicieli: kod 1" "$code" 1 "$out"
+  expect "konto spoza listy właścicieli: przerwane przed pobraniem" "$out" "nie jest właścicielem woluminu" "Nic nie pobrano"
+  expect_not "konto spoza listy właścicieli: softwareupdate --install nie uruchomiony" "$(fakelog)" "softwareupdate --install"
+  rm -f "$WORK/fake-volume-owner-unlisted"
 fi
 su_reset

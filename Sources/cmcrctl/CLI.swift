@@ -649,17 +649,21 @@ struct CLI: Sendable {
             }
             logAction(list)
             // Runs detached on the iMac and is followed again after a lost connection, also across the restart that
-            // installs it (Operations.installUpdates); Ctrl-C stops it on the iMac. As many iMacs at a time as the app
-            // runs: each one now waits for its restart.
+            // installs it (Operations.installUpdates); Ctrl-C stops it on the iMac. -j (default: the app's number of
+            // parallel operations) limits only how many installs start at a time – each one is then followed to its
+            // end, restart included, without holding a slot.
             let ssh = sshSettings()
-            let codes = await runHosts(list, jobs: args.jobs ?? max(1, settings.maxParallel), prefixLines: prefixLines) { io in
+            let launches = HostGate(limit: max(1, args.jobs ?? settings.maxParallel))
+            let codes = await runHosts(list, jobs: max(1, list.count), prefixLines: prefixLines) { io in
                 let h = io.host
                 io.out(header(h))
                 return await Interruption.shared.job(on: h) { handle in
+                    guard await launches.acquire("launch", handle: handle) else { return io.report(.cancelledResult) }
                     let r = await Operations.installUpdates(restart: restart, recommendedOnly: recommended,
                                                             downloadOnly: download, allowMajorUpgrade: major, on: h,
                                                             password: Keychain.password(for: h), settings: ssh,
-                                                            handle: handle, onOutput: io.stream)
+                                                            handle: handle, launched: { launches.release("launch") },
+                                                            onOutput: io.stream)
                     let code = io.report(r)
                     if let text = major ? nil : hint(h, r) { io.err(text) }
                     return code
@@ -671,7 +675,7 @@ struct CLI: Sendable {
             args.expect("updates status", options: Self.parallel, positional: 3)
             let list = targets(args[2])
             let ssh = sshSettings()
-            let codes = await runHosts(list, jobs: args.jobs ?? max(1, settings.maxParallel), prefixLines: prefixLines) { io in
+            let codes = await runHosts(list, jobs: args.jobs ?? max(1, list.count), prefixLines: prefixLines) { io in
                 let h = io.host
                 io.out(header(h))
                 return await Interruption.shared.job(on: h) { handle in

@@ -24,6 +24,11 @@ public extension Scripts {
 
     /// Exit code of a run whose update installed but whose restart did not come (see `cmcr_su_await_restart`).
     static let updateNotRestartedCode: Int32 = 6
+    /// Exit code of an install refused because a run that does less (a download, an install without restart) is going on.
+    static let updateBusyCode: Int32 = 7
+    /// The line (`CMCR:SU-RUN <id>`) by which the install and follow scripts name the run they follow – the new one, or
+    /// the one already going that they joined. `Operations` removes it from the output.
+    static let updateRunMarker = "CMCR:SU-RUN "
 
     /// The state of update runs on the Mac, shared by the install, follow and stop scripts.
     ///
@@ -68,7 +73,30 @@ public extension Scripts {
       case "$(cmcr_su_get phase)" in ''|done|cancelled) return 1 ;; esac
       cmcr_su_runner_pid "$(cmcr_su_get run)" >/dev/null
     }
-    cmcr_su_labels() { sed -n 's/^label=/→ /p' "$CMCR_SU_STATE" 2>/dev/null; }
+    # The run's updates: "→ label" for an install (the app takes them off its list), "↓ label" for a download.
+    cmcr_su_labels() {
+      if [ "$(cmcr_su_get mode)" = download ]; then sed -n 's/^label=/↓ /p' "$CMCR_SU_STATE" 2>/dev/null
+      else sed -n 's/^label=/→ /p' "$CMCR_SU_STATE" 2>/dev/null; fi
+    }
+    # What a run does: 0 download, 1 install, 2 install with restart (cmcr_su_level MODE RESTART).
+    cmcr_su_level() { if [ "$1" = download ]; then echo 0; elif [ "$2" = 1 ]; then echo 2; else echo 1; fi; }
+    # Stops run $1 (softwareupdate and the session that started it: one process group) and marks it cancelled.
+    # Returns 0 when stopped, 1 when something is still running, 2 when it was not running.
+    cmcr_su_stop() {
+      local p g my i=0
+      p="$(cmcr_su_runner_pid "$1")" || return 2
+      g="$(ps -o pgid= -p "$p" 2>/dev/null | tr -d ' ')"; my="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+      case "$g" in ''|0|1|*[!0-9]*|"$my") g="" ;; esac
+      if [ -n "$g" ]; then kill -TERM -- "-$g" 2>/dev/null; else kill -TERM "$p" 2>/dev/null; fi
+      while cmcr_su_runner_pid "$1" >/dev/null && [ $i -lt 8 ]; do sleep 0.2; i=$((i + 1)); done
+      if cmcr_su_runner_pid "$1" >/dev/null; then
+        if [ -n "$g" ]; then kill -KILL -- "-$g" 2>/dev/null; else kill -KILL "$p" 2>/dev/null; fi
+        sleep 0.3
+      fi
+      cmcr_su_runner_pid "$1" >/dev/null && return 1
+      [ "$(cmcr_su_get run)" = "$1" ] && cmcr_su_put phase=cancelled "finished=$(date +%s)"
+      return 0
+    }
     # Accounts with a GUI session (at the screen or in the background), comma-separated.
     cmcr_su_logged_in() { cmcr_gui_sessions | awk 'NF {print $2}' | paste -sd, - | sed 's/,/, /g'; }
     cmcr_su_size() {
@@ -83,11 +111,11 @@ public extension Scripts {
       CMCR_SU_OFF=$size
     }
     # cmcr_su_replay [N] – the log so far (its last N lines), each run of progress lines ("Downloading: 41.15%") as its last
-    # one; without the "→ …" lines, which cmcr_su_labels shows.
+    # one; without the "→ …" and "↓ …" lines, which cmcr_su_labels shows.
     cmcr_su_replay() {
       local size; size="$(cmcr_su_size)"
       head -c "$size" "$CMCR_SU_LOG" 2>/dev/null | tr '\r' '\n' \
-        | awk 'NF == 0 || /^→ / {next} /^[[:space:]]*[A-Za-z][A-Za-z ]*: *[0-9.]+%[[:space:]]*$/ {p = $0; next}
+        | awk 'NF == 0 || /^(→|↓) / {next} /^[[:space:]]*[A-Za-z][A-Za-z ]*: *[0-9.]+%[[:space:]]*$/ {p = $0; next}
                {if (p != "") print p; p = ""; print} END {if (p != "") print p}' \
         | if [ -n "${1:-}" ]; then tail -n "$1"; else cat; fi
       CMCR_SU_OFF=$size
@@ -150,15 +178,20 @@ public extension Scripts {
     }
     # softwareupdate ended without an error and has queued the installation: it installs after a logout and restarts the
     # Mac. Waits for that restart (which ends this session); when it does not come, says what holds it back.
+    # Only what is left of the wait counts: followed again later, a run that finished long ago is reported at once.
     cmcr_su_await_restart() {
-      local wait="${CMCR_SU_RESTART_WAIT:-300}" i=0 who
-      echo "… Instalacja zlecona – czekam, aż komputer uruchomi się ponownie (do $(( (wait + 59) / 60 )) min)."
-      while [ $i -lt "$wait" ]; do sleep 1; i=$((i + 1)); done
+      local wait="${CMCR_SU_RESTART_WAIT:-300}" fin left who
+      fin="$(cmcr_su_get finished)"; case "$fin" in ''|*[!0-9]*) fin="$(date +%s)" ;; esac
+      left=$(( wait - ($(date +%s) - fin) ))
+      if [ "$left" -gt 0 ]; then
+        echo "… Instalacja zlecona – czekam, aż komputer uruchomi się ponownie (do $(( (left + 59) / 60 )) min)."
+        while [ "$left" -gt 0 ]; do sleep 1; left=$((left - 1)); done
+      fi
       who="$(cmcr_su_logged_in)"
       if [ -n "$who" ]; then
-        echo "✘ Aktualizacja czeka na wylogowanie: komputer nie uruchomił się ponownie, a zalogowany jest: $who. macOS instaluje ją dopiero po wylogowaniu, które najczęściej wstrzymuje aplikacja z niezapisaną pracą. Wyloguj użytkownika (Sesja i zasilanie › Wyloguj natychmiast…) – macOS powinien wtedy sam zainstalować aktualizację i uruchomić komputer ponownie; jeśli nie, uruchom instalację jeszcze raz." >&2
+        echo "✘ Aktualizacja czeka na wylogowanie: komputer nie uruchomił się ponownie od $(cmcr_su_when "$fin"), a zalogowany jest: $who. macOS instaluje ją dopiero po wylogowaniu, które najczęściej wstrzymuje aplikacja z niezapisaną pracą. Wyloguj użytkownika (Sesja i zasilanie › Wyloguj natychmiast…) – macOS powinien wtedy sam zainstalować aktualizację i uruchomić komputer ponownie; jeśli nie, uruchom instalację jeszcze raz." >&2
       else
-        echo "✘ softwareupdate zakończył pracę bez błędu, ale komputer nie uruchomił się ponownie w ciągu $(( (wait + 59) / 60 )) min, choć nikt nie jest zalogowany. Zwykły restart nie zainstaluje tej aktualizacji – uruchom „Zainstaluj aktualizacje” z restartem jeszcze raz; jeśli to się powtarza, zainstaluj ją przy komputerze (Ustawienia systemowe › Ogólne › Uaktualnienia, hasło właściciela woluminu) i sprawdź /var/log/install.log." >&2
+        echo "✘ softwareupdate zakończył pracę bez błędu, ale komputer nie uruchomił się ponownie od $(cmcr_su_when "$fin"), choć nikt nie jest zalogowany. Zwykły restart nie zainstaluje tej aktualizacji – uruchom „Zainstaluj aktualizacje” z restartem jeszcze raz; jeśli to się powtarza, zainstaluj ją przy komputerze (Ustawienia systemowe › Ogólne › Uaktualnienia, hasło właściciela woluminu) i sprawdź /var/log/install.log." >&2
       fi
       return \#(updateNotRestartedCode)
     }
@@ -179,11 +212,16 @@ public extension Scripts {
         exit 1 }'
     }
     # "Yes" or "No": whether the admin account is a volume owner of the system volume (empty when it cannot tell).
+    # listUsers names only the volume's cryptographic users: an account without a Secure Token is not listed at all.
     cmcr_su_volume_owner() {
-      local guid
+      local guid users
       guid="$(dscl . -read "/Users/$CMCR_ADMIN_USER" GeneratedUID 2>/dev/null | awk '{print $2}')"
       [ -n "$guid" ] || return 0
-      diskutil apfs listUsers / 2>/dev/null | awk -v g="$guid" 'index($0, g) {f = 1; next} /^[|]? *\+--/ {f = 0} f && /Volume Owner:/ {print $NF; exit}'
+      users="$(diskutil apfs listUsers / 2>/dev/null)" || return 0
+      printf '%s\n' "$users" | grep -q "^+-- " || return 0
+      if ! printf '%s\n' "$users" | grep -qiF -- "$guid"; then echo No; return 0; fi
+      printf '%s\n' "$users" | awk -v g="$(printf '%s' "$guid" | tr '[:lower:]' '[:upper:]')" \
+        'index(toupper($0), g) {f = 1; next} /^[|]? *\+--/ {f = 0} f && /Volume Owner:/ {print $NF; exit}'
     }
     cmcr_su_token_hint() {
       echo "  Nadaj kontu Secure Token przy komputerze: sudo sysadminctl -secureTokenOn $CMCR_ADMIN_USER -password - -adminUser KONTO_Z_TOKENEM -adminPassword - (sprawdzenie: sysadminctl -secureTokenStatus $CMCR_ADMIN_USER)."
@@ -283,7 +321,7 @@ public extension Scripts {
       if [ $DL = 1 ]; then ARGS=(--download); else ARGS=(--install); fi
       ARGS+=("${KEEP[@]}")
       if [ $DL = 0 ]; then ARGS+=(--agree-to-license); [ $RESTART = 1 ] && ARGS+=(--restart); fi
-      printf '→ %s\n' "${KEEP[@]}"
+      if [ $DL = 1 ]; then printf '↓ %s\n' "${KEEP[@]}"; else printf '→ %s\n' "${KEEP[@]}"; fi
       KV=(); for LABEL in "${KEEP[@]}"; do KV+=("label=$LABEL"); done
       if [ $BEST -ge 0 ]; then KV+=(os_update=1); else KV+=(os_update=0); fi
       cmcr_su_put phase=install "needs_restart=$NEEDS_RESTART" "${KV[@]}"
@@ -360,10 +398,24 @@ public extension Scripts {
         umask 022
         cmcr_su_dir || exit 70
         if cmcr_su_active; then
-          echo "↻ Na tym komputerze trwa już instalacja aktualizacji uruchomiona $(cmcr_su_when "$(cmcr_su_get started)") – pokazuję jej postęp zamiast uruchamiać drugą."
+          ACTIVE="$(cmcr_su_get run)"; WHEN="$(cmcr_su_when "$(cmcr_su_get started)")"
+          if [ "$(cmcr_su_get mode)" = download ]; then WHAT="pobieranie aktualizacji (bez instalacji) uruchomione"
+          elif [ "$(cmcr_su_get restart)" = 1 ]; then WHAT="instalacja aktualizacji z ponownym uruchomieniem uruchomiona"
+          else WHAT="instalacja aktualizacji bez ponownego uruchomienia uruchomiona"; fi
+          if [ $DL = 1 ]; then WANT=download; else WANT=install; fi
+          # A run that does less than asked (a download, an install without restart) is not joined: the job would end
+          # as if the updates were installed.
+          if [ "$(cmcr_su_level "$(cmcr_su_get mode)" "$(cmcr_su_get restart)")" -lt "$(cmcr_su_level $WANT $RESTART)" ]; then
+            echo "✘ Na tym komputerze trwa już $WHAT $WHEN – poczekaj, aż się skończy (Aktualizacje › Stan instalacji), i uruchom tę instalację ponownie; teraz niczego nie zainstalowano." >&2
+            exit \#(updateBusyCode)
+          fi
+          echo "\#(updateRunMarker)$ACTIVE"
+          # „Przerwij” of this job stops the run it shows: it was started by another session, in another process group.
+          trap 'cmcr_su_stop "$ACTIVE"; exit 143' TERM INT
+          echo "↻ Na tym komputerze trwa już $WHAT $WHEN – pokazuję postęp zamiast uruchamiać drugą."
           cmcr_su_labels
           cmcr_su_replay 5
-          cmcr_su_follow "$(cmcr_su_get run)"; exit $?
+          cmcr_su_follow "$ACTIVE"; exit $?
         fi
         RUN='\#(run)'
         [ -f "$CMCR_SU_LOG" ] && mv -f "$CMCR_SU_LOG" "$CMCR_SU_LOG.1"
@@ -377,6 +429,7 @@ public extension Scripts {
         # Detached from this session: neither a lost connection nor a stalled output relay reaches softwareupdate.
         cmcr_su_runner </dev/null >>"$CMCR_SU_LOG" 2>&1 &
         echo "$RUN $! $(cmcr_boot)" > "$CMCR_SU_PIDF"
+        echo "\#(updateRunMarker)$RUN"
         cmcr_su_follow "$RUN"
         """#, asRoot: true)
     }
@@ -393,6 +446,7 @@ public extension Scripts {
         fi
         RUN=\#(run)
         cmcr_su_wait_run "$RUN" || exit 1
+        echo "\#(updateRunMarker)$RUN"
         if [ "$(cmcr_su_get mode)" = download ]; then WHAT="Pobieranie aktualizacji"; else WHAT="Instalacja aktualizacji"; fi
         [ "$(cmcr_su_get restart)" = 1 ] && WHAT="$WHAT z ponownym uruchomieniem"
         echo "▸ $WHAT rozpoczęta $(cmcr_su_when "$(cmcr_su_get started)") na macOS $(cmcr_su_get from):"
@@ -408,21 +462,12 @@ public extension Scripts {
         return RemoteScript(#"""
         \#(updateRunFunctions)
         RUN='\#(run)'
-        P="$(cmcr_su_runner_pid "$RUN")" || { echo "▸ Instalacja nie działała już na komputerze."; exit 0; }
-        G="$(ps -o pgid= -p "$P" 2>/dev/null | tr -d ' ')"; MY="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
-        case "$G" in ''|0|1|*[!0-9]*|"$MY") G="" ;; esac
-        if [ -n "$G" ]; then kill -TERM -- "-$G" 2>/dev/null; else kill -TERM "$P" 2>/dev/null; fi
-        i=0
-        while cmcr_su_runner_pid "$RUN" >/dev/null && [ $i -lt 15 ]; do sleep 0.2; i=$((i + 1)); done
-        if cmcr_su_runner_pid "$RUN" >/dev/null; then
-          if [ -n "$G" ]; then kill -KILL -- "-$G" 2>/dev/null; else kill -KILL "$P" 2>/dev/null; fi
-          sleep 0.3
-        fi
-        if cmcr_su_runner_pid "$RUN" >/dev/null; then
-          echo "▸ \#(RemoteCancelOutcome.stillRunning.message)" >&2; exit 1
-        fi
-        [ "$(cmcr_su_get run)" = "$RUN" ] && cmcr_su_put phase=cancelled "finished=$(date +%s)"
-        echo "▸ Zatrzymano instalację aktualizacji na komputerze."
+        cmcr_su_stop "$RUN"
+        case $? in
+          0) echo "▸ Zatrzymano instalację aktualizacji na komputerze." ;;
+          2) echo "▸ Instalacja nie działała już na komputerze." ;;
+          *) echo "▸ \#(RemoteCancelOutcome.stillRunning.message)" >&2; exit 1 ;;
+        esac
         """#, asRoot: true)
     }
 

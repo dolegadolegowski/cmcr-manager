@@ -53,8 +53,9 @@ import Testing
         #expect(!Scripts.followUpdate().asRoot)
         let stop = Scripts.stopUpdate(runID: "abc")
         #expect(stop.asRoot)
-        #expect(stop.body.contains(#"kill -TERM -- "-$G""#))
-        #expect(stop.body.contains("phase=cancelled"))
+        #expect(stop.body.contains(#"cmcr_su_stop "$RUN""#))
+        #expect(Scripts.updateRunFunctions.contains(#"kill -TERM -- "-$g""#))
+        #expect(Scripts.updateRunFunctions.contains("phase=cancelled"))
     }
 
     /// `cmcr_ver_newer` decides which macOS version is installed when several are offered.
@@ -71,7 +72,7 @@ import Testing
 
     // MARK: - Following again after a lost connection
 
-    /// A scripted remote side: the results for the sessions in order, and what was asked.
+    /// A scripted remote side: the results for the sessions in order (their stdout streamed first), and what was asked.
     final class FakeRemote: @unchecked Sendable {
         private let lock = NSLock()
         private var results: [CommandResult]
@@ -80,6 +81,10 @@ import Testing
         let handle: ProcessHandle?
         /// Cancels `handle` when the session with this index (0 = the install) is asked for.
         var cancelAt: Int?
+        /// How long the session with this index takes (a long download followed without a break).
+        var durations: [Int: TimeInterval] = [:]
+        /// Called after a session's output was streamed, before it returns.
+        var afterOutput: (@Sendable (Int) -> Void)?
 
         init(_ results: [CommandResult], handle: ProcessHandle? = nil) {
             self.results = results
@@ -88,12 +93,15 @@ import Testing
 
         var remote: UpdateRemote {
             UpdateRemote(
-                run: { [self] script, _ in
+                run: { [self] script, _, output in
                     let (r, index): (CommandResult, Int) = lock.withLock {
                         scripts.append(script.body)
                         return (results.isEmpty ? .failure("nic więcej", code: 99) : results.removeFirst(), scripts.count - 1)
                     }
                     if index == cancelAt { handle?.cancel(); return .cancelledResult }
+                    if !r.stdout.isEmpty { output?(.stdout, r.stdout) }
+                    afterOutput?(index)
+                    if let d = durations[index] { try? await Task.sleep(nanoseconds: UInt64(d * 1_000_000_000)) }
                     return r
                 },
                 stop: { [self] run in
@@ -197,6 +205,104 @@ import Testing
                                               handle: nil, onOutput: nil, remote: fake.remote)
         #expect(SSH.diagnose(r).0 == .offline)
         #expect(fake.scripts.count == 1)
+    }
+
+    // MARK: - The run the script names (AUDIT of PR #5: joining a running install)
+
+    /// The marker leaves the output whichever way the stream is cut; a line that only begins like it stays.
+    @Test func theRunMarkerIsTakenOutOfTheStream() {
+        let text = "→ softwareupdate --list\nCMCR:SU-RUN 1234-abcd\n→ Safari\nCMCR:SU-RUNNER nie\nDownloading: 5%\r"
+        let data = Data(text.utf8)
+        for cut in 1..<data.count {
+            let f = UpdateRunMarkerFilter()
+            var out = f.feed(data.prefix(cut))
+            out.append(f.feed(data.dropFirst(cut)))
+            out.append(f.finish())
+            #expect(String(decoding: out, as: UTF8.self)
+                    == "→ softwareupdate --list\n→ Safari\nCMCR:SU-RUNNER nie\nDownloading: 5%\r", "cięcie \(cut)")
+            #expect(f.runID == "1234-abcd")
+        }
+        // Not at the start of a line: the command's own text.
+        let (kept, id) = UpdateRunMarkerFilter.strip(Data("Downloading: 5%\rx CMCR:SU-RUN zz\n".utf8))
+        #expect(String(decoding: kept, as: UTF8.self) == "Downloading: 5%\rx CMCR:SU-RUN zz\n")
+        #expect(id == nil)
+        #expect(UpdateRunMarkerFilter.strip(Data("CMCR:SU-RUN a'b\n".utf8)).1 == nil)
+    }
+
+    @Test func aJoinedRunIsFollowedAndStoppedByItsOwnID() async {
+        let handle = ProcessHandle()
+        let out = Collected()
+        let fake = FakeRemote([Self.broken("CMCR:SU-RUN joined-run\n↻ Na tym komputerze trwa już instalacja\n→ macOS 27.2-26C1\n"),
+                               Self.offline, Self.ended(0, "")], handle: handle)
+        fake.cancelAt = 2
+        let r = await Operations.installUpdates(Self.script, run: "run-1", policy: Self.fast, handle: handle,
+                                                onOutput: out.output, remote: fake.remote)
+        #expect(r.cancelled)
+        #expect(fake.scripts[1].contains("RUN='joined-run'"))
+        #expect(fake.stopped == ["joined-run"])
+        #expect(!out.text.contains("CMCR:SU-RUN"))
+    }
+
+    @Test func aJoinedRunIsFollowedToItsEndAfterABreak() async {
+        let out = Collected()
+        let fake = FakeRemote([Self.broken("CMCR:SU-RUN joined-run\n→ macOS 27.2-26C1\n"),
+                               Self.ended(0, "CMCR:SU-RUN joined-run\nDone.\n")])
+        let r = await Operations.installUpdates(Self.script, run: "run-1", policy: Self.fast, handle: nil,
+                                                onOutput: out.output, remote: fake.remote)
+        #expect(r.succeeded)
+        #expect(fake.scripts[1].contains("RUN='joined-run'"))
+        #expect(r.stdoutText == "→ macOS 27.2-26C1\nDone.\n")
+        #expect(!out.text.contains("CMCR:SU-RUN"))
+    }
+
+    /// A launch slot is given back as soon as the run is going, not when the install ends; and only once.
+    @Test func launchedComesWithTheMarkerOnce() async {
+        let count = Counter()
+        let seenDuringFirst = Counter()
+        let fake = FakeRemote([Self.broken("CMCR:SU-RUN run-1\nDownloading: 1%\n"), Self.ended(0, "Done.\n")])
+        fake.afterOutput = { index in if index == 0 { seenDuringFirst.add(count.value) } }
+        let r = await Operations.installUpdates(Self.script, run: "run-1", policy: Self.fast, handle: nil,
+                                                launched: { count.add(1) }, onOutput: nil, remote: fake.remote)
+        #expect(r.succeeded)
+        #expect(seenDuringFirst.value == 1)
+        #expect(count.value == 1)
+        // A first session that never named a run (refused, busy) gives its slot back too.
+        let refused = FakeRemote([Self.refusedKey])
+        let other = Counter()
+        _ = await Operations.installUpdates(Self.script, run: "run-1", policy: Self.fast, handle: nil,
+                                            launched: { other.add(1) }, onOutput: nil, remote: refused.remote)
+        #expect(other.value == 1)
+    }
+
+    /// The limit counts the time without contact, not the whole following: after a long download followed without a
+    /// break, the Mac going down to install is waited for again.
+    @Test func theGiveUpTimeCountsFromTheLastContact() async {
+        let fake = FakeRemote([Self.broken(), Self.broken("Downloading: 100%\n"), Self.offline, Self.offline,
+                               Self.ended(0, "✔ Komputer uruchomił się ponownie z nowym systemem\n")])
+        fake.durations = [1: 0.35]
+        let r = await Operations.installUpdates(Self.script, run: "run-1",
+                                                policy: UpdateFollowPolicy(delays: [0.05], giveUpAfter: 0.25),
+                                                handle: nil, onOutput: nil, remote: fake.remote)
+        #expect(r.succeeded)
+        #expect(fake.scripts.count == 5)
+    }
+
+    final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        var value: Int { lock.withLock { n } }
+        func add(_ k: Int) { lock.withLock { n += k } }
+    }
+
+    @Test func theInstallAndFollowScriptsNameTheirRun() {
+        let body = Scripts.installUpdates(restart: true, recommendedOnly: false, downloadOnly: false, runID: "abc-123").body
+        #expect(body.contains(#"echo "\#(Scripts.updateRunMarker)$RUN""#))
+        #expect(body.contains(#"echo "\#(Scripts.updateRunMarker)$ACTIVE""#))
+        // A joined run is stopped when its job is cancelled: it runs in another session's process group.
+        #expect(body.contains(#"trap 'cmcr_su_stop "$ACTIVE"; exit 143' TERM INT"#))
+        // A run that does less than asked is not joined.
+        #expect(body.contains("exit \(Scripts.updateBusyCode)"))
+        #expect(Scripts.followUpdate().body.contains(#"echo "\#(Scripts.updateRunMarker)$RUN""#))
     }
 
     @Test func onlyABrokenSessionOfAStartedScriptCountsAsBroken() {

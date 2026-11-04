@@ -4,8 +4,8 @@ import Foundation
 public struct UpdateFollowPolicy: Sendable {
     /// The pause before each new connection; the last one repeats.
     public var delays: [TimeInterval]
-    /// How long the Mac may stay out of reach before the app stops waiting. A macOS update installs while the Mac
-    /// restarts, which takes 10–40 minutes on an iMac.
+    /// How long the Mac may stay out of reach – counted from the last session that reached it – before the app stops
+    /// waiting. A macOS update installs while the Mac restarts, which takes 10–40 minutes on an iMac.
     public var giveUpAfter: TimeInterval
 
     public init(delays: [TimeInterval], giveUpAfter: TimeInterval) {
@@ -22,32 +22,122 @@ public struct UpdateFollowPolicy: Sendable {
 
 /// The sessions an update needs, replaceable in the tests.
 struct UpdateRemote: Sendable {
-    /// Runs a script on the Mac (the first one with the retry policy of a job).
-    var run: @Sendable (_ script: RemoteScript, _ first: Bool) async -> CommandResult
+    /// Runs a script on the Mac (the first one with the retry policy of a job), streaming its output to `output`.
+    var run: @Sendable (_ script: RemoteScript, _ first: Bool, _ output: Operations.Output?) async -> CommandResult
     /// Stops the update run with this id (`Scripts.stopUpdate`); never cancelled by the job's handle.
     var stop: @Sendable (_ runID: String) async -> CommandResult
+}
+
+/// Takes the `CMCR:SU-RUN <id>` line (`Scripts.updateRunMarker`) out of a script's stdout as it streams in and keeps the
+/// id. The line starts a line of its own; a tail that could still become it is held back until more data arrives or
+/// `finish()` hands it over.
+final class UpdateRunMarkerFilter: @unchecked Sendable {
+    private static let prefix = Data(Scripts.updateRunMarker.utf8)
+    private let lock = NSLock()
+    private var held = Data()
+    private var atLineStart = true
+    private var id: String?
+
+    /// The id of the last marker seen.
+    var runID: String? { lock.withLock { id } }
+
+    func feed(_ data: Data) -> Data {
+        lock.withLock {
+            var buf = held
+            buf.append(data)
+            held = Data()
+            var out = Data()
+            var i = buf.startIndex
+            while i < buf.endIndex {
+                let newline = buf[i...].firstIndex(of: 0x0A)
+                guard atLineStart else {
+                    guard let newline else { out.append(buf[i...]); return out }
+                    out.append(buf[i...newline])
+                    i = newline + 1
+                    atLineStart = true
+                    continue
+                }
+                if let newline {
+                    let line = buf[i..<newline]
+                    if line.starts(with: Self.prefix) {
+                        record(line)
+                    } else {
+                        out.append(buf[i...newline])
+                    }
+                    i = newline + 1
+                    continue
+                }
+                let rest = buf[i...]
+                let maybe = rest.count < Self.prefix.count ? Self.prefix.starts(with: rest) : rest.starts(with: Self.prefix)
+                if maybe { held = Data(rest) } else { out.append(rest); atLineStart = false }
+                return out
+            }
+            return out
+        }
+    }
+
+    /// What is still held back: a marker cut off at the end is taken, anything else handed over.
+    func finish() -> Data {
+        lock.withLock {
+            let rest = held
+            held = Data()
+            if rest.starts(with: Self.prefix) { record(rest); return Data() }
+            return rest
+        }
+    }
+
+    private func record(_ line: Data) {
+        let text = String(decoding: line.dropFirst(Self.prefix.count), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if RemoteJobs.isValidID(text) { id = text }
+    }
+
+    /// `data` without marker lines, and the last marker's id.
+    static func strip(_ data: Data) -> (Data, String?) {
+        let f = UpdateRunMarkerFilter()
+        var out = f.feed(data)
+        out.append(f.finish())
+        return (out, f.runID)
+    }
+}
+
+/// Calls an action once, from whichever path gets there first.
+final class OnceAction: @unchecked Sendable {
+    private let lock = NSLock()
+    private var action: (@Sendable () -> Void)?
+    init(_ action: (@Sendable () -> Void)?) { self.action = action }
+    func fire() {
+        let a: (@Sendable () -> Void)? = lock.withLock { defer { action = nil }; return action }
+        a?()
+    }
 }
 
 public extension Operations {
     /// Installs (or downloads) macOS updates as a detached run on the Mac (`Scripts.installUpdates`) and follows it to
     /// its end. When the session breaks off under it – the master connection's keepalive on a network saturated by the
     /// downloads, Wi‑Fi, the admin's Mac asleep, the iMac restarting to install – softwareupdate goes on, and this
-    /// connects again (with pauses, for up to `policy.giveUpAfter` while the Mac is out of reach) and follows the same
-    /// run (`Scripts.followUpdate`): its progress, the restart and the system version after it. Cancelling `handle`
-    /// („Przerwij”, Ctrl-C) stops the update on the Mac, also while it is being followed again.
+    /// connects again (with pauses, for up to `policy.giveUpAfter` since the Mac last answered) and follows the same run
+    /// (`Scripts.followUpdate`): its progress, the restart and the system version after it. The run is the one the
+    /// script names (`Scripts.updateRunMarker`): a new one, or one already going on the Mac that it joined. Cancelling
+    /// `handle` („Przerwij”, Ctrl-C) stops that run on the Mac, also while it is being followed again.
+    ///
+    /// `launched` is called once, as soon as the run is going on the Mac (or the first session ended): a caller that
+    /// limits how many installs start at a time releases its slot there, not when the install has finished.
     ///
     /// The result's stdout begins with the first session's (the `→ label` lines of what was installed).
     static func installUpdates(restart: Bool, recommendedOnly: Bool, downloadOnly: Bool, allowMajorUpgrade: Bool,
                                on host: Machine, password: String?, settings: SSHSettings,
                                handle: ProcessHandle? = nil, policy: UpdateFollowPolicy = .standard,
                                maxCapture: Int = ProcessRunner.defaultMaxCapture,
+                               launched: (@Sendable () -> Void)? = nil,
                                onOutput: Output? = nil) async -> CommandResult {
         let run = RemoteJobs.newID()
         let script = Scripts.installUpdates(restart: restart, recommendedOnly: recommendedOnly, downloadOnly: downloadOnly,
                                             allowMajorUpgrade: allowMajorUpgrade, runID: run)
-        return await installUpdates(script, run: run, policy: policy, handle: handle, onOutput: onOutput,
+        return await installUpdates(script, run: run, policy: policy, handle: handle, launched: launched,
+                                    onOutput: onOutput,
                                     remote: updateRemote(on: host, password: password, settings: settings, handle: handle,
-                                                         maxCapture: maxCapture, onOutput: onOutput))
+                                                         maxCapture: maxCapture))
     }
 
     /// „Stan instalacji”: the last update run CMCR Manager started on the Mac – what it installs, its log, how it ended –
@@ -59,7 +149,7 @@ public extension Operations {
         await followUpdate(run: nil, attached: false, stopOnCancel: false, policy: policy, handle: handle,
                            onOutput: onOutput,
                            remote: updateRemote(on: host, password: password, settings: settings, handle: handle,
-                                                maxCapture: maxCapture, onOutput: onOutput))
+                                                maxCapture: maxCapture))
     }
 
     /// A started script whose session broke off under it: ssh's 255 without the script's own end (see `SSH.diagnose`).
@@ -69,11 +159,11 @@ public extension Operations {
     }
 
     internal static func updateRemote(on host: Machine, password: String?, settings: SSHSettings, handle: ProcessHandle?,
-                             maxCapture: Int, onOutput: Output?) -> UpdateRemote {
+                                      maxCapture: Int) -> UpdateRemote {
         UpdateRemote(
-            run: { script, first in
+            run: { script, first, output in
                 await SSH.run(script, on: host, password: password, settings: settings, handle: handle,
-                              retry: first ? .job : .transient, maxCapture: maxCapture, onOutput: onOutput)
+                              retry: first ? .job : .transient, maxCapture: maxCapture, onOutput: output)
             },
             stop: { run in
                 await SSH.run(Scripts.stopUpdate(runID: run), on: host, password: password, settings: settings,
@@ -81,14 +171,39 @@ public extension Operations {
             })
     }
 
+    /// Runs `script` with its run marker taken out of the output; returns the result (marker removed) and the run's id.
+    internal static func runFollowingMarker(_ script: RemoteScript, first: Bool, remote: UpdateRemote,
+                                            onLaunch: OnceAction? = nil,
+                                            onOutput: Output?) async -> (CommandResult, String?) {
+        let marker = UpdateRunMarkerFilter()
+        let output: Output = { channel, data in
+            guard channel == .stdout else { onOutput?(channel, data); return }
+            let clean = marker.feed(data)
+            if marker.runID != nil { onLaunch?.fire() }
+            if !clean.isEmpty { onOutput?(channel, clean) }
+        }
+        var r = await remote.run(script, first, output)
+        let rest = marker.finish()
+        if !rest.isEmpty { onOutput?(.stdout, rest) }
+        let (stdout, id) = UpdateRunMarkerFilter.strip(r.stdout)
+        r.stdout = stdout
+        return (r, marker.runID ?? id)
+    }
+
     internal static func installUpdates(_ script: RemoteScript, run: String, policy: UpdateFollowPolicy,
-                                        handle: ProcessHandle?, onOutput: Output?,
-                                        remote: UpdateRemote) async -> CommandResult {
-        let first = await remote.run(script, true)
+                                        handle: ProcessHandle?, launched: (@Sendable () -> Void)? = nil,
+                                        onOutput: Output?, remote: UpdateRemote) async -> CommandResult {
+        let launch = OnceAction(launched)
+        defer { launch.fire() }
+        let (first, named) = await runFollowingMarker(script, first: true, remote: remote, onLaunch: launch,
+                                                      onOutput: onOutput)
+        launch.fire()
         guard sessionBrokeOff(first) else { return first }
         onOutput?(.stderr, Data(("▸ Połączenie z komputerem zostało przerwane, ale instalacja trwa na nim dalej – "
                                  + "łączę się ponownie, aby śledzić jej postęp…\n").utf8))
-        var r = await followUpdate(run: run, attached: true, stopOnCancel: true, policy: policy, handle: handle,
+        // The run the script named: a run already going that it joined has an id of its own. Broken off before the
+        // script named one, it can only be ours.
+        var r = await followUpdate(run: named ?? run, attached: true, stopOnCancel: true, policy: policy, handle: handle,
                                    onOutput: onOutput, remote: remote)
         r.stdout = first.stdout + r.stdout
         return r
@@ -96,11 +211,14 @@ public extension Operations {
 
     /// Follows run `run` (nil: the Mac's last one) over new sessions until one reports how it ended. `attached`: the
     /// run is known to be going on the Mac (its session broke off), so a Mac out of reach is waited for – it is most
-    /// likely restarting to install. Otherwise a Mac that cannot be reached is reported at once.
+    /// likely restarting to install – for up to `policy.giveUpAfter` since a session last reached it. Otherwise a Mac
+    /// that cannot be reached is reported at once.
     internal static func followUpdate(run: String?, attached: Bool, stopOnCancel: Bool, policy: UpdateFollowPolicy,
                                       handle: ProcessHandle?, onOutput: Output?,
                                       remote: UpdateRemote) async -> CommandResult {
-        let began = Date()
+        let clock = ContinuousClock()
+        var lastContact = clock.now
+        var run = run
         var attempt = 0, waitFirst = attached, attached = attached, saidUnreachable = false
         func cancelled() async -> CommandResult {
             guard stopOnCancel, let run else { return .cancelledResult }
@@ -121,8 +239,11 @@ public extension Operations {
             }
             waitFirst = true
             if handle?.isCancelled == true || Task.isCancelled { return await cancelled() }
-            let r = await remote.run(Scripts.followUpdate(runID: run, replayLines: attached ? 3 : nil), false)
+            let (r, named) = await runFollowingMarker(Scripts.followUpdate(runID: run, replayLines: attached ? 3 : nil),
+                                                      first: false, remote: remote, onOutput: onOutput)
+            if let named { run = named }
             if r.cancelled || handle?.isCancelled == true { return await cancelled() }
+            if r.started { lastContact = clock.now }
             if sessionBrokeOff(r) {
                 // Most often the Mac going down to install the update.
                 attached = true; attempt = 0; saidUnreachable = false
@@ -132,11 +253,11 @@ public extension Operations {
             }
             if r.started { return r }
             guard attached, !refusedForGood(r) else { return r }
-            let waited = Date().timeIntervalSince(began)
-            if waited >= policy.giveUpAfter {
-                return .failure("Komputer nie odpowiada od \(Int(waited / 60)) min – nie wiadomo, jak skończyła się "
-                                + "instalacja. Sprawdź później: Aktualizacje › Stan instalacji (cmcrctl updates status).",
-                                code: 255)
+            let silent = lastContact.duration(to: clock.now)
+            if silent >= .seconds(policy.giveUpAfter) {
+                return .failure("Komputer nie odpowiada od \(Int(silent.components.seconds / 60)) min – nie wiadomo, jak "
+                                + "skończyła się instalacja. Sprawdź później: Aktualizacje › Stan instalacji "
+                                + "(cmcrctl updates status).", code: 255)
             }
             if !saidUnreachable {
                 saidUnreachable = true

@@ -116,7 +116,9 @@ struct UpdatesView: View {
             }
             HStack(spacing: 10) {
                 TargetButton(title: "Stan instalacji", icon: "list.bullet.clipboard", prominent: false) {
-                    model.runBatch("Stan instalacji aktualizacji", on: model.selectedMachines) { m, job in
+                    let targets = model.selectedMachines
+                    // Only watching: every Mac at once.
+                    model.runBatch("Stan instalacji aktualizacji", on: targets, maxParallel: max(1, targets.count)) { m, job in
                         await Operations.followUpdate(on: m, password: model.password(for: m), settings: model.sshSettings,
                                                       handle: job.handle, maxCapture: AppModel.jobCapture,
                                                       onOutput: OutputSink(job).callback)
@@ -141,13 +143,20 @@ struct UpdatesView: View {
     }
 
     /// Updates run detached on the iMacs and are followed again after a lost connection (`Operations.installUpdates`).
+    /// „Równoległe operacje” limits only how many start at a time: a Mac's slot is free again as soon as its install is
+    /// going, not when it has finished – with the restart that can take an hour, and the last Macs would start that late
+    /// (or never, if the app is quit).
     func runInstall(_ title: String, restart: Bool, recommendedOnly: Bool, downloadOnly: Bool, allowMajor: Bool,
                     onResult: (@MainActor (Machine, CommandResult) -> Void)? = nil) {
-        model.runBatch(title, on: model.selectedMachines) { m, job in
+        let targets = model.selectedMachines
+        let launches = HostGate(limit: max(1, model.settings.maxParallel))
+        model.runBatch(title, on: targets, maxParallel: max(1, targets.count)) { m, job in
+            guard await launches.acquire("launch", handle: job.handle) else { return .cancelledResult }
             let r = await Operations.installUpdates(restart: restart, recommendedOnly: recommendedOnly,
                                                     downloadOnly: downloadOnly, allowMajorUpgrade: allowMajor, on: m,
                                                     password: model.password(for: m), settings: model.sshSettings,
                                                     handle: job.handle, maxCapture: AppModel.jobCapture,
+                                                    launched: { launches.release("launch") },
                                                     onOutput: OutputSink(job).callback)
             onResult?(m, r)
             return r
