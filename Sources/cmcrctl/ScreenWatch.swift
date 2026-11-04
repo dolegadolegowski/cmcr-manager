@@ -66,7 +66,8 @@ func screenWatchCommand(_ arguments: [String]) async -> Int32 {
     }
     if let issue = summary.issue {
         // Documented in the usage text: 3 – nobody logged in, 4 – preview not allowed, 5 – no Screen Recording
-        // permission, 6 – sudo; any other problem is 1.
+        // permission, 6 – sudo, 9 – CMCR Screen Agent missing, not answering or not the installed one; any other
+        // problem is 1.
         Console.err("✘ \(issue.message)")
         return issue.exitCode
     }

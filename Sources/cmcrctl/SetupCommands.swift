@@ -7,7 +7,9 @@ enum SetupCommands {
 
     static let usage = """
       cmcrctl setup-script [opcje] > plik.sh    skrypt konfiguracyjny do uruchomienia przy iMacu: sudo bash plik.sh
-      cmcrctl setup all|nr [opcje] [--verify]   skonfiguruj iMaki zdalnie jako root (jednorazowo)
+      cmcrctl setup all|nr [opcje] [--verify]   skonfiguruj iMaki zdalnie jako root (jednorazowo); najpierw
+                                                instaluje lub aktualizuje usługę podglądu ekranu
+                                                (bez niej: --no-screen-agent)
       cmcrctl readiness [all|nr]                gotowość iMaców: klucz, sudo, folder, uprawnienia, FileVault…
     """
 
@@ -65,6 +67,12 @@ enum SetupCommands {
             if let problem = SetupScript.sharedFolderProblem(settings) { err("Uwaga: \(problem)") }
             print(SetupScript.standalone(cl.options, settings: settings, publicKey: key), terminator: "")
             err("Skopiuj plik na iMaca i uruchom na koncie administratora: sudo bash \(SetupScript.fileName)")
+            if cl.options.screenAgent {
+                // The agent ships inside the app, not in the script (SetupOptions.screenAgent never reaches it). No
+                // shell syntax in the text: `cmcrctl setup-script > plik.sh 2>&1` puts it at the end of the file.
+                err("Usługi podglądu ekranu \(ScreenAgentInfo.displayName) skrypt z pliku nie instaluje – gdy iMac będzie "
+                    + "dostępny zdalnie: cmcrctl screen-agent install KOMP")
+            }
             return 0
 
         case "setup":
@@ -78,6 +86,17 @@ enum SetupCommands {
             }
             var status: Int32 = 0
             let hosts = select(target)
+            // CMCR Screen Agent ships inside the app, so cmcrctl installs it before the script, in the same run, as
+            // „Skonfiguruj zaznaczone” does; --verify and --dry-run change nothing, so they install nothing.
+            let withAgent = cl.options.screenAgent && cl.mode == .apply
+            let agent = withAgent ? ScreenAgentLocator.bundledAgent() : nil
+            if withAgent && agent == nil {
+                err("Uwaga: \(ScreenAgentCLI.missingAgentText) Usługa podglądu zostanie pominięta, reszta konfiguracji się "
+                    + "wykona (bez tej uwagi: --no-screen-agent).")
+            }
+            if cl.mode != .apply && cl.options.screenAgent {
+                print("Usługa podglądu ekranu nie jest instalowana przy --verify/--dry-run – jej stan: cmcrctl screen-agent status.")
+            }
             if cl.mode == .apply { logAction(hosts) }
             var notStarted: [Machine] = []
             for h in hosts {
@@ -91,6 +110,24 @@ enum SetupCommands {
                 print("══ \(h.name) (\(h.destination)): \(what)…")
                 if cl.options.setHostname && SetupScript.hostname(for: h) == nil {
                     err("Uwaga: adres \(h.address) nie ma postaci nazwa.local – nazwa komputera \(h.name) zostanie bez zmian.")
+                }
+                if let agent {
+                    print("→ usługa podglądu ekranu (\(ScreenAgentInfo.displayName) \(ScreenAgentInfo.version)): instalacja lub aktualizacja…")
+                    // A registered job, like the script: Ctrl-C stops the upload or the installation on the iMac too.
+                    let a = await Interruption.shared.job(on: h) { handle in
+                        await Operations.installScreenAgent(on: h, agentApp: agent, password: Keychain.password(for: h),
+                                                            settings: ssh, handle: handle, onOutput: printer)
+                    }
+                    if a.succeeded {
+                        print("→ \(h.name): \(ScreenAgentCLI.installSummary(a.stdoutText, host: h))")
+                    } else {
+                        let (reach, message) = SSH.diagnose(a)
+                        err("✘ \(h.name): usługa podglądu: \(message)")
+                        status = ExitCode.failure
+                        // Stopped, or the Mac was not reached at all: the script would fail the same way.
+                        if a.cancelled || Interruption.shared.isInterrupted || reach != .online { continue }
+                        err("  Skrypt konfiguracyjny zostanie uruchomiony mimo to.")
+                    }
                 }
                 let script = SetupScript.remote(cl.options, host: h, settings: settings, publicKey: key, mode: cl.mode)
                 // A registered job: Ctrl-C stops the configuration on the iMac too (Interruption).

@@ -53,6 +53,7 @@ struct SetupOptionsSheet: View {
                     folderSection
                     powerSection
                     systemSection
+                    screenAgentSection
                     advancedSection
                 }
                 .formStyle(.grouped)
@@ -77,7 +78,7 @@ struct SetupOptionsSheet: View {
                     .font(.title2.weight(.semibold))
                 Text(isSave
                      ? "Plik do jednorazowego uruchomienia przy iMacu (sudo bash), np. z pendrive’a. Jeden plik pasuje do wszystkich iMaców – konto administratora i nazwa są wykrywane na miejscu."
-                     : "Skrypt konfiguracyjny \(SetupScript.version) zostanie uruchomiony z uprawnieniami administratora (root) na: \(targetNames). Można go bezpiecznie uruchamiać wielokrotnie – zmienia tylko to, co trzeba.")
+                     : "Skrypt konfiguracyjny \(SetupScript.version) zostanie uruchomiony z uprawnieniami administratora (root) na: \(targetNames).\(o.screenAgent ? " Najpierw aplikacja zainstaluje lub zaktualizuje usługę podglądu ekranu." : "") Można go bezpiecznie uruchamiać wielokrotnie – zmienia tylko to, co trzeba.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -109,7 +110,7 @@ struct SetupOptionsSheet: View {
                 } label: {
                     Label("Tylko sprawdź", systemImage: "checklist")
                 }
-                .help("Uruchamia skrypt w trybie sprawdzania: raport pokaże, co zostałoby zmienione, nic nie jest zmieniane.")
+                .help("Uruchamia skrypt w trybie sprawdzania: raport pokaże, co zostałoby zmienione, nic nie jest zmieniane (usługa podglądu też nie jest instalowana).")
                 .disabled(blocked || reachable.isEmpty)
             }
             Spacer()
@@ -160,6 +161,9 @@ struct SetupOptionsSheet: View {
         if let f = SetupScript.sharedFolderProblem(model.settings) { out.append(f + " Popraw go w zakładce Ustawienia.") }
         if o.installKey && model.managerPublicKey == nil {
             out.append("Na tym Macu nie ma jeszcze klucza logowania – utwórz go w zakładce Dostęp i hasła, inaczej skrypt go nie zainstaluje.")
+        }
+        if !isSave && o.screenAgent && !hasBundledAgent {
+            out.append("Ta kopia aplikacji nie zawiera usługi podglądu ekranu (\(ScreenAgentInfo.displayName)) – zostanie pominięta, reszta konfiguracji się wykona.")
         }
         if !isSave && !model.hasSharedPassword && targets.contains(where: { $0.usesSharedPassword }) {
             out.append("Nie zapisano hasła administratora – bez niego skrypt się nie uruchomi (chyba że iMac ma uprawnienia administratora bez hasła).")
@@ -261,6 +265,28 @@ struct SetupOptionsSheet: View {
             OptionToggle(title: "Odblokuj zdalne logowanie w zaporze", icon: "flame.fill", color: .orange,
                          detail: "Wyłącza „Blokuj wszystkie połączenia przychodzące”, które uniemożliwia połączenie z aplikacji.",
                          isOn: $o.fixFirewall)
+        }
+    }
+
+    /// Looked up when the sheet opens, not on every redraw.
+    @ViewState private var hasBundledAgent = AppModel.bundledScreenAgent() != nil
+
+    /// CMCR Screen Agent ships inside the app, not in the bash script: the app installs it before the script, so
+    /// the standalone copy cannot (SetupOptions.screenAgent never reaches the script).
+    @ViewBuilder var screenAgentSection: some View {
+        Section {
+            OptionToggle(title: "Usługa podglądu ekranu (\(ScreenAgentInfo.displayName))", icon: "puzzlepiece.extension.fill", color: .red,
+                         detail: "Instaluje lub aktualizuje (wersja \(ScreenAgentInfo.version)) usługę, która robi zrzut ekranu tylko na żądanie podglądu. Tę samą wersję zostawia bez zmian, więc nadane uprawnienie nagrywania ekranu nie przepada.",
+                         isOn: isSave ? .constant(false) : $o.screenAgent)
+                .disabled(isSave)
+        } header: {
+            Text("Podgląd ekranów")
+        } footer: {
+            if isSave {
+                FormFooter("Skrypt zapisany do pliku nie instaluje usługi podglądu – jest ona częścią aplikacji. Gdy iMac będzie już dostępny zdalnie: Szybkie naprawy › Zainstaluj lub zaktualizuj usługę podglądu ekranu (albo cmcrctl screen-agent install).")
+            } else {
+                FormFooter("Uprawnienie nagrywania ekranu nadaje się usłudze raz przy każdym iMacu – tabela gotowości pokaże, gdzie go brakuje. „Tylko sprawdź” niczego nie instaluje.")
+            }
         }
     }
 

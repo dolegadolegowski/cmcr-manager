@@ -8,10 +8,11 @@ Użycie: cmcrctl POLECENIE [argumenty] [opcje]
 
 KOMP – wybór komputerów: all | numer z nazwy (4 → imac04) | lista (1,3,7) | zakres (1-5)
        | pozycja na liście (@2) | nazwa, adres lub konto (imac04, imac04.local).
-Bez KOMP polecenia, które tylko odczytują (status, readiness, filevault, app-version, schedule show),
-działają na wszystkich komputerach; polecenia, które coś zmieniają (exec, open-app, quit-app, lock,
-lesson, install, trust…) – tylko w terminalu, po pytaniu „Wykonać na wszystkich?” (--yes na nie nie odpowiada),
-a w skryptach wymagają podania KOMP, np. all. rename (nazwy komputerów) zawsze wymaga KOMP.
+Bez KOMP polecenia, które tylko odczytują (status, readiness, filevault, app-version, schedule show,
+screen-agent status), działają na wszystkich komputerach; polecenia, które coś zmieniają (exec, open-app,
+quit-app, lock, lesson, install, screen-agent install, trust…) – tylko w terminalu, po pytaniu „Wykonać na
+wszystkich?” (--yes na nie nie odpowiada), a w skryptach wymagają podania KOMP, np. all. rename (nazwy
+komputerów) zawsze wymaga KOMP.
 cmcrctl POLECENIE --help – pomoc jednego polecenia (niczego nie wykonuje).
 
 Stan i polecenia
@@ -87,7 +88,7 @@ Opcje
 Kody wyjścia: 0 – sukces, 1 – błąd na co najmniej jednym komputerze, 2 – błędne użycie (także opcja,
 której polecenie nie używa, lub nadmiarowy argument – wtedy nic nie jest wykonywane);
 exec zwraca kod zdalnego polecenia (najwyższy z kilku komputerów; nieudane lub zerwane połączenie – 1),
-screen-watch – także 3–6;
+screen-watch – także 3–6 i 9;
 130 – przerwano: Ctrl-C zatrzymuje także na iMacach każde polecenie, które coś na nich zmienia, i nie uruchamia go
 już na kolejnych; ponowne Ctrl-C kończy od razu.
 
