@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  CMCR Manager: macOS 15.1+ nie pokazuje osobie przy komputerze okien z pytaniem o dalszy dostęp aplikacji do ekranu,
+  m.in. tego, że „sshd-session” chce pominąć systemowy wybór okien (podgląd ekranów w CMCR Manager działa wtedy bez
+  pytania ucznia).
+
+  UWAGA – ustawienie dotyczy CAŁEGO MACA: forceBypassScreenCaptureAlert nie ma pola wskazującego aplikację
+  („the system bypasses the presentation of a screen capture alert”). Wyłącza te okna i okresowe przypomnienia dla
+  WSZYSTKICH aplikacji z uprawnieniem „Nagrywanie ekranu” (Zoom, Teams, OBS, …) i na WSZYSTKICH kontach – nikt przy
+  komputerze nie dostanie już przypomnienia, że któraś z nich może nagrywać ekran. Rozważ to przed wdrożeniem.
+  Bez profilu CMCR Manager wyłącza okno sam, tylko dla sesji SSH i tylko na kontach, które obserwuje.
+
+  Klucz forceBypassScreenCaptureAlert działa WYŁĄCZNIE w profilu wdrożonym przez MDM: macOS ignoruje go w profilu
+  zainstalowanym ręcznie (schemat Apple: allowmanualinstall: false). Wgraj ten plik do MDM szkoły jako profil
+  niestandardowy (niektóre MDM, np. Jamf, wymagają wcześniej podpisania profilu) i przypisz go iMacom pracowni.
+  Bez MDM okno wyłącza sam CMCR Manager (odnawia zgodę przed każdym podglądem – zob. README).
+
+  Ten profil NIE nadaje uprawnienia „Nagrywanie ekranu”: profil PPPC może je tylko zablokować albo pozwolić
+  włączyć je kontu standardowemu. Uprawnienie trzeba raz włączyć przy komputerze.
+  Źródło: https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.applicationaccess.yaml
+-->
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadDisplayName</key>
+			<string>Bez okien o dostępie do ekranu (cały Mac)</string>
+			<key>PayloadIdentifier</key>
+			<string>pl.cmcr.manager.screen-capture-alert.restrictions</string>
+			<key>PayloadType</key>
+			<string>com.apple.applicationaccess</string>
+			<key>PayloadUUID</key>
+			<string>6AB3551F-E566-468B-9360-944747700DAE</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>forceBypassScreenCaptureAlert</key>
+			<true/>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>macOS 15.1+: wyłącza na całym Macu okna i okresowe przypomnienia o dostępie do ekranu – dla wszystkich aplikacji z uprawnieniem „Nagrywanie ekranu” (nie tylko podglądu CMCR Manager przez SSH) i na wszystkich kontach. Działa tylko wdrożony przez MDM.</string>
+	<key>PayloadDisplayName</key>
+	<string>CMCR Manager – bez okien o dostępie do ekranu (wszystkie aplikacje)</string>
+	<key>PayloadIdentifier</key>
+	<string>pl.cmcr.manager.screen-capture-alert</string>
+	<key>PayloadOrganization</key>
+	<string>CMCR Manager</string>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>329F940F-108F-4F8D-9EAD-3DB347E57837</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>

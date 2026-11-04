@@ -150,9 +150,29 @@ public struct ReadinessReport: Sendable {
     }
 
     /// macOS 15+ asks the logged-in user again from time to time whether the remote session may keep
-    /// recording the screen (replayd's "bypass the system private window picker" alert). It appears on the
-    /// student's screen and in the preview; the app cannot answer it.
-    public static let screenCaptureAlertNote = "Od macOS 15 system co jakiś czas (zwykle raz w miesiącu, na niektórych Macach przy każdym nowym połączeniu) pokazuje osobie przy komputerze okno, że „sshd-session” / „sshd-keygen-wrapper” chce mieć dostęp do ekranu z pominięciem systemowego wyboru okien. Okno widać też w podglądzie. Podgląd działa dalej po zezwoleniu (po angielsku „Allow For One Month”); po odmowie albo „Otwórz Ustawienia systemowe” pokazuje tylko tapetę, dopóki ktoś nie zezwoli przy komputerze."
+    /// recording the screen (replayd's "bypass the system private window picker" alert). The app prevents it by
+    /// renewing replayd's remembered consent (`cmcr_sc_approval`) before every preview and in the setup script;
+    /// that needs Full Disk Access for remote users. Only an MDM profile turns the alert off for good.
+    public static let screenCaptureAlertNote = "Od macOS 15 system potrafi co jakiś czas pokazać osobie przy komputerze okno, że „sshd-session” / „sshd-keygen-wrapper” chce mieć dostęp do ekranu z pominięciem systemowego wyboru okien. CMCR Manager zapobiega temu sam: przed każdym podglądem i przy „Skonfiguruj zaznaczone” odnawia zapamiętaną przez macOS zgodę – do tego sesje SSH potrzebują pełnego dostępu do dysku. Gdyby okno mimo to się pojawiło, przy komputerze trzeba zezwolić (po angielsku „Allow For One Month”); po odmowie podgląd pokazuje tylko tapetę. Na Macach w MDM takie okna wyłącza na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig – ale dla wszystkich aplikacji i kont na Macu, nie tylko dla podglądu."
+
+    /// What the readiness check found about the alert (`screen_alert` from `cmcr_sc_approval … check`).
+    public static func screenCaptureAlertNote(state: String?, user: String?) -> String {
+        let name = (user?.isEmpty ?? true) ? nil : user
+        let who = name.map { " (konto \($0))" } ?? ""
+        let mdm = "Na Macach w MDM takie okna wyłącza na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig – dla wszystkich aplikacji i kont na Macu, nie tylko dla podglądu."
+        switch state {
+        case "ok"?, "renewed"?:
+            return "Okno macOS o dostępie sesji SSH do ekranu jest wyłączone\(who): zgoda jest zapamiętana, a CMCR Manager odnawia ją przed każdym podglądem."
+        case "stale"?:
+            return "Zapamiętana przez macOS zgoda na dostęp sesji SSH do ekranu\(who) wygasła albo jej nie ma – CMCR Manager odnowi ją sam przed najbliższym podglądem, więc okno o dostępie do ekranu się nie pokaże."
+        case "nohome"?:
+            return "Konto \(name ?? "ucznia") nie ma jeszcze katalogu domowego – zgodę na dostęp sesji SSH do ekranu zapisze pierwszy podgląd."
+        case "denied"?:
+            return "Nie da się odnowić zapamiętanej przez macOS zgody na dostęp sesji SSH do ekranu\(who) – sesje SSH nie mają pełnego dostępu do dysku. Bez tego macOS co jakiś czas (zwykle raz w miesiącu) pyta osobę przy komputerze, czy „sshd-session” może dalej widzieć ekran. Włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Otwórz instrukcję). \(mdm)"
+        default:
+            return screenCaptureAlertNote
+        }
+    }
 
     public static func parse(_ text: String, student: String, sharedFolder: String,
                              expectedVersion: String = SetupScript.version, date: Date = Date()) -> ReadinessReport {
@@ -225,7 +245,8 @@ public struct ReadinessReport: Sendable {
             screenGranted = nil
         }
         let osMajor = Int((v["os"] ?? "").split(separator: ".").first ?? "") ?? 0
-        let alertNote = osMajor >= 15 ? " " + ReadinessReport.screenCaptureAlertNote : ""
+        let alertNote = osMajor >= 15
+            ? " " + ReadinessReport.screenCaptureAlertNote(state: v["screen_alert"], user: v["screen_alert_user"]) : ""
         switch screenGranted {
         case true?: items[.screen] = ReadinessItem(.ok, "zezwolono",
             "Sesje SSH mają uprawnienie „Nagrywanie ekranu” – podgląd ekranu działa.\(alertNote)")
@@ -247,7 +268,7 @@ public struct ReadinessReport: Sendable {
         items[.fda] = fdaGranted
             ? ReadinessItem(.ok, "włączony", "Sesje SSH mają pełny dostęp do dysku.")
             : ReadinessItem(.manual, "ręcznie",
-                "„Daj użytkownikom zdalnym pełny dostęp do dysku” jest wyłączone – pobieranie prac z Biurka/Dokumentów ucznia i podmiana aplikacji mogą się nie udać. Włącza się to przy komputerze: Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie” (Otwórz instrukcję).")
+                "„Daj użytkownikom zdalnym pełny dostęp do dysku” jest wyłączone – pobieranie prac z Biurka/Dokumentów ucznia i podmiana aplikacji mogą się nie udać, a od macOS 15 aplikacja nie wyłączy okna, w którym system co jakiś czas pyta ucznia o zgodę na podgląd ekranu. Włącza się to przy komputerze: Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie” (Otwórz instrukcję).")
 
         switch v["filevault"] {
         case "off": items[.filevault] = ReadinessItem(.ok, "wyłączony", "Po restarcie iMac od razu jest dostępny przez SSH.")
@@ -280,6 +301,18 @@ public struct ReadinessReport: Sendable {
 }
 
 public extension Scripts {
+    /// Shell functions that check and renew replayd's remembered screen-capture consent for the SSH session
+    /// (`cmcr_sc_approval ACCOUNT HOME MACOS_VERSION [check]`, macOS 15+): the CMCR-REPLAYD block of
+    /// setup/cmcr-imac-setup.sh, so the screen preview, the readiness check and the setup script share one copy.
+    static let screenCaptureApprovalShell: String = {
+        let text = SetupScriptTemplate.text
+        guard let start = text.range(of: "# >>> CMCR-REPLAYD"),
+              let end = text.range(of: "# <<< CMCR-REPLAYD <<<", range: start.upperBound..<text.endIndex) else {
+            preconditionFailure("setup/cmcr-imac-setup.sh has no CMCR-REPLAYD block")
+        }
+        return String(text[start.lowerBound..<end.upperBound])
+    }()
+
     /// Root quick fix for the student folder. Unlike a plain `mkdir -p` it never creates a missing home folder
     /// (it would belong to root and the student could not log in) and lets the student create missing folders
     /// inside their own home.
@@ -333,7 +366,9 @@ public extension Scripts {
           ( sleep 10; kill "$p" 2>/dev/null ) </dev/null >/dev/null 2>&1 & local w=$!
           wait "$p"; kill "$w" 2>/dev/null
         }
-        kv os "$(sw_vers -productVersion 2>/dev/null)"
+        \#(screenCaptureApprovalShell)
+        OSV="$(sw_vers -productVersion 2>/dev/null)"
+        kv os "$OSV"
         kv admin "$(id -un)"
         kv console "$CONSOLE_USER"
         kv lhn "$(scutil --get LocalHostName 2>/dev/null)"
@@ -393,7 +428,8 @@ public extension Scripts {
           kv sudo "$SUDO"
           exit 0
         fi
-        { declare -f folder_state; cat <<'CMCR_READINESS_ROOT'
+        { declare -f folder_state cmcr_sc_as cmcr_sc_epoch cmcr_sc_approval; declare -p CMCR_SC_CLIENT CMCR_SC_HINT
+          cat <<'CMCR_READINESS_ROOT'
         R="$1"; SHOME="$2"; CUID="$3"
         echo "root=ok"
         echo "folder=$(folder_state "$5" "$6")"
@@ -414,10 +450,16 @@ public extension Scripts {
                 wait "$p"; kill "$w" 2>/dev/null)"
           echo "screen_preflight=$SP"
         fi
+        # replayd's remembered consent for the SSH session (macOS 15+, read only) of the student account – the one the
+        # setup script manages. Whoever else is at the screen is not reported: the preview renews the consent of
+        # every account it observes by itself, and never touches the others (outside the allowed list, or admins
+        # while "only standard accounts" is on – the default).
+        echo "screen_alert_user=$5"
+        echo "screen_alert=$(cmcr_sc_approval "$5" "${SHOME:+$R$SHOME}" "$7" check </dev/null 2>/dev/null)"
         CMCR_READINESS_ROOT
         } > "$CMCR_TMP/readiness-root.sh"
         ROOTOUT="$(asroot /bin/bash --noprofile --norc "$CMCR_TMP/readiness-root.sh" "$R" "$SHOME" "$CONSOLE_UID" "$JXA" \
-          "$STUDENT" "$R$SHARED" 2>"$CMCR_TMP/readiness.err")"
+          "$STUDENT" "$R$SHARED" "$OSV" 2>"$CMCR_TMP/readiness.err")"
         if printf '%s\n' "$ROOTOUT" | grep -qx 'root=ok'; then
           kv sudo "$SUDO"
           printf '%s\n' "$ROOTOUT" | grep -v '^root='
