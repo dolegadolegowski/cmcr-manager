@@ -373,7 +373,8 @@ screen_preflight() {
 # To nie jest uprawnienie TCC „Nagrywanie ekranu” (to da się włączyć tylko przy komputerze), tylko
 # zapamiętana odpowiedź – zapis nie wymaga wyłączenia SIP ani MDM. Folder jest jednak chroniony: potrzebny jest
 # pełny dostęp do dysku („Daj użytkownikom zdalnym pełny dostęp do dysku” dla sesji SSH). Bez niego okno wyłącza
-# na stałe tylko profil MDM setup/mdm/cmcr-screen-capture-alert.mobileconfig (macOS 15.1+).
+# na stałe tylko profil MDM setup/mdm/cmcr-screen-capture-alert.mobileconfig (macOS 15.1+) – ten jednak dla
+# wszystkich aplikacji i kont na Macu, nie tylko dla SSH.
 CMCR_SC_CLIENT=/usr/libexec/sshd-keygen-wrapper
 CMCR_SC_HINT=2099-01-01T00:00:00Z
 # cmcr_sc_as KONTO POLECENIE… – jako to konto: root nigdy nie zapisuje sam w cudzym katalogu domowym.
@@ -1077,28 +1078,26 @@ step_tcc() {
   step_screen_alert
 }
 
-# Okno macOS 15+ „sshd-session chce pominąć systemowy wybór okien” (blok CMCR-REPLAYD): zgoda zapamiętana dla
-# ucznia i dla osoby przy komputerze. Podgląd ekranu odnawia ją też sam przed każdym połączeniem.
+# Okno macOS 15+ „sshd-session chce pominąć systemowy wybór okien” (blok CMCR-REPLAYD): zgoda zapamiętana tylko
+# dla konta ucznia. Innych kont skrypt nie dotyka: odnowienie zatrzymuje replayd konta (przerywa jego własne
+# nagrywanie lub udostępnianie ekranu), a kont spoza listy dozwolonych – przy domyślnym „Tylko konta standardowe”
+# także administratorów – podgląd nie obserwuje. Każdemu kontu, które naprawdę obserwuje, podgląd odnawia zgodę
+# sam, tuż przed pierwszym zrzutem.
 step_screen_alert() {
-  local u h st seen=" " mode="" what="Okno macOS o dostępie sesji SSH do ekranu"
+  local h st mode="" what="Okno macOS o dostępie sesji SSH do ekranu (konto $STUDENT)"
   [ "$OS_MAJOR" -ge 15 ] || return 0
   [ $CHANGE -eq 1 ] || mode=check
-  for u in "$STUDENT" "$CONSOLE_USER"; do
-    [ -n "$u" ] || continue
-    case "$seen" in *" $u "*) continue ;; esac
-    seen="$seen$u "
-    dscl . -read "/Users/$u" UniqueID >/dev/null 2>&1 || continue
-    h="$(home_of "$u")"
-    st="$(cmcr_sc_approval "$u" "$h" "$OS_VER" $mode)"
-    case "$st" in
-      ok)      record screen_alert ok "$what (konto $u): wyłączone – zgoda zapamiętana." ;;
-      renewed) record screen_alert changed "$what (konto $u): wyłączone – odnowiono zapamiętaną zgodę." ;;
-      stale)   record screen_alert pending "Wymaga zmiany: $what (konto $u) – odnowienie zapamiętanej zgody." ;;
-      nohome)  record screen_alert skipped "$what (konto $u): konto nie ma jeszcze katalogu domowego – zgodę zapisze pierwszy podgląd ekranu." ;;
-      denied)  record screen_alert warn "$what (konto $u): brak dostępu do zapamiętanej zgody – włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”$([ $VIA_SSH -eq 0 ] && echo ' (przy komputerze: pełny dostęp do dysku dla Terminala)'). Do tego czasu macOS może co jakiś czas pytać osobę przy komputerze; na stałe wyłącza je profil MDM setup/mdm/cmcr-screen-capture-alert.mobileconfig." ;;
-      *)       record screen_alert warn "$what (konto $u): nie udało się sprawdzić zapamiętanej zgody." ;;
-    esac
-  done
+  dscl . -read "/Users/$STUDENT" UniqueID >/dev/null 2>&1 || return 0
+  h="$(home_of "$STUDENT")"
+  st="$(cmcr_sc_approval "$STUDENT" "$h" "$OS_VER" $mode)"
+  case "$st" in
+    ok)      record screen_alert ok "$what: wyłączone – zgoda zapamiętana." ;;
+    renewed) record screen_alert changed "$what: wyłączone – odnowiono zapamiętaną zgodę." ;;
+    stale)   record screen_alert pending "Wymaga zmiany: $what – odnowienie zapamiętanej zgody." ;;
+    nohome)  record screen_alert skipped "$what: konto nie ma jeszcze katalogu domowego – zgodę zapisze pierwszy podgląd ekranu." ;;
+    denied)  record screen_alert warn "$what: brak dostępu do zapamiętanej zgody – włącz „Daj użytkownikom zdalnym pełny dostęp do dysku”$([ $VIA_SSH -eq 0 ] && echo ' (przy komputerze: pełny dostęp do dysku dla Terminala)'). Do tego czasu macOS może co jakiś czas pytać osobę przy komputerze; na stałe (dla wszystkich aplikacji na tym Macu) wyłącza je profil MDM setup/mdm/cmcr-screen-capture-alert.mobileconfig." ;;
+    *)       record screen_alert warn "$what: nie udało się sprawdzić zapamiętanej zgody." ;;
+  esac
 }
 
 write_marker() {

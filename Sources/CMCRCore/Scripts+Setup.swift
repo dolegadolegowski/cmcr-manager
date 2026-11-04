@@ -153,13 +153,13 @@ public struct ReadinessReport: Sendable {
     /// recording the screen (replayd's "bypass the system private window picker" alert). The app prevents it by
     /// renewing replayd's remembered consent (`cmcr_sc_approval`) before every preview and in the setup script;
     /// that needs Full Disk Access for remote users. Only an MDM profile turns the alert off for good.
-    public static let screenCaptureAlertNote = "Od macOS 15 system potrafi co jakiś czas pokazać osobie przy komputerze okno, że „sshd-session” / „sshd-keygen-wrapper” chce mieć dostęp do ekranu z pominięciem systemowego wyboru okien. CMCR Manager zapobiega temu sam: przed każdym podglądem i przy „Skonfiguruj zaznaczone” odnawia zapamiętaną przez macOS zgodę – do tego sesje SSH potrzebują pełnego dostępu do dysku. Gdyby okno mimo to się pojawiło, przy komputerze trzeba zezwolić (po angielsku „Allow For One Month”); po odmowie podgląd pokazuje tylko tapetę. Na Macach w MDM okno wyłącza na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig."
+    public static let screenCaptureAlertNote = "Od macOS 15 system potrafi co jakiś czas pokazać osobie przy komputerze okno, że „sshd-session” / „sshd-keygen-wrapper” chce mieć dostęp do ekranu z pominięciem systemowego wyboru okien. CMCR Manager zapobiega temu sam: przed każdym podglądem i przy „Skonfiguruj zaznaczone” odnawia zapamiętaną przez macOS zgodę – do tego sesje SSH potrzebują pełnego dostępu do dysku. Gdyby okno mimo to się pojawiło, przy komputerze trzeba zezwolić (po angielsku „Allow For One Month”); po odmowie podgląd pokazuje tylko tapetę. Na Macach w MDM takie okna wyłącza na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig – ale dla wszystkich aplikacji i kont na Macu, nie tylko dla podglądu."
 
     /// What the readiness check found about the alert (`screen_alert` from `cmcr_sc_approval … check`).
     public static func screenCaptureAlertNote(state: String?, user: String?) -> String {
         let name = (user?.isEmpty ?? true) ? nil : user
         let who = name.map { " (konto \($0))" } ?? ""
-        let mdm = "Na Macach w MDM okno wyłącza na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig."
+        let mdm = "Na Macach w MDM takie okna wyłącza na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig – dla wszystkich aplikacji i kont na Macu, nie tylko dla podglądu."
         switch state {
         case "ok"?, "renewed"?:
             return "Okno macOS o dostępie sesji SSH do ekranu jest wyłączone\(who): zgoda jest zapamiętana, a CMCR Manager odnawia ją przed każdym podglądem."
@@ -417,11 +417,7 @@ public extension Scripts {
           kv setup none
         fi
 
-        if [ -n "$CONSOLE_UID" ] && [ "$(id -u)" = "$CONSOLE_UID" ]; then
-          kv screen_preflight "$(preflight)"
-          kv screen_alert_user "$CONSOLE_USER"
-          kv screen_alert "$(cmcr_sc_approval "$CONSOLE_USER" "$R$HOME" "$OSV" check </dev/null 2>/dev/null)"
-        fi
+        if [ -n "$CONSOLE_UID" ] && [ "$(id -u)" = "$CONSOLE_UID" ]; then kv screen_preflight "$(preflight)"; fi
 
         if [ "$(id -u)" -eq 0 ]; then SUDO=root
         elif ! is_admin_user "$(id -un)"; then SUDO=notadmin
@@ -454,18 +450,16 @@ public extension Scripts {
                 wait "$p"; kill "$w" 2>/dev/null)"
           echo "screen_preflight=$SP"
         fi
-        # replayd's remembered consent for the SSH session (macOS 15+, read only): the account at the screen, else
-        # the student – the one who would see the alert.
-        SCU="${8:-$5}"; SCH="$SHOME"
-        if [ -n "${8:-}" ]; then
-          SCH="$(dscl . -read "/Users/$SCU" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p' | head -n 1)"
-        fi
-        echo "screen_alert_user=$SCU"
-        echo "screen_alert=$(cmcr_sc_approval "$SCU" "${SCH:+$R$SCH}" "$7" check </dev/null 2>/dev/null)"
+        # replayd's remembered consent for the SSH session (macOS 15+, read only) of the student account – the one the
+        # setup script manages. Whoever else is at the screen is not reported: the preview renews the consent of
+        # every account it observes by itself, and never touches the others (outside the allowed list, or admins
+        # while "only standard accounts" is on – the default).
+        echo "screen_alert_user=$5"
+        echo "screen_alert=$(cmcr_sc_approval "$5" "${SHOME:+$R$SHOME}" "$7" check </dev/null 2>/dev/null)"
         CMCR_READINESS_ROOT
         } > "$CMCR_TMP/readiness-root.sh"
         ROOTOUT="$(asroot /bin/bash --noprofile --norc "$CMCR_TMP/readiness-root.sh" "$R" "$SHOME" "$CONSOLE_UID" "$JXA" \
-          "$STUDENT" "$R$SHARED" "$OSV" "$CONSOLE_USER" 2>"$CMCR_TMP/readiness.err")"
+          "$STUDENT" "$R$SHARED" "$OSV" 2>"$CMCR_TMP/readiness.err")"
         if printf '%s\n' "$ROOTOUT" | grep -qx 'root=ok'; then
           kv sudo "$SUDO"
           printf '%s\n' "$ROOTOUT" | grep -v '^root='

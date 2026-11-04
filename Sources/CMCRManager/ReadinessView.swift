@@ -310,7 +310,7 @@ enum ManualStep: String, CaseIterable, Identifiable {
         case .screenRecording:
             return ["W macOS 26.1–26.2 dodane narzędzie może nie być widoczne na liście – to błąd systemu, uprawnienie działa.",
                     "Samego uprawnienia nie da się nadać zdalnie: systemowa baza TCC jest chroniona przez SIP, a profil MDM może Nagrywanie ekranu tylko zablokować albo pozwolić włączyć je kontu standardowemu – nie włączyć.",
-                    "Okno, w którym macOS 15+ co jakiś czas pyta zalogowanego użytkownika o zgodę na dostęp do ekranu, CMCR Manager wyłącza sam przed każdym podglądem (potrzebny pełny dostęp do dysku dla sesji zdalnych). Na Macach w MDM wyłącza je na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig."]
+                    "Okno, w którym macOS 15+ co jakiś czas pyta zalogowanego użytkownika o zgodę na dostęp do ekranu, CMCR Manager wyłącza sam przed każdym podglądem (potrzebny pełny dostęp do dysku dla sesji zdalnych). Na Macach w MDM takie okna wyłącza na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig – dla wszystkich aplikacji i kont na Macu, nie tylko dla podglądu."]
         case .screenSharing:
             return ["Od macOS 12.1 usługa włączona zdalnie potrafi pokazywać czarny ekran, dopóki ktoś raz jej nie przełączy."]
         case .fileVault:

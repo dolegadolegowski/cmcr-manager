@@ -44,7 +44,7 @@ private func approvals(_ dir: URL) throws -> [String: Any] {
     return try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
 }
 
-@Test func approvalBlockIsSharedFromTheSetupScript() {
+@Test func approvalBlockIsSharedFromTheSetupScript() throws {
     let block = Scripts.screenCaptureApprovalShell
     #expect(block.hasPrefix("# >>> CMCR-REPLAYD"))
     #expect(block.hasSuffix("# <<< CMCR-REPLAYD <<<"))
@@ -58,10 +58,17 @@ private func approvals(_ dir: URL) throws -> [String: Any] {
     let readiness = Scripts.readiness(student: "student", sharedFolder: "/Users/student/Public/cmcr", publicKey: nil).body
     #expect(readiness.contains(block))
     #expect(readiness.contains("declare -f folder_state cmcr_sc_as cmcr_sc_epoch cmcr_sc_approval"))
-    #expect(readiness.contains("echo \"screen_alert=$(cmcr_sc_approval \"$SCU\" \"${SCH:+$R$SCH}\" \"$7\" check"))
+    // Only the student account is reported: an admin at the screen is never observed, so nothing renews theirs.
+    #expect(readiness.contains("echo \"screen_alert=$(cmcr_sc_approval \"$5\" \"${SHOME:+$R$SHOME}\" \"$7\" check"))
+    #expect(readiness.components(separatedBy: "cmcr_sc_approval \"").count == 2, "one readiness call, for the student")
     // Setup: a step of its own after the TCC checks.
     #expect(SetupScriptTemplate.text.contains("  step_screen_alert\n}"))
-    #expect(SetupScriptTemplate.text.contains("st=\"$(cmcr_sc_approval \"$u\" \"$h\" \"$OS_VER\" $mode)\""))
+    // Setup renews only the student's consent: renewing stops that account's replayd, so an admin or teacher at
+    // the screen (whom the preview does not observe) keeps their own reminder and their running screen recording.
+    let step = try #require(SetupScriptTemplate.text.components(separatedBy: "step_screen_alert() {").last?
+        .components(separatedBy: "\n}\n").first)
+    #expect(step.contains("st=\"$(cmcr_sc_approval \"$STUDENT\" \"$h\" \"$OS_VER\" $mode)\""))
+    #expect(!step.contains("CONSOLE_USER"))
 }
 
 @Test func approvalIsWrittenOnlyFromMacOS15AndOnlyWhenItLapses() throws {
@@ -159,6 +166,9 @@ private func approvals(_ dir: URL) throws -> [String: Any] {
     #expect(detail("screen_alert=stale\n").contains("odnowi ją sam przed najbliższym podglądem"))
     #expect(detail("screen_alert=denied\n").contains("nie mają pełnego dostępu do dysku"))
     #expect(detail("screen_alert=denied\n").contains("setup/mdm/cmcr-screen-capture-alert.mobileconfig"))
+    // The MDM key is device-wide: every mention says so.
+    #expect(detail("screen_alert=denied\n").contains("dla wszystkich aplikacji i kont na Macu"))
+    #expect(ReadinessReport.screenCaptureAlertNote.contains("dla wszystkich aplikacji i kont na Macu"))
     #expect(detail("screen_alert=nohome\n").contains("Konto student nie ma jeszcze katalogu domowego"))
     #expect(detail("").contains(ReadinessReport.screenCaptureAlertNote))
     #expect(ReadinessReport.screenCaptureAlertNote.contains("CMCR Manager zapobiega temu sam"))
@@ -180,6 +190,8 @@ private func approvals(_ dir: URL) throws -> [String: Any] {
     let restrictions = try #require(payloads(alert).first)
     #expect(restrictions["PayloadType"] as? String == "com.apple.applicationaccess")
     #expect(restrictions["forceBypassScreenCaptureAlert"] as? Bool == true)
+    #expect((alert["PayloadDescription"] as? String)?.contains("na całym Macu") == true)
+    #expect((alert["PayloadDescription"] as? String)?.contains("dla wszystkich aplikacji") == true)
     uuids += [alert["PayloadUUID"], restrictions["PayloadUUID"]].compactMap { $0 as? String }
 
     let fda = try profile("cmcr-ssh-full-disk-access.mobileconfig")
