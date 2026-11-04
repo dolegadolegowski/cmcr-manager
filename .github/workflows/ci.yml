@@ -1,11 +1,19 @@
 # Builds CMCR Manager and runs the unit tests on every push and pull request.
 # No secrets: releases are built and signed locally with scripts/release.sh (the Ed25519 key never leaves
 # the maintainer's Mac).
+#
+# The macOS arm64 hosted pool (macos-26) is often short of capacity: a job can wait 15 minutes and then be
+# cancelled with "The job was not acquired by Runner of type hosted". The gate therefore runs on the Intel
+# pool, which has capacity of its own. The app only needs the macOS 26 SDK from Xcode 26 to compile
+# (deployment target is macOS 14, glassEffect sits behind #available), and it ships as a universal binary,
+# so an x86_64 runner with Xcode 26 tests a real build. The Apple Silicon / macOS 26 job still runs, but it
+# is informational and cannot block the run when no runner picks it up.
 name: CI
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,12 +24,31 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: macos-26              # Apple Silicon, Xcode 26 (macOS 26 SDK: glassEffect & co.)
+    name: build-and-test (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel   # x86_64, Xcode 26 selected below – the gate
+            optional: false
+          - runner: macos-26         # Apple Silicon, macOS 26 – best effort (arm64 queue)
+            optional: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with:
           persist-credentials: false
+      - name: Xcode 26
+        run: |
+          # The newest installed Xcode 26 (macOS 26 SDK: glassEffect & co.); images may default to an older one.
+          XCODE="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1)"
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE/Contents/Developer"; fi
+          xcodebuild -version
+          SDK="$(xcrun --sdk macosx --show-sdk-version)"
+          echo "macOS SDK $SDK"
+          [ "${SDK%%.*}" -ge 26 ] || { echo "::error::macOS 26 SDK required, found $SDK"; exit 1; }
       - name: Toolchain
         run: swift --version
       - name: Build (debug)
