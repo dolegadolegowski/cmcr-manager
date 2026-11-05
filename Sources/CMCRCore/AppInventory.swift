@@ -18,7 +18,7 @@ public struct InstalledApp: Identifiable, Hashable, Sendable {
     }
 
     public var path: String
-    /// apps, utilities, folder, user:<account>, unity, system.
+    /// apps, utilities, folder, user:<account>, unity, system, link (a link in an Applications folder to an app elsewhere).
     public var location: String
     public var kind: Kind
     public var bundleID: String
@@ -68,7 +68,11 @@ public struct InstalledApp: Identifiable, Hashable, Sendable {
         case .apple: return "Aplikacja Apple – CMCR nie odinstalowuje aplikacji Apple; w razie potrzeby usuń ją przy komputerze lub przez MDM."
         case .cmcr: return "Składnik CMCR – nie odinstalowuje się go zdalnie."
         case .app, .appStore, .unity:
-            return location == "system" ? "Aplikacja systemowa macOS – nie można jej odinstalować." : nil
+            if location == "system" { return "Aplikacja systemowa macOS – nie można jej odinstalować." }
+            if location == "link" {
+                return "W folderze Aplikacje jest tylko dowiązanie do niej (\(path)) – CMCR odinstalowuje aplikacje tylko z folderów Aplikacje."
+            }
+            return nil
         }
     }
 
@@ -93,6 +97,7 @@ public struct InstalledApp: Identifiable, Hashable, Sendable {
         case "folder": return "Aplikacje › \((folder as NSString).lastPathComponent)"
         case "unity": return "Unity Hub"
         case "system": return "macOS"
+        case "link": return "Dowiązanie w Aplikacje"
         default:
             if let user {
                 let home = "/\(user)/Applications"

@@ -166,7 +166,14 @@ public struct UninstallReport: Sendable {
             switch r.what {
             case "app", "unity": return "  • Do usunięcia – \(noun(r.what)): \(r.path)\(sizeSuffix)"
             case "daemon", "agent", "uagent":
-                return "  • Do usunięcia – \(noun(r.what)) \(r.detail) (najpierw zatrzymana): \(r.path)"
+                let why: String
+                switch r.extra.first ?? "" {
+                case "prog": why = " – jej program leży w aplikacji"
+                case "pkg": why = " – z pakietu aplikacji"
+                case "label": why = " – etykieta jak identyfikator aplikacji"
+                default: why = ""
+                }
+                return "  • Do usunięcia – \(noun(r.what)) \(r.detail) (najpierw zatrzymana): \(r.path)\(why)"
             case "receipt": return "  • Do wyrejestrowania – pakiet \(r.path) (pkgutil --forget)"
             default: return "  • Do usunięcia – \(noun(r.what)): \(r.path)"
             }
@@ -191,7 +198,10 @@ public struct UninstallReport: Sendable {
                 return "  ↷ Zostaje \(Polish.count(n, "plik", "pliki", "plików")) pakietu poza aplikacją (np. \(examples)). "
                     + "Aby je usunąć: „Usuń także pliki pakietu” (cmcrctl: --with-package-files)."
             case "receipt": return "  ↷ Zostaje pakiet \(r.path) – \(r.detail)"
-            default: return "  ↷ Zostaje \(noun(r.what)): \(r.path) – \(r.detail)"
+            case "daemon": return "  ↷ Zostaje usługa systemowa (LaunchDaemon): \(r.path) – \(r.detail)"
+            case "agent", "uagent": return "  ↷ Zostaje agent (LaunchAgent): \(r.path) – \(r.detail)"
+            case "pkgfile": return "  ↷ Zostaje plik pakietu: \(r.path) – \(r.detail)"
+            default: return "  ↷ Zostaje: \(r.path) – \(r.detail)"
             }
         case .refused:
             return "✘ Odmowa: \(r.path) – \(r.detail)"
@@ -201,7 +211,7 @@ public struct UninstallReport: Sendable {
         case .missing:
             return "• Nie znaleziono: \(r.path) – \(r.detail)"
         case .note:
-            return "  ℹ︎ \(r.detail)"
+            return r.what == "systemwide" ? "  ⚠︎ \(r.detail)" : "  ℹ︎ \(r.detail)"
         case .done:
             return UninstallSummary(r).map(summaryLine)
         }

@@ -151,6 +151,22 @@ import Testing
         }
     }
 
+    @Test func linkedAppsAreNotOfferedAndLaunchdItemsAreExplained() throws {
+        let link = AppInventory.parse("CMCR:APP\tlink\tapp\t/Users/Shared/Tool.app\tpl.test.tool\t1.0\t10\t").apps[0]
+        #expect(!link.isRemovable && link.reasonNotRemovable?.contains("dowiązanie") == true && link.locationLabel == "Dowiązanie w Aplikacje")
+        let text = UninstallReport.render([
+            "CMCR:UN\tplan\tdaemon\t/Library/LaunchDaemons/a.plist\tcom.firma.a\tprog",
+            "CMCR:UN\tplan\tdaemon\t/Library/LaunchDaemons/b.plist\tcom.firma.b\tpkg",
+            "CMCR:UN\tnote\tsystemwide\t\tUwaga: zostaną usunięte usługi działające dla całego komputera: com.firma.a",
+            "CMCR:UN\tkept\tdaemon\t/Library/LaunchDaemons/c.plist\tetykieta pasuje",
+            "CMCR:UN\tnote\tcopies\t/Applications/X.app\tNa komputerze jest inna kopia",
+        ].joined(separator: "\n"))
+        #expect(text.contains("(najpierw zatrzymana): /Library/LaunchDaemons/a.plist – jej program leży w aplikacji"))
+        #expect(text.contains("/Library/LaunchDaemons/b.plist – z pakietu aplikacji"))
+        #expect(text.contains("⚠︎ Uwaga: zostaną usunięte usługi działające dla całego komputera"))
+        #expect(text.contains("↷ Zostaje usługa systemowa (LaunchDaemon): /Library/LaunchDaemons/c.plist – etykieta pasuje"))
+    }
+
     // MARK: - Versions on several Macs
 
     static let lab = (1...11).map { String(format: "imac%02d", $0) }

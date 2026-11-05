@@ -109,7 +109,8 @@ struct UninstallSheet: View {
                     if let text = UninstallReport.line(r) {
                         Text(text.trimmingCharacters(in: .whitespaces))
                             .font(r.verb == .target ? .callout.weight(.medium) : .callout)
-                            .foregroundStyle(Self.color(r.verb))
+                            .foregroundStyle(r.what == "systemwide" ? Color.orange : Self.color(r.verb))
+                            .fontWeight(r.what == "systemwide" ? .semibold : .regular)
                             .padding(.leading, r.verb == .target || r.verb == .refused || r.verb == .missing ? 0 : 14)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)

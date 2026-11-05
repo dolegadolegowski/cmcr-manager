@@ -113,13 +113,13 @@ sleep 0.3
 clear_fakelog
 out="$(ctlpw uninstall "Kalkulator Testowy" 1 --dry-run)"; code=$?
 expect_code "dry-run: kod 0" "$code" 0 "$out"
-expect "dry-run: aplikacja, usługa, program pomocniczy i pakiet" "$out" \
+expect "dry-run: aplikacja i pakiet" "$out" \
   "Do usunięcia – aplikację: $AP_APPS/Kalkulator Testowy.app" \
-  "usługę systemową (LaunchDaemon) pl.test.kalk.helper" \
-  "program pomocniczy: $AP_FS/Library/PrivilegedHelperTools/pl.test.kalk.helper" \
   "Do wyrejestrowania – pakiet pl.test.kalk.pkg"
+expect "dry-run: usługa z /Library tylko po etykiecie zostaje" "$out" "Zostaje usługa systemowa (LaunchDaemon): $AP_FS/Library/LaunchDaemons/pl.test.kalk.helper.plist"
+expect_not "dry-run: usługa po etykiecie nie jest planowana" "$out" "Do usunięcia – usługę"
 expect "dry-run: uruchomiona aplikacja zostanie zamknięta" "$out" "Aplikacja jest uruchomiona – konto: $ME"
-expect "dry-run: pliki pakietu zostają bez --with-package-files" "$out" "Zostaje 2 pliki pakietu poza aplikacją" "--with-package-files"
+expect "dry-run: pliki pakietu zostają bez --with-package-files" "$out" "Zostaje 4 pliki pakietu poza aplikacją" "--with-package-files"
 expect "dry-run: podsumowanie" "$out" "Podgląd: do usunięcia" "nic jeszcze nie zmieniono"
 expect_not "dry-run: bez błędów basha (składnia)" "$out" "syntax error"
 expect_not "dry-run: bez błędów basha (polecenia)" "$out" "command not found"
@@ -128,6 +128,10 @@ expect_not "dry-run: bez błędów basha (polecenia)" "$out" "command not found"
 kill -0 "$AP_PID" 2>/dev/null && pass "dry-run: aplikacja dalej działa" || fail "dry-run: aplikację zamknięto"
 expect_not "dry-run: bez bootout i --forget" "$(fakelog)" "bootout"
 out="$(ctlpw uninstall "Kalkulator Testowy" 1 --dry-run --with-package-files)"
+expect "dry-run --with-package-files: usługa pakietu i ostrzeżenie o usługach całego komputera" "$out" \
+  "Do usunięcia – usługę systemową (LaunchDaemon) pl.test.kalk.helper (najpierw zatrzymana): $AP_FS/Library/LaunchDaemons/pl.test.kalk.helper.plist – z pakietu aplikacji" \
+  "Uwaga: zostaną usunięte usługi działające dla całego komputera: pl.test.kalk.helper" \
+  "Do usunięcia – plik pakietu: $AP_FS/Library/PrivilegedHelperTools/pl.test.kalk.helper"
 expect "dry-run --with-package-files: plik tylko tego pakietu" "$out" "Do usunięcia – plik pakietu: $AP_FS/Library/Application Support/KalkTest/sub/dane.txt"
 expect "dry-run --with-package-files: wspólny plik zostaje" "$out" "KalkTest/wspolny.txt – należy też do innego pakietu"
 expect_not "actions.log: podgląd bez wpisu" "$(cat "$WORK/config/actions.log" 2>/dev/null)" "uninstall"
@@ -275,3 +279,76 @@ kill "$AP2_PID" 2>/dev/null
 wait "$AP2_PID" 2>/dev/null
 cp "$AP2/hosts.json.bak" "$WORK/config/hosts.json"
 rm -rf "$AP_APPS/Bez Wersji.app"
+
+
+section "Usługi systemowe nie idą za identyfikatorem aplikacji ucznia (przegląd PR #6)"
+# A student's app with a crafted bundle id must not take services of other vendors with it.
+mkdir -p "$AP_FS/Library/PrivilegedHelperTools"
+ap_plist "$AP_FS/Library/LaunchDaemons/com.jamf.management.plist" com.jamf.management "$AP_FS/Library/PrivilegedHelperTools/com.jamf.management"
+printf '#!/bin/sh\n' > "$AP_FS/Library/PrivilegedHelperTools/com.jamf.management"
+ap_plist "$AP_FS/Library/LaunchDaemons/com.zlosliwa.dev.plist" com.zlosliwa.dev "$AP_FS/Library/PrivilegedHelperTools/com.jamf.management"
+ap_plist "$AP_HOME/Library/LaunchAgents/com.jamf.agent.plist" com.jamf.agent "/Library/Obca/agent"
+for bid in com com.jamf com.jamf.management; do
+  rm -rf "$AP_HOME/Applications/Zlosliwa.app"
+  ap_mkapp "$AP_HOME/Applications" Zlosliwa "$bid" 1.0
+  clear_fakelog
+  out="$(ctlpw uninstall "$AP_HOME/Applications/Zlosliwa.app" 1 --yes)"; code=$?
+  expect_code "id „$bid”: kod 0" "$code" 0 "$out"
+  [ ! -e "$AP_HOME/Applications/Zlosliwa.app" ] && pass "id „$bid”: aplikacja ucznia usunięta" || fail "id „$bid”: aplikacja została" "$out"
+  [ -f "$AP_FS/Library/LaunchDaemons/com.jamf.management.plist" ] && [ -f "$AP_FS/Library/PrivilegedHelperTools/com.jamf.management" ] \
+    && [ -f "$AP_FS/Library/LaunchDaemons/com.zlosliwa.dev.plist" ] \
+    && pass "id „$bid”: obce usługi z /Library i ich program zostały" || fail "id „$bid”: usunięto obce usługi" "$out $(ls -R "$AP_FS/Library")"
+  expect_not "id „$bid”: bez bootout usług systemowych" "$(fakelog)" "bootout system"
+done
+[ -f "$AP_HOME/Library/LaunchAgents/com.jamf.agent.plist" ] && pass "id ucznia: agent o podobnej etykiecie (id za krótki) został" || fail "id ucznia: usunięto agenta"
+
+# An app in /Applications with a short id: no label matching either.
+ap_mkapp "$AP_APPS" Krotkie com.vendor 1.0
+ap_plist "$AP_FS/Library/LaunchDaemons/com.vendor.updater.plist" com.vendor.updater "$AP_FS/Library/PrivilegedHelperTools/com.vendor.updater"
+out="$(ctlpw uninstall Krotkie 1 --yes)"
+[ ! -e "$AP_APPS/Krotkie.app" ] && [ -f "$AP_FS/Library/LaunchDaemons/com.vendor.updater.plist" ] \
+  && pass "id z dwóch części: aplikacja usunięta, usługa po etykiecie została" || fail "id z dwóch części" "$out"
+
+# A copy with the same id stays: the services named after it stay as well, and the preview says so.
+ap_mkapp "$AP_APPS" Wspolna com.firma.wspolna 1.0
+ap_mkapp "$AP_HOME/Applications" Wspolna com.firma.wspolna 1.0
+ap_plist "$AP_FS/Library/LaunchDaemons/com.firma.wspolna.service.plist" com.firma.wspolna.service "/Library/Obca/serwis"
+out="$(ctlpw uninstall "$AP_HOME/Applications/Wspolna.app" 1 --yes)"
+expect "wspólny identyfikator: wyjaśnienie" "$out" "inna kopia aplikacji o tym samym identyfikatorze"
+[ -f "$AP_FS/Library/LaunchDaemons/com.firma.wspolna.service.plist" ] && [ -d "$AP_APPS/Wspolna.app" ] && [ ! -e "$AP_HOME/Applications/Wspolna.app" ] \
+  && pass "wspólny identyfikator: kopia ucznia usunięta, usługa kopii systemowej została" || fail "wspólny identyfikator" "$out"
+
+# /Applications app whose daemon points into the app: removed (with the warning in the preview).
+ap_mkapp "$AP_APPS" Serwisowa com.firma.serwisowa 1.0
+ap_plist "$AP_FS/Library/LaunchDaemons/com.firma.serwisowa.d.plist" com.firma.serwisowa.d "$AP_APPS/Serwisowa.app/Contents/MacOS/Serwisowa"
+out="$(ctlpw uninstall Serwisowa 1 --dry-run)"
+expect "usługa z programem w aplikacji: ostrzeżenie w podglądzie" "$out" "jej program leży w aplikacji" "Uwaga: zostaną usunięte usługi działające dla całego komputera: com.firma.serwisowa.d"
+clear_fakelog
+out="$(ctlpw uninstall Serwisowa 1 --yes)"
+[ ! -e "$AP_FS/Library/LaunchDaemons/com.firma.serwisowa.d.plist" ] && expect "usługa z programem w aplikacji: zatrzymana i usunięta" "$(fakelog)" "launchctl bootout system" \
+  || fail "usługa z programem w aplikacji została" "$out"
+
+# --with-package-files: a launch daemon of the package that does not belong to the app's id is stopped before it goes.
+ap_mkapp "$AP_APPS" Paczka com.pakiet.paczka 1.0
+ap_plist "$AP_FS/Library/LaunchDaemons/com.inny.aktualizator.plist" com.inny.aktualizator "$AP_FS/Library/PrivilegedHelperTools/com.inny.aktualizator"
+printf '#!/bin/sh\n' > "$AP_FS/Library/PrivilegedHelperTools/com.inny.aktualizator"
+mkdir -p "$AP_RC/pl.test.paczka.pkg"
+printf 'version: 1\nlocation: /\ninstall-time: 1767225600\n' > "$AP_RC/pl.test.paczka.pkg/info"
+printf '%s\n' "$R/Applications/Paczka.app" "$R/fsroot/Library/LaunchDaemons/com.inny.aktualizator.plist" \
+  "$R/fsroot/Library/PrivilegedHelperTools/com.inny.aktualizator" > "$AP_RC/pl.test.paczka.pkg/files"
+: > "$AP_RC/pl.test.paczka.pkg/dirs"
+clear_fakelog
+out="$(ctlpw uninstall Paczka 1 --with-package-files --yes)"; code=$?
+expect_code "pakiet z usługą: kod 0" "$code" 0 "$out"
+expect "pakiet z usługą: najpierw bootout" "$(fakelog)" "launchctl bootout system $AP_FS/Library/LaunchDaemons/com.inny.aktualizator.plist"
+[ ! -e "$AP_FS/Library/LaunchDaemons/com.inny.aktualizator.plist" ] && [ ! -e "$AP_FS/Library/PrivilegedHelperTools/com.inny.aktualizator" ] \
+  && pass "pakiet z usługą: plist i program usunięte" || fail "pakiet z usługą: została" "$out"
+
+section "Dowiązanie w Aplikacje nie jest oferowane do odinstalowania (przegląd PR #6)"
+mkdir -p "$WORK/in/inne"
+ap_mkapp "$WORK/in/inne" Zewnetrzna pl.test.zewn.dow 1.0
+ln -s "$WORK/in/inne/Zewnetrzna.app" "$AP_APPS/Zewnetrzna.app"
+out="$(ctl apps installed 1 --json)"
+expect "dowiązanie poza folderami: miejsce link i brak możliwości usunięcia" \
+  "$(ap_json "$out" "apps['Zewnetrzna']['location'], apps['Zewnetrzna']['removable'], apps['Zewnetrzna']['path']")" "link" "False" "$WORK/in/inne/Zewnetrzna.app"
+rm -f "$AP_APPS/Zewnetrzna.app"; rm -rf "$WORK/in/inne"
