@@ -51,7 +51,8 @@ stop_delayed_power() { delayed_power | xargs kill 2>/dev/null; }
 section "cmcrctl – pomoc poleceń (--help, -h niczego nie wykonują)"
 clear_fakelog
 MM_HELP=(lock unlock rename rename-computer "lesson end" "lesson start" "schedule clear" "schedule set" power-cancel
-         filevault report "ask Pytanie" "app-version Safari" rm mkdir exists collect get ls install install-url screen-watch)
+         filevault report "ask Pytanie" "app-version Safari" rm mkdir exists collect get ls install install-url screen-watch
+         screen-agent "screen-agent install" "screen-agent permission" "screen-agent remove")
 [ "$MM_POWER" = 1 ] && MM_HELP+=("power-later shutdown 5")
 for cmd in "${MM_HELP[@]}"; do
   ok=1

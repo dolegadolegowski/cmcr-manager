@@ -243,7 +243,6 @@ p2_setup_begin() {
   printf '# test\nInclude /etc/ssh/sshd_config.d/*\nPasswordAuthentication yes\n' > "$SR/etc/ssh/sshd_config"
   printf 'root ALL = (ALL) ALL\n#includedir /private/etc/sudoers.d\n' > "$SR/etc/sudoers"
   printf 'womp 1\nsleep 1\ntcpkeepalive 1\n' > "$SS/pmset"
-  echo false > "$SS/screen-preflight"
   echo "FileVault is Off." > "$SS/filevault"
   cp "$WORK/config/hosts.json" "$SCONF/hosts.json"
   cat > "$SCONF/settings.json" <<EOF
@@ -331,6 +330,7 @@ fi
 p2_setup_end
 
 section "P2: podgląd ekranu – jakość JPEG także bez zmniejszania (AUDIT ZAJ-08)"
+agent_ensure
 cp "$WORK/config/settings.json" "$P2/settings.json.bak"
 p2_quality() { # p2_quality Q FILE – a screenshot at full size with JPEG quality Q
   python3 - "$WORK/config/settings.json" "$1" <<'PY'

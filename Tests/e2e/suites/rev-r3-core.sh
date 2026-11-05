@@ -108,7 +108,6 @@ rv3_setup_begin() {
   printf '# test\nInclude /etc/ssh/sshd_config.d/*\nPasswordAuthentication yes\n' > "$RV3_SR/etc/ssh/sshd_config"
   printf 'root ALL = (ALL) ALL\n#includedir /private/etc/sudoers.d\n' > "$RV3_SR/etc/sudoers"
   printf 'womp 1\nsleep 1\ntcpkeepalive 1\n' > "$RV3_SS/pmset"
-  echo false > "$RV3_SS/screen-preflight"
   echo "FileVault is Off." > "$RV3_SS/filevault"
   cp "$WORK/config/hosts.json" "$RV3_CONF/hosts.json"
   cat > "$RV3_CONF/settings.json" <<EOF

@@ -56,67 +56,162 @@ sudo() {
   SUDO_USER="$(id -un)" "$@"
 }
 
-_e2e_fake_png() {
-  sips -s format png "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns" \
-    --out "$1" >/dev/null 2>&1
-}
-
-# screencapture: writes a fake image per output file (format from -t). Control files in $CMCR_E2E_WORK:
-# displays (number of displays, default 1), screencapture_fail (no Screen Recording permission),
-# screen_variant (a different picture, to test change detection).
+# screencapture: the screen preview no longer runs it (CMCR Screen Agent takes the picture); a call is only logged and
+# refused, so nothing in the tests can capture the real screen of the Mac running them.
 screencapture() {
-  local fmt=png i=0 n f src
-  local -a files=()
   _e2e_log "screencapture $*"
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      -t) fmt="$2"; shift 2 ;;
-      -D|-R|-T|-l) shift 2 ;;
-      -*) shift ;;
-      *) files[${#files[@]}]="$1"; shift ;;
-    esac
-  done
-  if [ -e "${CMCR_E2E_WORK:-/nonexistent}/screencapture_fail" ]; then
-    echo "could not create image from display" >&2; return 1
-  fi
-  n="$(cat "${CMCR_E2E_WORK:-/nonexistent}/displays" 2>/dev/null || echo 1)"
-  src=/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns
-  [ -e "${CMCR_E2E_WORK:-/nonexistent}/screen_variant" ] && src=/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericFolderIcon.icns
-  for f in "${files[@]}"; do
-    i=$((i + 1)); [ "$i" -le "$n" ] || break
-    case "$fmt" in
-      jpg|jpeg) sips -s format jpeg "$src" --out "$f" >/dev/null 2>&1 ;;
-      *) sips -s format png "$src" --out "$f" >/dev/null 2>&1 ;;
-    esac
-  done
+  echo "screencapture (atrapa): nieużywane – zrzut robi CMCR Screen Agent" >&2
+  return 1
 }
 
-# Observation notice of the screen preview (Scripts.observeNoticeJXA, tag CMCR_OBSERVE_NOTICE): answers like
-# the real panel. Control files in $CMCR_E2E_WORK: fake-notify-fail (osascript fails, e.g. no access to the
-# GUI session), fake-notify-hidden (the panel is not on screen), fake-notify-locked (the screen is locked or
-# asleep), fake-notify-silent (no answer at all),
-# fake-notify-hang (no answer from a real process that does not quit for a minute, like an osascript stuck in
-# the GUI session; its command line holds "cmcr-fake-osascript $CMCR_E2E_WORK/", so tests can look for leftovers).
-_e2e_notice() {
-  local w="${CMCR_E2E_WORK:-/nonexistent}"
-  _e2e_log "observe-notice: $1"
-  if [ -e "$w/fake-notify-fail" ]; then
-    echo "execution error: Error: Connection to the window server refused (-2700)" >&2; return 1
-  fi
-  if [ -e "$w/fake-notify-hidden" ]; then echo "CMCR:NOTICE:hidden"; return 0; fi
-  # fake-notify-locked: the student's screen is locked or the display sleeps (AUDIT ZAJ-05).
-  if [ -e "$w/fake-notify-locked" ]; then echo "CMCR:NOTICE:locked"; return 0; fi
-  if [ -e "$w/fake-notify-silent" ]; then sleep 10; return 0; fi
-  if [ -e "$w/fake-notify-hang" ]; then
-    /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i + 1)); done' "cmcr-fake-osascript $w/"
-    return 0
-  fi
-  echo "CMCR:NOTICE:shown"
-}
-_e2e_is_notice() { case " $* " in *" CMCR_OBSERVE_NOTICE "*) return 0 ;; esac; return 1; }
+# tccutil: logged only – the real one would reset privacy permissions of this Mac (install and removal of the screen
+# agent run `tccutil reset ScreenCapture pl.cmcr.manager.screen-agent`).
+tccutil() { _e2e_log "tccutil $*"; return 0; }
 
-# launchctl: `asuser UID cmd…` runs cmd "in the GUI session" – here: logs it and executes only safe tools.
+# --- CMCR Screen Agent in the GUI sessions (docs/screen-agent.md) -----------------------------------------------
+# launchd's state of the LaunchAgent pl.cmcr.manager.screen-agent in each gui/<uid> domain lives in
+# $CMCR_E2E_WORK/launchd/gui-<uid>/: loaded (the plist it was bootstrapped from), pid (the running agent), disabled.
+# bootstrap and kickstart start the INSTALLED agent – the plist's ProgramArguments, and only a program under
+# $CMCR_E2E_WORK – detached like a launchd job (its own session, no terminal, a fresh environment, output appended to
+# $CMCR_E2E_WORK/agent-serve.log) and always in the agent's DEBUG test mode: CMCR_SCREEN_AGENT_TEST_DIR=
+# $CMCR_E2E_WORK/agent (no AppKit, ScreenCaptureKit or TCC; the screen's state comes from files there),
+# CMCR_SCREEN_AGENT_TEST_UID=<uid> (the socket of that session), CMCR_SETUP_ROOT_PREFIX (the files of the test install).
+# bootout sends SIGTERM (the agent removes its socket) and waits for it to end. Unlike launchd it never restarts an
+# agent that ended by itself (KeepAlive): `print` then reports "not running" and the scripts have to revive it
+# (kickstart -k), which is what the tests check. Calls about anything else return 200 to the caller.
+_e2e_agent_dir() { printf '%s/launchd/gui-%s' "${CMCR_E2E_WORK:-/nonexistent}" "$1"; }
+# _e2e_agent_pid UID – prints the pid of that session's agent while it runs (a process of this test in serve mode).
+_e2e_agent_pid() {
+  local p
+  p="$(cat "$(_e2e_agent_dir "$1")/pid" 2>/dev/null)"
+  case "$p" in ''|*[!0-9]*) return 1 ;; esac
+  case "$(command ps -p "$p" -o command= 2>/dev/null)" in
+    "${CMCR_E2E_WORK:-/nonexistent}/"*" serve") echo "$p" ;;
+    *) return 1 ;;
+  esac
+}
+_e2e_agent_start() { # _e2e_agent_start UID
+  local w="${CMCR_E2E_WORK:-}" d plist exe mode
+  [ -n "$w" ] || return 1
+  d="$(_e2e_agent_dir "$1")"
+  plist="$(cat "$d/loaded" 2>/dev/null)"
+  exe="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist" 2>/dev/null)"
+  mode="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:1' "$plist" 2>/dev/null)"
+  case "$exe" in
+    "$w/"*) ;;
+    *) _e2e_log "launchd: usługa spoza katalogu testu nie zostanie uruchomiona (${exe:-?})"; return 1 ;;
+  esac
+  # A LaunchAgent whose program is missing just does not run (launchd keeps trying).
+  [ -x "$exe" ] || { _e2e_log "launchd: brak pliku usługi $exe"; return 0; }
+  mkdir -p "$w/agent"
+  # $! is the agent itself: env and perl exec it in the same process.
+  ( cd / || exit 1
+    /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$HOME" USER="$(id -un)" TMPDIR="${TMPDIR:-/tmp/}" \
+      CMCR_SETUP_ROOT_PREFIX="${CMCR_SETUP_ROOT_PREFIX:-$w/setup-root}" CMCR_SCREEN_AGENT_TEST_DIR="$w/agent" \
+      CMCR_SCREEN_AGENT_TEST_UID="$1" \
+      /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec { $ARGV[0] } @ARGV; exit 127' "$exe" "$mode" \
+      </dev/null >>"$w/agent-serve.log" 2>&1 &
+    echo $! > "$d/pid" )
+  _e2e_log "launchd: gui/$1/pl.cmcr.manager.screen-agent uruchomiona"
+}
+_e2e_agent_stop() { # _e2e_agent_stop UID
+  local p i d
+  d="$(_e2e_agent_dir "$1")"
+  if p="$(_e2e_agent_pid "$1")"; then
+    builtin kill -TERM "$p" 2>/dev/null
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+      _e2e_agent_pid "$1" >/dev/null || break
+      sleep 0.1
+    done
+    _e2e_agent_pid "$1" >/dev/null && builtin kill -KILL "$p" 2>/dev/null
+    _e2e_log "launchd: gui/$1/pl.cmcr.manager.screen-agent zatrzymana"
+  fi
+  rm -f "$d/pid"
+}
+_e2e_agent_launchctl() {
+  local cmd="${1:-}" all="$*" k=0 t uid d p label
+  [ -n "${CMCR_E2E_WORK:-}" ] || return 200
+  shift
+  if [ "$cmd" = kickstart ]; then
+    while :; do case "${1:-}" in -k) k=1; shift ;; -p|-s) shift ;; *) break ;; esac; done
+  fi
+  t="${1:-}"
+  case "$cmd $t" in
+    "bootstrap gui/"[0-9]*)
+      case "${2:-}" in */pl.cmcr.manager.screen-agent.plist) ;; *) return 200 ;; esac
+      uid="${t#gui/}" ;;
+    "bootout gui/"[0-9]*/*|"print gui/"[0-9]*/*|"kickstart gui/"[0-9]*/*|"enable gui/"[0-9]*/*|"disable gui/"[0-9]*/*)
+      case "$t" in */pl.cmcr.manager.screen-agent) ;; *) return 200 ;; esac
+      uid="${t#gui/}"; uid="${uid%%/*}" ;;
+    "bootout gui/"[0-9]*)
+      # The whole session ends (logout): its agent goes with it; the rest is the caller's.
+      uid="${t#gui/}"
+      case "$uid" in *[!0-9]*) return 200 ;; esac
+      _e2e_agent_stop "$uid"
+      rm -f "$(_e2e_agent_dir "$uid")/loaded"
+      return 200 ;;
+    *) return 200 ;;
+  esac
+  case "$uid" in ''|*[!0-9]*) return 200 ;; esac
+  d="$(_e2e_agent_dir "$uid")"
+  mkdir -p "$d"
+  _e2e_log "launchctl $all"
+  case "$cmd" in
+    print)
+      if [ ! -e "$d/loaded" ]; then
+        echo "Bad request." >&2
+        echo "Could not find service \"pl.cmcr.manager.screen-agent\" in domain for user gui: $uid" >&2
+        return 113
+      fi
+      p="$(_e2e_agent_pid "$uid")"
+      printf 'gui/%s/pl.cmcr.manager.screen-agent = {\n\tpath = %s\n\tstate = %s\n' "$uid" "$(cat "$d/loaded")" \
+        "$([ -n "$p" ] && echo running || echo 'not running')"
+      [ -n "$p" ] && printf '\tpid = %s\n' "$p"
+      echo "}"
+      return 0 ;;
+    bootstrap)
+      if [ ! -f "${2:-}" ]; then echo "Bootstrap failed: 2: No such file or directory" >&2; return 2; fi
+      label="$(/usr/libexec/PlistBuddy -c 'Print :Label' "$2" 2>/dev/null)"
+      if [ -e "$d/loaded" ] || [ -e "$d/disabled" ] || [ "$label" != pl.cmcr.manager.screen-agent ]; then
+        echo "Bootstrap failed: 5: Input/output error" >&2; return 5
+      fi
+      printf '%s\n' "$2" > "$d/loaded"
+      _e2e_agent_start "$uid"
+      return 0 ;;
+    bootout)
+      _e2e_slow launchctl-bootout
+      [ -e "$d/loaded" ] || { echo "Boot-out failed: 3: No such process" >&2; return 3; }
+      _e2e_agent_stop "$uid"
+      rm -f "$d/loaded"
+      return 0 ;;
+    kickstart)
+      if [ ! -e "$d/loaded" ]; then
+        echo "Could not find service \"pl.cmcr.manager.screen-agent\" in domain for user gui: $uid" >&2; return 113
+      fi
+      if [ -e "$d/disabled" ]; then
+        echo "Could not kickstart service \"pl.cmcr.manager.screen-agent\": 119: Service is disabled" >&2; return 119
+      fi
+      if _e2e_agent_pid "$uid" >/dev/null; then
+        [ $k = 1 ] || return 0
+        _e2e_agent_stop "$uid"
+      fi
+      _e2e_agent_start "$uid"
+      return 0 ;;
+    enable) rm -f "$d/disabled"; return 0 ;;
+    disable) : > "$d/disabled"; return 0 ;;
+  esac
+  return 200
+}
+
+# launchctl: `asuser UID cmd…` runs cmd "in the GUI session" – here: only logs it. The screen agent's service in
+# gui/<uid> is kept by _e2e_agent_launchctl above; anything else is logged only.
 launchctl() {
+  case "${1:-}" in
+    print|bootout|bootstrap|enable|disable|kickstart)
+      _e2e_agent_launchctl "$@"
+      local _e2e_rc=$?
+      [ "$_e2e_rc" = 200 ] || return "$_e2e_rc" ;;
+  esac
   case "${1:-}" in
     asuser)
       shift 2
@@ -128,21 +223,15 @@ launchctl() {
         done
         _e2e_log "gui-sudo:$sflags (cwd $PWD)"
       fi
-      case "${1:-}" in
-        /usr/sbin/screencapture|screencapture) shift; screencapture "$@" ;;
-        /usr/bin/lsappinfo|lsappinfo) shift; lsappinfo "$@" ;;
-        *)
-          if [ "${1:-}" = /usr/bin/osascript ] && _e2e_is_notice "$@"; then _e2e_notice gui; return; fi
-          local input=""
-          if [ ! -t 0 ]; then input="$(cat)"; fi
-          _e2e_log "gui-exec: $*"
-          [ -n "$input" ] && _e2e_log "gui-stdin: $input"
-          # fake-ae-denied: Apple Events refused (Automation/TCC), as the scripts' `on error` handler logs it.
-          if [ "${1:-}" = /usr/bin/osascript ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/fake-ae-denied" ]; then
-            echo "CMCR_AE_ERR -1743 Not authorized to send Apple events to the application." >&2
-          fi
-          return 0 ;;
-      esac ;;
+      local input=""
+      if [ ! -t 0 ]; then input="$(cat)"; fi
+      _e2e_log "gui-exec: $*"
+      [ -n "$input" ] && _e2e_log "gui-stdin: $input"
+      # fake-ae-denied: Apple Events refused (Automation/TCC), as the scripts' `on error` handler logs it.
+      if [ "${1:-}" = /usr/bin/osascript ] && [ -e "${CMCR_E2E_WORK:-/nonexistent}/fake-ae-denied" ]; then
+        echo "CMCR_AE_ERR -1743 Not authorized to send Apple events to the application." >&2
+      fi
+      return 0 ;;
     print) _e2e_log "launchctl $*"; return 0 ;;
     bootout) _e2e_slow launchctl-bootout; _e2e_log "launchctl $*"; return 0 ;;
     bootstrap|enable|disable|kickstart|load|unload) _e2e_log "launchctl $*"; return 0 ;;
@@ -326,10 +415,7 @@ mas() {
   fi
   echo "mas (fake) $*"
 }
-osascript() {
-  if _e2e_is_notice "$@"; then _e2e_notice own; return; fi
-  _e2e_log "osascript $*"; return 0
-}
+osascript() { _e2e_log "osascript $*"; return 0; }
 # FileVault state comes from marker files in the test folder: fake-filevault (on, admin can unlock),
 # fake-filevault-nouser (on, admin not enabled for FileVault).
 fdesetup() {
@@ -440,7 +526,8 @@ ps() {
   fi
   return $rc
 }
-export -f _e2e_log _e2e_fake_png _e2e_notice _e2e_is_notice sudo screencapture launchctl shutdown reboot halt pmset softwareupdate installer tar ps \
+export -f _e2e_log sudo screencapture tccutil _e2e_agent_dir _e2e_agent_pid _e2e_agent_start _e2e_agent_stop \
+  _e2e_agent_launchctl launchctl shutdown reboot halt pmset softwareupdate installer tar ps \
   _e2e_su_run sysctl sw_vers log \
   chown systemsetup scutil dseditgroup visudo spctl defaults brew mas osascript fdesetup stat diskutil dscl \
   createhomedir networksetup 2>/dev/null
@@ -552,6 +639,9 @@ kill() {
         cmd="$(command ps -p "$a" -o command= 2>/dev/null)"
         case "$cmd" in
           *"${CMCR_E2E_WORK:-/nonexistent-cmcr-e2e}/"*) args+=("$a"); pids=$((pids + 1)) ;;
+          # A CMCR job shell or a subshell of one (e.g. the time limit of an agent call): its command line is the whole
+          # script, which names the agent's …/CMCR Screen Agent.app/Contents/MacOS/… – still a process of this test.
+          *CMCR:SESSION-STARTED*) args+=("$a"); pids=$((pids + 1)) ;;
           *.app/Contents/MacOS/*) _e2e_log "kill zablokowany (aplikacja spoza testu): $a $cmd" ;;
           *) args+=("$a"); pids=$((pids + 1)) ;;
         esac ;;
@@ -643,9 +733,13 @@ export -f _e2e_state _e2e_launchctl_base launchctl _e2e_pattern pgrep pkill kill
 # --- One-time setup script and readiness check (Tests/e2e/suites/setup.sh) ----------------------------
 # setup/cmcr-imac-setup.sh and Scripts.readiness put every system file and home folder they touch under
 # CMCR_SETUP_ROOT_PREFIX. While the setup suite runs it creates $CMCR_E2E_WORK/setup-sys, which switches
-# the fakes below to a small simulated system state (launchd services, pmset, firewall, FileVault,
-# screen-capture permission); otherwise they behave like the fakes above or pass read-only calls through.
+# the fakes below to a small simulated system state (launchd services, pmset, firewall, FileVault); otherwise
+# they behave like the fakes above or pass read-only calls through.
 [ -n "${CMCR_E2E_WORK:-}" ] && export CMCR_SETUP_ROOT_PREFIX="$CMCR_E2E_WORK/setup-root"
+# The screen agent's client (cmcr-screen-agent client, run by the preview, install, status and readiness scripts) in
+# its DEBUG test mode: it trusts an agent running as the developer also for another uid (the harness has no root and no
+# second account); the checks of the socket, the executable path and serve mode stay (docs/screen-agent.md › Testy).
+[ -n "${CMCR_E2E_WORK:-}" ] && export CMCR_SCREEN_AGENT_TEST_DIR="$CMCR_E2E_WORK/agent"
 _e2e_sys() { [ -n "${CMCR_E2E_WORK:-}" ] && [ -d "$CMCR_E2E_WORK/setup-sys" ]; }
 # Keeps an earlier fake of NAME callable as _e2e_base_NAME, so the wrappers below compose with it. A wrapper
 # inherited from the parent shell (export -f) is skipped: wrapping it again would make it call itself.
@@ -664,7 +758,7 @@ _e2e_next_fake() {
   local n=$1; shift
   if declare -F "_e2e_base_$n" >/dev/null; then "_e2e_base_$n" "$@"; else _e2e_log "$n $*"; fi
 }
-for _e2e_f in launchctl pmset osascript fdesetup dscl dseditgroup; do _e2e_wrap "$_e2e_f"; done
+for _e2e_f in launchctl pmset fdesetup dscl dseditgroup; do _e2e_wrap "$_e2e_f"; done
 unset _e2e_f
 # Service access lists (com.apple.access_ssh, …) are simulated while setup-sys/groups exists: one file per
 # group, with lines "nested GUID" (nested group, e.g. admin) and "member NAME" (direct member).
@@ -727,19 +821,6 @@ pmset() {
     return 0
   fi
   _e2e_next_fake pmset "$@"
-}
-
-osascript() {
-  : e2e-setup-wrapper
-  if _e2e_sys; then
-    case "$*" in
-      *CGPreflightScreenCaptureAccess*)
-        _e2e_log "osascript: screen-capture preflight"
-        cat "$CMCR_E2E_WORK/setup-sys/screen-preflight" 2>/dev/null || echo false
-        return 0 ;;
-    esac
-  fi
-  _e2e_next osascript "$@"
 }
 
 socketfilterfw() {
@@ -840,23 +921,12 @@ dseditgroup() {
     *) _e2e_next_fake dseditgroup "$@" ;;
   esac
 }
-export -f _e2e_sys _e2e_groups _e2e_wrap _e2e_next _e2e_next_fake launchctl pmset osascript socketfilterfw fdesetup \
+export -f _e2e_sys _e2e_groups _e2e_wrap _e2e_next _e2e_next_fake launchctl pmset socketfilterfw fdesetup \
   sshd dscl dseditgroup 2>/dev/null
-for _e2e_f in launchctl pmset osascript fdesetup dscl dseditgroup; do
+for _e2e_f in launchctl pmset fdesetup dscl dseditgroup; do
   declare -F "_e2e_base_$_e2e_f" >/dev/null && export -f "_e2e_base_$_e2e_f"
 done
 unset _e2e_f
-
-# lsappinfo: a fixed frontmost application ($CMCR_E2E_WORK/front_app overrides its name).
-lsappinfo() {
-  _e2e_log "lsappinfo $*"
-  case "${1:-}" in
-    front) echo "ASN:0x0-0xe2e0e2:" ;;
-    info) printf '"%s" ASN:0x0-0xe2e0e2: (in front) \n    bundleID=[ NULL ] \n' \
-            "$(cat "${CMCR_E2E_WORK:-/nonexistent}/front_app" 2>/dev/null || echo 'Przeglądarka Testowa')" ;;
-  esac
-}
-export -f lsappinfo 2>/dev/null
 
 # --- Unity Hub (Tests/e2e/suites/unity.sh) ---------------------------------------------------------------
 # The suite puts an executable "Unity Hub" into $CMCR_APPS_DIR/Unity Hub.app that calls this function (it sees the
