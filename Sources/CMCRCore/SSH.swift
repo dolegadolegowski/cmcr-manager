@@ -7,6 +7,7 @@ import Foundation
 /// - `asroot cmd…`          – run as root (sudo with the password supplied through SUDO_ASKPASS),
 /// - `as_console_user cmd…` – run inside the GUI session of the user logged in at the screen,
 /// - `with_askpass cmd…`    – run a tool that calls `sudo -A` itself (e.g. Homebrew),
+/// - `cmcr_plist FILE KEY`  – a value from a plist or JSON file, empty when the key is missing (never plutil's error),
 /// - `$CONSOLE_USER`, `$CONSOLE_UID`, `$CMCR_ADMIN_USER`, `$CMCR_TMP` (private temp dir, removed on exit),
 /// - `cmcr_pin_dir DIR` / `cmcr_pin_create DIR` – `cd` into a folder one component at a time, refusing a link a
 ///   user planted on the way (`cmcr_walk`).
@@ -96,6 +97,10 @@ public struct RemoteScript: Sendable {
       return $rc
     }
     is_admin_user() { dseditgroup -o checkmember -m "$1" admin >/dev/null 2>&1; }
+    # cmcr_plist FILE KEY – the value at KEY (a key path: a.b.0) in a plist or JSON file, or nothing. A value counts
+    # only when plutil succeeded: on macOS 15 a missing key prints „Could not extract value…” on stdout (exit 1),
+    # macOS 26 and later print it on stderr.
+    cmcr_plist() { local v; v="$(plutil -extract "$2" raw -o - "$1" 2>/dev/null)" || return 0; printf '%s' "$v"; }
     # Adds a command to the EXIT trap, keeping the wrapper's own cleanup.
     cmcr_on_exit() {
       local add="$1" prev=""

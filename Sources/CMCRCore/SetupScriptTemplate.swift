@@ -285,6 +285,9 @@ json_esc() {
   s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\t'/\\t}; s=${s//$'\r'/\\r}; s=${s//$'\n'/\\n}
   printf '%s' "$s"
 }
+# plist_get PLIK KLUCZ – wartość klucza z pliku plist/JSON albo nic. Liczy się tylko udane wywołanie plutil:
+# w macOS 15 brak klucza daje „Could not extract value…” na stdout (kod 1), od macOS 26 na stderr.
+plist_get() { local v; v="$(plutil -extract "$2" raw -o - "$1" 2>/dev/null)" || return 0; printf '%s' "$v"; }
 home_of() {
   local h; h="$(dscl . -read "/Users/$1" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p' | head -n 1)"
   [ -n "$h" ] && printf '%s%s' "$R" "$h"
@@ -921,8 +924,8 @@ step_power() {
     # Bez zmian tylko wtedy, gdy znacznik opisuje ten sam harmonogram I faktyczne zdarzenia pmset są wciąż te,
     # które ustawił skrypt (sam znacznik nie wie o zmianach z aplikacji ani ręcznych).
     SCHED_ACTUAL="$(sched_block)"
-    if [ "$(plutil -extract power_schedule raw -o - "$MARKER" 2>/dev/null)" = "$SCHED_DESC" ] && [ -n "$SCHED_ACTUAL" ] \
-       && [ "$(plutil -extract power_schedule_sched raw -o - "$MARKER" 2>/dev/null)" = "$SCHED_ACTUAL" ]; then
+    if [ "$(plist_get "$MARKER" power_schedule)" = "$SCHED_DESC" ] && [ -n "$SCHED_ACTUAL" ] \
+       && [ "$(plist_get "$MARKER" power_schedule_sched)" = "$SCHED_ACTUAL" ]; then
       record schedule ok "Harmonogram: $(sched_text)."
       return
     fi
@@ -1165,11 +1168,11 @@ write_marker() {
     printf '  "host": "%s",\n  "computer_name": "%s",\n' "$(json_esc "$host")" "$(json_esc "$(scutil --get ComputerName 2>/dev/null)")"
     printf '  "os": "%s",\n  "build": "%s",\n  "arch": "%s",\n' "$OS_VER" "$OS_BUILD" "$ARCH"
     printf '  "admin": "%s",\n  "student": "%s",\n' "$(json_esc "$ADMIN")" "$(json_esc "$STUDENT")"
-    printf '  "power_schedule": "%s",\n' "$(json_esc "${SCHED_DESC:-$( [ "$OPT_POWER_SCHEDULE" = off ] || plutil -extract power_schedule raw -o - "$MARKER" 2>/dev/null)}")"
+    printf '  "power_schedule": "%s",\n' "$(json_esc "${SCHED_DESC:-$( [ "$OPT_POWER_SCHEDULE" = off ] || plist_get "$MARKER" power_schedule)}")"
     # Odcisk zdarzeń pmset ustawionych przez skrypt (sched_block); „bez zmian” przenosi poprzedni.
     if [ -n "$SCHED_DESC" ]; then sched_fp="$SCHED_ACTUAL"
     elif [ "$OPT_POWER_SCHEDULE" = off ]; then sched_fp=""
-    else sched_fp="$(plutil -extract power_schedule_sched raw -o - "$MARKER" 2>/dev/null)"; fi
+    else sched_fp="$(plist_get "$MARKER" power_schedule_sched)"; fi
     printf '  "power_schedule_sched": "%s",\n' "$(json_esc "$sched_fp")"
     printf '  "key_fingerprints": "%s",\n  "ethernet_mac": "%s",\n' "$(json_esc "$KEY_FPS")" "$(json_esc "$ETH_MACS")"
     printf '  "via_ssh": %s,\n  "fda_remote": "%s",\n  "screen_capture_remote": "%s",\n  "screen_agent": "%s",\n  "filevault": "%s",\n' \

@@ -65,10 +65,10 @@ public enum Scripts {
         if command -v brew >/dev/null 2>&1; then echo "brew=yes"; else echo "brew=no"; fi
         SJ="/Library/Application Support/CMCR/setup.json"
         if [ -r "$SJ" ]; then
-          echo "setup_version=$(plutil -extract version raw -o - "$SJ" 2>/dev/null)"
-          echo "setup_result=$(plutil -extract result raw -o - "$SJ" 2>/dev/null)"
-          echo "setup_time=$(plutil -extract timestamp raw -o - "$SJ" 2>/dev/null)"
-          echo "setup_todo=$(plutil -extract todo_count raw -o - "$SJ" 2>/dev/null)"
+          echo "setup_version=$(cmcr_plist "$SJ" version)"
+          echo "setup_result=$(cmcr_plist "$SJ" result)"
+          echo "setup_time=$(cmcr_plist "$SJ" timestamp)"
+          echo "setup_todo=$(cmcr_plist "$SJ" todo_count)"
         fi
         # Listing this folder needs Full Disk Access („Daj użytkownikom zdalnym pełny dostęp do dysku”);
         # a denial is silent, macOS never asks.
@@ -699,15 +699,15 @@ public enum Scripts {
     }
 
     /// Shell functions that tell whether the editor in `ED` and its modules are complete (see `unityInstallEditor`).
-    /// Need `ED`, `MARK`, `MODLIST`, `V` and `CS`.
+    /// Need `ED`, `MARK`, `MODLIST`, `V` and `CS`, and `cmcr_plist` from `RemoteScript.library`.
     static let unityCompleteness = #"""
     # Hub's modules.json → "id<TAB>parent<TAB>selected" per module, in $MODLIST.
     cmcr_unity_read() {
       local i=0 id
       : > "$MODLIST"
       while id="$(plutil -extract "$i.id" raw -o - "$ED/modules.json" 2>/dev/null)"; do
-        printf '%s\t%s\t%s\n' "$id" "$(plutil -extract "$i.parent" raw -o - "$ED/modules.json" 2>/dev/null)" \
-          "$(plutil -extract "$i.selected" raw -o - "$ED/modules.json" 2>/dev/null)" >> "$MODLIST"
+        printf '%s\t%s\t%s\n' "$id" "$(cmcr_plist "$ED/modules.json" "$i.parent")" \
+          "$(cmcr_plist "$ED/modules.json" "$i.selected")" >> "$MODLIST"
         i=$((i + 1))
       done
     }

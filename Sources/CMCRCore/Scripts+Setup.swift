@@ -436,9 +436,9 @@ public extension Scripts {
 
         MK="$R/Library/Application Support/CMCR/setup.json"
         if [ -f "$MK" ]; then
-          kv setup "$(plutil -extract version raw -o - "$MK" 2>/dev/null)"
-          kv setup_result "$(plutil -extract result raw -o - "$MK" 2>/dev/null)"
-          kv setup_time "$(plutil -extract timestamp raw -o - "$MK" 2>/dev/null)"
+          kv setup "$(cmcr_plist "$MK" version)"
+          kv setup_result "$(cmcr_plist "$MK" result)"
+          kv setup_time "$(cmcr_plist "$MK" timestamp)"
         else
           kv setup none
         fi
