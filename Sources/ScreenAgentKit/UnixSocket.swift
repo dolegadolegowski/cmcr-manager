@@ -264,6 +264,14 @@ public enum PeerIdentity {
         return nil
     }
 
+    /// Whether `pid` has ended: it is gone, or only a zombie that its parent has not collected yet.
+    public static func hasEnded(_ pid: pid_t) -> Bool {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return true }
+        return info.pbi_status == 5  // SZOMB (sys/proc.h)
+    }
+
     /// Whether two paths name the same file: the same resolved path, or the same file system object (firmlinks such
     /// as /Library ↔ /System/Volumes/Data/Library resolve to different strings).
     public static func sameFile(_ a: String, _ b: String) -> Bool {

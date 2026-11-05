@@ -54,6 +54,9 @@ jobs:
       - name: Build (debug)
         run: swift build
       - name: Unit tests
+        # scripts/test.sh has its own watchdog (12 min, lists the tests that did not finish); this is the net under it,
+        # so that a hang costs 15 minutes, not the whole job's 30, and the steps after this one still run.
+        timeout-minutes: 15
         run: scripts/test.sh --unit
       - name: App bundle (release, ad-hoc signature)
         run: |

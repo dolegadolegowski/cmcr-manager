@@ -19,8 +19,10 @@ let package = Package(
         .executableTarget(name: "CMCRManager", dependencies: ["CMCRCore"]),
         .executableTarget(name: "cmcrctl", dependencies: ["CMCRCore"]),
         .executableTarget(name: "cmcr-screen-agent", dependencies: ["ScreenAgentKit"]),
-        .testTarget(name: "CMCRCoreTests", dependencies: ["CMCRCore"]),
+        // Test helpers: running processes with hard time limits (Process.waitUntilExit() can wait for ever).
+        .target(name: "CMCRTestSupport", path: "Tests/TestSupport"),
+        .testTarget(name: "CMCRCoreTests", dependencies: ["CMCRCore", "CMCRTestSupport"]),
         .testTarget(name: "CMCRManagerTests", dependencies: ["CMCRManager", "CMCRCore"]),
-        .testTarget(name: "ScreenAgentKitTests", dependencies: ["ScreenAgentKit", "CMCRCore"]),
+        .testTarget(name: "ScreenAgentKitTests", dependencies: ["ScreenAgentKit", "CMCRCore", "CMCRTestSupport"]),
     ]
 )

@@ -2,6 +2,7 @@ import CMCRCore
 import Darwin
 import Foundation
 import Testing
+import CMCRTestSupport
 @testable import ScreenAgentKit
 
 // MARK: - The agent's copy of the constants
@@ -317,13 +318,14 @@ private func socketPair() throws -> (Int32, Int32) {
     return (fds[0], fds[1])
 }
 
-@Test func socketStreamReadsLinesAndExactBytes() throws {
+@Test(.timeLimit(.minutes(1))) func socketStreamReadsLinesAndExactBytes() throws {
     let (a, b) = try socketPair()
     defer { close(a); close(b) }
-    let writer = SocketStream(fd: a, inactivity: 2, total: 5)
-    let reader = SocketStream(fd: b, inactivity: 2, total: 5)
+    let writer = SocketStream(fd: a, inactivity: 20, total: 40)
+    let reader = SocketStream(fd: b, inactivity: 20, total: 40)
     let payload = Data((0..<200_000).map { UInt8(truncatingIfNeeded: $0 &* 7) })
-    DispatchQueue.global().async {
+    // A thread of its own: the dispatch global queue may have no free thread for seconds while other tests block.
+    Thread.detachNewThread {
         try? writer.writeLine("OK CAPTURE 1 -")
         try? writer.writeLine("IMG 1 2 3 \(payload.count)\r")
         try? writer.write(payload)
@@ -335,13 +337,13 @@ private func socketPair() throws -> (Int32, Int32) {
     #expect(try reader.readLine() == "tail")
 }
 
-@Test func socketStreamTimesOutAndDetectsClosing() throws {
+@Test(.timeLimit(.minutes(1))) func socketStreamTimesOutAndDetectsClosing() throws {
     let (a, b) = try socketPair()
     defer { close(b) }
     let reader = SocketStream(fd: b, inactivity: 0.2, total: 5)
     let started = Date()
     #expect((#expect(throws: IOFailure.self) { try reader.readLine() })?.kind == .timeout)
-    #expect(Date().timeIntervalSince(started) < 2)
+    #expect(Date().timeIntervalSince(started) < 10)
     _ = "partial".withCString { Darwin.write(a, $0, 7) }
     close(a)
     #expect((#expect(throws: IOFailure.self) { try reader.readLine() })?.kind == .closed)
@@ -359,7 +361,7 @@ private func socketPair() throws -> (Int32, Int32) {
     #expect((#expect(throws: IOFailure.self) { try SocketStream(fd: f, inactivity: 1, total: 2).readLine() })?.kind == .invalid)
 }
 
-@Test func connectRetriesARefusedSocketAFewTimes() throws {
+@Test(.timeLimit(.minutes(1))) func connectRetriesARefusedSocketAFewTimes() throws {
     let dir = try makeTempDir(in: "/tmp")
     defer { try? FileManager.default.removeItem(atPath: dir) }
     // A socket file nobody listens on: refused at once, tried again 3 times 0.2 s apart.
@@ -372,17 +374,18 @@ private func socketPair() throws -> (Int32, Int32) {
     let e = #expect(throws: IOFailure.self) { try UnixSocket.connect(to: path, timeout: 1, attempts: 3, retryDelay: 0.2) }
     #expect(e?.errno == ECONNREFUSED)
     let took = Date().timeIntervalSince(started)
-    #expect(took >= 0.35 && took < 3)
+    #expect(took >= 0.35 && took < 15)
 }
 
-@Test func suspendedProcessesAreNoAgents() throws {
+@Test(.timeLimit(.minutes(1))) func suspendedProcessesAreNoAgents() throws {
     #expect(PeerIdentity.suspendedState(of: getpid()) == nil)
     #expect(PeerIdentity.suspendedState(of: 999_999) != nil)
+    #expect(!PeerIdentity.hasEnded(getpid()) && PeerIdentity.hasEnded(999_999))
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/sleep")
     p.arguments = ["30"]
     try p.run()
-    defer { kill(p.processIdentifier, SIGKILL); p.waitUntilExit() }
+    defer { p.stopAndWait(grace: 0) }
     #expect(PeerIdentity.suspendedState(of: p.processIdentifier) == nil)
     kill(p.processIdentifier, SIGSTOP)
     var state: String?
@@ -392,6 +395,7 @@ private func socketPair() throws -> (Int32, Int32) {
         usleep(10_000)
     }
     #expect(state?.contains("zatrzymany") == true)
+    #expect(!PeerIdentity.hasEnded(p.processIdentifier))
     kill(p.processIdentifier, SIGCONT)
     usleep(50_000)
     #expect(PeerIdentity.suspendedState(of: p.processIdentifier) == nil)
@@ -451,7 +455,7 @@ private func socketPair() throws -> (Int32, Int32) {
     catch { #expect(isMissing(error)) }
 }
 
-@Test func peerIdentityOfASocketPair() throws {
+@Test(.timeLimit(.minutes(1))) func peerIdentityOfASocketPair() throws {
     let (a, b) = try socketPair()
     defer { close(a); close(b) }
     #expect(PeerIdentity.uid(of: a) == geteuid())

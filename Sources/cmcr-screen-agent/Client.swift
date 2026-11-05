@@ -150,8 +150,11 @@ enum Client {
         } catch let e as ProtocolError {
             throw Failure.protocolError(e.message)
         }
-        // The process must still be running normally now that it has answered (not stopped meanwhile).
-        if let why = PeerIdentity.suspendedState(of: peer) {
+        // The process must still be running normally now that it has answered (not stopped meanwhile). One that has
+        // ended is fine: the peer was verified before the request, and an agent without the Screen Recording
+        // permission ends right after its answer (launchd starts a fresh one) – on a busy Mac that can happen before
+        // this check, and its answer must not turn into "untrusted".
+        if let why = PeerIdentity.suspendedState(of: peer), !PeerIdentity.hasEnded(peer) {
             throw Failure.untrusted("usługa po drugiej stronie gniazda nie działa: \(why)")
         }
         if case let .error(code, message) = reply {

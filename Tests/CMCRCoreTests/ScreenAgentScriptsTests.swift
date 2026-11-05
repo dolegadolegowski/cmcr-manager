@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import Testing
 @testable import CMCRCore
+import CMCRTestSupport
 
 /// The scripts that run on the iMac for CMCR Screen Agent (docs/screen-agent.md), executed locally as sshd would
 /// (`/bin/sh -c remoteCommand()`), without ssh, without root and without the real agent:
@@ -14,7 +15,7 @@ import Testing
 ///   reports the GUI sessions listed in $T/sessions, `stat` the console user from $T/console_user (and the owner
 ///   4242 for the paths listed in $T/foreign), `pgrep` the attention-mode overlay from $T/attention.
 /// `guardFakes()` checks that every bash (also a nested one) sees the fakes before any script runs.
-@Suite struct ScreenAgentScriptsTests {
+@Suite(.timeLimit(.minutes(5))) struct ScreenAgentScriptsTests {
     struct Sandbox {
         let dir: URL
         var root: String { dir.appendingPathComponent("root").path }
@@ -246,28 +247,20 @@ import Testing
         /// Runs a script with stdin left open until it exits – a capture stream waits between cycles only while the
         /// app keeps its input open (end of input ends the stream).
         func runOpen(_ script: RemoteScript, timeout: TimeInterval = 60) async -> (code: Int32, stdout: Data, stderr: String) {
-            await withCheckedContinuation { cont in
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: "/bin/sh")
-                p.arguments = ["-c", script.remoteCommand()]
-                p.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 }
-                let out = Pipe(), err = Pipe(), input = Pipe()
-                p.standardOutput = out; p.standardError = err; p.standardInput = input
-                do { try p.run() } catch { cont.resume(returning: (-1, Data(), "\(error)")); return }
-                input.fileHandleForWriting.write(Data("haslo\n".utf8))
-                let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
-                DispatchQueue.global().async {
-                    var errData = Data()
-                    let group = DispatchGroup()
-                    group.enter()
-                    DispatchQueue.global().async { errData = err.fileHandleForReading.readDataToEndOfFile(); group.leave() }
-                    let outData = out.fileHandleForReading.readDataToEndOfFile()
-                    p.waitUntilExit()
-                    try? input.fileHandleForWriting.close()
-                    group.wait()
-                    killer.cancel()
-                    cont.resume(returning: (p.terminationStatus, outData, String(decoding: errData, as: UTF8.self)))
+            let env = ProcessInfo.processInfo.environment.merging(environment) { $1 }
+            let command = script.remoteCommand()
+            // A thread of its own (not the dispatch global queue, whose threads run short when many tests block) and
+            // no waitUntilExit(): see BoundedProcess.
+            return await withCheckedContinuation { cont in
+                Thread.detachNewThread {
+                    do {
+                        let r = try BoundedProcess.run("/bin/sh", ["-c", command], environment: env,
+                                                       stdin: Data("haslo\n".utf8), keepStdinOpen: true, timeout: timeout)
+                        let note = r.timedOut ? "\n[przekroczony limit \(Int(timeout)) s – proces zabity]" : ""
+                        cont.resume(returning: (r.timedOut ? -1 : r.status, r.out, r.errText + note))
+                    } catch {
+                        cont.resume(returning: (-1, Data(), "\(error)"))
+                    }
                 }
             }
         }
