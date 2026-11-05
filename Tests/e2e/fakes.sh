@@ -729,6 +729,12 @@ pmset() {
   _e2e_next_fake pmset "$@"
 }
 
+# plutil-macos15 in $CMCR_E2E_WORK: plutil behaves like macOS 15, which prints „Could not extract value…” for a
+# missing key on stdout (macOS 26 and later: on stderr). Otherwise the real plutil.
+plutil() {
+  if [ -e "${CMCR_E2E_WORK:-/nonexistent}/plutil-macos15" ]; then command plutil "$@" 2>&1; else command plutil "$@"; fi
+}
+
 osascript() {
   : e2e-setup-wrapper
   if _e2e_sys; then
@@ -840,7 +846,7 @@ dseditgroup() {
     *) _e2e_next_fake dseditgroup "$@" ;;
   esac
 }
-export -f _e2e_sys _e2e_groups _e2e_wrap _e2e_next _e2e_next_fake launchctl pmset osascript socketfilterfw fdesetup \
+export -f _e2e_sys _e2e_groups _e2e_wrap _e2e_next _e2e_next_fake launchctl pmset plutil osascript socketfilterfw fdesetup \
   sshd dscl dseditgroup 2>/dev/null
 for _e2e_f in launchctl pmset osascript fdesetup dscl dseditgroup; do
   declare -F "_e2e_base_$_e2e_f" >/dev/null && export -f "_e2e_base_$_e2e_f"
