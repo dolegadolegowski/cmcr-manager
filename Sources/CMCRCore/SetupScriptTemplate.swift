@@ -357,10 +357,17 @@ tcc_ssh_value() {
     "SELECT IFNULL(MAX(auth_value),-1) FROM access WHERE service='$1' AND (client LIKE '%sshd-keygen-wrapper' OR client LIKE '%sshd-session');" 2>/dev/null
 }
 # agent_ping UID – odpowiedź usługi podglądu w sesji konta UID: wiersz „AGENT <wersja> perm=… …” albo „ERR …”
-# (limit 15 s). Z innym kontem rozmawia tylko root.
+# (limit 15 s). Z innym kontem rozmawia tylko root. Klient ufa tylko procesowi, który launchd uruchomił w tej sesji
+# (--pid z „launchctl print”); usługa załadowana bez procesu albo niezaładowana nie odpowiada.
 agent_ping() {
-  local f="$WORK/agent-ping" p w
-  "$AGENT_EXE" client "$1" ping </dev/null >"$f" 2>&1 & p=$!
+  local f="$WORK/agent-ping" p w pid
+  pid="$(launchctl print "gui/$1/pl.cmcr.manager.screen-agent" 2>/dev/null \
+    | awk -F' = ' '$1 == "\tpid" && $2 ~ /^[0-9]+$/ { print $2; exit }')"
+  if [ -z "$pid" ]; then
+    echo "ERR unreachable usługa nie działa w sesji użytkownika (launchd nie podaje jej procesu)"
+    return 0
+  fi
+  "$AGENT_EXE" client "$1" ping --pid "$pid" </dev/null >"$f" 2>&1 & p=$!
   ( sleep 15; kill "$p" 2>/dev/null ) </dev/null >/dev/null 2>&1 & w=$!
   wait "$p"; kill "$w" 2>/dev/null
   grep -E '^(AGENT|ERR)( |$)' "$f" 2>/dev/null | head -n 1

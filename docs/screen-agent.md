@@ -181,7 +181,10 @@ Pakiet usługi buduje `scripts/make-agent-bundle.sh BINARY OUT_DIR [IDENTITY] [K
 `BINARY --version`, `LSUIElement`, podpis z hardened runtime). `scripts/build-app.sh` wkłada go do
 `CMCR Manager.app/Contents/Helpers` przed podpisaniem aplikacji (ta sama tożsamość podpisu, przy `UNIVERSAL=1`
 te same architektury) i kopiuje obok `build/cmcrctl`; `scripts/release.sh` i CI sprawdzają podpis i wersję.
-Aplikacja i cmcrctl znajdują go przez `ScreenAgentLocator.bundledAgent()`.
+Aplikacja i cmcrctl znajdują go przez `ScreenAgentLocator.bundledAgent()` – tylko kopię o wersji dokładnie
+`ScreenAgentInfo.version` (i identyfikatorze `ScreenAgentInfo.bundleID`); kopia innej wersji (np. w
+`/Applications/CMCR Manager.app` przy samodzielnym cmcrctl albo `swift run`) jest pomijana. Wyjątkiem jest
+`CMCR_SCREEN_AGENT_APP` (testy e2e) – przyjmowany w każdej wersji.
 
 ## Skrypt podglądu (`Scripts.screenCapture`)
 
@@ -195,8 +198,12 @@ Zmienia się tylko to, kto robi zrzut:
 - aplikacja na pierwszym planie: z odpowiedzi `capture` zamiast `lsappinfo`;
 - zrzut: `client <uid> capture <maxpx> <jakość> <ekran>`, potem `md5` każdego pliku i `FRAME`/`SAME` –
   bez `screencapture` i bez ponownego kodowania przez `sips`;
+- klient dostaje zawsze `--pid <N>` na końcu polecenia (`client <uid> <polecenie> <argumenty…> --pid N`), gdzie N to
+  `pid = N` z `launchctl print gui/<uid>/<label>`: rozmawia tylko z procesem, który uruchomił launchd. Usługa
+  niezaładowana albo załadowana bez procesu nie jest w ogóle pytana – to „nie odpowiada” (`ERR unreachable`, kod 10);
 - usługa nie odpowiada (kod 10): `launchctl print gui/<uid>/<label>` → `bootstrap` (gdy nie załadowana) albo
-  `kickstart -k`, do 5 s oczekiwania na gniazdo, jedna ponowna próba; dalej `STATE agent-down`;
+  `kickstart -k`, do 5 s oczekiwania na odpowiedź, jedna ponowna próba; dalej `STATE agent-down`. Przed każdym
+  `bootstrap`/`kickstart` root zakłada folder usługi `run/<uid>` (patrz niżej);
 - brak pliku usługi → `STATE agent-missing`, kod 11 → `STATE agent-untrusted`, kod 12 → `STATE agent-perm`,
   kod 13 (ekran zablokowany) → `STATE notify … locked` (jak dotąd: bez potwierdzonej informacji nie ma obrazu),
   kod 14/15/16 → `STATE capture <user> <opis>`;
@@ -211,9 +218,25 @@ Szczegóły wykonania:
   samego konta może w tym czasie podmienić plik usługi); ścieżka pliku pochodzi z wiersza `SHOT`;
 - kod 14 z kodem `asleep`/`notconsole`/`nodisplay` dostaje opis po polsku („ekran jest uśpiony”, …);
 - tryb uwagi (`LockScreen`, nakładka `CMCR_ATTENTION`) sprawdza dalej skrypt, przed zapytaniem usługi – usługa go nie widzi;
-- przy kodzie 10: `launchctl enable gui/<uid>/<label>` (uczeń mógł usługę wyłączyć we własnej sesji), potem
-  `bootstrap`/`kickstart -k` i do 5 s oczekiwania, aż usługa odpowie na `ping` (samo gniazdo nic nie znaczy – zabita
-  usługa zostawia stare); `Operations.screenshot` ma limit 60 s (sudo + dwa takie wznowienia).
+- przy kodzie 10: `launchctl enable gui/<uid>/<label>` (uczeń mógł usługę wyłączyć we własnej sesji),
+  `cmcr_agent_rundir`, potem `bootstrap`/`kickstart -k` i do 5 s oczekiwania, aż usługa odpowie na `ping` (samo
+  gniazdo nic nie znaczy – zabita usługa zostawia stare); `Operations.screenshot` ma limit 60 s (sudo + dwa takie
+  wznowienia);
+- konto SSH będące osobą przy komputerze też przechodzi na roota, gdy `run/<uid>` nie jest prawdziwym folderem tego
+  konta z prawami 700 (konto zalogowane pierwszy raz po instalacji, coś innego pod tą nazwą) – założyć go może tylko
+  root, a usługa bez niego nie startuje.
+
+Folder gniazda (`cmcr_agent_rundir UID`, wspólny dla podglądu, instalacji, stanu, gotowości i prośby o uprawnienie):
+`run` jest root:wheel 755, więc wpisów w nim nie dodaje ani nie usuwa nikt poza rootem. Przed każdym `bootstrap` i
+`kickstart` usługi danego konta root usuwa to, co leży pod nazwą `run/<uid>`, jeśli nie jest prawdziwym folderem tego
+konta (plik, dowiązanie – usuwane samo, nigdy to, na co wskazuje – albo folder innego konta: pozostałości starego
+układu `run/<uid>.sock` w katalogu 1733 albo podrzucone wcześniej przez innego ucznia), i zakłada folder na nowo:
+`mkdir -m 700`, `chown <uid>:<grupa główna>`. Usługa wiąże `run/<uid>/agent.sock` (`ScreenAgentInfo.socketName`).
+
+Świeży stan uprawnienia (`cmcr_agent_fresh`): usługa nie kończy się już po `ping` z `perm=denied`, a macOS pamięta
+decyzję o uprawnieniu przez cały czas życia procesu. Skrypty, które pokazują stan uprawnienia (instalacja, stan,
+gotowość, prośba o uprawnienie), po odpowiedzi `perm=denied` robią raz `kickstart -k` (przez `cmcr_agent_revive`,
+z folderem `run/<uid>`) i pytają ponownie – uprawnienie nadane przy komputerze od startu procesu jest wtedy widoczne.
 
 ## Instalacja (`Operations.installScreenAgent`)
 
@@ -221,21 +244,31 @@ Szczegóły wykonania:
    pakuje ją (`Payload.make`) i wysyła (`SSH.upload`) do `/tmp/cmcr-up-*.tar`.
 2. `Scripts.installScreenAgent(remoteTar:)` (root): rozpakowuje do `$CMCR_TMP`, sprawdza identyfikator,
    wersję i podpis (`codesign --verify --strict`), porównuje z zainstalowaną kopią. **Tę samą wersję zostawia
-   bez zmian** (z podpisem ad-hoc każda wymiana pliku unieważnia nadane uprawnienie), inną – wymienia:
+   bez zmian** (z podpisem ad-hoc każda wymiana pliku unieważnia nadane uprawnienie), **nowszej nigdy nie zastępuje
+   starszą**, a brak kopii, kopię starszą albo nieprawidłową (zły podpis, dowiązanie) – wymienia:
    `bootout` we wszystkich sesjach graficznych, podmiana katalogu, `chown -R root:wheel`, usunięcie
-   `com.apple.quarantine`, zapis LaunchAgenta (`plutil -lint`, 644), katalogi `run` (1733) i `shots` (700),
-   `bootstrap gui/<uid>` w każdej sesji graficznej, `client <uid> ping`.
+   `com.apple.quarantine`, zapis LaunchAgenta (`plutil -lint`, 644), katalogi `run` (755, bez wpisów `*.sock` starego
+   układu) i `shots` (700), `run/<uid>` i `bootstrap gui/<uid>` w każdej sesji graficznej, `ping` przez klienta.
 3. Wynik w wierszach `CMCR:AGENT <installed|updated|unchanged> <wersja>` i
-   `CMCR:AGENT-SESSION <konto> <uid> <wiersz ping albo ERR …>`.
+   `CMCR:AGENT-SESSION <konto> <uid> <wiersz ping albo ERR …>`, albo – gdy na iMacu jest ważna nowsza wersja –
+   sam `CMCR:AGENT newer <zainstalowana>` z ostrzeżeniem „na iMacu jest nowsza usługa (X) – zaktualizuj CMCR Manager”
+   (kod 0). Aplikacja (`ScreenAgentInstallReport`, zmiana `.newer`) i `cmcrctl screen-agent install` streszczają to
+   jednym zdaniem.
 
 Szczegóły instalacji:
-- aplikacja jest wymieniana tylko wtedy, gdy zainstalowanej nie ma, ma inną wersję albo nieprawidłowy podpis;
+- wersje porównywane są liczbowo, część po części (`10.0.0` jest nowsze niż `9.1.0`, brakująca część to 0);
+  przy nowszej zainstalowanej skrypt niczego nie dotyka – ani aplikacji, ani LaunchAgenta, katalogów, sesji, ani
+  uprawnienia (to sprawa nowszej wersji CMCR Manager); dzięki temu starsza aplikacja albo cmcrctl innego nauczyciela
+  nie cofa wersji i nie kasuje uprawnienia na wszystkich iMacach;
+- aplikacja jest wymieniana tylko wtedy, gdy zainstalowanej nie ma, jest starsza albo ma nieprawidłowy podpis;
   sam LaunchAgent (porównany bajt po bajcie z `ScreenAgentInfo.launchAgentPlist(executable: "$R"+ścieżka)`) jest
   przepisywany niezależnie – zmiana tylko jego to też `updated` (aplikacja i uprawnienie zostają);
 - gdy nowa kopia ma inne wymaganie podpisu (`codesign -d -r-`, przy podpisie ad-hoc zawsze) niż wymieniana, skrypt
   robi `tccutil reset ScreenCapture pl.cmcr.manager.screen-agent` i ostrzega, że uprawnienie trzeba nadać ponownie
   (stary wpis pokazywałby włączony przełącznik, a macOS i tak odmawiałby nowej kopii);
-- przed `bootstrap` jest `launchctl enable`; usługa załadowana, ale milcząca, dostaje `kickstart -k`;
+- przed `bootstrap` jest `launchctl enable` i `cmcr_agent_rundir`; potem usługa jest pytana `ping` (do 10 s, aż
+  odpowie): milcząca dostaje `kickstart -k` i jest pytana jeszcze raz, a działająca od wcześniej (nie uruchomiona w tej
+  instalacji) z `perm=denied` – `cmcr_agent_fresh`; poza tymi przypadkami jedno pytanie na sesję;
 - kod wyjścia 0 także wtedy, gdy usługa w którejś sesji nie odpowiada (widać to w `CMCR:AGENT-SESSION … ERR …`);
   1 – nieprawidłowe archiwum, identyfikator, wersja, podpis albo błąd zapisu (z przywróceniem poprzedniej kopii).
 
@@ -248,18 +281,23 @@ zalogowanego użytkownika – macOS pokazuje przy komputerze okno z przyciskiem 
 usługa pojawia się na liście „Nagrywanie ekranu i dźwięku systemowego”. Włączyć ją musi administrator przy
 komputerze (albo uczeń, jeśli profil MDM PPPC ma `AllowStandardUserToSetSystemService`). Wynik:
 `CMCR:AGENT-PERMISSION <granted|denied>`; kody: 0, 3 (nikt nie jest zalogowany), 9 (brak usługi, nie odpowiada także
-po ponownym uruchomieniu, niezaufana), 1 (inny błąd).
+po ponownym uruchomieniu, niezaufana), 1 (inny błąd). Przed prośbą `ping` – przy `perm=denied` usługa jest
+uruchamiana od nowa (`cmcr_agent_fresh`), żeby świeży proces zobaczył uprawnienie nadane w międzyczasie.
 
 Stan (`Scripts.screenAgentStatus`, `Operations.screenAgentStatus`): wiersze `console=…`, `agent_installed=0|1`,
 `agent_version=…` (bez sudo) oraz z sesji osoby przy komputerze (jako root, chyba że to konto SSH) `agent_loaded=0|1`,
-`agent_ping=<AGENT … albo ERR <kod> <opis>>`, `agent_ping_rc=<kod klienta>`. Te same wiersze wypisuje sprawdzanie
-gotowości; oba czyta jedna funkcja `ScreenAgentStatus.parse`.
+`agent_ping=<AGENT … albo ERR <kod> <opis>>`, `agent_ping_rc=<kod klienta>` (po `perm=denied` – z odpowiedzi
+uruchomionej od nowa usługi). Te same wiersze wypisuje sprawdzanie gotowości; oba czyta jedna funkcja
+`ScreenAgentStatus.parse`. Bez części root (`agent_loaded` brak, np. nie działa sudo dla cudzej sesji)
+`ScreenAgentStatus.loaded` jest `nil`: `cmcrctl screen-agent status` pisze wtedy „załadowana: ?” i podaje powód
+(„nie udało się zapytać usługi w sesji zalogowanego użytkownika (potrzebne działające sudo): <błąd sudo>”).
 
 ## Gotowość (kolumna „Podgląd ekranu”, `ReadinessCheck.screen`)
 
 Sprawdzanie (`Scripts.readiness`) dopisuje `kv agent_installed 0|1`, `kv agent_version X`, `kv agent_loaded
 0|1`, `kv agent_ping <wiersz AGENT … albo ERR …>` i `kv agent_ping_rc N` (część root; gdy konto SSH jest osobą przy
-komputerze – bez sudo). Nie czyta już bazy TCC ani nie uruchamia `CGPreflightScreenCaptureAccess` z sesji SSH. Stan:
+komputerze – bez sudo). Nie czyta już bazy TCC ani nie uruchamia `CGPreflightScreenCaptureAccess` z sesji SSH. Usługa
+z `perm=denied` jest raz uruchamiana od nowa (`kickstart -k`) i pytana ponownie; milcząca nie jest wznawiana. Stan:
 
 | Warunek | Stan | Krótko |
 |---|---|---|
@@ -279,7 +317,8 @@ Od macOS 15 komórka dopisuje też stan zapamiętanej zgody replayd (okno „…
 Skrypt nie może zainstalować usługi (plik wykonywalny jest w aplikacji). W `step_tcc` zamiast sprawdzania uprawnienia
 sesji SSH jest krok `screen_agent`: brak usługi albo starsza wersja niż `CMCR_SCREEN_AGENT_VERSION` → `warn` z
 instrukcją instalacji z aplikacji, `perm=denied` → `todo` (włączyć przy komputerze), `perm=granted` → `ok`; nigdy
-`fail`. JSON znacznika ma nowe pole `"screen_agent": "<wersja>|none"`, a `"screen_capture_remote"` pochodzi z `ping`
+`fail`. Usługę pyta jak skrypty aplikacji: `client <uid> ping --pid N` z pidem z `launchctl print` (bez procesu –
+„nie odpowiada”); nie uruchamia jej ponownie. JSON znacznika ma nowe pole `"screen_agent": "<wersja>|none"`, a `"screen_capture_remote"` pochodzi z `ping`
 usługi. Blok CMCR-REPLAYD odnawia zgodę replayd pod dwoma kluczami – identyfikatorem usługi (`CMCR_SC_ID`) i ścieżką
 jej pliku wykonywalnego (`CMCR_SC_EXE`) – w formacie macOS 15.0 albo 15.1+. Klucze mają kropki i spacje, więc odczyt
 i zapis idą przez `/usr/libexec/PlistBuddy` (`Print -x`, jedno wywołanie `Delete`+`Merge /dev/stdin`), nie `plutil`.
@@ -323,7 +362,8 @@ testów e2e).
 
 W e2e działa prawdziwa usługa: `cmcrctl screen-agent install` wysyła pakiet przez scp, a `Scripts.installScreenAgent`
 instaluje go pod `$WORK/setup-root`. Atrapa `launchctl` w `Tests/e2e/fakes.sh` pamięta stan LaunchAgenta w każdej
-domenie `gui/<uid>` (`print` 113, `bootstrap` 5 przy załadowanej, `bootout`, `kickstart [-k]`, `enable`/`disable`) i
+domenie `gui/<uid>` (`print` 113, a działającej – `pid = <pid procesu usługi>`, `bootstrap` 5 przy załadowanej, `bootout`,
+`kickstart [-k]`, `enable`/`disable`; z `$WORK/agent-nostart` proces się nie pojawia) i
 uruchamia zainstalowany plik wykonywalny w trybie `serve` – zawsze z `CMCR_SCREEN_AGENT_TEST_DIR=$WORK/agent`,
 `CMCR_SCREEN_AGENT_TEST_UID=<uid>` i `CMCR_SETUP_ROOT_PREFIX`. W przeciwieństwie do launchd nie wznawia sama usługi,
 która się zakończyła – to musi zrobić skrypt podglądu, co testy sprawdzają. `tccutil` jest tylko zapisywany do

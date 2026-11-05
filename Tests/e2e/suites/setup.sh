@@ -277,14 +277,16 @@ expect "setup --verify: usługa nie działa – ostrzeżenie" "$out" "Usługa po
 expect_code "readiness, setup --verify: usługi nie uruchamiają" "$(grep -cE '^launchctl (kickstart|bootstrap) gui/' "$WORK/fake.log")" 0 "$(fakelog)"
 agent_restart "$SA_ME_UID" || fail "usługa podglądu: nie wróciła po bootout" "$(tail -5 "$WORK/agent-serve.log")"
 
-# An older agent (the same bundle as version 0.9.0, signed again ad hoc): a warning; setup updates it before the script.
+# An older agent (the same bundle as version 0.9.0, signed again ad hoc; installed on a clean iMac – it never replaces a
+# newer one): a warning; setup updates it before the script.
 SA_OLD="$WORK/setup-agent-0.9.0/CMCR Screen Agent.app"
 mkdir -p "$WORK/setup-agent-0.9.0"
 cp -R "$CMCR_SCREEN_AGENT_APP" "$WORK/setup-agent-0.9.0/"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.9.0" -c "Set :CFBundleVersion 0.9.0" "$SA_OLD/Contents/Info.plist"
 codesign --force --sign - --options runtime "$SA_OLD" >/dev/null 2>&1
+out="$(sctl screen-agent remove 1 --yes)"
 out="$(CMCR_SCREEN_AGENT_APP="$SA_OLD" sctl screen-agent install 1)"
-expect "starsza usługa: zainstalowana" "$out" "→ imac01: usługa podglądu zaktualizowana do wersji 0.9.0"
+expect "starsza usługa: zainstalowana" "$out" "→ imac01: usługa podglądu zainstalowana (wersja 0.9.0)"
 out="$(sctl readiness 1)"
 expect "readiness: starsza usługa – ostrzeżenie" "$out" "⚠︎ Podgląd ekranu" "v0.9.0" "jest starsza niż w tej wersji aplikacji (1.0.0)"
 out="$(setup_run --verify)"
@@ -297,6 +299,11 @@ expect "setup ze starszą usługą: najpierw aktualizacja usługi, potem skrypt"
   "→ imac01: usługa podglądu zaktualizowana do wersji 1.0.0" "Usługa podglądu ekranu 1.0.0 działa i ma uprawnienie" \
   '"screen_agent": "1.0.0"'
 expect "setup ze starszą usługą: nowy podpis – uprawnienie wyczyszczone" "$(fakelog)" "tccutil reset ScreenCapture pl.cmcr.manager.screen-agent"
+# …and an older copy never replaces the newer one: setup with it leaves 1.0.0 and says to update CMCR Manager.
+clear_fakelog
+out="$(CMCR_SCREEN_AGENT_APP="$SA_OLD" sctl screen-agent install 1)"
+expect "starsza kopia na nowszą: bez zmian" "$out" "CMCR:AGENT newer 1.0.0" "zaktualizuj CMCR Manager"
+expect_not "starsza kopia na nowszą: uprawnienie zostaje" "$(fakelog)" "tccutil"
 rm -rf "$WORK/setup-agent-0.9.0"
 
 # No agent at all: readiness and --verify say so and install nothing; setup apply installs it, unless --no-screen-agent.

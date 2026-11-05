@@ -1,5 +1,6 @@
 # CMCR Screen Agent itself (docs/screen-agent.md): cmcrctl screen-agent install|status|permission|remove, and how the
-# preview copes with an agent that is missing, stopped, disabled, not answering or not the installed one. Sourced by
+# preview copes with an agent that is missing, stopped, disabled, not answering, not the installed one or not the
+# process launchd started, and with something left at the name of its socket folder run/<uid>. Sourced by
 # run.sh. The agent is the real debug build (CMCR_SCREEN_AGENT_APP, built by run.sh), uploaded over scp and installed
 # under $WORK/setup-root by Scripts.installScreenAgent; the fake launchd of fakes.sh runs it in its test mode (files in
 # $AGENT_TEST set the state of the screen, requests.log lists what it was asked).
@@ -14,7 +15,8 @@ PY
 SA_UID="$(id -u)"
 SA_APP="$AGENT_ROOT/CMCR Screen Agent.app"
 SA_PLIST="$WORK/setup-root/Library/LaunchAgents/pl.cmcr.manager.screen-agent.plist"
-SA_SOCK="$AGENT_ROOT/run/$SA_UID.sock"
+SA_RUNDIR="$AGENT_ROOT/run/$SA_UID"
+SA_SOCK="$SA_RUNDIR/agent.sock"
 SA_LOG="$WORK/config/actions.log"
 SA_LABEL=pl.cmcr.manager.screen-agent
 sa_count() { local n; n="$(grep -c -- "$1" "$WORK/fake.log" 2>/dev/null)"; echo "${n:-0}"; }
@@ -27,7 +29,7 @@ sa_wait_for() { # sa_wait_for FILE NEEDLE [seconds] – polls a growing file
 sa_order() {
   awk -v a="$2" -v b="$3" 'index($0, a) && !x {x = NR} index($0, b) && !y {y = NR} END {print (x && y && x < y) ? "ok" : "nie"}' "$1"
 }
-sa_mode() { local m; m="$(stat -f %Mp%Lp "$1" 2>/dev/null)"; echo "${m#0}"; }  # with the sticky bit (run: 1733)
+sa_mode() { local m; m="$(stat -f %Mp%Lp "$1" 2>/dev/null)"; echo "${m#0}"; }  # with a sticky bit, if any
 sa_pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$2" 2>/dev/null; }
 rm -f "$WORK/console_user" "$WORK/fake-no-console"
 agent_reset
@@ -111,8 +113,8 @@ out="$(ctlpw screen-agent install 1)"; code=$?
 expect_code "instalacja: kod 0" "$code" 0 "$out"
 expect "instalacja: zainstalowana i działa w sesji zalogowanego użytkownika" "$out" "CMCR:AGENT installed 1.0.0" \
   "CMCR:AGENT-SESSION $ME $SA_UID AGENT 1.0.0 perm=granted" "→ imac01: usługa podglądu zainstalowana (wersja 1.0.0)"
-modes="$(sa_mode "$AGENT_ROOT") $(sa_mode "$SA_APP") $(sa_mode "$AGENT_EXE") $(sa_mode "$SA_PLIST") $(sa_mode "$AGENT_ROOT/run") $(sa_mode "$AGENT_ROOT/shots")"
-expect_code "instalacja: prawa (katalog, aplikacja, plik wykonywalny, LaunchAgent, run, shots)" "$modes" "755 755 755 644 1733 700" \
+modes="$(sa_mode "$AGENT_ROOT") $(sa_mode "$SA_APP") $(sa_mode "$AGENT_EXE") $(sa_mode "$SA_PLIST") $(sa_mode "$AGENT_ROOT/run") $(sa_mode "$SA_RUNDIR") $(sa_mode "$AGENT_ROOT/shots")"
+expect_code "instalacja: prawa (katalog, aplikacja, plik wykonywalny, LaunchAgent, run, run/<uid>, shots)" "$modes" "755 755 755 644 755 700 700" \
   "$(ls -la "$AGENT_ROOT" "$SA_PLIST" 2>&1)"
 [ -S "$SA_SOCK" ] && [ "$(sa_mode "$SA_SOCK")" = 600 ] && pass "instalacja: gniazdo usługi 600" \
   || fail "instalacja: gniazdo usługi" "$(ls -la "$AGENT_ROOT/run" 2>&1)"
@@ -124,6 +126,8 @@ expect_code "instalacja: LaunchAgent (program, serve, zawsze w sesji Aqua, bez p
 plutil -lint "$SA_PLIST" >/dev/null 2>&1 && pass "instalacja: LaunchAgent poprawny (plutil -lint)" || fail "instalacja: plutil -lint" "$(plutil -lint "$SA_PLIST" 2>&1)"
 expect "instalacja: właściciel root:wheel, start w sesji przez launchd" "$(fakelog)" "chown -R root:wheel $AGENT_ROOT/.cmcr-agent-new." \
   "launchctl bootstrap gui/$SA_UID $SA_PLIST"
+expect_code "instalacja: folder run/<uid> użytkownika przed startem usługi" \
+  "$(sa_order "$WORK/fake.log" "chown $SA_UID:" "launchctl bootstrap gui/$SA_UID $SA_PLIST")" ok "$(fakelog)"
 expect_not "instalacja: nowa instalacja nie czyści uprawnienia" "$(fakelog)" "tccutil"
 sa_tar="$(awk '{print $3}' "$WORK/tar.mode" 2>/dev/null | head -n 1)"
 rm -f "$WORK/tar.mode"
@@ -155,36 +159,53 @@ expect_code "zmieniony LaunchAgent: przywrócony" "$(sa_pb ThrottleInterval "$SA
 expect_not "zmieniony LaunchAgent: uprawnienie zostaje" "$(fakelog)" "tccutil"
 expect "zmieniony LaunchAgent: usługa działa" "$(agent_ping "$SA_UID")" "AGENT 1.0.0"
 
-# Another version (an older one, re-signed ad hoc): replaced, and with a new signature the Screen Recording permission
-# is cleared and has to be granted again.
+# An older version on the iMac (the same bundle as 0.9.0, re-signed ad hoc): replaced by this one's, and with a new
+# signature the Screen Recording permission is cleared and has to be granted again.
 SA_OLD="$WORK/agent-bundle-0.9.0/CMCR Screen Agent.app"
 mkdir -p "$WORK/agent-bundle-0.9.0"
 cp -R "$CMCR_SCREEN_AGENT_APP" "$WORK/agent-bundle-0.9.0/"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.9.0" -c "Set :CFBundleVersion 0.9.0" "$SA_OLD/Contents/Info.plist"
 codesign --force --sign - --options runtime "$SA_OLD" >/dev/null 2>&1
-sa_pid="$(agent_pid "$SA_UID")"
-clear_fakelog
+out="$(ctlpw screen-agent remove 1 --yes)" || fail "starsza wersja: usunięcie przed instalacją" "$out"
 out="$(CMCR_SCREEN_AGENT_APP="$SA_OLD" ctlpw screen-agent install 1)"; code=$?
-expect_code "inna wersja: kod 0" "$code" 0 "$out"
-expect "inna wersja: wymieniona, uprawnienie do nadania ponownie" "$out" "CMCR:AGENT updated 0.9.0" \
-  "Zaktualizowano usługę podglądu ekranu 1.0.0 → 0.9.0." "uprawnienie Nagrywanie ekranu trzeba nadać ponownie" \
-  "→ imac01: usługa podglądu zaktualizowana do wersji 0.9.0"
-expect "inna wersja: tccutil reset" "$(fakelog)" "tccutil reset ScreenCapture $SA_LABEL"
-expect_code "inna wersja: zatrzymana przed podmianą, potem uruchomiona" \
-  "$(sa_order "$WORK/fake.log" "launchctl bootout gui/$SA_UID/$SA_LABEL" "launchctl bootstrap gui/$SA_UID $SA_PLIST")" ok "$(fakelog)"
-expect_code "inna wersja: zainstalowana 0.9.0" "$(sa_pb CFBundleShortVersionString "$SA_APP/Contents/Info.plist")" 0.9.0
-[ "$(stat -f %i "$AGENT_EXE")" != "$sa_ino" ] && pass "inna wersja: plik usługi wymieniony" || fail "inna wersja: plik usługi ten sam"
-[ -n "$(agent_pid "$SA_UID")" ] && [ "$(agent_pid "$SA_UID")" != "$sa_pid" ] && pass "inna wersja: działa nowa kopia usługi" \
-  || fail "inna wersja: proces usługi (${sa_pid:-?} → $(agent_pid "$SA_UID"))"
+expect_code "starsza wersja: instalacja – kod 0" "$code" 0 "$out"
+expect "starsza wersja: zainstalowana" "$out" "CMCR:AGENT installed 0.9.0"
 out="$(ctlpw screen-agent status 1)"; code=$?
-expect "inna wersja: status – starsza wersja" "$out" "imac01: wersja: 0.9.0 (starsza niż 1.0.0 – cmcrctl screen-agent install)"
-expect_code "inna wersja: status – kod 1" "$code" 1 "$out"
+expect "starsza wersja: status – starsza wersja" "$out" "imac01: wersja: 0.9.0 (starsza niż 1.0.0 – cmcrctl screen-agent install)"
+expect_code "starsza wersja: status – kod 1" "$code" 1 "$out"
+sa_ino="$(stat -f %i "$AGENT_EXE")"; sa_pid="$(agent_pid "$SA_UID")"
 clear_fakelog
 out="$(ctlpw screen-agent install 1)"; code=$?
-expect_code "powrót do wersji aplikacji: kod 0" "$code" 0 "$out"
-expect "powrót do wersji aplikacji: zaktualizowana" "$out" "CMCR:AGENT updated 1.0.0" "→ imac01: usługa podglądu zaktualizowana do wersji 1.0.0"
-expect "powrót do wersji aplikacji: tccutil reset" "$(fakelog)" "tccutil reset ScreenCapture $SA_LABEL"
-expect "powrót do wersji aplikacji: usługa odpowiada" "$(agent_ping "$SA_UID")" "AGENT 1.0.0 perm=granted"
+expect_code "aktualizacja: kod 0" "$code" 0 "$out"
+expect "aktualizacja: wymieniona, uprawnienie do nadania ponownie" "$out" "CMCR:AGENT updated 1.0.0" \
+  "Zaktualizowano usługę podglądu ekranu 0.9.0 → 1.0.0." "uprawnienie Nagrywanie ekranu trzeba nadać ponownie" \
+  "→ imac01: usługa podglądu zaktualizowana do wersji 1.0.0"
+expect "aktualizacja: tccutil reset" "$(fakelog)" "tccutil reset ScreenCapture $SA_LABEL"
+expect_code "aktualizacja: zatrzymana przed podmianą, potem uruchomiona" \
+  "$(sa_order "$WORK/fake.log" "launchctl bootout gui/$SA_UID/$SA_LABEL" "launchctl bootstrap gui/$SA_UID $SA_PLIST")" ok "$(fakelog)"
+expect_code "aktualizacja: zainstalowana 1.0.0" "$(sa_pb CFBundleShortVersionString "$SA_APP/Contents/Info.plist")" 1.0.0
+[ "$(stat -f %i "$AGENT_EXE")" != "$sa_ino" ] && pass "aktualizacja: plik usługi wymieniony" || fail "aktualizacja: plik usługi ten sam"
+[ -n "$(agent_pid "$SA_UID")" ] && [ "$(agent_pid "$SA_UID")" != "$sa_pid" ] && pass "aktualizacja: działa nowa kopia usługi" \
+  || fail "aktualizacja: proces usługi (${sa_pid:-?} → $(agent_pid "$SA_UID"))"
+expect "aktualizacja: usługa odpowiada" "$(agent_ping "$SA_UID")" "AGENT 1.0.0 perm=granted"
+
+# Never a downgrade: an older copy (an older CMCR Manager or cmcrctl of another teacher) leaves the newer one, its
+# process and its Screen Recording permission alone.
+sa_ino="$(stat -f %i "$AGENT_EXE")"; sa_pid="$(agent_pid "$SA_UID")"
+clear_fakelog
+out="$(CMCR_SCREEN_AGENT_APP="$SA_OLD" ctlpw screen-agent install 1)"; code=$?
+expect_code "starsza kopia na nowszą: kod 0" "$code" 0 "$out"
+expect "starsza kopia na nowszą: zostaje nowsza" "$out" "CMCR:AGENT newer 1.0.0" \
+  "Na iMacu jest nowsza usługa podglądu ekranu (1.0.0) niż w tej kopii CMCR Manager (0.9.0)" \
+  "→ imac01: na iMacu jest nowsza usługa podglądu (1.0.0) – zostaje bez zmian; zaktualizuj CMCR Manager"
+expect_not "starsza kopia na nowszą: bez wierszy sesji" "$out" "CMCR:AGENT-SESSION"
+expect_code "starsza kopia na nowszą: wersja 1.0.0 zostaje" "$(sa_pb CFBundleShortVersionString "$SA_APP/Contents/Info.plist")" 1.0.0
+[ "$(stat -f %i "$AGENT_EXE")" = "$sa_ino" ] && pass "starsza kopia na nowszą: plik usługi nietknięty" || fail "starsza kopia na nowszą: plik wymieniony"
+[ -n "$sa_pid" ] && [ "$(agent_pid "$SA_UID")" = "$sa_pid" ] && pass "starsza kopia na nowszą: ten sam proces usługi" \
+  || fail "starsza kopia na nowszą: proces usługi (${sa_pid:-?} → $(agent_pid "$SA_UID"))" "$(fakelog)"
+expect_not "starsza kopia na nowszą: uprawnienie zostaje" "$(fakelog)" "tccutil"
+expect_code "starsza kopia na nowszą: usługa nie jest zatrzymywana ani uruchamiana" \
+  "$(grep -cE '^launchctl (bootout|bootstrap|kickstart) gui/' "$WORK/fake.log")" 0 "$(fakelog)"
 
 section "Usługa podglądu – podgląd wznawia usługę, której nie ma w sesji albo która nie odpowiada"
 # Killed while a stream runs (its socket stays behind): the next cycle restarts it and the frames go on.
@@ -211,19 +232,34 @@ expect_code "wyłączona usługa: najpierw włączona, potem załadowana" \
   "$(sa_order "$WORK/fake.log" "launchctl enable gui/$SA_UID/$SA_LABEL" "launchctl bootstrap gui/$SA_UID $SA_PLIST")" ok "$(fakelog)"
 [ -n "$(agent_pid "$SA_UID")" ] && pass "wyłączona usługa: działa" || fail "wyłączona usługa: nie działa" "$(fakelog)"
 
-# It cannot start at all (here: its run folder is gone): one restart, then "does not answer", without an image.
-mv "$AGENT_ROOT/run" "$AGENT_ROOT/run.away"
+# Its own folder run/<uid> is gone (an account that logged in after the install, a folder removed by hand): made
+# again by root before launchd starts the agent.
+agent_bootout "$SA_UID"
+rm -rf "$SA_RUNDIR"
+clear_fakelog
+out="$(ctlpw screenshot 1 "$WORK/sa-norundir.jpg")"; code=$?
+expect_code "brak folderu run/<uid>: zrzut – kod 0" "$code" 0 "$out"
+[ -d "$SA_RUNDIR" ] && [ ! -L "$SA_RUNDIR" ] && [ "$(sa_mode "$SA_RUNDIR")" = 700 ] && [ "$(sa_mode "$AGENT_ROOT/run")" = 755 ] \
+  && pass "brak folderu run/<uid>: utworzony (700) przed startem usługi" || fail "brak folderu run/<uid>" "$(ls -la "$AGENT_ROOT/run" 2>&1)"
+expect_code "brak folderu run/<uid>: najpierw folder, potem launchd" \
+  "$(sa_order "$WORK/fake.log" "chown $SA_UID:" "launchctl bootstrap gui/$SA_UID $SA_PLIST")" ok "$(fakelog)"
+
+# It cannot start at all (here: launchd keeps it loaded, but no process comes up): never asked without a process
+# launchd reports, one restart, then "does not answer", without an image.
+[ -n "$(agent_pid "$SA_UID")" ] && kill -KILL "$(agent_pid "$SA_UID")" 2>/dev/null
+: > "$WORK/agent-nostart"
 clear_fakelog
 out="$(ctlpw screen-watch 1 "$WORK/sa-down" --frames 1 --interval 2)"; code=$?
 expect_code "usługa nie odpowiada: kod 9" "$code" 9 "$out"
-expect "usługa nie odpowiada: komunikat" "$out" "nie odpowiada w sesji zalogowanego użytkownika, także po ponownym uruchomieniu" "brak katalogu"
+expect "usługa nie odpowiada: komunikat" "$out" "nie odpowiada w sesji zalogowanego użytkownika, także po ponownym uruchomieniu" \
+  "launchd nie podaje jej procesu"
 expect "usługa nie odpowiada: próba ponownego uruchomienia" "$(fakelog)" "launchctl kickstart -k gui/$SA_UID/$SA_LABEL"
 n="$(ls "$WORK/sa-down"/*.jpg 2>/dev/null | wc -l | tr -d ' ')"
 expect_code "usługa nie odpowiada: żadnej klatki" "$n" 0 "$out"
 out="$(ctlpw screen-agent status 1)"; code=$?
 expect "usługa nie odpowiada: status" "$out" "imac01: wersja: 1.0.0, załadowana: tak" "błąd: "
 expect_code "usługa nie odpowiada: status – kod 1" "$code" 1 "$out"
-mv "$AGENT_ROOT/run.away" "$AGENT_ROOT/run"
+rm -f "$WORK/agent-nostart"
 agent_restart "$SA_UID" && pass "usługa nie odpowiada: po naprawie znów działa" || fail "usługa nie odpowiada: nie wróciła" "$(tail -5 "$WORK/agent-serve.log")"
 
 # Another program answers on the agent's socket: here a copy of the agent itself at another path, in serve mode (its
@@ -238,7 +274,7 @@ sa_imp=$!
 for i in $(seq 1 50); do [ -S "$SA_SOCK" ] && [ "$(stat -f %i "$SA_SOCK" 2>/dev/null)" != "$sa_ino" ] && break; sleep 0.1; done
 clear_fakelog
 out="$(ctlpw screenshot 1 "$WORK/sa-untrusted.jpg")"
-expect "obca usługa: odmowa" "$out" "Na gnieździe usługi podglądu odpowiada inny program niż zainstalowana usługa" "sa-impostor"
+expect "obca usługa: odmowa" "$out" "Na gnieździe usługi podglądu odpowiada inny program niż zainstalowana usługa"
 [ ! -f "$WORK/sa-untrusted.jpg" ] && pass "obca usługa: brak pliku" || fail "obca usługa: zapisano obraz"
 out="$(ctlpw screen-watch 1 "$WORK/sa-untrusted" --frames 1 --interval 2)"; code=$?
 expect_code "obca usługa: screen-watch – kod 9" "$code" 9 "$out"
@@ -249,6 +285,63 @@ expect "obca usługa: status – błąd" "$out" "błąd: "
 expect_code "obca usługa: status – kod 1" "$code" 1 "$out"
 kill -TERM "$sa_imp" 2>/dev/null; wait "$sa_imp" 2>/dev/null
 agent_restart "$SA_UID" && pass "obca usługa: po jej zakończeniu prawdziwa usługa działa" || fail "obca usługa: usługa nie wróciła"
+
+# The installed agent itself, but started outside launchd (here while launchd's copy is stopped, so it cannot take its
+# socket back): the executable and its `serve` mode match, only the process differs. The scripts pass the pid launchd
+# reports (--pid), so it is refused like any other program – no notice, no image.
+sa_pid="$(agent_pid "$SA_UID")"
+[ -n "$sa_pid" ] && kill -STOP "$sa_pid"
+rm -f "$SA_SOCK"
+( cd / || exit 1
+  exec /usr/bin/env -i PATH=/usr/bin:/bin CMCR_SETUP_ROOT_PREFIX="$WORK/setup-root" CMCR_SCREEN_AGENT_TEST_DIR="$AGENT_TEST" \
+    CMCR_SCREEN_AGENT_TEST_UID="$SA_UID" "$AGENT_EXE" serve </dev/null >"$WORK/sa-rogue.log" 2>&1 ) &
+sa_rogue=$!
+for i in $(seq 1 50); do [ -S "$SA_SOCK" ] && break; sleep 0.1; done
+clear_fakelog
+out="$(ctlpw screen-watch 1 "$WORK/sa-rogue" --frames 1 --interval 2)"; code=$?
+expect_code "usługa spoza launchd: kod 9" "$code" 9 "$out"
+expect "usługa spoza launchd: odmowa" "$out" "Na gnieździe usługi podglądu odpowiada inny program niż zainstalowana usługa"
+expect_code "usługa spoza launchd: nic do niej nie wysłano" "$(agent_count '^CMCRA1 ')" 0 "$(agentlog)"
+kill -TERM "$sa_rogue" 2>/dev/null; wait "$sa_rogue" 2>/dev/null
+# launchd's own copy, stopped (SIGSTOP – e.g. by the student, to keep a socket answered by something else): refused too.
+rm -f "$SA_SOCK"
+[ -n "$sa_pid" ] && kill -CONT "$sa_pid"
+agent_restart "$SA_UID"
+sa_pid="$(agent_pid "$SA_UID")"
+[ -n "$sa_pid" ] && kill -STOP "$sa_pid"
+clear_fakelog
+out="$(ctlpw screen-watch 1 "$WORK/sa-stopped" --frames 1 --interval 2)"; code=$?
+expect_code "zatrzymana usługa (SIGSTOP): kod 9" "$code" 9 "$out"
+expect "zatrzymana usługa (SIGSTOP): odmowa" "$out" "Na gnieździe usługi podglądu odpowiada inny program niż zainstalowana usługa"
+[ -n "$sa_pid" ] && kill -CONT "$sa_pid"
+agent_restart "$SA_UID" && pass "usługa spoza launchd: potem prawdziwa usługa działa" || fail "usługa spoza launchd: usługa nie wróciła"
+
+section "Usługa podglądu – coś innego pod nazwą folderu run/<uid>"
+# Left by the older layout (run/ writable for everyone) or planted by another account before this one logged in: a
+# file, a link to another folder, a folder of another account. Root removes the entry itself (never what a link points
+# to) and makes the agent's folder anew before launchd starts it.
+mkdir -p "$WORK/sa-elsewhere"; : > "$WORK/sa-elsewhere/keep"
+sa_run_phys="$(cd -P "$AGENT_ROOT/run" && pwd -P)"
+for sa_kind in plik dowiązanie "folder innego konta"; do
+  agent_bootout "$SA_UID"
+  rm -rf "$SA_RUNDIR"
+  case "$sa_kind" in
+    plik) echo x > "$SA_RUNDIR" ;;
+    dowiązanie) ln -s "$WORK/sa-elsewhere" "$SA_RUNDIR" ;;
+    *) mkdir "$SA_RUNDIR"; : > "$SA_RUNDIR/planted"; echo "4242 $sa_run_phys/$SA_UID" > "$WORK/stat.uid" ;;
+  esac
+  clear_fakelog
+  out="$(ctlpw screenshot 1 "$WORK/sa-squat.jpg")"; code=$?
+  rm -f "$WORK/stat.uid"
+  expect_code "zajęty run/<uid> ($sa_kind): zrzut – kod 0" "$code" 0 "$out"
+  if [ -d "$SA_RUNDIR" ] && [ ! -L "$SA_RUNDIR" ] && [ ! -e "$SA_RUNDIR/planted" ] && [ "$(sa_mode "$SA_RUNDIR")" = 700 ]; then
+    pass "zajęty run/<uid> ($sa_kind): zastąpiony folderem usługi"
+  else
+    fail "zajęty run/<uid> ($sa_kind)" "$(ls -la "$AGENT_ROOT/run" "$SA_RUNDIR" 2>&1)"
+  fi
+done
+[ -e "$WORK/sa-elsewhere/keep" ] && pass "zajęty run/<uid>: cel dowiązania nietknięty" || fail "zajęty run/<uid>: usunięto cel dowiązania"
+rm -rf "$WORK/sa-elsewhere"
 
 section "Usługa podglądu – uprawnienie i stan (permission, status)"
 agent_restart "$SA_UID"
@@ -296,7 +389,8 @@ out="$(ctlpw screen-agent status 1)"; code=$?
 expect "konto ucznia: status z sesji ucznia" "$out" "uprawnienie: nadane, zalogowany: daemon"
 expect_code "konto ucznia: status – kod 0" "$code" 0 "$out"
 out="$(ctl screen-agent status 1)"; code=$?
-expect "konto ucznia bez hasła: uprawnienie nieznane" "$out" "uprawnienie: nieznane, zalogowany: daemon"
+expect "konto ucznia bez hasła: uprawnienie nieznane, powód podany" "$out" "załadowana: ?, uprawnienie: nieznane, zalogowany: daemon" \
+  "błąd: nie udało się zapytać usługi w sesji zalogowanego użytkownika (potrzebne działające sudo)" "hasła administratora"
 expect_code "konto ucznia bez hasła: status – kod 1" "$code" 1 "$out"
 rm -f "$WORK/console_user" "$AGENT_TEST/user"
 
@@ -335,5 +429,5 @@ expect_code "zrzuty: potem tylko główny – plik drugiego ekranu usunięty" "$
 
 agent_reset
 agent_ensure
-rm -rf "$WORK/sa-impostor" "$WORK/agent-bundle-0.9.0"
+rm -rf "$WORK/sa-impostor" "$WORK/agent-bundle-0.9.0" "$WORK/sa-rogue" "$WORK/sa-stopped"
 printf '%s' "$sa_settings_backup" > "$WORK/config/settings.json"

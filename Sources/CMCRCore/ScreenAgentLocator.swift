@@ -10,6 +10,11 @@ public enum ScreenAgentLocator {
     /// Lookup order: `CMCR_SCREEN_AGENT_APP` (test harness / DEBUG only), `Contents/Helpers` of the running app,
     /// `Contents/Helpers` of the app around `cmcrctl` (`Contents/Resources/bin`), next to the executable, and
     /// finally `/Applications/CMCR Manager.app`.
+    ///
+    /// Only an agent of exactly this build's `ScreenAgentInfo.version` (and `bundleID`) is taken from those places:
+    /// the app, cmcrctl and the readiness check all assume that version, and an installed CMCR Manager of another
+    /// release would otherwise be uploaded instead (a standalone cmcrctl, `swift run`). The `CMCR_SCREEN_AGENT_APP`
+    /// override is taken whatever its version – the e2e tests install older and newer copies on purpose.
     public static func bundledAgent(environment: [String: String] = ProcessInfo.processInfo.environment,
                                     mainBundle: Bundle = .main) -> URL? {
         #if DEBUG
@@ -44,7 +49,7 @@ public enum ScreenAgentLocator {
                 .appendingPathComponent(ScreenAgentInfo.appName, isDirectory: true))
         }
         candidates.append(helper(in: applicationsApp))
-        return candidates.first(where: isAgentBundle)
+        return candidates.first { isAgentBundle($0) && isThisVersion($0) }
     }
 
     static func helper(in app: URL) -> URL {
@@ -59,6 +64,17 @@ public enum ScreenAgentLocator {
         let exe = url.appendingPathComponent("Contents/MacOS/\(ScreenAgentInfo.executableName)")
         guard FileManager.default.fileExists(atPath: exe.path, isDirectory: &isDir), !isDir.boolValue else { return false }
         return FileManager.default.isExecutableFile(atPath: exe.path)
+    }
+
+    /// The bundle's Info.plist names this build's agent: `ScreenAgentInfo.bundleID` and `ScreenAgentInfo.version`.
+    static func isThisVersion(_ url: URL) -> Bool {
+        let info = url.appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: info),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            return false
+        }
+        return plist["CFBundleIdentifier"] as? String == ScreenAgentInfo.bundleID
+            && plist["CFBundleShortVersionString"] as? String == ScreenAgentInfo.version
     }
 
     /// The e2e harness (Tests/e2e/run.sh): an isolated configuration and its throw-away Keychain service, the same

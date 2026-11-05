@@ -14,12 +14,19 @@ private struct LocatorFixture {
 
     func cleanUp() { try? FileManager.default.removeItem(at: root) }
 
-    /// A fake agent bundle at `path` (relative to root); `executable: false` leaves out the binary.
+    /// A fake agent bundle at `path` (relative to root); `executable: false` leaves out the binary, `version: nil` the
+    /// Info.plist.
     @discardableResult
-    func agent(_ path: String, executable: Bool = true) throws -> URL {
+    func agent(_ path: String, executable: Bool = true, version: String? = ScreenAgentInfo.version,
+               id: String = ScreenAgentInfo.bundleID) throws -> URL {
         let app = root.appendingPathComponent(path, isDirectory: true)
         let macOS = app.appendingPathComponent("Contents/MacOS", isDirectory: true)
         try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
+        if let version {
+            let info: [String: Any] = ["CFBundleIdentifier": id, "CFBundleShortVersionString": version]
+            try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+                .write(to: app.appendingPathComponent("Contents/Info.plist"))
+        }
         if executable {
             let exe = macOS.appendingPathComponent(ScreenAgentInfo.executableName)
             try Data("#!/bin/sh\n".utf8).write(to: exe)
@@ -97,6 +104,30 @@ private let helperPath = "Contents/Helpers/CMCR Screen Agent.app"
     let installed = try f.agent("Applications/CMCR Manager.app/\(helperPath)")
     let found = f.locate(bundle: "Build/CMCR Manager.app", executable: "Build/CMCR Manager.app/Contents/MacOS/CMCRManager")
     #expect(found?.standardizedFileURL == installed.standardizedFileURL)
+}
+
+@Test func locatorSkipsAgentsOfAnotherVersion() throws {
+    let f = try LocatorFixture()
+    defer { f.cleanUp() }
+    // A standalone cmcrctl or `swift run` next to an installed CMCR Manager of another release: its agent is not this
+    // build's and would be uploaded under this build's version.
+    try f.file(".build/debug/cmcrctl")
+    try f.agent("Applications/CMCR Manager.app/\(helperPath)", version: "0.0.1")
+    #expect(f.locate(bundle: ".build/debug", executable: ".build/debug/cmcrctl") == nil)
+    // Earlier places are skipped the same way; the first one of this version wins.
+    try f.agent(".build/debug/CMCR Screen Agent.app", version: "99.0.0")
+    try f.agent("Applications/CMCR Manager.app/\(helperPath)")
+    #expect(f.locate(bundle: ".build/debug", executable: ".build/debug/cmcrctl")?.standardizedFileURL
+        == f.url("Applications/CMCR Manager.app/\(helperPath)").standardizedFileURL)
+    // Another bundle identifier, or no Info.plist at all, is no agent of this build either.
+    try f.agent("Other/CMCR Manager.app/\(helperPath)", id: "com.example.agent")
+    try f.agent("Bare/CMCR Manager.app/\(helperPath)", version: nil)
+    #expect(f.locate(bundle: "Other/CMCR Manager.app", executable: nil, applications: "none.app") == nil)
+    #expect(f.locate(bundle: "Bare/CMCR Manager.app", executable: nil, applications: "none.app") == nil)
+    // The explicit override is taken whatever its version (the e2e tests install older and newer copies).
+    let old = try f.agent("e2e/CMCR Screen Agent.app", version: "0.9.0")
+    #expect(f.locate(env: ["CMCR_SCREEN_AGENT_APP": old.path], bundle: "x", executable: nil, debug: true)?
+        .standardizedFileURL == old.standardizedFileURL)
 }
 
 @Test func locatorOverrideOnlyInDebugBuildsOrTheHarness() throws {

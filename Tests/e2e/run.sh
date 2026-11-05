@@ -84,10 +84,15 @@ AGENT_EXE="$AGENT_ROOT/CMCR Screen Agent.app/Contents/MacOS/cmcr-screen-agent"
 agent_ping() {
   CMCR_SETUP_ROOT_PREFIX="$WORK/setup-root" CMCR_SCREEN_AGENT_TEST_DIR="$AGENT_TEST" "$AGENT_EXE" client "$1" ping 2>&1
 }
-# agent_restart UID – a fresh agent in that session (kickstart -k, bootstrap when not loaded), back once it answers. A fresh one answers a missing
-# permission without ending itself (it does so only after 30 s, to read the permission anew).
+# agent_restart UID – a fresh agent in that session (kickstart -k, bootstrap when not loaded), back once it answers. It
+# never ends itself after a ping; a capture without the permission in an agent older than 30 s does (to read it anew).
 agent_restart() {
   local i
+  # As root does before it starts an agent: its own folder run/<uid> (the agent does not start without it).
+  if [ -L "$AGENT_ROOT/run/$1" ] || { [ -e "$AGENT_ROOT/run/$1" ] && [ ! -d "$AGENT_ROOT/run/$1" ]; }; then
+    rm -rf "$AGENT_ROOT/run/$1"
+  fi
+  mkdir -p "$AGENT_ROOT/run/$1" && chmod 700 "$AGENT_ROOT/run/$1"
   "$CTL" exec "launchctl kickstart -k gui/$1/pl.cmcr.manager.screen-agent" 1 >/dev/null 2>&1 \
     || "$CTL" exec "launchctl bootstrap gui/$1 '$WORK/setup-root/Library/LaunchAgents/pl.cmcr.manager.screen-agent.plist'" 1 \
       >/dev/null 2>&1

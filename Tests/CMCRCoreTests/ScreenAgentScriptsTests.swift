@@ -8,10 +8,11 @@ import Testing
 /// - every system path lives under `CMCR_SETUP_ROOT_PREFIX` (a folder in /tmp – socket paths must stay short);
 /// - the agent is a bash stub at the prefixed executable path that answers like `cmcr-screen-agent client`
 ///   (control files in $T: agent-state up|down|down-revivable|untrusted, agent-noperm, agent-locked, notice, …);
-/// - `launchctl` keeps the loaded state of each `gui/<uid>` in $T/launchd and never reaches the real launchd;
+/// - `launchctl` keeps the loaded state of each `gui/<uid>` in $T/launchd and never reaches the real launchd; `print`
+///   of a loaded agent reports `pid = 4242` (the stub ignores `--pid`, the log shows it was passed);
 /// - `sudo` runs the command as the current user, `codesign`, `chown`, `tccutil`, `pkill`, `xattr` only log, `ps`
-///   reports the GUI sessions listed in $T/sessions, `stat` the console user from $T/console_user, `pgrep` the
-///   attention-mode overlay from $T/attention.
+///   reports the GUI sessions listed in $T/sessions, `stat` the console user from $T/console_user (and the owner
+///   4242 for the paths listed in $T/foreign), `pgrep` the attention-mode overlay from $T/attention.
 /// `guardFakes()` checks that every bash (also a nested one) sees the fakes before any script runs.
 @Suite struct ScreenAgentScriptsTests {
     struct Sandbox {
@@ -46,6 +47,7 @@ import Testing
                 if [ -f "$T/console_user" ]; then cat "$T/console_user"; else id -un; fi
                 return 0
               fi
+              if [ $# = 3 ] && [ "$1 $2" = "-f %u" ] && grep -qxF -- "$3" "$T/foreign" 2>/dev/null; then echo 4242; return 0; fi
               command stat "$@"
             }
             ps() {
@@ -58,7 +60,13 @@ import Testing
               local t uid
               case "${1:-}" in
                 print)
-                  case "${2:-}" in gui/*) t="${2#gui/}"; uid="${t%%/*}"; [ -e "$T/launchd/$uid" ]; return ;; esac
+                  case "${2:-}" in
+                    gui/*/*)
+                      t="${2#gui/}"; uid="${t%%/*}"
+                      [ -e "$T/launchd/$uid" ] || return 113
+                      printf '%s = {\n\tactive count = 1\n\tpid = 4242\n\tendpoints = {\n\t\tpid = 1\n\t}\n}\n' "$2"
+                      return 0 ;;
+                  esac
                   return 113 ;;
                 bootstrap)
                   uid="${2#gui/}"; mkdir -p "$T/launchd"
@@ -126,17 +134,19 @@ import Testing
         func clearLog() { try? FileManager.default.removeItem(at: log) }
         func remove() { try? FileManager.default.removeItem(at: dir) }
 
-        /// Marks the agent as loaded by launchd in gui/<uid>.
+        /// Marks the agent as loaded (and running) by launchd in gui/<uid>, with its folder run/<uid> as root made it.
         func load(_ uid: Int) throws {
             try FileManager.default.createDirectory(at: dir.appendingPathComponent("launchd"), withIntermediateDirectories: true)
             touch("launchd/\(uid)")
+            try FileManager.default.createDirectory(atPath: "\(runDir)/\(uid)", withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
         }
         func isLoaded(_ uid: Int) -> Bool { exists(dir.appendingPathComponent("launchd/\(uid)").path) }
 
         /// A socket node like the one the agent binds (the stub cannot): `cmcr_agent_wait` looks for it.
         func makeSocket(_ uid: Int) throws {
-            try FileManager.default.createDirectory(atPath: runDir, withIntermediateDirectories: true)
-            let path = "\(runDir)/\(uid).sock"
+            try FileManager.default.createDirectory(atPath: "\(runDir)/\(uid)", withIntermediateDirectories: true)
+            let path = root + ScreenAgentInfo.socketPath(uid: "\(uid)")
             let fd = socket(AF_UNIX, SOCK_STREAM, 0)
             try #require(fd >= 0)
             defer { close(fd) }
@@ -207,10 +217,15 @@ import Testing
             return app
         }
 
-        /// The agent installed directly under the prefix (preview and status tests).
-        func installAgent(version: String = ScreenAgentInfo.version) throws {
+        /// The agent installed directly under the prefix (preview and status tests); `running`: launchd runs it in the
+        /// sessions of this account and of daemon (uid 1, the "student" of the tests).
+        func installAgent(version: String = ScreenAgentInfo.version, running: Bool = true) throws {
             try FileManager.default.createDirectory(atPath: root + ScreenAgentInfo.installDir, withIntermediateDirectories: true)
             _ = try Self.makeBundle(in: root + ScreenAgentInfo.installDir, version: version)
+            if running {
+                try load(Self.myUID)
+                try load(1)
+            }
         }
 
         /// An uploaded archive as `Operations.installScreenAgent` makes it (`Payload.make`), in /tmp like scp puts it.
@@ -290,7 +305,8 @@ import Testing
         let log = box.logText()
         #expect(log.components(separatedBy: "agent client \(Sandbox.myUID) notice ").count == 2, "\(log)")
         #expect(log.contains("agent client \(Sandbox.myUID) notice \(Data(Scripts.observeNoticeTitle.utf8).base64EncodedString()) \(Data(Scripts.observeNoticeText.utf8).base64EncodedString())"))
-        #expect(log.components(separatedBy: "agent client \(Sandbox.myUID) capture 640 55 main").count == 3, "\(log)")
+        #expect(log.components(separatedBy: "agent client \(Sandbox.myUID) capture 640 55 main --pid 4242").count == 3, "\(log)")
+        #expect(!log.contains("launchctl kickstart") && !log.contains("launchctl bootstrap"), "a running agent is not restarted")
         #expect(events.contains { if case .notified(Sandbox.me, _) = $0 { return true }; return false })
     }
 
@@ -405,9 +421,9 @@ import Testing
         let box = try Sandbox()
         defer { box.remove() }
         try #require(await box.guardFakes(), "atrapy nieaktywne – test przerwany")
-        try box.installAgent()
+        try box.installAgent(running: false)
         try box.makeSocket(Sandbox.myUID)
-        // Not loaded in the session and silent: bootstrap, then it answers.
+        // Not loaded in the session: never asked without a process launchd started – bootstrap, then it answers.
         try box.write("agent-state", "down-revivable")
         var r = await box.run(Scripts.screenCapture(Self.options()))
         #expect(r.exitCode == 0, "\(r.stdoutText) \(r.stderrText)")
@@ -415,6 +431,8 @@ import Testing
         let log = box.logText()
         #expect(log.contains("launchctl bootstrap gui/\(Sandbox.myUID) \(box.plist)"), "\(log)")
         #expect(!log.contains("kickstart"))
+        #expect(!log.contains(" notice ") || log.range(of: "launchctl bootstrap")!.lowerBound < log.range(of: " notice ")!.lowerBound,
+                "the client is not run before launchd has the agent: \(log)")
         // Loaded but silent: kickstart -k; still silent – asked once more, then STATE agent-down.
         box.clearLog()
         try box.write("agent-state", "down")
@@ -426,6 +444,50 @@ import Testing
         #expect(again.contains("launchctl kickstart -k gui/\(Sandbox.myUID)/\(ScreenAgentInfo.label)"), "\(again)")
         #expect(again.components(separatedBy: " notice ").count == 3, "the notice is asked exactly twice: \(again)")
         #expect(Date().timeIntervalSince(started) < 30)
+    }
+
+    @Test func reviveMakesTheAgentsOwnFolderFirst() async throws {
+        let box = try Sandbox()
+        defer { box.remove() }
+        try #require(await box.guardFakes(), "atrapy nieaktywne – test przerwany")
+        try box.installAgent(running: false)
+        let mine = "\(box.runDir)/\(Sandbox.myUID)"
+        // Something planted at the agent's folder name: a file, a link to another folder, a folder of another account.
+        try FileManager.default.createDirectory(atPath: box.runDir, withIntermediateDirectories: true)
+        let elsewhere = box.dir.appendingPathComponent("elsewhere").path
+        try FileManager.default.createDirectory(atPath: elsewhere, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: elsewhere + "/keep", contents: Data("x".utf8))
+        chmod(box.runDir, 0o1733)
+        let planted: [(String, () throws -> Void)] = [
+            ("file", { FileManager.default.createFile(atPath: mine, contents: Data("x".utf8)) }),
+            ("link", { try FileManager.default.createSymbolicLink(atPath: mine, withDestinationPath: elsewhere) }),
+            ("foreign", {
+                try FileManager.default.createDirectory(atPath: mine, withIntermediateDirectories: true)
+                FileManager.default.createFile(atPath: mine + "/planted", contents: nil)
+                try box.write("foreign", mine + "\n")
+            }),
+        ]
+        for (name, plant) in planted {
+            try? FileManager.default.removeItem(atPath: mine)
+            try? FileManager.default.removeItem(at: box.dir.appendingPathComponent("launchd/\(Sandbox.myUID)"))
+            try plant()
+            box.clearLog()
+            let r = await box.run(Scripts.screenCapture(Self.options(notify: false)))
+            #expect(r.exitCode == 0, "\(name): \(r.stdoutText) \(r.stderrText)")
+            // Only root can make the folder: even the account at the screen asks through sudo then.
+            #expect(Operations.screenshot(from: r).privileged, "\(name)")
+            var isDir: ObjCBool = false
+            #expect(FileManager.default.fileExists(atPath: mine, isDirectory: &isDir) && isDir.boolValue, "\(name)")
+            #expect(mode(mine) == 0o700 && mode(box.runDir) == 0o755, "\(name): \(String(mode(mine), radix: 8))")
+            #expect(!box.exists(mine + "/planted"), "\(name)")
+            #expect(box.logText().contains("chown \(Sandbox.myUID):"), "\(name): \(box.logText())")
+            let log = box.logText()
+            let made = try #require(log.range(of: "chown \(Sandbox.myUID):"), "\(name)")
+            let started = try #require(log.range(of: "launchctl bootstrap gui/\(Sandbox.myUID)"), "\(name)")
+            #expect(made.lowerBound < started.lowerBound, "the folder exists before launchd starts the agent")
+            try? FileManager.default.removeItem(at: box.dir.appendingPathComponent("foreign"))
+        }
+        #expect(box.exists(elsewhere + "/keep"), "a link is removed, never what it points to")
     }
 
     @Test func nobodyLoggedInAndRestrictionsNeverAskTheAgent() async throws {
@@ -453,6 +515,8 @@ import Testing
         try #require(await box.guardFakes(), "atrapy nieaktywne – test przerwany")
         try box.write("sessions", "  \(Sandbox.myUID) \(Sandbox.me) /System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow\n")
         try box.makeSocket(Sandbox.myUID)
+        // A socket of the older layout (run/<uid>.sock in a run/ everyone could write) goes with the install.
+        FileManager.default.createFile(atPath: "\(box.runDir)/1234.sock", contents: nil)
 
         // Fresh install.
         var tar = try await box.upload(version: ScreenAgentInfo.version)
@@ -465,7 +529,9 @@ import Testing
         let plistText = try String(contentsOfFile: box.plist, encoding: .utf8)
         #expect(plistText == ScreenAgentInfo.launchAgentPlist(executable: box.agentExe))
         #expect(mode(box.plist) == 0o644)
-        #expect(mode(box.runDir) == 0o1733)
+        #expect(mode(box.runDir) == 0o755, "run/ is root's own")
+        #expect(mode("\(box.runDir)/\(Sandbox.myUID)") == 0o700, "the agent's own folder, made before it starts")
+        #expect(!box.exists("\(box.runDir)/1234.sock"))
         #expect(mode(box.shotsDir) == 0o700)
         #expect(mode(box.agentExe) == 0o755, "group/other write removed")
         let log = box.logText()
@@ -473,6 +539,7 @@ import Testing
         #expect(log.contains("xattr -dr com.apple.quarantine"))
         #expect(log.contains("launchctl bootstrap gui/\(Sandbox.myUID) \(box.plist)"))
         #expect(!log.contains("tccutil"), "a first install has no permission to lose")
+        #expect(log.components(separatedBy: " ping --pid 4242").count == 2, "asked once, as the launchd process: \(log)")
         let inode = try inodeOf(box.agentExe)
 
         // The same version again: untouched, only started where it is not loaded.
@@ -515,16 +582,60 @@ import Testing
         #expect(r.stdoutText.contains("CMCR:AGENT updated 9.1.0\n"))
         #expect(!r.stdoutText.contains("trzeba nadać ponownie") && !box.logText().contains("tccutil"))
 
+        // Never a downgrade: an older upload leaves the newer copy, its LaunchAgent and its sessions alone.
+        box.clearLog()
+        let newer = try inodeOf(box.agentExe)
+        r = await box.run(Scripts.installScreenAgent(remoteTar: try await box.upload(version: ScreenAgentInfo.version)))
+        #expect(r.exitCode == 0, "\(r.stderrText)")
+        #expect(r.stdoutText.contains("CMCR:AGENT newer 9.1.0\n") && r.stdoutText.contains("Zaktualizuj CMCR Manager"),
+                "\(r.stdoutText)")
+        #expect(!r.stdoutText.contains("CMCR:AGENT-SESSION"))
+        #expect(try inodeOf(box.agentExe) == newer)
+        let kept = box.logText()
+        #expect(!kept.contains("bootout") && !kept.contains("bootstrap") && !kept.contains("kickstart") && !kept.contains("tccutil"),
+                "\(kept)")
+        // 10 > 9 (numbers, not text): an upgrade.
+        r = await box.run(Scripts.installScreenAgent(remoteTar: try await box.upload(version: "10.0.0")))
+        #expect(r.stdoutText.contains("CMCR:AGENT updated 10.0.0\n"), "\(r.stdoutText)")
+
         // Removal: stopped, every file and the permission entry gone.
         box.clearLog()
         r = await box.run(Scripts.removeScreenAgent())
         #expect(r.exitCode == 0, "\(r.stderrText)")
-        #expect(r.stdoutText.contains("CMCR:AGENT removed 9.1.0\n"))
+        #expect(r.stdoutText.contains("CMCR:AGENT removed 10.0.0\n"))
         #expect(!box.exists(box.agentApp) && !box.exists(box.plist) && !box.exists(box.runDir) && !box.exists(box.shotsDir))
         #expect(!box.isLoaded(Sandbox.myUID))
         #expect(box.logText().contains("tccutil reset ScreenCapture \(ScreenAgentInfo.label)"))
         r = await box.run(Scripts.removeScreenAgent())
         #expect(r.exitCode == 0 && r.stdoutText.contains("CMCR:AGENT absent -"))
+    }
+
+    @Test func installRestartsAnAgentWithoutPermissionOnceAndOnlyAnOldOne() async throws {
+        let box = try Sandbox()
+        defer { box.remove() }
+        try #require(await box.guardFakes(), "atrapy nieaktywne – test przerwany")
+        try box.write("sessions", "  \(Sandbox.myUID) \(Sandbox.me) /System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow\n")
+        box.touch("agent-noperm")
+        // Started by this install: its answer is already fresh.
+        var r = await box.run(Scripts.installScreenAgent(remoteTar: try await box.upload(version: ScreenAgentInfo.version)))
+        #expect(r.stdoutText.contains("CMCR:AGENT-SESSION \(Sandbox.me) \(Sandbox.myUID) AGENT \(ScreenAgentInfo.version) perm=denied"),
+                "\(r.stdoutText)")
+        #expect(!box.logText().contains("kickstart"), "\(box.logText())")
+        #expect(box.logText().components(separatedBy: " ping --pid").count == 2, "asked once: \(box.logText())")
+        // Running from before (the usual state before a visit): started anew once, so a permission granted meanwhile
+        // counts – and the answer is the fresh agent's, not a missing one.
+        box.clearLog()
+        r = await box.run(Scripts.installScreenAgent(remoteTar: try await box.upload(version: ScreenAgentInfo.version)))
+        #expect(r.stdoutText.contains("CMCR:AGENT unchanged"))
+        #expect(r.stdoutText.contains("CMCR:AGENT-SESSION \(Sandbox.me) \(Sandbox.myUID) AGENT \(ScreenAgentInfo.version) perm=denied"),
+                "\(r.stdoutText)")
+        let log = box.logText()
+        #expect(log.components(separatedBy: "launchctl kickstart -k gui/\(Sandbox.myUID)/").count == 2, "\(log)")
+        // Granted: nothing restarted.
+        try FileManager.default.removeItem(at: box.dir.appendingPathComponent("agent-noperm"))
+        box.clearLog()
+        r = await box.run(Scripts.installScreenAgent(remoteTar: try await box.upload(version: ScreenAgentInfo.version)))
+        #expect(r.stdoutText.contains("perm=granted") && !box.logText().contains("kickstart"), "\(box.logText())")
     }
 
     @Test func badUploadsAreRefusedAndRemoved() async throws {
@@ -560,7 +671,18 @@ import Testing
         r = await box.run(Scripts.requestScreenAgentPermission())
         #expect(r.exitCode == 0, "\(r.stderrText)")
         #expect(r.stdoutText.contains("CMCR:AGENT-PERMISSION denied\n") && r.stdoutText.contains("Nagrywanie ekranu"))
-        #expect(box.logText().contains("agent client \(Sandbox.myUID) request-permission"))
+        #expect(box.logText().contains("agent client \(Sandbox.myUID) request-permission --pid 4242"))
+        #expect(!box.logText().contains("kickstart"), "an agent with the permission is not restarted")
+        // Without the permission: started anew first (a stale process may not see a permission granted since).
+        box.clearLog()
+        box.touch("agent-noperm")
+        r = await box.run(Scripts.requestScreenAgentPermission())
+        #expect(r.exitCode == 0, "\(r.stderrText)")
+        let fresh = box.logText()
+        let restart = try #require(fresh.range(of: "launchctl kickstart -k gui/\(Sandbox.myUID)/"), "\(fresh)")
+        let request = try #require(fresh.range(of: "request-permission"), "\(fresh)")
+        #expect(restart.lowerBound < request.lowerBound)
+        try FileManager.default.removeItem(at: box.dir.appendingPathComponent("agent-noperm"))
         try box.write("permission", "granted")
         r = await box.run(Scripts.requestScreenAgentPermission())
         #expect(r.stdoutText.contains("CMCR:AGENT-PERMISSION granted\n"))
@@ -587,11 +709,20 @@ import Testing
         #expect(r.exitCode == 0, "\(r.stderrText)")
         status = ScreenAgentStatus.parse(r.stdoutText)
         #expect(status.installedVersion == ScreenAgentInfo.version && status.isCurrent)
-        #expect(status.loaded && status.permission == .denied && status.consoleUser == "daemon" && status.error == nil)
+        #expect(status.loaded == true && status.permission == .denied && status.consoleUser == "daemon" && status.error == nil)
         #expect(box.logText().contains("sudo /bin/bash"), "another account's agent is asked as root")
+        #expect(box.logText().contains("launchctl kickstart -k gui/1/"), "denied: asked again by a fresh agent")
+        #expect(box.logText().components(separatedBy: "agent client 1 ping --pid 4242").count >= 3, "\(box.logText())")
         try box.write("agent-state", "down")
         status = ScreenAgentStatus.parse(await box.run(Scripts.screenAgentStatus()).stdoutText)
         #expect(status.errorCode == "unreachable" && status.error == "brak odpowiedzi na gnieździe")
+        // Loaded without a process: not asked at all, reported as not answering.
+        try FileManager.default.removeItem(at: box.dir.appendingPathComponent("launchd/1"))
+        try box.write("agent-state", "up")
+        box.clearLog()
+        status = ScreenAgentStatus.parse(await box.run(Scripts.screenAgentStatus()).stdoutText)
+        #expect(status.errorCode == "unreachable" && status.loaded == false, "\(status)")
+        #expect(!box.logText().contains("agent client"), "\(box.logText())")
     }
 
     @Test func readinessAsksTheAgentInTheSandbox() async throws {
@@ -604,7 +735,15 @@ import Testing
         let report = ReadinessReport.parse(r.stdoutText, student: "student", sharedFolder: "/Users/student/Public/cmcr")
         #expect(report.values["agent_installed"] == "1" && report.values["agent_loaded"] == "1", "\(r.stdoutText)")
         #expect(report[.screen].state == .ok && report[.screen].short == "gotowy", "\(report[.screen]) \(r.stdoutText)")
-        #expect(box.logText().components(separatedBy: " ping").count == 2, "asked once: \(box.logText())")
+        #expect(box.logText().components(separatedBy: " ping --pid 4242").count == 2, "asked once: \(box.logText())")
+        #expect(!box.logText().contains("kickstart"))
+        // Denied: the answer comes from an agent started anew (one granted at the computer since would show).
+        box.clearLog()
+        box.touch("agent-noperm")
+        let denied = await box.run(Scripts.readiness(student: "student", sharedFolder: "/Users/student/Public/cmcr", publicKey: nil))
+        let again = ReadinessReport.parse(denied.stdoutText, student: "student", sharedFolder: "/Users/student/Public/cmcr")
+        #expect(again[.screen].short == "nadaj uprawnienie", "\(again[.screen])")
+        #expect(box.logText().components(separatedBy: "launchctl kickstart -k gui/\(Sandbox.myUID)/").count == 2, "\(box.logText())")
     }
 }
 
@@ -624,13 +763,13 @@ private func inodeOf(_ path: String) throws -> UInt64 {
 @Test func agentStatusParsesPingAndErrors() {
     let ok = ScreenAgentStatus.parse("console=jan\nagent_installed=1\nagent_version=1.0.0\nagent_loaded=1\n"
         + "agent_ping=AGENT 1.0.0 perm=granted locked=1 console=0 asleep=1 user=Jan Kowalski\nagent_ping_rc=0\n")
-    #expect(ok.installedVersion == "1.0.0" && ok.isCurrent && ok.loaded && ok.runningVersion == "1.0.0")
+    #expect(ok.installedVersion == "1.0.0" && ok.isCurrent && ok.loaded == true && ok.runningVersion == "1.0.0")
     #expect(ok.permission == .granted && ok.locked && !ok.onConsole && ok.asleep)
     #expect(ok.consoleUser == "Jan Kowalski" && ok.error == nil && ok.errorCode == nil)
 
     let down = ScreenAgentStatus.parse("console=jan\nagent_installed=1\nagent_version=0.9\nagent_loaded=0\n"
         + "agent_ping=ERR unreachable brak gniazda\nagent_ping_rc=10\n")
-    #expect(down.installedVersion == "0.9" && !down.isCurrent && !down.loaded)
+    #expect(down.installedVersion == "0.9" && !down.isCurrent && down.loaded == false)
     #expect(down.permission == .unknown && down.errorCode == "unreachable" && down.error == "brak gniazda")
     #expect(down.consoleUser == "jan")
 
@@ -640,6 +779,9 @@ private func inodeOf(_ path: String) throws -> UInt64 {
     #expect(garbage.errorCode == "failed" && garbage.error == "Segmentation fault")
     let none = ScreenAgentStatus.parse("console=\nagent_installed=0\n")
     #expect(!none.isInstalled && none.consoleUser == nil && none.error == nil && none.permission == .unknown)
+    // Without sudo for another account's session only the installed version is known.
+    let nosudo = ScreenAgentStatus.parse("console=jan\nagent_installed=1\nagent_version=1.0.0\n")
+    #expect(nosudo.loaded == nil && !nosudo.sessionChecked && nosudo.permission == .unknown)
 }
 
 @Test func screenCellFollowsTheReadinessTable() {

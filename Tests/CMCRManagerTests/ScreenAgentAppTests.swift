@@ -43,6 +43,16 @@ import Testing
         #expect(fresh.lines == ["s: usługa działa i ma uprawnienie nagrywania ekranu.", "Usługa podglądu zainstalowana (wersja 1.0.0)."])
     }
 
+    @Test func installReportOfANewerAgentOnTheIMac() {
+        // Another teacher's newer CMCR Manager installed it: nothing was touched and no session was asked.
+        let newer = ScreenAgentInstallReport.parse("CMCR:AGENT newer 9.1.0\n⚠︎ Na iMacu jest nowsza usługa…\n")
+        #expect(newer.change == .newer && newer.version == "9.1.0" && newer.sessions.isEmpty)
+        #expect(newer.short == "Usługa podglądu: na iMacu jest nowsza (9.1.0) – zaktualizuj CMCR Manager.")
+        #expect(newer.lines.count == 1)
+        #expect(newer.lines[0].contains("nowsza usługa podglądu (9.1.0)") && newer.lines[0].contains("Zaktualizuj CMCR Manager"))
+        #expect(!newer.lines[0].contains("Nikt nie jest zalogowany"))
+    }
+
     @Test func machineLinesStayOutOfTheJobLog() {
         let seen = Recorder()
         let filter = AgentLineFilter { channel, data in seen.add(channel, String(decoding: data, as: UTF8.self)) }

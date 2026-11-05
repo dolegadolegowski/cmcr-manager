@@ -9,8 +9,8 @@ enum ScreenAgentCLI {
     nonisolated static let usage = """
       cmcrctl screen-agent install|status|permission|remove KOMP
                                                 usługa podglądu ekranu (CMCR Screen Agent) na iMacach:
-                                                install – zainstaluj lub zaktualizuj (ta sama wersja zostaje
-                                                bez zmian razem z uprawnieniem), status – wersja, czy działa,
+                                                install – zainstaluj lub zaktualizuj (ta sama albo nowsza wersja
+                                                zostaje bez zmian razem z uprawnieniem), status – wersja, czy działa,
                                                 uprawnienie (kod 1, gdy podgląd nie jest gotowy), permission –
                                                 okno macOS z prośbą o uprawnienie nagrywania ekranu (włącza je
                                                 ktoś przy komputerze), remove – usuń (po potwierdzeniu)
@@ -73,6 +73,9 @@ enum ScreenAgentCLI {
         }
         var text: String
         switch change {
+        case "newer":
+            // Nothing was touched (no sessions are reported): an older copy never replaces a newer one.
+            return "na iMacu jest nowsza usługa podglądu (\(version)) – zostaje bez zmian; zaktualizuj CMCR Manager"
         case "updated": text = "usługa podglądu zaktualizowana do wersji \(version)"
         case "unchanged": text = "usługa podglądu bez zmian (wersja \(version) była już zainstalowana)"
         default: text = "usługa podglądu zainstalowana (wersja \(version))"
@@ -101,13 +104,22 @@ enum ScreenAgentCLI {
                 }
                 return ExitCode.failure
             }
-            io.out("\(io.host.name): \(statusLine(found))")
+            io.out("\(io.host.name): \(statusLine(found, sessionError: sessionError(found, r)))")
             return isReady(found) ? ExitCode.success : ExitCode.failure
         }
         return codes.allSatisfy { $0 == ExitCode.success } ? ExitCode.success : ExitCode.failure
     }
 
-    nonisolated static func statusLine(_ s: ScreenAgentStatus) -> String {
+    /// Why the session at the screen could not be asked: the agent of another account answers only root, so a sudo
+    /// that failed (no saved password, a wrong one) leaves the agent's state unknown – said in words, not hidden.
+    nonisolated static func sessionError(_ s: ScreenAgentStatus, _ r: CommandResult) -> String? {
+        guard s.isInstalled, s.consoleUser != nil, !s.sessionChecked else { return nil }
+        let why = r.succeeded ? "" : SSH.diagnose(r).1.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "nie udało się zapytać usługi w sesji zalogowanego użytkownika (potrzebne działające sudo)"
+            + (why.isEmpty ? "" : ": " + why)
+    }
+
+    nonisolated static func statusLine(_ s: ScreenAgentStatus, sessionError: String? = nil) -> String {
         guard let installed = s.installedVersion else { return "wersja: brak usługi, załadowana: nie, uprawnienie: –" }
         var version = installed
         switch SetupScript.compareVersions(installed, ScreenAgentInfo.version) {
@@ -116,7 +128,8 @@ enum ScreenAgentCLI {
         case .orderedSame: break
         }
         let user = s.consoleUser
-        var parts = ["wersja: \(version)", "załadowana: \(user == nil ? "–" : s.loaded ? "tak" : "nie")"]
+        let loaded = user == nil ? "–" : s.loaded.map { $0 ? "tak" : "nie" } ?? "?"
+        var parts = ["wersja: \(version)", "załadowana: \(loaded)"]
         switch s.permission {
         case .granted: parts.append("uprawnienie: nadane")
         case .denied: parts.append("uprawnienie: brak")
@@ -125,6 +138,7 @@ enum ScreenAgentCLI {
         parts.append("zalogowany: \(user ?? "nikt")")
         if s.locked { parts.append("ekran zablokowany") }
         if let error = s.error, !error.isEmpty { parts.append("błąd: \(error)") }
+        else if let sessionError { parts.append("błąd: \(sessionError)") }
         return parts.joined(separator: ", ")
     }
 
@@ -134,7 +148,7 @@ enum ScreenAgentCLI {
         guard let installed = s.installedVersion,
               SetupScript.compareVersions(installed, ScreenAgentInfo.version) != .orderedAscending else { return false }
         guard s.consoleUser != nil else { return true }
-        return s.loaded && s.permission == .granted && (s.error ?? "").isEmpty
+        return s.loaded == true && s.permission == .granted && (s.error ?? "").isEmpty
     }
 
     static func permission(_ a: ModuleArguments) async -> Int32 {
