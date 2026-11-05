@@ -415,6 +415,58 @@ networksetup() {
     *) _e2e_log "networksetup $*"; return 0 ;;
   esac
 }
+# Installed apps and uninstalling (Tests/e2e/suites/apps-uninstall.sh). The student's ~/Applications and the system
+# folders of launchd items and package files live in $CMCR_E2E_WORK (Scripts+Apps.swift reads these variables).
+[ -n "${CMCR_E2E_WORK:-}" ] && export CMCR_USERS_DIR="$CMCR_E2E_WORK/Users" CMCR_FS_PREFIX="$CMCR_E2E_WORK/fsroot"
+# pkgutil: only the test's receipts, $CMCR_E2E_WORK/receipts/ID/{info,files,dirs} (info: "version: …", "location: …",
+# "install-time: …"; files and dirs: paths relative to the location). --forget removes the receipt.
+pkgutil() {
+  local d="${CMCR_E2E_WORK:-/nonexistent}/receipts" mode="" id="" only="" r loc p q
+  _e2e_log "pkgutil $*"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --pkgs) mode=pkgs ;;
+      --pkg-info|--files|--forget|--file-info) mode="${1#--}"; id="${2:-}"; shift ;;
+      --only-files) only=files ;;
+      --only-dirs) only=dirs ;;
+      --volume) shift ;;
+    esac
+    shift
+  done
+  case "$mode" in
+    pkgs) [ -d "$d" ] && ls "$d"; return 0 ;;
+    file-info)
+      echo "volume: /"; echo "path: $id"
+      for r in "$d"/*/; do
+        r="${r%/}"; [ -f "$r/info" ] || continue
+        loc="$(sed -n 's/^location: *//p' "$r/info")"
+        while IFS= read -r p; do
+          q="$(printf '/%s/%s' "$loc" "$p" | sed 's#//*#/#g')"
+          [ "$q" = "$id" ] && { echo "pkgid: $(basename "$r")"; break; }
+        done < <(cat "$r/files" "$r/dirs" 2>/dev/null)
+      done
+      return 0 ;;
+  esac
+  [ -d "$d/$id" ] || { echo "No receipt for '$id' found at '/'." >&2; return 1; }
+  case "$mode" in
+    pkg-info) echo "package-id: $id"; cat "$d/$id/info"; echo "volume: /" ;;
+    files)
+      case "$only" in files) cat "$d/$id/files" 2>/dev/null ;; dirs) cat "$d/$id/dirs" 2>/dev/null ;;
+        *) cat "$d/$id/dirs" "$d/$id/files" 2>/dev/null ;; esac ;;
+    forget) rm -rf "$d/$id"; echo "Forgot package '$id' on '/'." ;;
+  esac
+}
+# profiles: enrolled in MDM while $CMCR_E2E_WORK/mdm.enrolled exists; nothing else is ever changed.
+profiles() {
+  case " $* " in
+    *" status "*)
+      if [ -e "${CMCR_E2E_WORK:-/nonexistent}/mdm.enrolled" ]; then printf 'Enrolled via DEP: No\nMDM enrollment: Yes (User Approved)\n'
+      else printf 'Enrolled via DEP: No\nMDM enrollment: No\n'; fi ;;
+    *) _e2e_log "profiles $*" ;;
+  esac
+  return 0
+}
+export -f pkgutil profiles 2>/dev/null
 # With $CMCR_E2E_WORK/tar.addfile: right after a folder was packed (tar -cf - .), a file appears in it – a student
 # saving work between collecting and cleaning at the end of a lesson (AUDIT ZAJ-01). One time only.
 tar() {

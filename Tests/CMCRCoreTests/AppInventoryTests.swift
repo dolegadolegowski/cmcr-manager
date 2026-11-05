@@ -1,0 +1,558 @@
+import Foundation
+import Testing
+@testable import CMCRCore
+
+/// Installed applications and uninstalling (Scripts+Apps.swift, AppInventory.swift, AppUninstall.swift): the records,
+/// their Polish text, and the scripts run locally against folders of the test (as sshd would run them, without ssh).
+@Suite struct AppInventoryTests {
+    // MARK: - Inventory records
+
+    static let sample = [
+        "CMCR:MDM\tyes",
+        "CMCR:APP\tapps\tapp\t/Applications/Blender.app\torg.blenderfoundation.blender\t4.2.1\t950000\tpl.test.blender,pl.test.extra",
+        "CMCR:APP\tuser:uczen\tapp\t/Users/uczen/Applications/Gra.app\tpl.test.gra\t0.9\t\t",
+        "CMCR:APP\tunity\tunity\t/Applications/Unity/Hub/Editor/6000.3.7f1/Unity.app\tcom.unity3d.UnityEditor5.x\t6000.3.7f1\t\t",
+        "CMCR:APP\tapps\tapple\t/Applications/Pages.app\tcom.apple.iWork.Pages\t14.1\t500000\t",
+        "CMCR:APP\tsystem\tsystem\t/System/Applications/Calculator.app\tcom.apple.calculator\t11.0\t1000\t",
+        "CMCR:APP\tapps\tappstore\t/Applications/Ze Sklepu.app\tpl.test.sklep\t2.2\t100\t",
+        "CMCR:APP\tfolder\tapp\t/Applications/Firma/Program.app\tpl.test.firma\t5\t10\t",
+        "CMCR:APP\tapps\tnieznany\t/Applications/X.app\tx\t1\t1\t",
+        "CMCR:APP\tapps\tapp\tbez-ukośnika\tx\t1\t1\t",
+        "jakiś inny wiersz",
+        "CMCR:PKG\tpl.test.blender\t4.2.1\t1767225600\t/",
+        "CMCR:END\t7",
+    ].joined(separator: "\n")
+
+    @Test func parsesAppsPackagesAndMDM() throws {
+        let inv = AppInventory.parse(Self.sample)
+        #expect(inv.complete)
+        #expect(inv.mdmEnrolled == true)
+        #expect(inv.apps.map(\.name) == ["Blender", "Calculator", "Gra", "Pages", "Program", "Unity 6000.3.7f1", "Ze Sklepu"])
+        let blender = try #require(inv.apps.first { $0.name == "Blender" })
+        #expect(blender.bundleID == "org.blenderfoundation.blender")
+        #expect(blender.version == "4.2.1")
+        #expect(blender.sizeKB == 950000)
+        #expect(blender.receipts == ["pl.test.blender", "pl.test.extra"])
+        #expect(blender.isRemovable && blender.locationLabel == "Aplikacje")
+        let gra = try #require(inv.apps.first { $0.name == "Gra" })
+        #expect(gra.sizeKB == nil && gra.receipts.isEmpty)
+        #expect(gra.user == "uczen" && gra.locationLabel == "Aplikacje konta uczen")
+        #expect(inv.packages.map(\.id) == ["pl.test.blender"])
+        #expect(inv.packages[0].installed == Date(timeIntervalSince1970: 1767225600))
+        #expect(!AppInventory.parse("CMCR:APP\tapps\tapp\t/Applications/A.app\ta\t1\t1\t").complete)
+        #expect(AppInventory.parse("CMCR:MDM\tunknown").mdmEnrolled == nil)
+    }
+
+    @Test func protectedKindsAreNotRemovableAndSayWhy() throws {
+        let inv = AppInventory.parse(Self.sample)
+        func app(_ name: String) throws -> InstalledApp { try #require(inv.apps.first { $0.name == name }) }
+        for name in ["Pages", "Calculator"] {
+            #expect(try !app(name).isRemovable, "\(name)")
+            #expect(try app(name).reasonNotRemovable != nil)
+        }
+        #expect(InstalledApp(path: "/Applications/C.app", location: "apps", kind: .cmcr).reasonNotRemovable?.contains("CMCR") == true)
+        let unity = try app("Unity 6000.3.7f1")
+        #expect(unity.isRemovable)
+        #expect(unity.removalPath == "/Applications/Unity/Hub/Editor/6000.3.7f1")
+        #expect(unity.uninstallNote?.contains("modułami") == true)
+        #expect(try app("Ze Sklepu").uninstallNote?.contains("MDM") == true)
+        #expect(try app("Program").locationLabel == "Aplikacje › Firma")
+        #expect(InstalledApp(path: "/Applications/Photoshop.app", location: "apps", kind: .app, bundleID: "com.adobe.Photoshop")
+            .uninstallNote?.contains("Creative Cloud") == true)
+    }
+
+    // MARK: - Uninstall records and their text
+
+    static let run = [
+        "CMCR:UN\ttarget\tapp\t/Applications/Gra.app\tGra\t1.0\tpl.test.gra\t2048\tapps",
+        "CMCR:UN\trunning\tprocess\t/Applications/Gra.app\tuczen\t123 456",
+        "CMCR:UN\tplan\tapp\t/Applications/Gra.app\t2048",
+        "CMCR:UN\tplan\tdaemon\t/Library/LaunchDaemons/pl.test.gra.plist\tpl.test.gra.helper",
+        "CMCR:UN\tkept\tpkgfiles\t/Library/Gra/a.txt\t2\t/Library/Gra/a.txt|/Library/Gra/b.txt",
+        "CMCR:UN\tplan\treceipt\tpl.test.gra.pkg\t",
+        "CMCR:UN\trefused\tapp\t/Applications/Pages.app\tto aplikacja Apple (com.apple.iWork.Pages)",
+        "CMCR:UN\tmissing\tapp\tBrak.app\tnie ma takiej aplikacji",
+        "CMCR:UN\tnote\tmdm\t\tKomputer jest zarządzany przez MDM",
+        "błąd narzędzia",
+        "CMCR:UN\tdone\tsummary\t\t0 1 0 3 1 1 2048 0",
+    ].joined(separator: "\n")
+
+    @Test func parsesTheReportAndItsSummary() throws {
+        let report = UninstallReport.parse(Self.run)
+        #expect(report.targets.map(\.path) == ["/Applications/Gra.app"])
+        #expect(report.planned.count == 3)
+        #expect(report.hasWork)
+        #expect(report.refusals.count == 1)
+        #expect(report.other == ["błąd narzędzia"])
+        let s = try #require(report.summary)
+        #expect(s.dryRun && s.planned == 3 && s.refused == 1 && s.kept == 1 && s.plannedKB == 2048)
+        #expect(UninstallRecord(line: "CMCR:UN\tnieznane\tapp\t/x") == nil)
+        #expect(UninstallRecord(line: "CMCR:UNX\tplan\tapp\t/x") == nil)
+    }
+
+    @Test func rendersPolishLines() {
+        let text = UninstallReport.render(Self.run)
+        let mb = AppInventory.sizeText(2048)
+        #expect(text.contains("▸ Gra – wersja 1.0, pl.test.gra, \(mb): /Applications/Gra.app"))
+        #expect(UninstallReport.line(UninstallRecord(verb: .target, what: "app", path: "/Applications/B.app", detail: "B",
+                                                     extra: ["", "pl.test.b", "", "apps"])) == "▸ B – wersja —, pl.test.b: /Applications/B.app")
+        #expect(text.contains("Aplikacja jest uruchomiona – konto: uczen (PID 123 456)"))
+        #expect(text.contains("• Do usunięcia – aplikację: /Applications/Gra.app (\(mb))"))
+        #expect(text.contains("usługę systemową (LaunchDaemon) pl.test.gra.helper (najpierw zatrzymana)"))
+        #expect(text.contains("Zostaje 2 pliki pakietu poza aplikacją (np. /Library/Gra/a.txt, /Library/Gra/b.txt)"))
+        #expect(text.contains("Do wyrejestrowania – pakiet pl.test.gra.pkg"))
+        #expect(text.contains("✘ Odmowa: /Applications/Pages.app – to aplikacja Apple"))
+        #expect(text.contains("• Nie znaleziono: Brak.app"))
+        #expect(text.contains("ℹ︎ Komputer jest zarządzany przez MDM"))
+        #expect(text.contains("błąd narzędzia"))
+        #expect(text.hasSuffix("Podgląd: do usunięcia 3 elementy (\(mb)), pozostawiono 1, odmowa: 1 – nic jeszcze nie zmieniono."))
+        #expect(!text.contains("CMCR:UN"))
+        var done = UninstallSummary()
+        done.removed = 5
+        done.removedKB = 1_048_576
+        done.failed = 1
+        #expect(UninstallReport.summaryLine(done) == "Wynik: usunięto 5 elementów (\(AppInventory.sizeText(1_048_576))), błędy: 1.")
+        #expect(UninstallReport.line(UninstallRecord(verb: .failed, what: "app", path: "/Applications/X.app", detail: "Operation not permitted"))
+                == "  ✘ Nie udało się usunąć /Applications/X.app: Operation not permitted")
+    }
+
+    /// cmcrctl and the app's Zadania get the records converted as they arrive, also when a line is split
+    /// between chunks; other output passes unchanged.
+    @Test func streamRendererConvertsLineByLine() {
+        let r = UninstallReport.StreamRenderer()
+        var out = Data()
+        let line = "CMCR:UN\tremoved\tapp\t/Applications/Gra.app\t2048\n"
+        let bytes = Array(Data(("zwykły wiersz\n" + line + "reszta bez końca").utf8))
+        for chunk in stride(from: 0, to: bytes.count, by: 7) {
+            out += r.feed(.stdout, Data(bytes[chunk..<min(chunk + 7, bytes.count)]))
+        }
+        out += r.finish(.stdout)
+        #expect(String(decoding: out, as: UTF8.self)
+                == "zwykły wiersz\n  ✔ Usunięto aplikację: /Applications/Gra.app (\(AppInventory.sizeText(2048)))\nreszta bez końca")
+        #expect(r.finish(.stderr).isEmpty)
+    }
+
+    // MARK: - Scripts
+
+    @Test func scriptsRunAsRootOnlyForUninstalling() {
+        #expect(!Scripts.appInventory(studentUser: "uczen").asRoot)
+        #expect(Scripts.uninstallApps(["Gra"], studentUser: "uczen").asRoot)
+        let body = Scripts.uninstallApps(["it's \"q\" $(id)", "/Applications/B.app"], studentUser: "a'b", dryRun: true,
+                                         packageFiles: true).body
+        #expect(body.contains(#"TARGETS=('it'\''s "q" $(id)' '/Applications/B.app')"#))
+        #expect(body.contains("STUDENT='a'\\''b'; DRY=1; PKGFILES=1"))
+        #expect(Scripts.uninstallApp("/Applications/X.app").body.contains("DRY=0; PKGFILES=0"))
+    }
+
+    /// bash 3.2 (macOS) cannot parse a case pattern inside $( ) – it fails at run time, not under bash -n.
+    @Test func noCaseInsideCommandSubstitution() {
+        for script in [Scripts.appInventory(studentUser: "s", receipts: true), Scripts.uninstallApps(["x"], studentUser: "s")] {
+            #expect(script.body.range(of: #"\$\(\s*case"#, options: .regularExpression) == nil)
+        }
+    }
+
+    @Test func linkedAppsAreNotOfferedAndLaunchdItemsAreExplained() throws {
+        let link = AppInventory.parse("CMCR:APP\tlink\tapp\t/Users/Shared/Tool.app\tpl.test.tool\t1.0\t10\t").apps[0]
+        #expect(!link.isRemovable && link.reasonNotRemovable?.contains("dowiązanie") == true && link.locationLabel == "Dowiązanie")
+        let text = UninstallReport.render([
+            "CMCR:UN\tplan\tdaemon\t/Library/LaunchDaemons/a.plist\tcom.firma.a\tinside",
+            "CMCR:UN\tplan\tdaemon\t/Library/LaunchDaemons/b.plist\tcom.firma.b\tpkg",
+            "CMCR:UN\tkept\tdaemon\t/Library/LaunchDaemons/c.plist\tetykieta pasuje",
+            "CMCR:UN\tnote\tcopies\t/Applications/X.app\tNa komputerze jest inna kopia",
+        ].joined(separator: "\n"))
+        // Intentional difference from the other implementation: the warning sits on each system-wide service's own line
+        // (systemWarning) instead of a separate "systemwide" note.
+        #expect(text.contains("(najpierw zatrzymana): /Library/LaunchDaemons/a.plist ⚠︎ uwaga: usługa systemowa"))
+        #expect(text.contains("Usuwana, bo to plik pakietu usuwanego razem z aplikacją"))
+        #expect(text.contains("↷ Zostaje usługa systemowa (LaunchDaemon): /Library/LaunchDaemons/c.plist – etykieta pasuje"))
+    }
+
+    // MARK: - Versions on several Macs
+
+    static let lab = (1...11).map { String(format: "imac%02d", $0) }
+
+    @Test func versionsAreListedWithTheirMacs() {
+        let pairs = Self.lab.map { ($0, $0 == "imac11" ? "12.0" : "12.1") }
+        #expect(VersionSummary.text(pairs.map { (host: $0.0, version: $0.1) }, order: Self.lab) == "12.1 (imac01–imac10), 12.0 (imac11)")
+        // One version on every Mac: just the version; no version anywhere: „—”.
+        #expect(VersionSummary.text([("imac01", "3.0"), ("imac02", "3.0")], order: Self.lab) == "3.0")
+        #expect(VersionSummary.text([("imac01", ""), ("imac02", "")], order: Self.lab) == "—")
+        #expect(VersionSummary.text([], order: Self.lab) == "—")
+        // A Mac without a version is shown, last.
+        #expect(VersionSummary.text([("imac02", ""), ("imac01", "2.0")], order: Self.lab) == "2.0 (imac01), — (imac02)")
+        // As many Macs: the newest version first (numerically: 1.10 > 1.9).
+        #expect(VersionSummary.text([("imac01", "1.9"), ("imac02", "1.10")], order: Self.lab) == "1.10 (imac02), 1.9 (imac01)")
+    }
+
+    /// A range never hides a Mac that does not have this version (or the app), and two Macs are not a range.
+    @Test func hostRangesFollowTheListOrder() {
+        #expect(VersionSummary.hostList(["imac01", "imac02", "imac03", "imac05"], order: Self.lab) == "imac01–imac03, imac05")
+        #expect(VersionSummary.hostList(["imac01", "imac02"], order: Self.lab) == "imac01, imac02")
+        #expect(VersionSummary.hostList(["imac03", "imac01", "imac02"], order: Self.lab) == "imac03, imac01, imac02")
+        #expect(VersionSummary.groups([("imac03", "1"), ("imac01", "1"), ("imac02", "1")], order: Self.lab).first?.hosts
+                == ["imac01", "imac02", "imac03"])
+        #expect(VersionSummary.hostList(["x", "imac01"], order: Self.lab) == "x, imac01")
+    }
+
+    @Test func uninstallVersionLinesPerApp() {
+        func report(_ version: String) -> UninstallReport {
+            UninstallReport.parse("CMCR:UN\ttarget\tapp\t/Applications/Gra.app\tGra\t\(version)\tpl.test.gra\t10\tapps\n"
+                                  + "CMCR:UN\ttarget\tapp\t/Applications/Edytor.app\tEdytor\t7\tpl.test.e\t10\tapps")
+        }
+        let lines = UninstallReport.versionLines([("imac01", report("1.0")), ("imac02", report("2.0")), ("imac03", report(""))])
+        #expect(lines == ["Gra: 2.0 (imac02), 1.0 (imac01), — (imac03)", "Edytor: 7"])
+        #expect(AppInventory.parse("CMCR:APP\tapps\tapp\t/Applications/A.app\ta\t 1.2 \t1\t").apps.first?.version == "1.2")
+        #expect(InstalledApp(path: "/Applications/A.app", location: "apps", kind: .app).versionText == "—")
+    }
+
+    // MARK: - Running the scripts locally
+
+    /// Folders of the test: Applications, Users/<account>/Applications and the system folders (fsroot), plus fakes:
+    /// sudo runs as the current user, pkgutil knows no packages, profiles says „not enrolled”, launchctl only logs.
+    struct Lab {
+        let dir: URL
+        var apps: URL { dir.appendingPathComponent("Applications") }
+        var home: URL { dir.appendingPathComponent("Users/\(Lab.me)") }
+        static let me = NSUserName()
+
+        init() throws {
+            dir = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("cmcr-apps-\(UUID().uuidString)")
+            for sub in ["Applications/Utilities", "Users/\(Lab.me)/Applications", "Users/\(Lab.me)/Library/LaunchAgents",
+                        "fsroot/Library/LaunchDaemons", "fsroot/Library/LaunchAgents", "fsroot/Library/PrivilegedHelperTools"] {
+                try FileManager.default.createDirectory(at: dir.appendingPathComponent(sub), withIntermediateDirectories: true)
+            }
+            let fakes = #"""
+            _lab_log() { printf '%s\n' "$*" >> "$LAB_DIR/log"; }
+            sudo() {
+              while [ $# -gt 0 ]; do
+                case "$1" in -A|-n|-k|-H) shift ;; -u|-g|-p|-C|-h) shift 2 ;; --) shift; break ;; -*) shift ;; *) break ;; esac
+              done
+              [ $# -eq 0 ] && return 0
+              SUDO_USER="$(id -un)" "$@"
+            }
+            pkgutil() { _lab_log "pkgutil $*"; case "$1" in --pkgs) return 0 ;; *) return 1 ;; esac; }
+            profiles() { printf 'MDM enrollment: No\n'; }
+            launchctl() { _lab_log "launchctl $*"; return 0; }
+            kill() { _lab_log "kill $*"; return 0; }
+            # LAB_RM_FAIL: rm -rf fails (macOS protects part of the bundle), as without Full Disk Access.
+            rm() { if [ -n "${LAB_RM_FAIL:-}" ] && [ "$1" = -rf ]; then echo "Operation not permitted" >&2; return 1; fi; command rm "$@"; }
+            # As on macOS 15: plutil prints „Could not extract value…” on stdout (macOS 26 and later: on stderr).
+            plutil() { command plutil "$@" 2>&1; }
+            # LAB_SESSIONS ("uid account" per line): GUI sessions (loginwindow processes) added to the output of ps.
+            # LAB_SESSIONS_ONLY: the real sessions of this Mac are not listed (the owner is then not logged in).
+            ps() {
+              local rc=0
+              if [ "$*" = "-axo uid=,user=,comm=" ] && [ -n "${LAB_SESSIONS_ONLY:-}" ]; then :; else command ps "$@"; rc=$?; fi
+              if [ "$*" = "-axo uid=,user=,comm=" ] && [ -n "${LAB_SESSIONS:-}" ]; then
+                printf '%s\n' "$LAB_SESSIONS" | awk '{printf "%5d %-16s /System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow\n", $1, $2}'
+              fi
+              return $rc
+            }
+            export -f _lab_log sudo pkgutil profiles launchctl kill rm plutil ps
+            """#
+            try fakes.write(to: dir.appendingPathComponent("fakes.sh"), atomically: true, encoding: .utf8)
+        }
+
+        var environment: [String: String] {
+            ["BASH_ENV": dir.appendingPathComponent("fakes.sh").path, "LAB_DIR": dir.path, "CMCR_APPS_DIR": apps.path,
+             "CMCR_USERS_DIR": dir.appendingPathComponent("Users").path, "CMCR_FS_PREFIX": dir.appendingPathComponent("fsroot").path]
+        }
+
+        /// `version` is CFBundleShortVersionString and `build` CFBundleVersion; nil leaves the key out.
+        func makeApp(_ folder: URL, _ name: String, bundleID: String, version: String? = "1.0", build: String? = nil,
+                     extra: [String: Any] = [:]) throws {
+            let contents = folder.appendingPathComponent("\(name).app/Contents")
+            try FileManager.default.createDirectory(at: contents.appendingPathComponent("MacOS"), withIntermediateDirectories: true)
+            var plist: [String: Any] = ["CFBundleIdentifier": bundleID]
+            if let version { plist["CFBundleShortVersionString"] = version }
+            if let build { plist["CFBundleVersion"] = build }
+            plist.merge(extra) { a, _ in a }
+            try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+                .write(to: contents.appendingPathComponent("Info.plist"))
+            try Data(count: 4096).write(to: contents.appendingPathComponent("MacOS/\(name)"))
+        }
+
+        var fs: URL { dir.appendingPathComponent("fsroot") }
+
+        /// A launchd plist (Label, Program) in `folder`; returns its path. A helper file is made when `program` is one.
+        @discardableResult
+        func launchdItem(_ folder: URL, _ label: String, program: String, createProgram: Bool = true) throws -> URL {
+            let f = folder.appendingPathComponent("\(label).plist")
+            try PropertyListSerialization.data(fromPropertyList: ["Label": label, "Program": program], format: .xml, options: 0).write(to: f)
+            if createProgram && program.hasPrefix(fs.path) { try Data("#!/bin/sh\n".utf8).write(to: URL(fileURLWithPath: program)) }
+            return f
+        }
+
+        func exists(_ u: URL) -> Bool { FileManager.default.fileExists(atPath: u.path) }
+
+        func run(_ script: RemoteScript, extraEnvironment: [String: String] = [:]) async -> CommandResult {
+            await ProcessRunner.run("/bin/sh", ["-c", script.remoteCommand()], environment: environment.merging(extraEnvironment) { $1 },
+                                    stdin: Data("haslo\n".utf8), timeout: 120)
+        }
+
+        /// Error output apart from the wrapper's own markers (SSH.run removes those).
+        static func errors(_ r: CommandResult) -> [Substring] {
+            r.stderrText.split(whereSeparator: \.isNewline).filter { !$0.hasPrefix("CMCR:SESSION-") }
+        }
+
+        func log() -> String { (try? String(contentsOf: dir.appendingPathComponent("log"), encoding: .utf8)) ?? "" }
+        func remove() { try? FileManager.default.removeItem(at: dir) }
+
+        /// The fakes must be in place in every bash (also the root re-exec) before anything runs.
+        func guardFakes() async -> Bool {
+            let r = await ProcessRunner.run("/bin/bash", ["--noprofile", "--norc", "-c", "/bin/bash --noprofile --norc -c 'type -t sudo pkgutil launchctl kill'"],
+                                            environment: environment)
+            return r.stdoutText == "function\nfunction\nfunction\nfunction\n"
+        }
+    }
+
+    @Test func inventoryListsTheFoldersOfTheTest() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        try lab.makeApp(lab.apps, "Edytor", bundleID: "pl.test.edytor", version: "2.5")
+        try lab.makeApp(lab.apps.appendingPathComponent("Utilities"), "Narzędzie", bundleID: "pl.test.narzedzie")
+        try lab.makeApp(lab.home.appendingPathComponent("Applications"), "Gra", bundleID: "pl.test.gra")
+        try lab.makeApp(lab.apps, "Pages Test", bundleID: "com.apple.test")
+        // Version fallbacks: CFBundleVersion without CFBundleShortVersionString (or with a blank one), neither,
+        // and a Unity editor (its folder's name).
+        try lab.makeApp(lab.apps, "Tylko Build", bundleID: "pl.test.build", version: nil, build: "77")
+        try lab.makeApp(lab.apps, "Pusta Wersja", bundleID: "pl.test.pusta", version: "  ", build: "5.0.1")
+        try lab.makeApp(lab.apps, "Bez Wersji", bundleID: "pl.test.bez", version: nil, build: nil)
+        try lab.makeApp(lab.apps.appendingPathComponent("Unity/Hub/Editor/6000.6.8f1"), "Unity",
+                        bundleID: "com.unity3d.UnityEditor5.x", version: "6000.6.8f1")
+        let r = await lab.run(Scripts.appInventory(studentUser: Lab.me))
+        #expect(r.exitCode == 0)
+        #expect(Lab.errors(r).isEmpty, "\(r.stderrText)")
+        let inv = AppInventory.parse(r.stdoutText)
+        #expect(inv.complete && inv.mdmEnrolled == false)
+        let byName = Dictionary(inv.apps.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        #expect(byName["Edytor"]?.version == "2.5" && byName["Edytor"]?.location == "apps")
+        #expect((byName["Edytor"]?.sizeKB ?? 0) > 0)
+        #expect(byName["Narzędzie"]?.location == "utilities")
+        #expect(byName["Gra"]?.location == "user:\(Lab.me)")
+        #expect(byName["Pages Test"]?.kind == .apple)
+        #expect(byName["Tylko Build"]?.version == "77")
+        #expect(byName["Pusta Wersja"]?.version == "5.0.1")
+        #expect(byName["Bez Wersji"]?.version == "" && byName["Bez Wersji"]?.versionText == "—")
+        #expect(byName["Unity 6000.6.8f1"]?.version == "6000.6.8f1" && byName["Unity 6000.6.8f1"]?.kind == .unity)
+        #expect(inv.apps.contains { $0.kind == .system && $0.path.hasPrefix("/System/Applications/") })
+    }
+
+    @Test func dryRunChangesNothingAndTheRealRunRemoves() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        try lab.makeApp(lab.apps, "Gra", bundleID: "pl.test.gra", version: nil, build: "42")
+        let app = lab.apps.appendingPathComponent("Gra.app").path
+        let dry = await lab.run(Scripts.uninstallApps(["Gra"], studentUser: Lab.me, dryRun: true))
+        #expect(dry.exitCode == 0, "\(dry.stdoutText)\(dry.stderrText)")
+        #expect(Lab.errors(dry).isEmpty, "\(dry.stderrText)")
+        let plan = UninstallReport.parse(dry.stdoutText)
+        #expect(plan.planned.map(\.path) == [app])
+        #expect(plan.targets.first?.version == "42", "wersja z CFBundleVersion, gdy brak CFBundleShortVersionString")
+        #expect(plan.summary?.dryRun == true)
+        #expect(FileManager.default.fileExists(atPath: app))
+        let real = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me))
+        #expect(real.exitCode == 0, "\(real.stdoutText)\(real.stderrText)")
+        let done = UninstallReport.parse(real.stdoutText)
+        #expect(done.records.contains { $0.verb == .removed && $0.path == app })
+        #expect(done.summary?.removed == 1)
+        #expect(!FileManager.default.fileExists(atPath: app))
+        let again = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me))
+        #expect(again.exitCode == 0)
+        #expect(UninstallReport.parse(again.stdoutText).records.first?.verb == .missing)
+    }
+
+    @Test func refusalsLeaveEverythingInPlace() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        try lab.makeApp(lab.apps, "Apple Test", bundleID: "com.apple.test")
+        let outside = lab.dir.appendingPathComponent("gdzie-indziej")
+        try lab.makeApp(outside, "Obca", bundleID: "pl.test.obca")
+        let r = await lab.run(Scripts.uninstallApps(["Apple Test", outside.appendingPathComponent("Obca.app").path,
+                                                     lab.apps.appendingPathComponent("../gdzie-indziej/Obca.app").path],
+                                                    studentUser: Lab.me))
+        #expect(r.exitCode == 2, "\(r.stdoutText)\(r.stderrText)")
+        let report = UninstallReport.parse(r.stdoutText)
+        #expect(report.refusals.count == 3)
+        #expect(report.summary?.removed == 0)
+        #expect(FileManager.default.fileExists(atPath: lab.apps.appendingPathComponent("Apple Test.app").path))
+        #expect(FileManager.default.fileExists(atPath: outside.appendingPathComponent("Obca.app").path))
+        #expect(!lab.log().contains("kill"))
+    }
+
+    // MARK: - launchd items: only what really belongs to the app
+
+    /// A student controls the bundle id of an app in ~/Applications ("com", "com.jamf.management"): root must not boot
+    /// out or delete the system-wide daemons, agents and helpers of other software because of it.
+    @Test func aStudentsBundleIDCannotRemoveSystemServices() async throws {
+        for (bid, name) in [("com", "Krotki"), ("com.jamf", "Dwa"), ("com.jamf.management", "Jamf")] {
+            let lab = try Lab()
+            defer { lab.remove() }
+            try #require(await lab.guardFakes())
+            let helper = lab.fs.appendingPathComponent("Library/PrivilegedHelperTools/com.jamf.management.daemon").path
+            let daemon = try lab.launchdItem(lab.fs.appendingPathComponent("Library/LaunchDaemons"), "com.jamf.management.daemon", program: helper)
+            let agent = try lab.launchdItem(lab.fs.appendingPathComponent("Library/LaunchAgents"), "com.jamf.management.agent",
+                                            program: "/Library/JamfManagement/agent")
+            let google = try lab.launchdItem(lab.fs.appendingPathComponent("Library/LaunchDaemons"), "com.google.keystone.daemon",
+                                             program: "/Library/Google/keystone")
+            let games = lab.home.appendingPathComponent("Applications")
+            try lab.makeApp(games, name, bundleID: bid)
+            let mine = try lab.launchdItem(lab.home.appendingPathComponent("Library/LaunchAgents"), "\(bid).moj", program: "/nie/ma/tego")
+            let own = try lab.launchdItem(lab.home.appendingPathComponent("Library/LaunchAgents"), "pl.test.\(name).agent",
+                                          program: games.appendingPathComponent("\(name).app/Contents/MacOS/\(name)").path)
+            let app = games.appendingPathComponent("\(name).app").path
+            let dry = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me, dryRun: true))
+            #expect(dry.exitCode == 0, "\(dry.stdoutText)\(dry.stderrText)")
+            let plan = UninstallReport.parse(dry.stdoutText)
+            #expect(!plan.planned.contains { $0.what == "daemon" || $0.what == "agent" || $0.what == "helper" }, "\(bid): \(dry.stdoutText)")
+            #expect(plan.planned.contains { $0.what == "uagent" && $0.path == own.path })
+            let real = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me))
+            #expect(real.exitCode == 0, "\(real.stdoutText)\(real.stderrText)")
+            for f in [daemon, agent, google, URL(fileURLWithPath: helper)] { #expect(lab.exists(f), "\(bid): \(f.lastPathComponent) usunięty") }
+            #expect(!lab.exists(URL(fileURLWithPath: app)) && !lab.exists(own))
+            #expect(!lab.log().contains("bootout system"), "\(bid): \(lab.log())")
+            // The student's own agent is looked at by its label only with a real id (three components).
+            #expect(lab.exists(mine) == !(bid == "com.jamf.management"), "\(bid): agent konta")
+        }
+    }
+
+    /// An app in /Applications: a daemon whose Program is inside the bundle goes (with a warning in the preview), the
+    /// helper only when the bundle itself names it; a daemon of the same vendor that only shares the label prefix stays.
+    @Test func vendorServicesOfAnAppInApplicationsGoWithWarnings() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        try lab.makeApp(lab.apps, "Vendor", bundleID: "pl.test.vendor.app",
+                        extra: ["SMPrivilegedExecutables": ["pl.test.vendor.app.helper": "anchor apple generic"]])
+        let tools = lab.fs.appendingPathComponent("Library/PrivilegedHelperTools")
+        let daemons = lab.fs.appendingPathComponent("Library/LaunchDaemons")
+        let inside = try lab.launchdItem(daemons, "pl.inny.nazwa", program: lab.apps.path + "/Vendor.app/Contents/MacOS/Vendor")
+        let blessed = try lab.launchdItem(daemons, "pl.test.vendor.app.helper", program: tools.path + "/pl.test.vendor.app.helper")
+        let prefixOnly = try lab.launchdItem(daemons, "pl.test.vendor.app.updater", program: tools.path + "/pl.test.vendor.app.updater")
+        let unrelated = try lab.launchdItem(daemons, "pl.test.vendor.app.helper2", program: "/Library/Inny/dziala")
+        let app = lab.apps.appendingPathComponent("Vendor.app").path
+        let dry = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me, dryRun: true))
+        #expect(dry.exitCode == 0, "\(dry.stdoutText)\(dry.stderrText)")
+        let text = UninstallReport.render(dry.stdoutText)
+        let plan = UninstallReport.parse(dry.stdoutText).planned
+        #expect(Set(plan.filter { $0.what == "daemon" }.map(\.path)) == [inside.path, blessed.path], "\(text)")
+        #expect(plan.contains { $0.what == "helper" && $0.path.hasSuffix("pl.test.vendor.app.helper") })
+        let warnings = text.split(separator: "\n").filter { $0.contains("Do usunięcia – usługę systemową") || $0.contains("program pomocniczy") }
+        #expect(warnings.count == 3 && warnings.allSatisfy { $0.contains("uwaga: usługa systemowa") }, "\(text)")
+        let real = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me))
+        #expect(real.exitCode == 0, "\(real.stdoutText)\(real.stderrText)")
+        #expect(!lab.exists(inside) && !lab.exists(blessed) && !lab.exists(tools.appendingPathComponent("pl.test.vendor.app.helper")))
+        #expect(lab.exists(prefixOnly) && lab.exists(unrelated) && lab.exists(tools.appendingPathComponent("pl.test.vendor.app.updater")))
+        #expect(lab.log().contains("launchctl bootout system \(inside.path)") && lab.log().contains("launchctl bootout system \(blessed.path)"))
+        #expect(!lab.log().contains(prefixOnly.path) && !lab.log().contains(unrelated.path))
+    }
+
+    /// A bundle id shared with another copy of the app: the services the other copy needs stay.
+    @Test func servicesOfAnotherCopyStay() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        let ext: [String: Any] = ["SMPrivilegedExecutables": ["pl.test.dwa.app.helper": "x"]]
+        try lab.makeApp(lab.apps, "Dwa", bundleID: "pl.test.dwa.app", extra: ext)
+        try lab.makeApp(lab.apps.appendingPathComponent("Stare"), "Dwa", bundleID: "pl.test.dwa.app", extra: ext)
+        let tools = lab.fs.appendingPathComponent("Library/PrivilegedHelperTools")
+        let blessed = try lab.launchdItem(lab.fs.appendingPathComponent("Library/LaunchDaemons"), "pl.test.dwa.app.helper",
+                                          program: tools.path + "/pl.test.dwa.app.helper")
+        let r = await lab.run(Scripts.uninstallApps([lab.apps.path + "/Stare/Dwa.app"], studentUser: Lab.me))
+        #expect(r.exitCode == 0, "\(r.stdoutText)\(r.stderrText)")
+        #expect(lab.exists(blessed) && lab.exists(tools.appendingPathComponent("pl.test.dwa.app.helper")))
+        #expect(!lab.exists(lab.apps.appendingPathComponent("Stare/Dwa.app")))
+    }
+
+    /// The removal fails (macOS protects part of the bundle): the bundle comes back and so do its stopped services.
+    @Test func failedRemovalStartsTheServicesAgain() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        try lab.makeApp(lab.apps, "Chroniona", bundleID: "pl.test.chroniona")
+        let daemon = try lab.launchdItem(lab.fs.appendingPathComponent("Library/LaunchDaemons"), "pl.test.chroniona.d",
+                                         program: lab.apps.path + "/Chroniona.app/Contents/MacOS/Chroniona")
+        let r = await lab.run(Scripts.uninstallApps(["Chroniona"], studentUser: Lab.me), extraEnvironment: ["LAB_RM_FAIL": "1"])
+        #expect(r.exitCode == 1, "\(r.stdoutText)\(r.stderrText)")
+        #expect(lab.exists(lab.apps.appendingPathComponent("Chroniona.app")) && lab.exists(daemon))
+        let log = lab.log()
+        let out = try #require(log.range(of: "launchctl bootout system \(daemon.path)"))
+        let back = try #require(log.range(of: "launchctl bootstrap system \(daemon.path)"))
+        #expect(out.lowerBound < back.lowerBound)
+        #expect(UninstallReport.render(r.stdoutText).contains("uruchomiono ponownie"))
+    }
+
+    /// A student's agent in ~/Applications is stopped and (when the removal fails) started again ONLY in its owner's
+    /// own GUI domain – never in a teacher's or another student's session – and only when its Label is the bundle's
+    /// and its program lies inside the bundle.
+    @Test func aStudentsAgentIsOnlyTouchedInItsOwnersDomain() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        let me = getuid()
+        let other = me + 4000
+        let games = lab.home.appendingPathComponent("Applications")
+        try lab.makeApp(games, "Evil", bundleID: "pl.test.evil")
+        let prog = games.appendingPathComponent("Evil.app/Contents/MacOS/Evil").path
+        let agents = lab.home.appendingPathComponent("Library/LaunchAgents")
+        let own = try lab.launchdItem(agents, "pl.test.evil.agent", program: prog)
+        // Another vendor's label with a program inside the bundle, and the bundle's label with a program outside it.
+        let foreign = try lab.launchdItem(agents, "com.vendor.other", program: prog)
+        let outside = try lab.launchdItem(agents, "pl.test.evil.dwa", program: "/usr/bin/true")
+        let app = games.appendingPathComponent("Evil.app").path
+        let sessions = ["LAB_SESSIONS": "\(me) \(Lab.me)\n\(other) inny"]
+        let dry = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me, dryRun: true), extraEnvironment: sessions)
+        #expect(dry.exitCode == 0, "\(dry.stdoutText)\(dry.stderrText)")
+        #expect(dry.stdoutText.contains("gui/\(me)"), "\(dry.stdoutText)")
+        #expect(!dry.stdoutText.contains("gui/\(other)"))
+        // The removal fails: the rollback starts the agent again – in the owner's domain only.
+        let r = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me), extraEnvironment: sessions.merging(["LAB_RM_FAIL": "1"]) { $1 })
+        #expect(r.exitCode == 1, "\(r.stdoutText)\(r.stderrText)")
+        let log = lab.log()
+        #expect(!log.contains("gui/\(other)"), Comment(rawValue: log))
+        #expect(!log.contains(foreign.path) && !log.contains(outside.path), Comment(rawValue: log))
+        let out = try #require(log.range(of: "launchctl bootout gui/\(me) \(own.path)"))
+        let back = try #require(log.range(of: "launchctl bootstrap gui/\(me) \(own.path)"))
+        #expect(out.lowerBound < back.lowerBound)
+        #expect(lab.exists(games.appendingPathComponent("Evil.app")) && lab.exists(own))
+    }
+
+    /// The owner has no GUI session: nothing of the agent is loaded, so nothing is stopped – in anybody's domain.
+    @Test func aStudentsAgentWithoutASessionIsNotStoppedAnywhere() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        let games = lab.home.appendingPathComponent("Applications")
+        try lab.makeApp(games, "Evil", bundleID: "pl.test.evil")
+        let own = try lab.launchdItem(lab.home.appendingPathComponent("Library/LaunchAgents"), "pl.test.evil.agent",
+                                      program: games.appendingPathComponent("Evil.app/Contents/MacOS/Evil").path)
+        let r = await lab.run(Scripts.uninstallApps([games.appendingPathComponent("Evil.app").path], studentUser: Lab.me),
+                              extraEnvironment: ["LAB_SESSIONS": "\(getuid() + 4000) inny", "LAB_SESSIONS_ONLY": "1"])
+        #expect(r.exitCode == 0, "\(r.stdoutText)\(r.stderrText)")
+        #expect(!lab.log().contains("bootout") && !lab.log().contains("bootstrap"), Comment(rawValue: lab.log()))
+        #expect(!lab.exists(own))
+    }
+
+    /// A link in /Applications to an app elsewhere is listed as a link that cannot be removed – and the uninstaller
+    /// refuses it with the same reason; one into the system stays listed where the app really is.
+    @Test func aLinkOutsideIsNotOfferedAsRemovable() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        let elsewhere = lab.dir.appendingPathComponent("Shared")
+        try lab.makeApp(elsewhere, "Tool", bundleID: "pl.test.tool")
+        let link = lab.apps.appendingPathComponent("Tool.app")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: elsewhere.appendingPathComponent("Tool.app"))
+        let inv = await lab.run(Scripts.appInventory(studentUser: Lab.me))
+        let apps = AppInventory.parse(inv.stdoutText).apps
+        let tool = try #require(apps.first { $0.name == "Tool" })
+        #expect(tool.location == "link" && tool.path == link.path && !tool.isRemovable && tool.reasonNotRemovable != nil)
+        let r = await lab.run(Scripts.uninstallApps([tool.removalPath], studentUser: Lab.me))
+        #expect(r.exitCode == 2, "\(r.stdoutText)")
+        #expect(UninstallReport.parse(r.stdoutText).refusals.first?.detail.contains("dowiązanie") == true)
+        #expect(lab.exists(elsewhere.appendingPathComponent("Tool.app")))
+    }
+}

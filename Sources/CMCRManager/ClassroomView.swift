@@ -903,9 +903,9 @@ struct AppNameMenu: View {
     }
 
     var knownNames: [String] {
-        let all = model.installedApps.values.flatMap { $0 }
-            .filter { $0.hasPrefix("/Applications/") }
-            .map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension }
+        let all = model.installedApps.values.flatMap(\.apps)
+            .filter { $0.path.hasPrefix("/Applications/") && $0.kind != .unity }
+            .map(\.name)
         return Array(Set(all)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 }

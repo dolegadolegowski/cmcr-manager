@@ -33,11 +33,20 @@ Pliki
 
 Aplikacje
   apps nr                                  uruchomione aplikacje użytkownika
+  apps installed [KOMP] [--receipts] [--system] [--json]
+                                           zainstalowane aplikacje: nazwa, wersja, rozmiar, identyfikator,
+                                           miejsce (/Applications, Utilities, ~/Applications ucznia, edytory
+                                           Unity); --receipts: także pakiety .pkg spoza Apple, --system: także
+                                           aplikacje macOS
   open-app "Nazwa" [KOMP]                  uruchom aplikację u zalogowanego użytkownika
   quit-app "Nazwa" [KOMP] [--force]        zamknij aplikację (--force: natychmiast, po potwierdzeniu)
   open-url ADRES KOMP                      otwórz stronę lub plik u zalogowanego użytkownika
   kill PID nr [--force]                    zakończ proces na jednym komputerze (--force: SIGKILL)
-  uninstall /Applications/X.app KOMP       usuń aplikację
+  uninstall APLIKACJA… KOMP [--dry-run] [--with-package-files]
+                                           odinstaluj (nazwa lub ścieżka): zamyka aplikację, usuwa ją, jej usługi
+                                           (LaunchDaemons/Agents) i wpis pakietu; najpierw podgląd i pytanie;
+                                           --dry-run: tylko podgląd; --with-package-files: także pozostałe pliki
+                                           pakietu .pkg. Aplikacji systemowych, Apple i CMCR nie usuwa
   brew "argumenty" KOMP                    Homebrew, np.: cmcrctl brew "install --cask firefox" all
   screenshot nr plik.jpg                   zrzut ekranu zalogowanego użytkownika
 
@@ -151,7 +160,7 @@ struct CLI: Sendable {
         case "pull": return await pull()
         case "ls": return await listFolder()
         case "clean": return await clean()
-        case "apps": return await apps()
+        case "apps": return args[1] == "installed" ? await installedApps() : await apps()
         case "open-app", "quit-app": return await openQuitApp(open: command == "open-app")
         case "open-url": return await openURL()
         case "kill": return await kill()
@@ -557,14 +566,7 @@ struct CLI: Sendable {
         return await runScript(on: [h]) { _ in Scripts.killProcess(pid, force: hard) }
     }
 
-    func uninstall() async -> Int32 {
-        args.expect("uninstall", options: Self.parallel, positional: 3)
-        guard let path = args[1] else { usageError("Użycie: cmcrctl uninstall /Applications/Nazwa.app KOMP") }
-        let list = targets(args[2])
-        confirm("Usunąć \(path) na: \(names(list))?")
-        logAction(list)
-        return await runScript(on: list) { _ in Scripts.uninstallApp(path) }
-    }
+    // uninstall: AppsCommands.swift.
 
     func brew() async -> Int32 {
         args.expect("brew", options: Self.parallel, positional: 3)

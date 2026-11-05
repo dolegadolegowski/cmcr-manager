@@ -124,19 +124,7 @@ public enum Scripts {
         """#)
     }
 
-    /// Applications in the Applications folders. A link is listed where the app really is: /Applications/Safari.app
-    /// leads into the system cryptex since macOS 13, and an app outside /Applications is not offered for uninstalling.
-    public static func installedApps() -> RemoteScript {
-        RemoteScript(#"""
-        for d in /Applications /Applications/Utilities /System/Applications /System/Applications/Utilities ${CONSOLE_USER:+"/Users/$CONSOLE_USER/Applications"}; do
-          for a in "$d"/*.app; do
-            if [ -L "$a" ]; then cmcr_realdir "$a"
-            elif [ -e "$a" ]; then echo "$a"; fi
-          done
-        done | awk 'NF && !seen[$0]++'
-        exit 0
-        """#)
-    }
+    // Installed applications (inventory, uninstalling): Scripts+Apps.swift.
 
     /// Starts an application (name like `Safari`, or a full `/Applications/X.app` path) in the user's session.
     /// `arguments` is split like a shell command line (quotes and backslashes group words) and every word is
@@ -309,60 +297,6 @@ public enum Scripts {
         fi
         asroot kill -$SIG "$PID" && echo "Wysłano SIG$SIG do PID $PID ($EXE)."
         """#)
-    }
-
-    /// Removes an application bundle from /Applications (or `$CMCR_APPS_DIR`, used by the tests).
-    ///
-    /// Its processes (of every user) are stopped only once it is certain the app can go: links (Safari is a link into
-    /// the system cryptex) and items with the SIP flag `restricted` are refused, and the bundle is first moved aside
-    /// within its folder – the same permission as deleting it, which macOS refuses without Full Disk Access.
-    public static func uninstallApp(_ path: String) -> RemoteScript {
-        RemoteScript(#"""
-        APP=\#(shQuote(path)); APPS="${CMCR_APPS_DIR:-/Applications}"
-        while [ "${APP%/}" != "$APP" ]; do APP="${APP%/}"; done
-        case "$APP/" in */../*|*/./*|*//*) echo "Odmowa: niepoprawna ścieżka $APP" >&2; exit 2 ;; esac
-        case "$APP" in
-          "$APPS"/*.app/*) echo "Odmowa: $APP leży wewnątrz innej aplikacji." >&2; exit 2 ;;
-          "$APPS"/*.app) ;;
-          *) echo "Odinstalowywać można tylko aplikacje z $APPS." >&2; exit 2 ;;
-        esac
-        [ -e "$APP" ] || [ -L "$APP" ] || { echo "Nie znaleziono: $APP"; exit 0; }
-        PARENT="$(cmcr_realdir "$(dirname "$APP")")"; RAPPS="$(cmcr_realdir "$APPS")"
-        case "$PARENT/" in "$RAPPS"/*) ;; *) echo "Odmowa: $APP wskazuje poza $APPS ($PARENT)." >&2; exit 2 ;; esac
-        if [ -L "$APP" ]; then
-          echo "✘ Odmowa: $APP to tylko dowiązanie do „$(readlink "$APP")” (tak macOS umieszcza w folderze Aplikacje np. Safari) – nie odinstalowuję. Aplikacji systemowych nie można odinstalować." >&2
-          exit 2
-        fi
-        case "$(stat -f %Sf "$APP" 2>/dev/null)" in
-          *restricted*) echo "✘ $APP jest chroniona przez macOS (System Integrity Protection) – aplikacji systemowych nie można odinstalować." >&2; exit 2 ;;
-        esac
-        FDA="  macOS chroni aplikacje: włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Ustawienia systemowe › Ogólne › Udostępnianie › ⓘ przy „Zdalne logowanie”)."
-        NAME="$(basename "$APP" .app)"
-        # cmcr_ps lists precomposed names; the name on disk may be decomposed (e.g. copied from an HFS+ image), so
-        # the search uses it converted the same way (AUDIT REV-09). File operations keep the name as it is.
-        PSNAME="$(printf '%s' "$NAME" | iconv -c -f UTF-8-MAC -t UTF-8)"
-        [ -n "$PSNAME" ] || PSNAME="$NAME"
-        PIDS="$(cmcr_ps -axww -o pid=,comm= | awk -v n="/$PSNAME.app/Contents/MacOS/" 'index($0, n) > 0 {print $1}')"
-        # Moved aside first (a rename needs the same permission as deleting): an app macOS protects stays where it is
-        # and keeps running, instead of being quit for every user and then not removed.
-        GONE="$(mktemp -d "$PARENT/.cmcr-uninstall.XXXXXX" 2>"$CMCR_TMP/rm.err")" \
-          && /bin/mv "$APP" "$GONE/" 2>"$CMCR_TMP/rm.err" || {
-          [ -n "$GONE" ] && rmdir "$GONE" 2>/dev/null
-          echo "✘ Nie udało się usunąć $APP: $(head -1 "$CMCR_TMP/rm.err") – aplikacji nie zamknięto." >&2
-          echo "$FDA" >&2
-          exit 1
-        }
-        [ -n "$PIDS" ] && kill -KILL $PIDS 2>/dev/null
-        if rm -rf "$GONE" 2>"$CMCR_TMP/rm.err" && [ ! -e "$GONE" ]; then
-          echo "Usunięto $APP"
-        else
-          # Back in place, so the list still shows it and the next attempt finds it.
-          if [ ! -e "$APP" ] && [ -e "$GONE/$NAME.app" ]; then /bin/mv "$GONE/$NAME.app" "$APP" 2>/dev/null && rmdir "$GONE" 2>/dev/null; fi
-          echo "✘ Nie udało się usunąć $APP: $(head -1 "$CMCR_TMP/rm.err")" >&2
-          echo "$FDA" >&2
-          exit 1
-        fi
-        """#, asRoot: true)
     }
 
     // MARK: - Installing software

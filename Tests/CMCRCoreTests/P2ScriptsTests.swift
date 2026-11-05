@@ -138,8 +138,8 @@ import Testing
         let box = try Box()
         defer { box.remove() }
         try #require(await box.guardFakes())
-        let r = await box.run(Scripts.installedApps())
-        let lines = Parsers.lines(r.stdoutText)
+        let r = await box.run(Scripts.appInventory(studentUser: ""))
+        let lines = AppInventory.parse(r.stdoutText).apps.map(\.path)
         #expect(r.exitCode == 0)
         #expect(!lines.contains(link), "dowiązanie na liście jako aplikacja z /Applications")
         let real = URL(fileURLWithPath: target, relativeTo: URL(fileURLWithPath: "/Applications")).resolvingSymlinksInPath().path

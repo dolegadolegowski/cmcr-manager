@@ -387,7 +387,9 @@ final class AppModel: ObservableObject {
     var sleepActivity: NSObjectProtocol?
     var toastTask: Task<Void, Never>?
     @Published var runningApps: [UUID: HostApps] = [:]
-    @Published var installedApps: [UUID: [String]] = [:]
+    /// Installed applications per Mac (Scripts.appInventory); package receipts only while `installedAppsWithPackages`.
+    @Published var installedApps: [UUID: HostInventory] = [:]
+    @Published var installedAppsWithPackages = false
     /// Lists being read now, and why the last reading of a Mac failed (AUDIT WSP-06, UI-07).
     @Published var runningAppsLoading: Set<UUID> = []
     @Published var installedAppsLoading: Set<UUID> = []
@@ -1039,18 +1041,19 @@ final class AppModel: ObservableObject {
 
     func refreshInstalledApps(_ targets: [Machine]) {
         let ss = sshSettings
+        let script = Scripts.appInventory(studentUser: settings.studentUser, receipts: installedAppsWithPackages)
         let jobs = targets.map { ($0, password(for: $0)) }
         installedAppsLoading.formUnion(targets.map(\.id))
         Task {
             await withTaskGroup(of: Void.self) { group in
                 for (m, pw) in jobs {
                     group.addTask {
-                        let r = await SSH.run(Scripts.installedApps(), on: m, password: pw, settings: ss,
-                                              timeout: OperationTimeout.list)
+                        let r = await SSH.run(script, on: m, password: pw, settings: ss,
+                                              timeout: Self.inventoryTimeout)
                         await MainActor.run {
                             self.installedAppsLoading.remove(m.id)
                             if r.succeeded {
-                                self.installedApps[m.id] = Parsers.lines(r.stdoutText)
+                                self.installedApps[m.id] = AppInventory.parse(r.stdoutText)
                                 self.installedAppsErrors[m.id] = nil
                             } else {
                                 self.installedAppsErrors[m.id] = SSH.diagnose(r).1
@@ -1087,12 +1090,7 @@ final class AppModel: ObservableObject {
         runScript("Otwórz: \(url)", on: targets) { _ in Scripts.openURL(url) }
     }
 
-    func uninstall(_ path: String, on targets: [Machine]) {
-        runScript("Odinstaluj: \((path as NSString).lastPathComponent)", on: targets,
-                  script: { _ in Scripts.uninstallApp(path) }) { m, _ in
-            self.refreshInstalledApps([m])
-        }
-    }
+    // Uninstalling: AppModel+Uninstall.swift.
 
     private func scheduleAppsRefresh(_ m: Machine) {
         Task {
