@@ -15,7 +15,6 @@ chmod 775 "$SHOME"                                   # sshd StrictModes: the scr
 printf 'womp 0\nsleep 1\ntcpkeepalive 1\n' > "$SS/pmset"
 : > "$SS/off-com.openssh.sshd"                      # Remote Login "off" before the first run
 : > "$SS/off-com.apple.screensharing"
-echo false > "$SS/screen-preflight"
 echo "FileVault is Off." > "$SS/filevault"
 cp "$WORK/config/hosts.json" "$SCONF/hosts.json"
 cat > "$SCONF/settings.json" <<EOF
@@ -58,6 +57,9 @@ expect_code "setup: pierwsze uruchomienie – kod 0" "$code" 0 "$out"
 expect "setup: zmiany w raporcie" "$out" "Włączono zdalne logowanie (SSH)" "Klucz SSH aplikacji zainstalowany" \
   "050-cmcr-manager.conf" "Harmonogram ustawiony: pn wt śr cz pt: włączenie 07:30, wyłączenie 17:00" \
   "sudo bez hasła WŁĄCZONE" "Do zrobienia ręcznie" "→ imac01: Zmieniono"
+expect "setup: najpierw usługa podglądu ekranu (już zainstalowana – bez zmian)" "$out" \
+  "→ usługa podglądu ekranu (CMCR Screen Agent 1.0.0): instalacja lub aktualizacja…" \
+  "→ imac01: usługa podglądu bez zmian (wersja 1.0.0 była już zainstalowana)" '"screen_agent": "1.0.0"'
 expect "setup: polecenia systemowe przez atrapy" "$(fakelog)" \
   "launchctl bootstrap system /System/Library/LaunchDaemons/ssh.plist" "pmset -a womp 1" "pmset -a sleep 0" \
   "pmset repeat wakeorpoweron MTWRF 07:30:00 shutdown MTWRF 17:00:00" "visudo -cf" "sshd -t -f $SR/etc/ssh/sshd_config"
@@ -204,49 +206,125 @@ else
   pass "SSH ACL: pominięto (konto $ME nie jest administratorem tego Maca)"
 fi
 
-section "Gotowość iMaców (readiness)"
+section "Gotowość iMaców (readiness) i usługa podglądu ekranu w skrypcie przygotowania"
+# The "Podgląd ekranu" column and the setup step screen_agent ask CMCR Screen Agent in the GUI session (setup above
+# installed it before the script): no TCC.db, no osascript preflight from the SSH session (docs/screen-agent.md).
+SA_ME_UID="$(id -u)"
+SA_PLIST="$SR/Library/LaunchAgents/pl.cmcr.manager.screen-agent.plist"
+agent_reset
+agent_restart "$SA_ME_UID"
+clear_fakelog
 out="$(sctl readiness 1)"
 expect "readiness: stan po konfiguracji" "$out" "SSH i klucz" "klucz" "sudo" "Folder ucznia" "Wake-on-LAN" "włączony" \
-  "Udostępnianie ekranu" "wyłączone" "FileVault" "Konfiguracja" "v1."
-expect "readiness: kroki ręczne (TCC) wykryte" "$out" "Nagrywanie ekranu" "ręcznie" "Pełny dostęp do dysku"
-expect "readiness: sprawdzenie nagrywania bez pytania o zgodę" "$(fakelog)" "osascript: screen-capture preflight"
+  "Udostępnianie ekranu" "wyłączone" "FileVault" "Konfiguracja" "v1.2.0"
+expect "readiness: podgląd ekranu gotowy (usługa z uprawnieniem)" "$out" "✔ Podgląd ekranu" "gotowy"
+expect "readiness: krok ręczny (pełny dostęp do dysku) wykryty" "$out" "☐ Pełny dostęp do dysku" "ręcznie"
+expect "readiness: stan podglądu od usługi w sesji użytkownika" "$(agentlog)" "CMCRA1 PING"
+expect_not "readiness: bez sprawdzania nagrywania z sesji SSH (osascript)" "$(fakelog)" "osascript"
+expect_code "readiness: usługa nie jest uruchamiana ponownie" "$(grep -cE '^launchctl (kickstart|bootstrap) gui/' "$WORK/fake.log")" 0 "$(fakelog)"
+
+# The old grants for the SSH session in TCC.db mean nothing now: the agent without permission is a step at the Mac.
 TCCDIR="$SR/Library/Application Support/com.apple.TCC"
 mkdir -p "$TCCDIR"
 sqlite3 "$TCCDIR/TCC.db" "CREATE TABLE access (service TEXT, client TEXT, auth_value INTEGER);
   INSERT INTO access VALUES ('kTCCServiceSystemPolicyAllFiles','/usr/libexec/sshd-keygen-wrapper',2);
   INSERT INTO access VALUES ('kTCCServiceScreenCapture','/usr/libexec/sshd-keygen-wrapper',2);"
-# The grant is in TCC.db, but the preview's own process chain is still refused (e.g. macOS attributes the
-# session to sshd-session): the preflight wins, the stale row does not make the Mac look ready.
+echo denied > "$AGENT_TEST/perm"
+agent_restart "$SA_ME_UID"        # a fresh agent: an older one ends itself after answering perm=denied
 out="$(sctl readiness 1)"; code=$?
-expect "readiness: wpis w TCC.db, ale sesja SSH bez uprawnienia – ręcznie" "$out" "☐ Nagrywanie ekranu" "/usr/libexec/sshd-session"
-expect_not "readiness: nieaktualny wpis TCC nie udaje gotowości" "$out" "● imac01 – gotowy"
+expect "readiness: usługa bez uprawnienia – krok przy komputerze" "$out" "☐ Podgląd ekranu" "nadaj uprawnienie" \
+  "włącz „CMCR Screen Agent”" "✔ Pełny dostęp do dysku"
+expect_not "readiness: wpis Nagrywania ekranu dla sesji SSH w TCC.db nie udaje gotowości" "$out" "● imac01 – gotowy"
+expect_code "readiness: usługa bez uprawnienia – kod 1" "$code" 1 "$out"
+agent_restart "$SA_ME_UID"
 clear_fakelog
-out="$(setup_run --verify)"
-expect "setup --verify: nieaktualny wpis TCC – rozstrzyga sprawdzenie w sesji (jak Gotowość)" "$out" \
-  '"screen_capture_remote": "no"' "☐ Ustawienia › Prywatność i ochrona › Nagrywanie ekranu"
-expect_not "setup --verify: nieaktualny wpis TCC nie udaje zgody" "$out" "Nagrywanie ekranu dla sesji SSH: zezwolono"
-expect "setup --verify: sprawdzenie nagrywania bez pytania o zgodę" "$(fakelog)" "osascript: screen-capture preflight"
-echo true > "$SS/screen-preflight"
+out="$(setup_run --verify)"; code=$?
+expect "setup --verify: usługa bez uprawnienia – do zrobienia przy komputerze" "$out" \
+  "Usługa podglądu ekranu nie jest instalowana przy --verify/--dry-run" '"screen_capture_remote": "no"' \
+  '"screen_agent": "1.0.0"' "☐ Ustawienia › Prywatność i ochrona › Nagrywanie ekranu" "włącz „CMCR Screen Agent”"
+expect_not "setup --verify: wpis TCC dla sesji SSH bez znaczenia" "$out" "Nagrywanie ekranu dla sesji SSH"
+expect_code "setup --verify: usługa nie jest instalowana ani uruchamiana" "$(grep -cE '^launchctl (kickstart|bootstrap) gui/' "$WORK/fake.log")" 0 "$(fakelog)"
+expect "setup --verify: stan od usługi" "$(agentlog)" "CMCRA1 PING"
+rm -f "$AGENT_TEST/perm"
+agent_restart "$SA_ME_UID"
 out="$(sctl readiness 1)"; code=$?
 expect_code "readiness: wszystko gotowe – kod 0" "$code" 0 "$out"
-expect "readiness: gotowy" "$out" "● imac01 – gotowy" "zezwolono"
+expect "readiness: gotowy" "$out" "● imac01 – gotowy" "✔ Podgląd ekranu" "gotowy"
 out="$(setup_run --verify)"
-expect "setup --verify: uprawnienia TCC odczytane z bazy" "$out" '"fda_remote": "yes"' '"screen_capture_remote": "yes"' '"todo_count": 0,'
-# OpenSSH 9.8+ (macOS 15+): the grant may belong to sshd-session instead of sshd-keygen-wrapper.
-sqlite3 "$TCCDIR/TCC.db" "DELETE FROM access WHERE service='kTCCServiceScreenCapture';
-  INSERT INTO access VALUES ('kTCCServiceScreenCapture','com.apple.sshd-session',2);"
-out="$(setup_run --verify)"
-expect "setup --verify: uprawnienie dla sshd-session rozpoznane" "$out" '"screen_capture_remote": "yes"' \
-  "Nagrywanie ekranu dla sesji SSH: zezwolono"
-# Nobody logged in: only the TCC row speaks, and the report says so.
+expect "setup --verify: usługa z uprawnieniem, pełny dostęp z bazy TCC" "$out" '"fda_remote": "yes"' \
+  '"screen_capture_remote": "yes"' '"screen_agent": "1.0.0"' '"todo_count": 0,' \
+  "Usługa podglądu ekranu 1.0.0 działa i ma uprawnienie „Nagrywanie ekranu”"
+
+# Nobody logged in: installed, the permission is checked once someone logs in.
 : > "$WORK/fake-no-console"
 clear_fakelog
+out="$(sctl readiness 1)"
+expect "readiness: nikt nie jest zalogowany" "$out" "? Podgląd ekranu" "nikt nie zalogowany"
 out="$(setup_run --verify)"
 rm -f "$WORK/fake-no-console"
-expect "setup --verify bez zalogowanego użytkownika: tylko wpis w TCC" "$out" '"screen_capture_remote": "yes"' \
-  "Nagrywanie ekranu dla sesji SSH: wpis w TCC zezwala – sprawdź w Gotowości (nikt nie jest zalogowany przy komputerze)"
-expect_not "setup --verify bez zalogowanego użytkownika: bez sprawdzenia w sesji" "$(fakelog)" "screen-capture preflight"
-echo false > "$SS/screen-preflight"
+expect "setup --verify bez zalogowanego użytkownika: uprawnienie sprawdzi aplikacja" "$out" \
+  '"screen_capture_remote": "unknown"' "sprawdzi CMCR Manager, gdy ktoś się zaloguje"
+expect_code "bez zalogowanego użytkownika: usługa nie jest pytana" "$(agent_count '^CMCRA1 ')" 0 "$(agentlog)"
+
+# Not running in the session (launchd does not have it): readiness and setup only report it, the next preview or
+# install starts it.
+agent_bootout "$SA_ME_UID"
+clear_fakelog
+out="$(sctl readiness 1)"
+expect "readiness: usługa nie działa – nie odpowiada" "$out" "⚠︎ Podgląd ekranu" "nie odpowiada" "launchd nie ma jej w sesji"
+out="$(setup_run --verify)"
+expect "setup --verify: usługa nie działa – ostrzeżenie" "$out" "Usługa podglądu ekranu 1.0.0 nie odpowiada w sesji $ME"
+expect_code "readiness, setup --verify: usługi nie uruchamiają" "$(grep -cE '^launchctl (kickstart|bootstrap) gui/' "$WORK/fake.log")" 0 "$(fakelog)"
+agent_restart "$SA_ME_UID" || fail "usługa podglądu: nie wróciła po bootout" "$(tail -5 "$WORK/agent-serve.log")"
+
+# An older agent (the same bundle as version 0.9.0, signed again ad hoc): a warning; setup updates it before the script.
+SA_OLD="$WORK/setup-agent-0.9.0/CMCR Screen Agent.app"
+mkdir -p "$WORK/setup-agent-0.9.0"
+cp -R "$CMCR_SCREEN_AGENT_APP" "$WORK/setup-agent-0.9.0/"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.9.0" -c "Set :CFBundleVersion 0.9.0" "$SA_OLD/Contents/Info.plist"
+codesign --force --sign - --options runtime "$SA_OLD" >/dev/null 2>&1
+out="$(CMCR_SCREEN_AGENT_APP="$SA_OLD" sctl screen-agent install 1)"
+expect "starsza usługa: zainstalowana" "$out" "→ imac01: usługa podglądu zaktualizowana do wersji 0.9.0"
+out="$(sctl readiness 1)"
+expect "readiness: starsza usługa – ostrzeżenie" "$out" "⚠︎ Podgląd ekranu" "v0.9.0" "jest starsza niż w tej wersji aplikacji (1.0.0)"
+out="$(setup_run --verify)"
+expect "setup --verify: starsza usługa – ostrzeżenie" "$out" "Usługa podglądu ekranu 0.9.0 jest starsza niż w tej wersji CMCR Manager (1.0.0)" \
+  '"screen_agent": "0.9.0"'
+clear_fakelog
+out="$(setup_run)"; code=$?
+expect_code "setup ze starszą usługą: kod 0" "$code" 0 "$out"
+expect "setup ze starszą usługą: najpierw aktualizacja usługi, potem skrypt" "$out" \
+  "→ imac01: usługa podglądu zaktualizowana do wersji 1.0.0" "Usługa podglądu ekranu 1.0.0 działa i ma uprawnienie" \
+  '"screen_agent": "1.0.0"'
+expect "setup ze starszą usługą: nowy podpis – uprawnienie wyczyszczone" "$(fakelog)" "tccutil reset ScreenCapture pl.cmcr.manager.screen-agent"
+rm -rf "$WORK/setup-agent-0.9.0"
+
+# No agent at all: readiness and --verify say so and install nothing; setup apply installs it, unless --no-screen-agent.
+out="$(sctl screen-agent remove 1 --yes)"
+expect "brak usługi: usunięta" "$out" "→ imac01: usługa podglądu usunięta."
+out="$(sctl readiness 1)"
+expect "readiness: brak usługi" "$out" "✘ Podgląd ekranu" "brak usługi" "Zainstaluj usługę podglądu"
+clear_fakelog
+out="$(setup_run --verify)"
+expect "setup --verify: brak usługi – ostrzeżenie" "$out" "Usługa podglądu ekranu nie jest instalowana przy --verify/--dry-run" \
+  "Usługa podglądu ekranu (CMCR Screen Agent) nie jest zainstalowana" '"screen_agent": "none"'
+[ ! -e "$AGENT_EXE" ] && [ ! -e "$SA_PLIST" ] && pass "setup --verify: usługa nie została zainstalowana" \
+  || fail "setup --verify: zainstalowano usługę" "$(ls -la "$AGENT_ROOT" 2>&1)"
+out="$(setup_run --no-screen-agent)"; code=$?
+expect_code "setup --no-screen-agent: kod 0" "$code" 0 "$out"
+expect_not "setup --no-screen-agent: bez instalacji usługi" "$out" "→ usługa podglądu ekranu"
+expect "setup --no-screen-agent: krok usługi ostrzega" "$out" "(CMCR Screen Agent) nie jest zainstalowana" '"screen_agent": "none"'
+[ ! -e "$AGENT_EXE" ] && pass "setup --no-screen-agent: usługa nie została zainstalowana" || fail "setup --no-screen-agent: zainstalowano usługę"
+clear_fakelog
+out="$(setup_run)"; code=$?
+expect_code "setup: instalacja usługi – kod 0" "$code" 0 "$out"
+expect "setup: usługa zainstalowana przed skryptem i działa" "$out" \
+  "→ usługa podglądu ekranu (CMCR Screen Agent 1.0.0): instalacja lub aktualizacja…" \
+  "→ imac01: usługa podglądu zainstalowana (wersja 1.0.0)" "Usługa podglądu ekranu 1.0.0 działa i ma uprawnienie" \
+  '"screen_agent": "1.0.0"' '"screen_capture_remote": "yes"'
+[ -x "$AGENT_EXE" ] && [ -f "$SA_PLIST" ] && pass "setup: pliki usługi zainstalowane" || fail "setup: brak plików usługi" "$out"
+expect "setup: usługa uruchomiona w sesji użytkownika" "$(fakelog)" "launchctl bootstrap gui/$SA_ME_UID $SA_PLIST"
+expect "setup: usługa odpowiada" "$(agent_ping "$SA_ME_UID")" "AGENT 1.0.0 perm=granted"
 rm -rf "$TCCDIR"
 out="$(CMCR_CONFIG_DIR="$SCONF" CMCR_PASSWORD="zle-haslo" "$CTL" readiness 1 2>&1)"
 expect "readiness: błędne hasło sudo" "$out" "złe hasło"

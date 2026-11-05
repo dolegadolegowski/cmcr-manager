@@ -281,3 +281,14 @@ tymczasowym: `ping`/`capture`/`notice`/`front`, podmiana i usuwanie plików, kod
 obcemu programowi na gnieździe. `Tests/e2e/run.sh` buduje pakiet usługi z kompilacji debug do
 `$WORK/agent-bundle` i eksportuje `CMCR_SCREEN_AGENT_APP` (uwzględniane tylko w kompilacji DEBUG albo w środowisku
 testów e2e).
+
+W e2e działa prawdziwa usługa: `cmcrctl screen-agent install` wysyła pakiet przez scp, a `Scripts.installScreenAgent`
+instaluje go pod `$WORK/setup-root`. Atrapa `launchctl` w `Tests/e2e/fakes.sh` pamięta stan LaunchAgenta w każdej
+domenie `gui/<uid>` (`print` 113, `bootstrap` 5 przy załadowanej, `bootout`, `kickstart [-k]`, `enable`/`disable`) i
+uruchamia zainstalowany plik wykonywalny w trybie `serve` – zawsze z `CMCR_SCREEN_AGENT_TEST_DIR=$WORK/agent`,
+`CMCR_SCREEN_AGENT_TEST_UID=<uid>` i `CMCR_SETUP_ROOT_PREFIX`. W przeciwieństwie do launchd nie wznawia sama usługi,
+która się zakończyła – to musi zrobić skrypt podglądu, co testy sprawdzają. `tccutil` jest tylko zapisywany do
+dziennika atrap (`run.sh` przerywa testy, gdy w sesji zdalnej działa prawdziwy). Stan „ekranu” ustawiają pliki w
+`$WORK/agent`; zestawy `screen-agent.sh` (instalacja, aktualizacja, usuwanie, stan, uprawnienie, wznawianie, obca
+usługa, zastępowanie zrzutów), `screens.sh` i `p2-notice.sh` (podgląd i informacja dla ucznia) oraz `setup.sh`
+(kolumna „Podgląd ekranu” i krok `screen_agent`) korzystają z niej.
