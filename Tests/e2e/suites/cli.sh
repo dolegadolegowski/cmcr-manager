@@ -408,6 +408,7 @@ expect "password clear: usunięte" "$(kctl password status)" "Wspólne hasło ad
 while security delete-generic-password -s "$KS" >/dev/null 2>&1; do :; done
 
 section "cmcrctl screenshot – zapis do niedostępnego pliku"
+agent_ensure
 out="$(CMCR_PASSWORD="$PASSWORD" CMCR_CONFIG_DIR="$MULTI" "$CTL" screenshot 1 "$WORK/brak/katalogu/x.jpg" 2>&1)"; code=$?
 expect "screenshot: czytelny błąd zapisu" "$out" "Nie można zapisać"
 expect_not "screenshot: brak awarii" "$out" "Fatal error"

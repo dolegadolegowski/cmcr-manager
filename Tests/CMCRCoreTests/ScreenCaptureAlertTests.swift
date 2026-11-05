@@ -2,12 +2,15 @@ import Foundation
 import Testing
 @testable import CMCRCore
 
-// macOS 15+ consent window for the screen preview ("sshd-session is requesting to bypass the system private window
-// picker…"): replayd's remembered consent is renewed by the preview and the setup script (cmcr_sc_approval).
+// macOS 15+ consent window for the screen preview ("CMCR Screen Agent is requesting to bypass the system private
+// window picker…"): replayd's remembered consent is renewed by the preview and the setup script (cmcr_sc_approval),
+// for both names macOS may keep it under – the agent's bundle id (15.1+) and its executable path (15.0).
 
 private let repoRoot = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-private let client = "/usr/libexec/sshd-keygen-wrapper"
+private let clients = [ScreenAgentInfo.bundleID, ScreenAgentInfo.executablePath]
+/// The SSH session's old key: left alone, never renewed any more.
+private let sshClient = "/usr/libexec/sshd-keygen-wrapper"
 
 /// Runs the CMCR-REPLAYD block with `commands` under /bin/bash in a temporary folder ($T). `pkill` is replaced by a
 /// logger, so the real replayd of the account running the tests is never stopped.
@@ -22,6 +25,22 @@ private func runApprovalShell(_ commands: String) throws -> (output: String, dir
     pkill() { echo "pkill $*" >> "$T/pkill.log"; }
     U="$(id -un)"; H="$T/home"
     F="$H/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"
+    PB=/usr/libexec/PlistBuddy
+    # set_date KEY[:SUBKEY] DATE – PlistBuddy cannot parse ISO dates, so the entry is merged from XML like the block does.
+    set_date() {
+      local k="${1%%:*}" sub="" xml
+      [ "$k" != "$1" ] && sub="${1#*:}"
+      if [ -n "$sub" ]; then
+        $PB -c "Delete :'$k':$sub" "$F" >/dev/null 2>&1
+        xml="<dict><key>$sub</key><date>$2</date></dict>"
+        printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">%s</plist>\n' "$xml" | $PB -c "Merge /dev/stdin :'$k'" "$F" >/dev/null
+      else
+        $PB -c "Delete :'$k'" "$F" >/dev/null 2>&1
+        printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>%s</key><date>%s</date></dict></plist>\n' "$k" "$2" \
+          | $PB -c "Merge /dev/stdin" "$F" >/dev/null
+      fi
+    }
+    ID=\(shQuote(ScreenAgentInfo.bundleID)); EXE=\(shQuote(ScreenAgentInfo.executablePath))
     \(commands)
     """
     let url = dir.appendingPathComponent("t.sh")
@@ -49,15 +68,22 @@ private func approvals(_ dir: URL) throws -> [String: Any] {
     #expect(block.hasPrefix("# >>> CMCR-REPLAYD"))
     #expect(block.hasSuffix("# <<< CMCR-REPLAYD <<<"))
     #expect(block.contains("cmcr_sc_approval()"))
-    #expect(block.contains("CMCR_SC_CLIENT=\(client)"))
+    // The agent's two names, as macOS keeps them; never the SSH session any more.
+    #expect(block.contains("CMCR_SC_ID=\(ScreenAgentInfo.bundleID)\n"))
+    #expect(block.contains("CMCR_SC_EXE=\(shQuote(ScreenAgentInfo.executablePath))\n"))
+    #expect(!block.contains("CMCR_SC_CLIENT=") && !block.contains("sshd-keygen-wrapper\n"))
+    // Keys with dots and spaces: plutil's key paths would split them, PlistBuddy (":") does not.
+    #expect(!block.contains("plutil -extract") && !block.contains("plutil -replace"))
+    #expect(block.contains("/usr/libexec/PlistBuddy -x -c \"Print $3\""))
     #expect(SetupScriptTemplate.text.contains(block))
     // The preview renews it before capturing; the readiness check only reads it.
     let capture = Scripts.screenCapture(ScreenCaptureOptions(maxSize: 800)).body
     #expect(capture.contains(block))
-    #expect(capture.contains("scr_capture() {\n  local i n files f\n  scr_approval"))
+    #expect(capture.contains("scr_capture() {\n  local line tag d w h b f front=\"\" n=0 sent=0 i\n  scr_approval"))
     let readiness = Scripts.readiness(student: "student", sharedFolder: "/Users/student/Public/cmcr", publicKey: nil).body
     #expect(readiness.contains(block))
-    #expect(readiness.contains("declare -f folder_state cmcr_sc_as cmcr_sc_epoch cmcr_sc_approval"))
+    #expect(readiness.contains("declare -f folder_state cmcr_sc_as cmcr_sc_epoch cmcr_sc_valid cmcr_sc_approval"))
+    #expect(readiness.contains("declare -p CMCR_SC_ID CMCR_SC_EXE CMCR_SC_HINT"))
     // Only the student account is reported: an admin at the screen is never observed, so nothing renews theirs.
     #expect(readiness.contains("echo \"screen_alert=$(cmcr_sc_approval \"$5\" \"${SHOME:+$R$SHOME}\" \"$7\" check"))
     #expect(readiness.components(separatedBy: "cmcr_sc_approval \"").count == 2, "one readiness call, for the student")
@@ -87,14 +113,18 @@ private func approvals(_ dir: URL) throws -> [String: Any] {
     #expect(!out.contains("written-by-check"))
     #expect(out.contains("renew=renewed\n"))
     #expect(out.contains("again=ok\n"))
-    let entry = try #require(try approvals(dir)[client] as? [String: Any])
-    #expect(entry["kScreenCapturePrivacyHintPolicy"] as? Int == 2_592_000)
-    #expect(entry["kScreenCaptureAlertableUsageCount"] as? Int == 1)
-    let used = try #require(entry["kScreenCaptureApprovalLastUsed"] as? Date)
-    #expect(abs(used.timeIntervalSinceNow) < 120)
-    #expect(entry["kScreenCaptureApprovalLastAlerted"] as? Date == used)
-    let hint = try #require(entry["kScreenCapturePrivacyHintDate"] as? Date)
-    #expect(hint > Date().addingTimeInterval(50 * 365 * 86_400))
+    let all = try approvals(dir)
+    for client in clients {
+        let entry = try #require(all[client] as? [String: Any], "\(client)")
+        #expect(entry["kScreenCapturePrivacyHintPolicy"] as? Int == 2_592_000)
+        #expect(entry["kScreenCaptureAlertableUsageCount"] as? Int == 1)
+        let used = try #require(entry["kScreenCaptureApprovalLastUsed"] as? Date)
+        #expect(abs(used.timeIntervalSinceNow) < 120)
+        #expect(entry["kScreenCaptureApprovalLastAlerted"] as? Date == used)
+        let hint = try #require(entry["kScreenCapturePrivacyHintDate"] as? Date)
+        #expect(hint > Date().addingTimeInterval(50 * 365 * 86_400))
+    }
+    #expect(all[sshClient] == nil, "the SSH session is no longer what captures")
     // replayd is stopped before and after the one write, never for a valid consent.
     let log = try String(contentsOf: dir.appendingPathComponent("pkill.log"), encoding: .utf8)
     #expect(log == "pkill -KILL -x -U \(getuid()) replayd\npkill -KILL -x -U \(getuid()) replayd\n")
@@ -103,43 +133,52 @@ private func approvals(_ dir: URL) throws -> [String: Any] {
 @Test func lapsedApprovalIsRenewedKeepingOtherAppsAndTheUsageCount() throws {
     let (out, dir) = try runApprovalShell(#"""
     mkdir -p "$(dirname "$F")"
-    cat > "$F" <<'PLIST'
+    cat > "$F" <<PLIST
     <?xml version="1.0" encoding="UTF-8"?>
     <plist version="1.0"><dict>
-    <key>/usr/libexec/sshd-keygen-wrapper</key><dict>
+    <key>$ID</key><dict>
       <key>kScreenCaptureAlertableUsageCount</key><integer>42</integer>
       <key>kScreenCaptureApprovalLastUsed</key><date>2026-01-01T00:00:00Z</date>
       <key>kScreenCapturePrivacyHintDate</key><date>2099-01-01T00:00:00Z</date>
     </dict>
+    <key>/usr/libexec/sshd-keygen-wrapper</key><dict><key>kScreenCaptureAlertableUsageCount</key><integer>9</integer></dict>
     <key>/Applications/Zoom/zoom</key><dict><key>kScreenCaptureAlertableUsageCount</key><integer>7</integer></dict>
     </dict></plist>
     PLIST
     echo "lapsed=$(cmcr_sc_approval "$U" "$H" 15.6 check)"
     echo "renew=$(cmcr_sc_approval "$U" "$H" 15.6)"
-    plutil -replace "/usr/libexec/sshd-keygen-wrapper.kScreenCapturePrivacyHintDate" -date 2026-12-01T00:00:00Z "$F"
+    echo "fresh=$(cmcr_sc_approval "$U" "$H" 15.6 check)"
+    set_date "$EXE:kScreenCapturePrivacyHintDate" 2026-12-01T00:00:00Z
     echo "hint=$(cmcr_sc_approval "$U" "$H" 15.6 check)"
-    plutil -replace "/usr/libexec/sshd-keygen-wrapper.kScreenCapturePrivacyHintDate" -date 2099-01-01T00:00:00Z "$F"
-    plutil -replace "/usr/libexec/sshd-keygen-wrapper.kScreenCaptureApprovalLastUsed" -date 3024-01-01T00:00:00Z "$F"
+    set_date "$EXE:kScreenCapturePrivacyHintDate" 2099-01-01T00:00:00Z
+    echo "restored=$(cmcr_sc_approval "$U" "$H" 15.6 check)"
+    set_date "$ID:kScreenCaptureApprovalLastUsed" 3024-01-01T00:00:00Z
     echo "future=$(cmcr_sc_approval "$U" "$H" 15.6 check)"
     echo "renew2=$(cmcr_sc_approval "$U" "$H" 15.6)"
     """#)
     defer { try? FileManager.default.removeItem(at: dir) }
     #expect(out.contains("lapsed=stale\n"))
     #expect(out.contains("renew=renewed\n"))
-    #expect(out.contains("hint=stale\n"), "a reminder date that is close counts as lapsed")
+    #expect(out.contains("fresh=ok\n"))
+    #expect(out.contains("hint=stale\n"), "a reminder date that is close counts as lapsed – for either name")
+    #expect(out.contains("restored=ok\n"))
     #expect(out.contains("future=stale\n"), "a last-use date far in the future is not trusted")
     #expect(out.contains("renew2=renewed\n"))
     let all = try approvals(dir)
     #expect((all["/Applications/Zoom/zoom"] as? [String: Any])?["kScreenCaptureAlertableUsageCount"] as? Int == 7)
-    let entry = try #require(all[client] as? [String: Any])
+    #expect((all[sshClient] as? [String: Any])?["kScreenCaptureAlertableUsageCount"] as? Int == 9)
+    let entry = try #require(all[ScreenAgentInfo.bundleID] as? [String: Any])
     #expect(entry["kScreenCaptureAlertableUsageCount"] as? Int == 42)
     #expect(abs((entry["kScreenCaptureApprovalLastUsed"] as? Date ?? .distantPast).timeIntervalSinceNow) < 120)
+    let path = try #require(all[ScreenAgentInfo.executablePath] as? [String: Any])
+    #expect(path["kScreenCaptureAlertableUsageCount"] as? Int == 1)
 }
 
 @Test func approvalHandlesMacOS150BrokenFilesAndMissingAccess() throws {
     let (out, dir) = try runApprovalShell("""
     echo "v150=$(cmcr_sc_approval "$U" "$H" 15.0.1)"
-    plutil -extract "/usr/libexec/sshd-keygen-wrapper" raw -o - "$F"; echo
+    $PB -x -c "Print :'$ID'" "$F" | sed -n 's|.*<date>\\(.*\\)</date>.*|id \\1|p'
+    $PB -x -c "Print :'$EXE'" "$F" | sed -n 's|.*<date>\\(.*\\)</date>.*|exe \\1|p'
     echo "v150again=$(cmcr_sc_approval "$U" "$H" 15.0)"
     echo garbage > "$F"
     echo "broken=$(cmcr_sc_approval "$U" "$H" 26.0)"
@@ -149,7 +188,7 @@ private func approvals(_ dir: URL) throws -> [String: Any] {
     echo "other=$(cmcr_sc_approval root "$H" 26.0)"
     """)
     defer { try? FileManager.default.removeItem(at: dir) }
-    #expect(out.contains("v150=renewed\n2099-01-01T00:00:00Z\n"), "macOS 15.0 keeps only the date of the next question")
+    #expect(out.contains("v150=renewed\nid 2099-01-01T00:00:00Z\nexe 2099-01-01T00:00:00Z\n"), "macOS 15.0 keeps only the date of the next question")
     #expect(out.contains("v150again=ok\n"))
     #expect(out.contains("broken=renewed\n"))
     #expect(out.contains("denied=denied\n"))
@@ -158,11 +197,16 @@ private func approvals(_ dir: URL) throws -> [String: Any] {
 }
 
 @Test func readinessExplainsTheConsentWindowByState() {
-    let base = "os=26.2\nadmin=imac07\nconsole=student\nkey=ok\nfolder=ok\nsudo=ok\nscreen_preflight=true\nscreen_alert_user=student\n"
+    let base = "os=26.2\nadmin=imac07\nconsole=student\nkey=ok\nfolder=ok\nsudo=ok\nscreen_alert_user=student\n"
+        + "agent_installed=1\nagent_version=\(ScreenAgentInfo.version)\nagent_loaded=1\n"
+        + "agent_ping=AGENT \(ScreenAgentInfo.version) perm=granted locked=0 console=1 asleep=0 user=student\nagent_ping_rc=0\n"
     func detail(_ extra: String) -> String {
         ReadinessReport.parse(base + extra, student: "student", sharedFolder: "/Users/student/Public/cmcr")[.screen].detail
     }
     #expect(detail("screen_alert=ok\n").contains("jest wyłączone (konto student)"))
+    #expect(detail("screen_alert=ok\n").contains("usługi podglądu"))
+    #expect(!detail("screen_alert=denied\n").contains("sshd-session"))
+    #expect(detail("screen_alert=denied\n").contains("„\(ScreenAgentInfo.displayName)” może dalej widzieć ekran"))
     #expect(detail("screen_alert=stale\n").contains("odnowi ją sam przed najbliższym podglądem"))
     #expect(detail("screen_alert=denied\n").contains("nie mają pełnego dostępu do dysku"))
     #expect(detail("screen_alert=denied\n").contains("setup/mdm/cmcr-screen-capture-alert.mobileconfig"))
@@ -200,7 +244,7 @@ private func approvals(_ dir: URL) throws -> [String: Any] {
     let services = try #require(pppc["Services"] as? [String: Any])
     #expect(services.keys.sorted() == ["SystemPolicyAllFiles"], "a PPPC profile cannot allow ScreenCapture")
     let entries = try #require(services["SystemPolicyAllFiles"] as? [[String: Any]])
-    #expect(entries.map { $0["Identifier"] as? String } == [client, "/usr/libexec/sshd-session"])
+    #expect(entries.map { $0["Identifier"] as? String } == [sshClient, "/usr/libexec/sshd-session"])
     for e in entries {
         #expect(e["Authorization"] as? String == "Allow" && e["Allowed"] == nil)
         #expect(e["IdentifierType"] as? String == "path")

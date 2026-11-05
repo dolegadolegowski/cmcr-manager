@@ -1,5 +1,6 @@
 #!/bin/bash
-# Builds "CMCR Manager.app" and the cmcrctl command line tool into ./build.
+# Builds "CMCR Manager.app" and the cmcrctl command line tool into ./build. The app carries CMCR Screen Agent
+# (docs/screen-agent.md) in Contents/Helpers; a copy next to build/cmcrctl lets that one find it too.
 #   scripts/build-app.sh          – release build
 #   scripts/build-app.sh --dmg    – additionally packs build/CMCR-Manager.dmg
 # Environment:
@@ -21,6 +22,8 @@ VERSION="${VERSION:-$(tr -d '[:space:]' < VERSION 2>/dev/null || true)}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
 BUILD_DIR="build"
 APP="$BUILD_DIR/$APP_NAME.app"
+AGENT_NAME="CMCR Screen Agent.app"
+HELPER="$APP/Contents/Helpers/$AGENT_NAME"
 
 DEFAULT_IDENTITY="CMCR Manager Code Signing"
 KEYCHAIN_ARGS=()
@@ -36,15 +39,17 @@ fi
 echo "• Kompilacja (release)…"
 swift build -c release --product "$EXECUTABLE"
 swift build -c release --product cmcrctl
+swift build -c release --product cmcr-screen-agent
 BIN="$(swift build -c release --show-bin-path)"
 if [ "${UNIVERSAL:-0}" = 1 ]; then
   echo "• Kompilacja x86_64 (universal)…"
   X86=(-c release --triple x86_64-apple-macosx14.0 --scratch-path .build/x86_64)
   swift build "${X86[@]}" --product "$EXECUTABLE"
   swift build "${X86[@]}" --product cmcrctl
+  swift build "${X86[@]}" --product cmcr-screen-agent
   X86_BIN="$(swift build "${X86[@]}" --show-bin-path)"
   mkdir -p "$BUILD_DIR/universal"
-  for b in "$EXECUTABLE" cmcrctl; do lipo -create "$BIN/$b" "$X86_BIN/$b" -output "$BUILD_DIR/universal/$b"; done
+  for b in "$EXECUTABLE" cmcrctl cmcr-screen-agent; do lipo -create "$BIN/$b" "$X86_BIN/$b" -output "$BUILD_DIR/universal/$b"; done
   BIN="$BUILD_DIR/universal"
 fi
 
@@ -95,8 +100,22 @@ PLIST
 if [ "$SIGN_IDENTITY" = "-" ]; then echo "• Podpis kodu: ad-hoc"; else echo "• Podpis kodu: $SIGN_IDENTITY"; fi
 codesign --force --sign "$SIGN_IDENTITY" ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} --identifier "$BUNDLE_ID.cmcrctl" \
   "$APP/Contents/Resources/bin/cmcrctl" "$BUILD_DIR/cmcrctl"
+# The screen agent is nested code: it is signed (same identity, its own identifier) before the app around it, whose
+# signature seals it. With a stable identity its Screen Recording permission on the iMacs survives new versions.
+echo "• Usługa podglądu ekranu ($AGENT_NAME)…"
+AGENT_ICON="$BUILD_DIR/AppIcon.icns" scripts/make-agent-bundle.sh "$BIN/cmcr-screen-agent" "$APP/Contents/Helpers" \
+  "$SIGN_IDENTITY" "${CMCR_SIGN_KEYCHAIN:-}" >/dev/null
 codesign --force --sign "$SIGN_IDENTITY" ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} "$APP"
 codesign --verify --deep --strict "$APP"
+codesign --verify --strict "$HELPER"
+AGENT_VERSION="$("$HELPER/Contents/MacOS/cmcr-screen-agent" --version)"
+if [ "${UNIVERSAL:-0}" = 1 ]; then
+  MAIN_ARCHS="$(lipo -archs "$APP/Contents/MacOS/$EXECUTABLE")"
+  AGENT_ARCHS="$(lipo -archs "$HELPER/Contents/MacOS/cmcr-screen-agent")"
+  [ "$AGENT_ARCHS" = "$MAIN_ARCHS" ] || { echo "✘ Usługa podglądu ma architektury '$AGENT_ARCHS', aplikacja '$MAIN_ARCHS'." >&2; exit 1; }
+fi
+rm -rf "$BUILD_DIR/$AGENT_NAME"
+ditto "$HELPER" "$BUILD_DIR/$AGENT_NAME"
 
 if [ "${1:-}" = "--dmg" ]; then
   echo "• Obraz DMG…"
@@ -113,3 +132,4 @@ fi
 rm -rf "$ICONSET" "$BUILD_DIR/icon-1024.png"
 echo "✔ Gotowe: $APP (wersja $VERSION, kompilacja $BUILD_NUMBER, podpis: $SIGN_IDENTITY)"
 echo "  CLI: $BUILD_DIR/cmcrctl"
+echo "  Usługa podglądu ekranu: $HELPER (wersja $AGENT_VERSION)"

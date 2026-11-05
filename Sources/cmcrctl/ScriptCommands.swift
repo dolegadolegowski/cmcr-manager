@@ -196,6 +196,10 @@ enum ScriptCommands {
         case "unity-modules": script = Scripts.unityInstallModules(version: arg(0), modules: Array(a.dropFirst()))
         case "android-sdk": script = Scripts.androidSDK(unityVersion: arg(0), apiLevels: Array(a.dropFirst()))
         case "screen-sharing": script = Scripts.enableScreenSharing()
+        // CMCR Screen Agent (docs/screen-agent.md): the scripts behind `cmcrctl screen-agent` with their own exit codes.
+        case "screen-agent-status": script = Scripts.screenAgentStatus()
+        case "screen-agent-permission": script = Scripts.requestScreenAgentPermission()
+        case "screen-agent-remove": script = Scripts.removeScreenAgent()
         case "push":
             // _builder push HOST DEST OWNER MODE file…
             let dest = arg(0), owner = arg(1), mode = arg(2)

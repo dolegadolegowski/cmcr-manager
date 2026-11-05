@@ -36,6 +36,9 @@ public struct SetupOptions: Codable, Equatable, Sendable {
     public var rosetta = false
     public var updates: UpdatePolicy = .unchanged
     public var fixFirewall = false
+    /// Install or update CMCR Screen Agent (the screen preview service) before the setup script runs. App and
+    /// `cmcrctl setup` only – the bash script never sees it (the agent ships inside the app, not in the script).
+    public var screenAgent = true
 
     public init() {}
 
@@ -67,6 +70,7 @@ public struct SetupOptions: Codable, Equatable, Sendable {
         rosetta = v(.rosetta, d.rosetta)
         updates = v(.updates, d.updates)
         fixFirewall = v(.fixFirewall, d.fixFirewall)
+        screenAgent = v(.screenAgent, d.screenAgent)
     }
 
     /// Value of `--power-schedule`, or `nil` to leave the schedule as it is.
@@ -416,6 +420,9 @@ public struct SetupCommandLine: Sendable {
       --rosetta                 zainstaluj Rosettę 2
       --updates check|download|auto
       --fix-firewall            wyłącz „Blokuj wszystkie połączenia przychodzące”
+      --no-screen-agent         nie instaluj usługi podglądu ekranu (CMCR Screen Agent); domyślnie
+                                setup najpierw ją instaluje lub aktualizuje (--screen-agent), poza
+                                --verify i --dry-run; skryptu z pliku (setup-script) to nie dotyczy
       --verify                  tylko sprawdź (nic nie zmienia); --dry-run pokazuje też polecenia
     """
 
@@ -478,6 +485,11 @@ public struct SetupCommandLine: Sendable {
                 }
                 options.updates = u
             case "--fix-firewall": options.fixFirewall = true
+            // Not a flag of the bash script: `cmcrctl setup` installs the agent itself before the script runs
+            // (SetupOptions.screenAgent). Always on by default, whatever the app last chose – the agent is what the
+            // screen preview needs, and installing the same version again changes nothing.
+            case "--screen-agent": options.screenAgent = true
+            case "--no-screen-agent": options.screenAgent = false
             case "--verify": mode = .verify
             case "--dry-run": mode = .dryRun
             default:

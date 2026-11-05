@@ -90,6 +90,8 @@ final class SetupReportFilter: @unchecked Sendable {
 
 enum ReadinessFix {
     case key, folder, wol, vnc
+    /// CMCR Screen Agent: install or update, ask for the Screen Recording permission, remove (docs/screen-agent.md).
+    case screenAgent, screenPermission, removeScreenAgent
 }
 
 extension AppModel {
@@ -98,23 +100,57 @@ extension AppModel {
         SSHKeys.currentPrivateKey(settings: settings).flatMap { SSHKeys.publicKey(for: $0) }
     }
 
-    /// Runs setup/cmcr-imac-setup.sh as root on the targets, then re-checks their readiness.
+    /// Runs setup/cmcr-imac-setup.sh as root on the targets, then re-checks their readiness. With
+    /// `options.screenAgent` an applying run first installs or updates CMCR Screen Agent on each Mac, in the same
+    /// job: the agent ships inside the app, so the script cannot carry it. „Tylko sprawdź” installs nothing.
     func runSetupScript(_ options: SetupOptions, mode: SetupScript.Mode, on targets: [Machine]) {
         let key = managerPublicKey
         let settings = self.settings
+        let withAgent = options.screenAgent && mode == .apply
+        // Looked up once for the whole batch: every Mac gets the same copy.
+        let agent = withAgent ? Self.bundledScreenAgent() : nil
         let title = mode == .apply
-            ? "Konfiguracja iMaców (skrypt \(SetupScript.version))"
+            ? "Konfiguracja iMaców (skrypt \(SetupScript.version)\(withAgent ? ", usługa podglądu \(ScreenAgentInfo.version)" : ""))"
             : "Sprawdzenie konfiguracji iMaców (bez zmian)"
         runBatch(title, on: targets, section: .setup, operation: { m, job in
+            var agentNote = ""
+            var agentFailure: CommandResult?
+            if withAgent {
+                if let agent {
+                    job.note("Usługa podglądu ekranu (\(ScreenAgentInfo.displayName) \(ScreenAgentInfo.version)) – instalacja lub aktualizacja…")
+                    let a = await self.installScreenAgent(agent, on: m, job: job)
+                    if a.succeeded {
+                        agentNote = " " + ScreenAgentInstallReport.parse(a.stdoutText).short
+                    } else {
+                        let (reach, message) = SSH.diagnose(a)
+                        // Stopped, or the Mac was not reached at all (off, password refused, host key not trusted):
+                        // the script would fail the same way, so the job ends with this result.
+                        if a.cancelled || job.handle.isCancelled || reach != .online { return a }
+                        agentFailure = a
+                        agentNote = " Uwaga: usługa podglądu nie została zainstalowana (\(message))."
+                        job.note("Usługa podglądu: \(message) Skrypt konfiguracyjny zostanie uruchomiony mimo to.")
+                    }
+                } else {
+                    agentNote = " Uwaga: usługa podglądu pominięta – ta kopia aplikacji jej nie zawiera."
+                    job.note(Self.screenAgentMissingText + " Usługa podglądu zostaje pominięta, reszta konfiguracji się wykona.")
+                }
+            }
             let script = SetupScript.remote(options, host: m, settings: settings, publicKey: key, mode: mode)
             let filter = SetupReportFilter(OutputSink(job).callback)
             let r = await SSH.run(script, on: m, password: self.password(for: m), settings: self.sshSettings,
                                   handle: job.handle, onOutput: filter.callback)
+            // The notes follow the streamed report, not a chunk of it still waiting to be shown.
+            job.flushIncoming()
             if let report = SetupReport.parse(r.stdoutText) {
-                job.note(report.summary)
+                job.note(report.summary + agentNote)
             } else if r.exitCode == SetupScript.ExitCode.badOptions {
-                job.note("Skrypt odrzucił opcje – szczegóły powyżej.")
+                job.note("Skrypt odrzucił opcje – szczegóły powyżej." + agentNote)
+            } else if r.succeeded, !agentNote.isEmpty {
+                job.note(agentNote.trimmingCharacters(in: .whitespaces))
             }
+            // The script went well but the agent did not: the job fails, so „Powtórz na nieudanych” installs it
+            // again (the script runs again too, and changes only what is still needed).
+            if r.succeeded, let agentFailure { return agentFailure }
             return r
         }, completion: { batch in
             ReadinessStore.shared.check(batch.jobs.map(\.machine), model: self)
@@ -144,6 +180,12 @@ extension AppModel {
         case .vnc:
             runScript("Włącz Udostępnianie ekranu", on: targets, section: .setup,
                       script: { _ in Scripts.enableScreenSharing() }, onResult: recheck)
+        case .screenAgent:
+            installScreenAgent(on: targets, onResult: recheck)
+        case .screenPermission:
+            requestScreenAgentPermission(on: targets, onResult: recheck)
+        case .removeScreenAgent:
+            removeScreenAgent(on: targets, onResult: recheck)
         }
     }
 }
@@ -205,7 +247,7 @@ extension ReadinessCheck {
         case .folder: return "Folder\nucznia"
         case .wol: return "Budzenie\nprzez sieć"
         case .vnc: return "Udostępnianie\nekranu"
-        case .screen: return "Nagrywanie\nekranu"
+        case .screen: return "Podgląd\nekranu"
         case .fda: return "Pełny dostęp\ndo dysku"
         case .filevault: return "FileVault"
         case .setup: return "Wersja\nkonfiguracji"
@@ -240,7 +282,7 @@ enum ManualStep: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .fullDiskAccess: return "Pełny dostęp do dysku dla sesji zdalnych"
-        case .screenRecording: return "Nagrywanie ekranu dla podglądu"
+        case .screenRecording: return "Nagrywanie ekranu dla usługi podglądu"
         case .screenSharing: return "Udostępnianie ekranu – czarny obraz"
         case .fileVault: return "FileVault – odblokowanie po restarcie"
         case .localNetwork: return "Na tym Macu: dostęp do sieci lokalnej"
@@ -270,7 +312,7 @@ enum ManualStep: String, CaseIterable, Identifiable {
     var summary: String {
         switch self {
         case .fullDiskAccess: return "Pobieranie prac z Biurka i Dokumentów ucznia, czyszczenie folderów, podmiana aplikacji, a od macOS 15 także wyłączenie okna, w którym system pyta ucznia o zgodę na podgląd ekranu."
-        case .screenRecording: return "Bez tego podgląd ekranów pokazuje tylko tapetę."
+        case .screenRecording: return "Usługa podglądu (\(ScreenAgentInfo.displayName)) robi zrzut ekranu dopiero wtedy, gdy raz na każdym iMacu dostanie to uprawnienie."
         case .screenSharing: return "Tylko gdy Udostępnianie ekranu (VNC) pokazuje czarny obraz."
         case .fileVault: return "Z FileVault iMac po restarcie jest niedostępny, dopóki ktoś go nie odblokuje."
         case .localNetwork: return "Jednorazowa zgoda macOS dla CMCR Manager."
@@ -285,11 +327,10 @@ enum ManualStep: String, CaseIterable, Identifiable {
                     "Kliknij ⓘ obok „Zdalne logowanie”.",
                     "Włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” i kliknij OK."]
         case .screenRecording:
-            return ["Otwórz Ustawienia systemowe › Prywatność i ochrona › Nagrywanie ekranu i dźwięku systemowego (w macOS 14 i starszych: Nagrywanie ekranu).",
-                    "Kliknij „+” pod listą i podaj hasło administratora.",
-                    "Naciśnij ⌘⇧G, wpisz /usr/libexec/sshd-keygen-wrapper i kliknij Otwórz.",
-                    "Sprawdź, czy przełącznik przy sshd-keygen-wrapper jest włączony.",
-                    "Jeśli podgląd nadal pokazuje tylko tapetę (nowszy macOS, OpenSSH 9.8+), dodaj tak samo /usr/libexec/sshd-session."]
+            return ["W aplikacji kliknij „Poproś o uprawnienie na iMacu” w okienku komórki „Podgląd ekranu” (albo Szybkie naprawy › Poproś o uprawnienie nagrywania ekranu) – na iMacu pojawi się okno macOS.",
+                    "Przy iMacu otwórz Ustawienia systemowe › Prywatność i ochrona › Nagrywanie ekranu i dźwięku systemowego (w macOS 14: Nagrywanie ekranu) – albo kliknij „Otwórz Ustawienia systemowe” w tym oknie.",
+                    "Włącz „\(ScreenAgentInfo.displayName)” i podaj hasło administratora.",
+                    "W aplikacji kliknij „Sprawdź ponownie” – kolumna „Podgląd ekranu” pokaże „gotowy”."]
         case .screenSharing:
             return ["Otwórz Ustawienia systemowe › Ogólne › Udostępnianie.",
                     "Wyłącz i ponownie włącz „Udostępnianie ekranu”.",
@@ -308,8 +349,9 @@ enum ManualStep: String, CaseIterable, Identifiable {
         case .fullDiskAccess:
             return ["macOS chroni to ustawienie – nie da się go włączyć zdalnie ani skryptem (tylko przy komputerze lub przez MDM)."]
         case .screenRecording:
-            return ["W macOS 26.1–26.2 dodane narzędzie może nie być widoczne na liście – to błąd systemu, uprawnienie działa.",
-                    "Samego uprawnienia nie da się nadać zdalnie: systemowa baza TCC jest chroniona przez SIP, a profil MDM może Nagrywanie ekranu tylko zablokować albo pozwolić włączyć je kontu standardowemu – nie włączyć.",
+            return ["Uprawnienie nadaje się raz na iMaca – obowiązuje dla wszystkich kont, także ucznia.",
+                    "Z podpisem ad-hoc (aplikacja zbudowana bez stałej tożsamości podpisu) każda nowa wersja usługi wymaga ponownego nadania uprawnienia; ponowna instalacja tej samej wersji zostawia usługę i uprawnienie bez zmian. Ze stałą tożsamością podpisu (scripts/make-signing-identity.sh) uprawnienie przetrwa także aktualizacje usługi.",
+                    "Samego uprawnienia nie da się nadać zdalnie: systemowa baza TCC jest chroniona przez SIP. Profil MDM (PPPC) dla ScreenCapture z AllowStandardUserToSetSystemService pozwala włączyć je uczniowi na koncie standardowym – nadal przy komputerze.",
                     "Okno, w którym macOS 15+ co jakiś czas pyta zalogowanego użytkownika o zgodę na dostęp do ekranu, CMCR Manager wyłącza sam przed każdym podglądem (potrzebny pełny dostęp do dysku dla sesji zdalnych). Na Macach w MDM takie okna wyłącza na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig – dla wszystkich aplikacji i kont na Macu, nie tylko dla podglądu."]
         case .screenSharing:
             return ["Od macOS 12.1 usługa włączona zdalnie potrafi pokazywać czarny ekran, dopóki ktoś raz jej nie przełączy."]
@@ -318,12 +360,6 @@ enum ManualStep: String, CaseIterable, Identifiable {
         case .localNetwork:
             return []
         }
-    }
-
-    /// Text worth copying while following the steps.
-    /// Paths to paste in the file dialog: both ssh programs that may need Screen Recording (AUDIT TXT-14).
-    var copyTexts: [String] {
-        self == .screenRecording ? ["/usr/libexec/sshd-keygen-wrapper", "/usr/libexec/sshd-session"] : []
     }
 
     func applies(to r: ReadinessReport) -> Bool {
@@ -353,6 +389,7 @@ struct ReadinessView: View {
     @ObservedObject private var store = ReadinessStore.shared
     @ViewState private var sheet: SetupSheetMode?
     @ViewState private var passwordFor: Machine?
+    @ViewState private var confirm: ConfirmRequest?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -394,6 +431,7 @@ struct ReadinessView: View {
         .sheet(item: $passwordFor) { m in
             HostPasswordSheet(machine: m).environmentObject(model)
         }
+        .confirmation($confirm)
         .task {
             if store.reports.isEmpty && store.checking.isEmpty && !model.machines.isEmpty {
                 store.check(model.machines, model: model)
@@ -457,6 +495,22 @@ struct ReadinessView: View {
                 }
                 .disabled(model.actionTargets.isEmpty)
             }
+            Section("Usługa podglądu ekranu (\(ScreenAgentInfo.displayName))") {
+                Button("Zainstaluj lub zaktualizuj usługę podglądu ekranu", systemImage: "puzzlepiece.extension") {
+                    model.applyReadinessFix(.screenAgent, on: model.selectedMachines)
+                }
+                .disabled(model.actionTargets.isEmpty)
+                .help("Wysyła usługę \(ScreenAgentInfo.version) z tej aplikacji i uruchamia ją w sesji zalogowanego użytkownika. Ta sama wersja zostaje bez zmian, więc nadane uprawnienie nie przepada.")
+                Button("Poproś o uprawnienie nagrywania ekranu", systemImage: "hand.raised") {
+                    model.applyReadinessFix(.screenPermission, on: model.selectedMachines)
+                }
+                .disabled(model.actionTargets.isEmpty)
+                .help("Pokazuje przy iMacu okno macOS i dodaje usługę do listy „Nagrywanie ekranu i dźwięku systemowego” – włączyć ją musi ktoś przy komputerze.")
+                Button("Usuń usługę podglądu…", systemImage: "trash", role: .destructive) {
+                    confirmRemoveScreenAgent()
+                }
+                .disabled(model.actionTargets.isEmpty)
+            }
             Section("Klucze komputerów (pierwsze połączenie, reinstalacja)") {
                 Button("Sprawdź klucz komputera…", systemImage: "key.viewfinder") {
                     model.reviewHostKeys(model.selectedMachines)
@@ -469,6 +523,16 @@ struct ReadinessView: View {
         .fixedSize()
         .disabled(model.selection.isEmpty)
         .help("Pojedyncze poprawki na zaznaczonych iMacach bez uruchamiania całego skryptu.")
+    }
+
+    func confirmRemoveScreenAgent() {
+        let targets = model.selectedMachines
+        confirm = ConfirmRequest(
+            title: "Usunąć usługę podglądu ekranu?",
+            message: "Z iMaców zostanie usunięta usługa \(ScreenAgentInfo.displayName), jej zapisane zrzuty i uprawnienie nagrywania ekranu. Podgląd ekranów przestanie na nich działać; po ponownej instalacji uprawnienie trzeba będzie nadać od nowa przy każdym iMacu.",
+            button: "Usuń usługę") {
+                model.applyReadinessFix(.removeScreenAgent, on: targets)
+            }
     }
 
     @ViewBuilder var checkStatus: some View {
@@ -826,6 +890,12 @@ struct ReadinessCellDetail: View {
             fix("Włącz budzenie przez sieć", "dot.radiowaves.left.and.right", .wol)
         case (.vnc, .off):
             fix("Włącz Udostępnianie ekranu", "rectangle.on.rectangle", .vnc)
+        // No agent, an older one, or one that does not answer: installing (the same version is left as it is) fixes it.
+        case (.screen, .problem), (.screen, .warning):
+            fix("Zainstaluj usługę podglądu", "puzzlepiece.extension", .screenAgent)
+        // The agent runs but has no permission: macOS shows its dialog at the iMac; someone there switches it on.
+        case (.screen, .manual):
+            fix("Poproś o uprawnienie na iMacu", "hand.raised", .screenPermission)
         case (.setup, _):
             Button(action: onConfigure) {
                 Label("Skonfiguruj ten iMac…", systemImage: "wrench.and.screwdriver")
@@ -939,15 +1009,6 @@ struct ManualStepGuideContent: View {
             Label(step.title, systemImage: step.icon).font(.headline)
             ForEach(Array(step.steps.enumerated()), id: \.offset) { i, text in
                 NumberedStep(n: i + 1, text: text)
-            }
-            ForEach(step.copyTexts, id: \.self) { copy in
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(copy, forType: .string)
-                } label: {
-                    Label("Kopiuj ścieżkę \(copy)", systemImage: "doc.on.doc")
-                }
-                .help("Przydaje się, gdy instrukcję czytasz na tym samym Macu, który konfigurujesz.")
             }
             ForEach(step.notes, id: \.self) { note in
                 Label {

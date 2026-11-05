@@ -152,6 +152,16 @@ extension ScreenIssue {
 
     /// Plain-language explanation on the tile (the technical one stays in the tooltip).
     var displayMessage: String { isOffline ? "Może być wyłączony, uśpiony albo poza siecią." : message }
+
+    /// What the app can start from the tile when CMCR Screen Agent cannot serve the preview (docs/screen-agent.md):
+    /// installing it again fixes a missing, stuck or replaced agent; a missing permission needs the macOS dialog.
+    var agentFix: ReadinessFix? {
+        switch self {
+        case .agentMissing, .agentDown, .agentUntrusted: return .screenAgent
+        case .agentPermission: return .screenPermission
+        default: return nil
+        }
+    }
 }
 
 extension ScreenFreshness {
@@ -324,6 +334,20 @@ struct ScreenActions {
         center.refresh(targets.map(\.id))
     }
 
+    /// Installs the agent or asks for its permission from a tile; the preview of that Mac tries again afterwards.
+    func fixAgent(_ fix: ReadinessFix, on m: Machine) {
+        let center = center, model = model
+        let again: @MainActor (Machine, CommandResult) -> Void = { m, r in
+            if r.succeeded { center.refresh([m.id]) }
+            ReadinessStore.shared.check([m], model: model)
+        }
+        if fix == .screenPermission {
+            model.requestScreenAgentPermission(on: [m], section: .screens, onResult: again)
+        } else {
+            model.installScreenAgent(on: [m], section: .screens, onResult: again)
+        }
+    }
+
     func save(_ feed: ScreenFeed, of m: Machine) {
         guard let image = feed.image, let data = ScreenImage.encode(image) else {
             model.reportFailure("Brak obrazu do zapisania", hint: "Poczekaj, aż pojawi się obraz ekranu \(m.name).")
@@ -422,6 +446,14 @@ struct ScreenMoreMenuItems: View {
     let actions: ScreenActions
 
     var body: some View {
+        if let fix = feed.issue?.agentFix {
+            Button { actions.fixAgent(fix, on: machine) } label: {
+                fix == .screenPermission
+                    ? Label("Poproś o uprawnienie nagrywania ekranu", systemImage: "hand.raised")
+                    : Label("Zainstaluj usługę podglądu", systemImage: "puzzlepiece.extension")
+            }
+            Divider()
+        }
         Button { actions.refresh([machine]) } label: { Label("Odśwież teraz", systemImage: "arrow.clockwise") }
         Button { actions.save(feed, of: machine) } label: { Label("Zapisz zrzut ekranu…", systemImage: "square.and.arrow.up") }
             .disabled(feed.image == nil)

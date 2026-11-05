@@ -67,6 +67,7 @@ else
 fi
 
 section "REV-08: pozostały licznik automatycznego odblokowania nie blokuje podglądu"
+agent_ensure
 rv_settings_backup="$(cat "$WORK/config/settings.json")"
 python3 - "$WORK/config/settings.json" <<'PY'
 import json, sys
@@ -74,7 +75,7 @@ p = sys.argv[1]; s = json.load(open(p))
 s.update(observeAllowedUsers="", observeOnlyStandardAccounts=False, screenshotMaxSize=640)
 json.dump(s, open(p, "w"))
 PY
-rm -f "$WORK"/fake-notify-* "$WORK/attention.running" "$WORK/lockscreen.running"
+agent_reset; rm -f "$WORK/attention.running" "$WORK/lockscreen.running"
 printf '%s' daemon > "$WORK/console_user"           # a new student at the screen, not the SSH account
 # The auto-unlock timer of lockScreen as it stays after a logout: root's bash with the tag in its arguments (here
 # the test account's; the student at the screen is another account).
@@ -89,15 +90,15 @@ clear_fakelog
 out="$(ctlpw screen-watch 1 "$RV/watch-timer" --frames 1 --interval 2)"; code=$?
 expect_not "licznik odblokowania bez blokady: nie twierdzi, że ekran jest zablokowany" "$out" "zablokowany w trybie uwagi"
 expect "licznik odblokowania bez blokady: uczeń powiadomiony" "$out" "Powiadomiono użytkownika daemon"
-if [ "$(rv_count '^screencapture ')" -gt 0 ]; then pass "licznik odblokowania bez blokady: obraz pobrany"
-else fail "licznik odblokowania bez blokady: obraz nie został pobrany" "$(fakelog)"; fi
+if [ "$(agent_count '^CMCRA1 CAPTURE ')" -gt 0 ]; then pass "licznik odblokowania bez blokady: obraz pobrany"
+else fail "licznik odblokowania bez blokady: obraz nie został pobrany" "$(agentlog)"; fi
 # The overlay itself (in the student's session) still holds the notice back (AUDIT ZAJ-05).
 : > "$WORK/attention.running"
 clear_fakelog
 out="$(ctlpw screen-watch 1 "$RV/watch-overlay" --frames 1 --interval 2)"
 rm -f "$WORK/attention.running"
 expect "komunikat trybu uwagi na ekranie: powiadomienie czeka" "$out" "zablokowany w trybie uwagi"
-expect_code "komunikat trybu uwagi na ekranie: obraz nie jest pobierany" "$(rv_count '^screencapture ')" 0 "$(fakelog)"
+expect_code "komunikat trybu uwagi na ekranie: obraz nie jest pobierany" "$(agent_count '^CMCRA1 CAPTURE ')" 0 "$(agentlog)"
 pkill -P "$RV_TIMER" 2>/dev/null; kill "$RV_TIMER" 2>/dev/null; wait "$RV_TIMER" 2>/dev/null
 rm -f "$WORK/console_user"
 printf '%s' "$rv_settings_backup" > "$WORK/config/settings.json"

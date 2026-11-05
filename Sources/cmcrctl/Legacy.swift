@@ -87,13 +87,13 @@ func runEach(_ list: [Machine], _ a: ModuleArguments, ssh: SSHSettings, timeout:
 enum ExtraCommands {
     static var usage: String {
         // The classroom commands have a heading of their own: a blank line before it, like before every section.
-        [ScriptCommands.usage, UnityCLI.usage, SetupCommands.usage, BrowseCLI.usage, "\n" + ClassroomCLI.usage, screenWatchUsage,
-         SelfUpdateCommand.usage].joined(separator: "\n")
+        [ScriptCommands.usage, UnityCLI.usage, SetupCommands.usage, ScreenAgentCLI.usage, BrowseCLI.usage, "\n" + ClassroomCLI.usage,
+         screenWatchUsage, SelfUpdateCommand.usage].joined(separator: "\n")
     }
 
     /// Commands parsed with `ModuleArguments` (setup, setup-script and readiness have their own parser and help).
     static let moduleCommands: Set<String> = Set(ScriptCommands.specs.keys).union(BrowseCLI.specs.keys)
-        .union(ClassroomCLI.specs.keys).union(["screen-watch", "rename"])
+        .union(ClassroomCLI.specs.keys).union(["screen-watch", "screen-agent", "rename"])
 
     /// Exit status, or nil when the command is not handled here. `argv` starts with the command word.
     @MainActor
@@ -118,13 +118,15 @@ enum ExtraCommands {
         // every Mac (`lock --help` used to lock the whole lab).
         if ModuleArguments.wantsHelp(args) {
             Console.out(commandHelp(command, spec: ScriptCommands.specs[command] ?? BrowseCLI.specs[command]
-                                    ?? ClassroomCLI.specs[command] ?? (command == "screen-watch" ? screenWatchSpec : nil)))
+                                    ?? ClassroomCLI.specs[command] ?? (command == "screen-watch" ? screenWatchSpec : nil)
+                                    ?? (command == "screen-agent" ? ScreenAgentCLI.spec : nil)))
             return ExitCode.success
         }
         let ssh = sshSettings
         switch command {
         case "install", "install-url", "unity": return await ScriptCommands.run(command, args)
         case "screen-watch": return await screenWatchCommand(args)
+        case "screen-agent": return await ScreenAgentCLI.run(ModuleArguments.parse(command, args, ScreenAgentCLI.spec))
         case "rename": return await rename(args, ssh: ssh)
         default:
             if BrowseCLI.specs[command] != nil {
@@ -176,7 +178,8 @@ let screenWatchUsage = """
   cmcrctl screen-watch nr katalog [--frames N] [--interval S] [--size PX] [--display main|all|N]
                                             podgląd ekranu na żywo: kolejne klatki JPEG w katalogu
                                             (kody wyjścia: 3 – nikt nie jest zalogowany, 4 – podgląd
-                                            niedozwolony, 5 – brak uprawnienia nagrywania ekranu, 6 – sudo)
+                                            niedozwolony, 5 – brak uprawnienia nagrywania ekranu, 6 – sudo,
+                                            9 – brak usługi podglądu lub nie odpowiada: cmcrctl screen-agent)
 """
 
 func looksLikeRemotePath(_ s: String) -> Bool {

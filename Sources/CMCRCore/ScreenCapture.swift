@@ -4,7 +4,8 @@ import Foundation
 // a single capture over `SSH.run` (CLI, "save screenshot") and a long-lived stream used by the app.
 
 public extension ScriptCode {
-    /// The capture needs sudo (`launchctl asuser`) and sudo failed: no stored password, a wrong one, or no rights.
+    /// The capture needs sudo (only root may ask another account's screen agent) and sudo failed: no stored password,
+    /// a wrong one, or no rights.
     static let captureSudoFailed: Int32 = 6
     /// The observed user could not be shown the "your screen is being viewed" notice, so nothing was captured.
     static let observeNotNotified: Int32 = 8
@@ -97,6 +98,14 @@ public enum ScreenIssue: Equatable, Sendable {
     case sudoPasswordWrong
     case sudoNotPermitted
     case captureFailed(String)
+    /// CMCR Screen Agent is not installed on this iMac (docs/screen-agent.md).
+    case agentMissing
+    /// The agent is installed but did not answer in the user's session, even after launchd restarted it (detail).
+    case agentDown(String)
+    /// Something other than the installed agent answered on its socket – no image is taken from it (detail).
+    case agentUntrusted(String)
+    /// The agent has no Screen Recording permission on this iMac yet.
+    case agentPermission
     /// The observation notice could not be shown to this user, so the screen is not captured (user, detail).
     case notifyFailed(String, String)
     case connection(Reachability, String)
@@ -124,7 +133,11 @@ public enum ScreenIssue: Equatable, Sendable {
         case .sudoPasswordMissing: return "Brak hasła administratora"
         case .sudoPasswordWrong: return "Błędne hasło administratora"
         case .sudoNotPermitted: return "Konto bez uprawnień sudo"
-        case .captureFailed: return "Brak uprawnienia do nagrywania ekranu"
+        case .captureFailed: return "Zrzut ekranu nieudany"
+        case .agentMissing: return "Brak usługi podglądu"
+        case .agentDown: return "Usługa podglądu nie odpowiada"
+        case .agentUntrusted: return "Niezaufana usługa podglądu"
+        case .agentPermission: return "Brak uprawnienia do nagrywania ekranu"
         case .notifyFailed: return "Nie udało się powiadomić ucznia"
         case .connection(let r, _): return r == .offline ? "Komputer nie odpowiada" : r == .authFailed ? "Odmowa dostępu" : "Błąd połączenia"
         case .other: return "Błąd podglądu"
@@ -146,8 +159,18 @@ public enum ScreenIssue: Equatable, Sendable {
         case .sudoNotPermitted:
             return "Konto, którym łączy się aplikacja, nie może używać sudo (nie jest administratorem tego iMaca)."
         case .captureFailed(let detail):
-            let base = "Zrzut ekranu nieudany. Na tym iMacu nadaj sesjom SSH uprawnienie „Nagrywanie ekranu i dźwięku systemowego”: Ustawienia systemowe › Prywatność i ochrona › „+” › /usr/libexec/sshd-keygen-wrapper (w nowszych macOS może być potrzebne także /usr/libexec/sshd-session). Konfiguracja › Przygotowanie iMaców pokazuje, czy działa."
+            let base = "Usługa podglądu nie zrobiła zrzutu ekranu."
             return detail.isEmpty ? base : "\(base) (\(detail))"
+        case .agentMissing:
+            return "Na tym iMacu nie ma usługi podglądu ekranu (\(ScreenAgentInfo.displayName)). Zainstaluj ją: Konfiguracja › Przygotowanie iMaców › Szybkie naprawy › Zainstaluj usługę podglądu (albo Skonfiguruj zaznaczone)."
+        case .agentDown(let detail):
+            let base = "Usługa podglądu (\(ScreenAgentInfo.displayName)) nie odpowiada w sesji zalogowanego użytkownika, także po ponownym uruchomieniu. Zainstaluj ją ponownie w Konfiguracja › Przygotowanie iMaców."
+            return detail.isEmpty ? base : "\(base) (\(detail))"
+        case .agentUntrusted(let detail):
+            let base = "Na gnieździe usługi podglądu odpowiada inny program niż zainstalowana usługa – obraz nie jest pobierany. Zainstaluj usługę ponownie w Konfiguracja › Przygotowanie iMaców."
+            return detail.isEmpty ? base : "\(base) (\(detail))"
+        case .agentPermission:
+            return "Usługa podglądu nie ma jeszcze uprawnienia do nagrywania ekranu. Przy tym iMacu: Ustawienia systemowe › Prywatność i ochrona › Nagrywanie ekranu i dźwięku systemowego › włącz „\(ScreenAgentInfo.displayName)”. Konfiguracja › Przygotowanie iMaców › „Poproś o uprawnienie” dodaje usługę do tej listy i pokazuje okno macOS przy komputerze."
         case .notifyFailed(let user, let detail):
             let base = "Na ekranie użytkownika \(user) nie udało się wyświetlić informacji o podglądzie, więc obraz nie jest pobierany. Kolejna próba przy następnym odświeżeniu."
             return detail.isEmpty ? base : "\(base) (\(detail))"
@@ -162,6 +185,9 @@ public enum ScreenIssue: Equatable, Sendable {
         case .userNotAllowed, .adminAccount: return "eye.slash"
         case .sudoPasswordMissing, .sudoPasswordWrong, .sudoNotPermitted: return "key.slash"
         case .captureFailed: return "rectangle.dashed.badge.record"
+        case .agentMissing, .agentDown: return "puzzlepiece.extension"
+        case .agentUntrusted: return "exclamationmark.shield"
+        case .agentPermission: return "rectangle.dashed.badge.record"
         case .notifyFailed: return "bell.slash"
         case .connection(let r, _): return r == .offline ? "wifi.slash" : "exclamationmark.triangle"
         case .other: return "exclamationmark.triangle"
@@ -174,7 +200,8 @@ public enum ScreenIssue: Equatable, Sendable {
         case .noUser: return ScriptCode.noConsoleUser
         case .userNotAllowed, .adminAccount: return ScriptCode.observeDenied
         case .sudoPasswordMissing, .sudoPasswordWrong, .sudoNotPermitted: return ScriptCode.captureSudoFailed
-        case .captureFailed: return ScriptCode.captureFailed
+        case .captureFailed, .agentPermission: return ScriptCode.captureFailed
+        case .agentMissing, .agentDown, .agentUntrusted: return ScriptCode.agentUnavailable
         case .notifyFailed: return ScriptCode.observeNotNotified
         case .connection, .other: return 1
         }
@@ -189,6 +216,10 @@ public enum ScreenIssue: Equatable, Sendable {
         case "sudo-wrong": self = .sudoPasswordWrong
         case "sudo-denied": self = .sudoNotPermitted
         case "capture": self = .captureFailed(detail)
+        case "agent-missing": self = .agentMissing
+        case "agent-down": self = .agentDown(detail)
+        case "agent-untrusted": self = .agentUntrusted(detail)
+        case "agent-perm": self = .agentPermission
         case "notify": self = .notifyFailed(user.isEmpty ? "?" : user, detail)
         case "error": self = .other(detail.isEmpty ? "Błąd skryptu podglądu." : detail)
         default: return nil
@@ -305,10 +336,13 @@ public enum ScreenStreamCommand: Equatable, Sendable {
 public extension Scripts {
     /// Captures the console user's screen as JPEG, honouring the observation restrictions.
     ///
-    /// Runs unprivileged when the SSH account is the one logged in at the screen; otherwise the capture loop
-    /// is re-executed once as root (`launchctl asuser` needs it), so a whole stream costs a single sudo.
-    /// The console user and the frontmost application are re-read on every cycle; a user who has not been
-    /// told yet in this observation session is notified once before the first capture.
+    /// The picture comes from CMCR Screen Agent (docs/screen-agent.md), which runs in the user's GUI session and is
+    /// the process macOS gives the Screen Recording permission to; this script only asks it (`cmcr-screen-agent client
+    /// <uid> notice|capture …`) and streams the file it saved. It runs unprivileged when the SSH account is the one
+    /// logged in at the screen (and its agent's folder `run/<uid>` exists); otherwise the loop is re-executed once as
+    /// root (only root may talk to another account's agent, restart it and make its folder), so a whole stream costs a
+    /// single sudo. The console user is re-read on every cycle; a user
+    /// who has not been told yet in this login session is notified once before the first capture.
     static func screenCapture(_ o: ScreenCaptureOptions) -> RemoteScript {
         RemoteScript(#"""
         CMCR_MAXSIZE=\#(ScreenCaptureOptions.clampedSize(o.maxSize))
@@ -321,7 +355,11 @@ public extension Scripts {
         CMCR_NOTIFY=\#(o.notify ? 1 : 0)
         CMCR_LAST=\#(shQuote(o.alreadyNotifiedUser ?? ""))
         CMCR_DISPLAY=\#(shQuote(o.display.scriptValue))
-        SCR_NOTICE="$(echo \#(Data(observeNoticeJXA().utf8).base64EncodedString()) | base64 -D)"
+        SCR_NOTICE_T=\#(Data(observeNoticeTitle.utf8).base64EncodedString())
+        SCR_NOTICE_X=\#(Data(observeNoticeText.utf8).base64EncodedString())
+        R="${CMCR_SETUP_ROOT_PREFIX:-}"
+        \#(screenAgentShellPaths)
+        \#(screenAgentShellFunctions)
         \#(screenCaptureApprovalShell)
         if [ -n "${SCR_IN_SET:-}" ]; then
           CMCR_MAXSIZE="$SCR_IN_SIZE"; CMCR_INTERVAL="$SCR_IN_INTERVAL"; CMCR_DISPLAY="$SCR_IN_DISPLAY"; CMCR_LAST="$SCR_IN_LAST"
@@ -344,13 +382,6 @@ public extension Scripts {
             SCR_UID_FOR="$CONSOLE_USER"
           fi
         }
-        # Runs a tool in the console user's GUI session: directly when that is us, else through launchctl (root).
-        scr_gui() {
-          if [ "$SCR_ME" = "$CONSOLE_UID" ]; then "${1##*/}" "${@:2}"; else launchctl asuser "$CONSOLE_UID" "$@"; fi
-        }
-        scr_gui_user() {
-          if [ "$SCR_ME" = "$CONSOLE_UID" ]; then "${1##*/}" "${@:2}"; else launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" -- "$@"; fi
-        }
         scr_allowed() {
           # Nobody at the screen: whoever logs in next is told again (AUDIT ZAJ-04).
           if [ -z "$CONSOLE_USER" ]; then CMCR_LAST=""; scr_emit STATE nouser; SCR_RC=\#(ScriptCode.noConsoleUser); return 1; fi
@@ -369,19 +400,48 @@ public extension Scripts {
           fi
           return 0
         }
-        # Stops a process and everything it started, children first: the wrapper subshell of a notice, the
-        # launchctl/sudo under it and the osascript itself. They stay in the script's process group, so a job
-        # cancel still reaches them too.
-        scr_kill_tree() {
-          local c
-          for c in $(pgrep -P "$1" 2>/dev/null); do scr_kill_tree "$c"; done
-          kill "$1" 2>/dev/null
+        # One command for the agent in the console user's session (`client <uid> …`): its answer is in
+        # $SCR_DIR/agent.out, the exit code in SCR_AGENT_RC and its own words in SCR_AGENT_ERR. The client talks only to
+        # the process launchd runs for that session (--pid). An agent that does not answer (code 10: not running, no
+        # socket, refused, no answer in time) is loaded or restarted by launchd and asked once more; it keeps the screen
+        # untouched until it is asked.
+        scr_agent() {
+          local again=0
+          while :; do
+            cmcr_agent_client "$CONSOLE_UID" "$@" </dev/null >"$SCR_DIR/agent.out" 2>"$SCR_DIR/agent.err"
+            SCR_AGENT_RC=$?
+            [ "$SCR_AGENT_RC" = \#(ScreenAgentInfo.ClientCode.unreachable) ] && [ $again = 0 ] || break
+            again=1
+            cmcr_agent_revive "$CONSOLE_UID" 5
+          done
+          SCR_AGENT_CODE="$(sed -n 's/^ERR \([^ ]*\).*/\1/p' "$SCR_DIR/agent.out" 2>/dev/null | head -n 1)"
+          SCR_AGENT_ERR="$(sed -n 's/^ERR [^ ]* *//p' "$SCR_DIR/agent.out" 2>/dev/null | head -n 1)"
+          [ -n "$SCR_AGENT_ERR" ] || SCR_AGENT_ERR="$(grep -v '^ *$' "$SCR_DIR/agent.err" 2>/dev/null | head -n 1)"
+          return "$SCR_AGENT_RC"
         }
-        # Tells a user who was not told yet that the screen is being viewed. The notice is a small panel drawn by
-        # osascript in the user's session (Scripts.observeNoticeJXA): unlike `display notification` it needs no
-        # Notification Center permission and Focus does not hide it, and it confirms that it is on screen
-        # (CMCR:NOTICE:shown). Without that confirmation the user counts as not notified: nothing is captured
-        # (STATE notify) and the next cycle tries again.
+        # What a failed agent command (notice or capture) means for the app; always fails.
+        scr_agent_failed() {
+          local detail="$SCR_AGENT_ERR"
+          case "$SCR_AGENT_CODE" in
+            asleep) detail="ekran jest uśpiony" ;;
+            notconsole) detail="sesja użytkownika nie jest na pierwszym planie (szybkie przełączanie użytkowników)" ;;
+            nodisplay) detail="brak ekranu" ;;
+          esac
+          [ -n "$detail" ] || detail="usługa podglądu zakończyła się kodem $SCR_AGENT_RC"
+          case "$SCR_AGENT_RC" in
+            \#(ScreenAgentInfo.ClientCode.unreachable)) scr_emit STATE agent-down "$CONSOLE_USER" "$SCR_AGENT_ERR"; SCR_RC=\#(ScriptCode.agentUnavailable) ;;
+            \#(ScreenAgentInfo.ClientCode.untrusted)) scr_emit STATE agent-untrusted "$CONSOLE_USER" "$SCR_AGENT_ERR"; SCR_RC=\#(ScriptCode.agentUnavailable) ;;
+            \#(ScreenAgentInfo.ClientCode.noPermission)) scr_emit STATE agent-perm "$CONSOLE_USER" "$SCR_AGENT_ERR"; SCR_RC=\#(ScriptCode.captureFailed) ;;
+            \#(ScreenAgentInfo.ClientCode.locked))
+              # Nobody sees a notice on a locked screen, and no image is taken without one (AUDIT ZAJ-05).
+              scr_emit STATE notify "$CONSOLE_USER" "ekran jest zablokowany – komunikat zostanie pokazany po jego odblokowaniu"
+              SCR_RC=\#(ScriptCode.observeNotNotified) ;;
+            *)
+              if [ "$1" = notice ]; then scr_emit STATE notify "$CONSOLE_USER" "$detail"; SCR_RC=\#(ScriptCode.observeNotNotified)
+              else scr_emit STATE capture "$CONSOLE_USER" "$detail"; SCR_RC=\#(ScriptCode.captureFailed); fi ;;
+          esac
+          return 1
+        }
         # The login session at the screen: the account and its loginwindow process, which macOS starts anew for
         # every login. Logging out and in again – also to the same shared student account – is someone new at
         # the screen, who is told again (AUDIT ZAJ-04).
@@ -390,11 +450,15 @@ public extension Scripts {
           [ -n "$CONSOLE_UID" ] && p="$(pgrep -u "$CONSOLE_UID" -x loginwindow 2>/dev/null | head -n 1)"
           SCR_SESSION="$CONSOLE_USER${p:+#$p}"
         }
+        # Tells a user who was not told yet that the screen is being viewed: the agent shows a small panel in the top
+        # right corner of every display for a few seconds (no Notification Center permission, Focus does not hide it)
+        # and confirms it is on screen. Without that confirmation the user counts as not notified: nothing is
+        # captured (STATE notify) and the next cycle tries again.
         scr_notify() {
+          local state detail
           [ "$CMCR_NOTIFY" = 1 ] || return 0
           scr_session
           [ "$SCR_SESSION" = "$CMCR_LAST" ] && return 0
-          local out err pid i=0 state="" rc="" detail="" why
           # A screen covered by the attention-mode lock hides the panel: nobody could read it (AUDIT ZAJ-05).
           # The overlay counts only in the session at the screen (it runs as that user): the auto-unlock timer of
           # lockScreen (root) carries the tag too and outlives a logout, and a lock left in a session in the
@@ -405,64 +469,27 @@ public extension Scripts {
             SCR_RC=\#(ScriptCode.observeNotNotified)
             return 1
           fi
-          # Fresh files per attempt: a late answer of an earlier attempt must not count for this one.
-          SCR_NOTICE_N=$((${SCR_NOTICE_N:-0} + 1))
-          rm -f "$SCR_DIR"/notice.* 2>/dev/null
-          out="$SCR_DIR/notice.$SCR_NOTICE_N.out"; err="$SCR_DIR/notice.$SCR_NOTICE_N.err"
-          : > "$out"; : > "$err"
-          scr_gui_user /usr/bin/osascript -l JavaScript -e "$SCR_NOTICE" CMCR_OBSERVE_NOTICE </dev/null >"$out" 2>"$err" &
-          pid=$!
-          # The panel stays up for a few seconds after it answers; only its answer is awaited (≤ 6 s).
-          while [ $i -lt 60 ]; do
-            state="$(sed -n 's/^CMCR:NOTICE://p' "$out" 2>/dev/null | head -n 1)"
-            [ -n "$state" ] && break
-            if ! kill -0 "$pid" 2>/dev/null; then
-              wait "$pid" 2>/dev/null; rc=$?
-              state="$(sed -n 's/^CMCR:NOTICE://p' "$out" 2>/dev/null | head -n 1)"
-              break
-            fi
-            sleep 0.1; i=$((i + 1))
-          done
-          if [ "$state" = shown ]; then
-            CMCR_LAST="$SCR_SESSION"
-            scr_emit NOTIFIED "$CONSOLE_USER" "$SCR_SESSION"
-            return 0
-          fi
-          if [ "$state" = locked ]; then detail="ekran jest zablokowany lub uśpiony – komunikat zostanie pokazany po jego odblokowaniu"
-          elif [ "$state" = hidden ]; then detail="okno komunikatu nie pojawiło się na ekranie"
-          elif [ -n "$rc" ]; then detail="osascript zakończył się kodem $rc"
-          else
-            # A hung osascript must not outlive the attempt (each cycle would leave one more behind).
-            scr_kill_tree "$pid"; wait "$pid" 2>/dev/null
-            detail="brak potwierdzenia wyświetlenia w ciągu 6 s"
-          fi
-          why="$(grep -v '^ *$' "$err" 2>/dev/null | head -n 1)"
-          [ -n "$why" ] && detail="$detail: $why"
+          scr_agent notice "$SCR_NOTICE_T" "$SCR_NOTICE_X" || { scr_agent_failed notice; return 1; }
+          state="$(sed -n 's/^NOTICE \([a-z]*\).*/\1/p' "$SCR_DIR/agent.out" 2>/dev/null | head -n 1)"
+          case "$state" in
+            shown)
+              CMCR_LAST="$SCR_SESSION"
+              scr_emit NOTIFIED "$CONSOLE_USER" "$SCR_SESSION"
+              return 0 ;;
+            locked) detail="ekran jest zablokowany lub uśpiony – komunikat zostanie pokazany po jego odblokowaniu" ;;
+            hidden) detail="okno komunikatu nie pojawiło się na ekranie" ;;
+            *) detail="usługa podglądu nie potwierdziła wyświetlenia komunikatu" ;;
+          esac
           scr_emit STATE notify "$CONSOLE_USER" "$detail"
           SCR_RC=\#(ScriptCode.observeNotNotified)
           return 1
         }
-        scr_front() {
-          local asn raw
-          SCR_FRONT=""
-          asn="$(scr_gui_user /usr/bin/lsappinfo front </dev/null 2>/dev/null)"
-          case "$asn" in ASN:*) ;; *) return 0 ;; esac
-          raw="$(scr_gui_user /usr/bin/lsappinfo info -only name "$asn" </dev/null 2>/dev/null)"
-          SCR_FRONT="$(printf '%s\n' "$raw" | sed -n -e 's/^"LSDisplayName"="\(.*\)"[[:space:]]*$/\1/p' -e 's/^"\([^"]*\)" ASN:.*/\1/p' | head -n 1)"
-        }
-        # Sends one captured display: always re-encoded with the JPEG quality from the settings (screencapture
-        # uses its own), resized only when larger than requested, skipped when unchanged.
+        # Sends one display the agent saved, skipped when unchanged. The agent's JPEG already has the requested size
+        # and quality. Read once into a private copy: another preview of the same account (the app and cmcrctl at
+        # once) may replace the agent's file meanwhile, and the hash must belong to the bytes sent.
         scr_send() {
-          local d="$1" n="$2" raw="$3" out hash size
-          out="$SCR_DIR/out$d.jpg"
-          if [ -z "${SCR_DIM[$d]:-}" ] || [ $((SCR_N % 30)) = 0 ]; then
-            SCR_DIM[$d]="$(sips -g pixelWidth -g pixelHeight "$raw" 2>/dev/null | awk '/pixel(Width|Height)/ { if ($2 > m) m = $2 } END { print m + 0 }')"
-          fi
-          if [ "${SCR_DIM[$d]:-0}" -gt "$CMCR_MAXSIZE" ]; then
-            sips -s format jpeg -s formatOptions "$CMCR_QUALITY" -Z "$CMCR_MAXSIZE" "$raw" --out "$out" >/dev/null 2>&1 || out="$raw"
-          else
-            sips -s format jpeg -s formatOptions "$CMCR_QUALITY" "$raw" --out "$out" >/dev/null 2>&1 || out="$raw"
-          fi
+          local d="$1" n="$2" src="$3" out="$SCR_DIR/out$1.jpg" hash size
+          { [ -f "$src" ] && [ ! -L "$src" ] && cat "$src" > "$out" 2>/dev/null && [ -s "$out" ]; } || return 1
           hash="$(md5 -q "$out" 2>/dev/null)"
           if [ "$SCR_FORCE" != 1 ] && [ -n "$hash" ] && [ "$hash" = "${SCR_HASH[$d]:-}" ]; then
             scr_emit SAME "$d" "$n" "$hash"; return 0
@@ -472,10 +499,10 @@ public extension Scripts {
           scr_emit FRAME "$d" "$n" "$size" "$hash"
           cat "$out" 2>/dev/null || exit 0
         }
-        # macOS 15+: replayd's remembered consent for the SSH session is renewed before the first capture of every
-        # account (and hourly), so the person at the screen never gets the "…requesting to bypass the system private
-        # window picker" alert (cmcr_sc_approval, the CMCR-REPLAYD block of setup/cmcr-imac-setup.sh). Best effort:
-        # without Full Disk Access for remote users the file cannot be written and the capture goes on as before.
+        # macOS 15+: replayd's remembered consent for the agent is renewed before the first capture of every account
+        # (and hourly), so the person at the screen never gets the "…requesting to bypass the system private window
+        # picker" alert (cmcr_sc_approval, the CMCR-REPLAYD block of setup/cmcr-imac-setup.sh). Best effort: without
+        # Full Disk Access for remote users the file cannot be written and the capture goes on as before.
         scr_approval() {
           local h
           if [ "${SCR_APPROVED_FOR-x}" = "$CONSOLE_USER" ] && [ $((SECONDS - SCR_APPROVED_AT)) -lt 3600 ]; then return 0; fi
@@ -484,24 +511,37 @@ public extension Scripts {
           h="$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p' | head -n 1)"
           SCR_APPROVAL="$(cmcr_sc_approval "$CONSOLE_USER" "${h:+${CMCR_SETUP_ROOT_PREFIX:-}$h}" "$SCR_OS" </dev/null 2>/dev/null)"
         }
+        # One capture by the agent: `FRONT <app>`, then `SHOT <n> <width> <height> <bytes> <file>` per display, each
+        # file replacing the previous capture of that display. Reports INFO (with the frontmost app) and the frames.
         scr_capture() {
-          local i n files f
+          local line tag d w h b f front="" n=0 sent=0 i
           scr_approval
-          rm -f "$SCR_DIR"/raw*.jpg "$SCR_DIR"/out*.jpg 2>/dev/null
-          case "$CMCR_DISPLAY" in
-            main) scr_gui /usr/sbin/screencapture -x -C -m -t jpg "$SCR_DIR/raw1.jpg" ;;
-            all) scr_gui /usr/sbin/screencapture -x -C -t jpg "$SCR_DIR/raw1.jpg" "$SCR_DIR/raw2.jpg" "$SCR_DIR/raw3.jpg" "$SCR_DIR/raw4.jpg" ;;
-            *) scr_gui /usr/sbin/screencapture -x -C -D "$CMCR_DISPLAY" -t jpg "$SCR_DIR/raw$CMCR_DISPLAY.jpg" ;;
-          esac </dev/null >/dev/null 2>"$SCR_DIR/err"
-          files=""; n=0
-          for i in 1 2 3 4 5 6 7 8 9; do
-            if [ -s "$SCR_DIR/raw$i.jpg" ]; then files="$files $i"; n=$((n + 1)); fi
+          if ! scr_agent capture "$CMCR_MAXSIZE" "$CMCR_QUALITY" "$CMCR_DISPLAY"; then
+            scr_emit INFO "$CONSOLE_USER" ""
+            scr_agent_failed capture
+            return 1
+          fi
+          while IFS= read -r line; do
+            case "$line" in
+              FRONT) front="" ;;
+              FRONT\ *) front="${line#FRONT }" ;;
+              SHOT\ *)
+                read -r tag d w h b f <<<"$line"
+                case "$d" in [1-9]) ;; *) continue ;; esac
+                [ -n "$f" ] || continue
+                SCR_SHOT_D[$n]="$d"; SCR_SHOT_F[$n]="$f"; n=$((n + 1)) ;;
+            esac
+          done < "$SCR_DIR/agent.out"
+          scr_emit INFO "$CONSOLE_USER" "$front"
+          i=0
+          while [ $i -lt $n ]; do
+            scr_send "${SCR_SHOT_D[$i]}" "$n" "${SCR_SHOT_F[$i]}" && sent=$((sent + 1))
+            i=$((i + 1))
           done
-          if [ $n = 0 ]; then
-            scr_emit STATE capture "$CONSOLE_USER" "$(head -n 1 "$SCR_DIR/err" 2>/dev/null)"
+          if [ $sent = 0 ]; then
+            scr_emit STATE capture "$CONSOLE_USER" "usługa podglądu nie zapisała zrzutu ekranu"
             SCR_RC=\#(ScriptCode.captureFailed); return 1
           fi
-          for f in $files; do scr_send "$f" "$n" "$SCR_DIR/raw$f.jpg"; done
           SCR_RC=0
         }
         # Applies one control line from the app; succeeds when a capture should follow right away.
@@ -557,18 +597,25 @@ public extension Scripts {
           while :; do
             if [ $((SECONDS - SCR_START)) -ge "$CMCR_MAXTIME" ]; then scr_emit BYE maxtime; return 0; fi
             scr_console
-            SCR_FRONT=""
             if scr_allowed; then
-              # Someone else is logged in: from now on the capture needs root (the caller re-executes the loop).
-              if [ "${CMCR_SCREEN_ROLE:-}" != root ] && [ "$SCR_ME" != 0 ] && [ "$CONSOLE_UID" != "$SCR_ME" ]; then return 7; fi
-              if scr_notify; then
-                scr_front
-                scr_emit INFO "$CONSOLE_USER" "$SCR_FRONT"
-                if scr_capture; then SCR_FAILS=0; else SCR_FAILS=$((SCR_FAILS + 1)); fi
-              else
-                # Not told about the observation: neither the screen nor the frontmost app is read.
+              if [ ! -x "$CMCR_AGENT_EXE" ]; then
+                # Nothing on this iMac can take the picture; no sudo is spent on finding that out.
                 scr_emit INFO "$CONSOLE_USER" ""
-                SCR_FAILS=$((SCR_FAILS + 1))
+                scr_emit STATE agent-missing "$CONSOLE_USER"
+                SCR_RC=\#(ScriptCode.agentUnavailable); SCR_FAILS=$((SCR_FAILS + 1))
+              else
+                # Someone else is logged in: from now on the agent is asked as root (the caller re-executes the loop).
+                # So too when the agent's own folder is missing or not as it should be (an account that logged in after
+                # the install, something left at its name): only root can make it, and the agent cannot start without it.
+                if [ "${CMCR_SCREEN_ROLE:-}" != root ] && [ "$SCR_ME" != 0 ] \
+                   && { [ "$CONSOLE_UID" != "$SCR_ME" ] || ! cmcr_agent_rundir_ok "$CONSOLE_UID"; }; then return 7; fi
+                if scr_notify; then
+                  if scr_capture; then SCR_FAILS=0; else SCR_FAILS=$((SCR_FAILS + 1)); fi
+                else
+                  # Not told about the observation: neither the screen nor the frontmost app is read.
+                  scr_emit INFO "$CONSOLE_USER" ""
+                  SCR_FAILS=$((SCR_FAILS + 1))
+                fi
               fi
             else
               scr_emit INFO "$CONSOLE_USER" ""
@@ -585,7 +632,7 @@ public extension Scripts {
           asroot /bin/bash --noprofile --norc -c 'CMCR_TMP="$1"; export CMCR_TMP; CMCR_SCREEN_ROLE=root; SCR_IN_SET=1; SCR_IN_SIZE="$2"; SCR_IN_INTERVAL="$3"; SCR_IN_DISPLAY="$4"; SCR_IN_LAST="$5"; source "$CMCR_TMP/lib.sh"; source "$CMCR_TMP/body.sh"' \
             cmcr "$CMCR_TMP" "$CMCR_MAXSIZE" "$CMCR_INTERVAL" "$CMCR_DISPLAY" "$CMCR_LAST" 2>"$CMCR_TMP/sudo.err"
           rc=$?
-          case $rc in 0|3|4|5|\#(ScriptCode.observeNotNotified)) return $rc ;; esac
+          case $rc in 0|3|4|5|\#(ScriptCode.observeNotNotified)|\#(ScriptCode.agentUnavailable)) return $rc ;; esac
           if grep -qiE 'incorrect password|sorry, try again' "$CMCR_TMP/sudo.err" 2>/dev/null; then reason=sudo-wrong
           elif [ $rc = 91 ] || grep -qiE 'Brak hasła|password is required|no password was provided|terminal is required' "$CMCR_TMP/sudo.err" 2>/dev/null; then reason=sudo-missing
           elif grep -qiE 'not in the sudoers|not allowed to' "$CMCR_TMP/sudo.err" 2>/dev/null; then reason=sudo-denied
@@ -606,78 +653,9 @@ public extension Scripts {
         """#)
     }
 
+    /// The notice the agent shows to an observed user before the first capture of their login session.
     static let observeNoticeTitle = "Podgląd ekranu"
     static let observeNoticeText = "Administrator rozpoczął podgląd Twojego ekranu."
-
-    /// The observation notice: a panel in the top right corner of every display for `seconds`, drawn by
-    /// `osascript -l JavaScript` in the observed user's session. It never takes the keyboard (non-activating
-    /// panel of an accessory app, so macOS 14+ cooperative activation does not matter), ignores the mouse,
-    /// shows over full-screen apps and needs no Notification Center permission. It prints
-    /// `CMCR:NOTICE:shown` once the panel is on screen (`CMCR:NOTICE:hidden` otherwise) and quits by itself
-    /// – the timer that ends it is set up before anything is reported. `--dry-run` builds the panels
-    /// without showing them.
-    static func observeNoticeJXA(title: String = observeNoticeTitle, text: String = observeNoticeText,
-                                 seconds: Int = 8) -> String {
-        """
-        ObjC.import('Cocoa');
-        function say(s) {
-          $.NSFileHandle.fileHandleWithStandardOutput.writeData($(s + '\\n').dataUsingEncoding($.NSUTF8StringEncoding));
-        }
-        function run(argv) {
-          var dry = argv.indexOf('--dry-run') >= 0;
-          var app = $.NSApplication.sharedApplication;
-          app.setActivationPolicy(1);
-          var screens = $.NSScreen.screens;
-          var panels = [];
-          for (var i = 0; i < screens.count; i++) {
-            var vf = screens.objectAtIndex(i).visibleFrame;
-            var w = 420, h = 96, pad = 16;
-            var rect = {origin: {x: vf.origin.x + vf.size.width - w - pad, y: vf.origin.y + vf.size.height - h - pad},
-                        size: {width: w, height: h}};
-            var p = $.NSPanel.alloc.initWithContentRectStyleMaskBackingDefer(rect, 128, 2, false);
-            p.setLevel(1001);
-            p.setOpaque(false);
-            p.setHasShadow(true);
-            p.setIgnoresMouseEvents(true);
-            p.setHidesOnDeactivate(false);
-            p.setCollectionBehavior(1 | 16 | 64 | 256);
-            p.setBackgroundColor($.NSColor.colorWithSRGBRedGreenBlueAlpha(0.10, 0.12, 0.18, 0.96));
-            var t = $.NSTextField.labelWithString(\(Scripts.jsLiteral(title)));
-            t.setFont($.NSFont.boldSystemFontOfSize(16));
-            t.setTextColor($.NSColor.whiteColor);
-            t.setFrame({origin: {x: 18, y: h - 38}, size: {width: w - 36, height: 22}});
-            p.contentView.addSubview(t);
-            var m = $.NSTextField.wrappingLabelWithString(\(Scripts.jsLiteral(text)));
-            m.setFont($.NSFont.systemFontOfSize(14));
-            m.setTextColor($.NSColor.colorWithSRGBRedGreenBlueAlpha(1.0, 1.0, 1.0, 0.88));
-            m.setFrame({origin: {x: 18, y: 12}, size: {width: w - 36, height: h - 54}});
-            p.contentView.addSubview(m);
-            panels.push(p);
-          }
-          // A locked screen (screen saver with password, lock screen) or a sleeping display: the panel would be
-          // drawn where nobody sees it, so it does not count as shown (AUDIT ZAJ-05).
-          var covered = false;
-          try {
-            ObjC.import('CoreGraphics');
-            var session = ObjC.castRefToObject($.CGSessionCopyCurrentDictionary());
-            var locked = session.objectForKey('CGSSessionScreenIsLocked');
-            covered = (!locked.isNil() && locked.boolValue) || $.CGDisplayIsAsleep($.CGMainDisplayID()) != 0;
-          } catch (e) {}
-          if (argv.indexOf('--screen-state') >= 0) { return covered ? 'covered' : 'visible'; }
-          if (dry) { return 'panels=' + panels.length; }
-          if (covered) { say('CMCR:NOTICE:locked'); return; }
-          $.NSTimer.scheduledTimerWithTimeIntervalTargetSelectorUserInfoRepeats(\(max(2, seconds)), app, 'terminate:', null, false);
-          var shown = false;
-          for (var j = 0; j < panels.length; j++) {
-            panels[j].orderFrontRegardless;
-            if (panels[j].isVisible) { shown = true; }
-          }
-          say(shown ? 'CMCR:NOTICE:shown' : 'CMCR:NOTICE:hidden');
-          if (!shown) { return; }
-          app.run;
-        }
-        """
-    }
 
     /// Single capture with the restrictions (kept for callers of the original API).
     static func screenshot(maxSize: Int, quality: Int, notify: Bool,
@@ -725,8 +703,9 @@ public extension Operations {
                            handle: ProcessHandle? = nil) async -> Screenshot {
         let options = ScreenCaptureOptions(settings: appSettings, maxSize: maxSize, notify: notify,
                                            alreadyNotifiedUser: notifyUnless, display: display, frames: 1)
+        // Room for one sudo and, at worst, an agent that launchd has to start again before the notice and the capture.
         let r = await SSH.run(Scripts.screenCapture(options), on: host, password: password, settings: sshSettings,
-                              timeout: 45, handle: handle)
+                              timeout: 60, handle: handle)
         return screenshot(from: r)
     }
 

@@ -168,7 +168,10 @@ private func frameBytes(display: Int, count: Int, payload: Data, hash: String = 
         #expect(issue.exitCode == ScriptCode.captureSudoFailed)
         #expect(!issue.isIdle)
     }
-    #expect(ScreenIssue.captureFailed("").message.contains("Nagrywanie ekranu"))
+    // The permission belongs to the screen agent now, and its own issue names it.
+    #expect(ScreenIssue.agentPermission.message.contains("Nagrywanie ekranu"))
+    #expect(ScreenIssue.agentPermission.message.contains(ScreenAgentInfo.displayName))
+    #expect(!ScreenIssue.captureFailed("").message.contains("sshd"))
     #expect(ScreenIssue.noUser.isIdle && ScreenIssue.adminAccount("x").hidesImage)
 }
 
@@ -225,8 +228,15 @@ private func bashSyntaxCheck(_ text: String) -> (Int32, String) {
     #expect(script.body.contains("CMCR_QUALITY=100"))
     #expect(script.body.contains("CMCR_INTERVAL=2"))
     #expect(script.body.contains("CMCR_DISPLAY='all'"))
-    // Captures JPEG directly; no PNG round trip.
-    #expect(script.body.contains("-t jpg") && !script.body.contains("-t png"))
+    // The agent takes the picture (already JPEG in the requested size and quality): no screencapture over SSH, no
+    // second encoding with sips, no lsappinfo for the frontmost app.
+    #expect(script.body.contains("scr_agent capture \"$CMCR_MAXSIZE\" \"$CMCR_QUALITY\" \"$CMCR_DISPLAY\""))
+    for gone in ["screencapture", "sips ", "lsappinfo", "launchctl asuser", "osascript"] {
+        #expect(!script.body.contains(gone), "\(gone)")
+    }
+    // Every path of the agent goes through the test-only root prefix.
+    #expect(script.body.contains("R=\"${CMCR_SETUP_ROOT_PREFIX:-}\""))
+    #expect(script.body.contains("CMCR_AGENT_EXE=\"$R\"\(shQuote(ScreenAgentInfo.executablePath))"))
 }
 
 @Test func legacyScreenshotBuilderStillWorks() {
@@ -290,14 +300,11 @@ private func solidImage(width: Int, height: Int) -> CGImage? {
 }
 
 /// AUDIT ZAJ-05: on a locked or sleeping screen (or behind the attention-mode lock) the notice does not count as
-/// shown. The check itself runs here, in this Mac's session: it must not fail, whatever the state of the screen.
-@Test func theNoticeIsNotCountedOnACoveredScreen() async {
+/// shown – the agent answers `NOTICE locked` (or `ERR locked`, code 13), and the script reports `STATE notify`.
+/// Run against a fake agent in ScreenAgentScriptsTests.
+@Test func theNoticeIsNotCountedOnACoveredScreen() {
     let script = Scripts.screenCapture(ScreenCaptureOptions(maxSize: 800)).body
     #expect(script.contains("pgrep -x LockScreen"))
-    #expect(script.contains("[ \"$state\" = locked ]"))
-    let jxa = Scripts.observeNoticeJXA()
-    #expect(jxa.contains("CGSSessionScreenIsLocked") && jxa.contains("CGDisplayIsAsleep"))
-    let r = await ProcessRunner.run("/usr/bin/osascript", ["-l", "JavaScript", "-e", jxa, "CMCR_OBSERVE_NOTICE", "--screen-state"], timeout: 20)
-    #expect(["visible", "covered"].contains(r.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)),
-            "osascript: \(r.stdoutText) \(r.stderrText)")
+    #expect(script.contains("    locked) detail=\"ekran jest zablokowany lub uśpiony"))
+    #expect(script.contains("\(ScreenAgentInfo.ClientCode.locked))\n"))
 }

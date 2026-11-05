@@ -43,7 +43,6 @@ rv2_setup_begin() {
   printf '# test\nInclude /etc/ssh/sshd_config.d/*\nPasswordAuthentication yes\n' > "$RV2_SR/etc/ssh/sshd_config"
   printf 'root ALL = (ALL) ALL\n#includedir /private/etc/sudoers.d\n' > "$RV2_SR/etc/sudoers"
   printf 'womp 1\nsleep 1\ntcpkeepalive 1\n' > "$RV2_SS/pmset"
-  echo false > "$RV2_SS/screen-preflight"
   echo "FileVault is Off." > "$RV2_SS/filevault"
   cp "$WORK/config/hosts.json" "$RV2_CONF/hosts.json"
   cat > "$RV2_CONF/settings.json" <<EOF

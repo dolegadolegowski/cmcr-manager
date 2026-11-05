@@ -20,7 +20,13 @@ cleanup() {
   case "${CMCR_KEYCHAIN_SERVICE:-}" in
     pl.cmcr.manager.e2e-*) while security delete-generic-password -s "$CMCR_KEYCHAIN_SERVICE" >/dev/null 2>&1; do :; done ;;
   esac
-  if [ "${CMCR_E2E_KEEP:-0}" = 1 ]; then echo "Zachowano: $WORK"; return; fi
+  if [ "${CMCR_E2E_KEEP:-0}" = 1 ]; then
+    # The folder stays, the screen agents started by the fake launchd do not (pkill -f "$WORK/" below otherwise).
+    pkill -f "^$WORK/.*cmcr-screen-agent serve\$" 2>/dev/null
+    echo "Zachowano: $WORK"; return
+  fi
+  # Every process started from this run's folder, the screen agents of the fake launchd too (their program is the
+  # test install under $WORK/setup-root).
   pkill -f "$WORK/" 2>/dev/null
   rm -rf "$WORK"
 }
@@ -49,7 +55,57 @@ expect_code() { # expect_code "name" actual expected output
   if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (kod $2, oczekiwano $3)" "${4:-}"; fi
 }
 fakelog() { cat "$WORK/fake.log" 2>/dev/null; }
-clear_fakelog() { : > "$WORK/fake.log"; }
+# The screen agent's test folder (CMCR_SCREEN_AGENT_TEST_DIR, exported by fakes.sh): files there set the state of the
+# "screen" (perm, locked, notice, displays, variant, front …); requests.log lists every request the agents got.
+AGENT_TEST="$WORK/agent"
+agentlog() { cat "$AGENT_TEST/requests.log" 2>/dev/null; }
+agent_count() { local n; n="$(grep -cE -- "$1" "$AGENT_TEST/requests.log" 2>/dev/null)"; echo "${n:-0}"; }  # ERE
+clear_fakelog() { : > "$WORK/fake.log"; [ -d "$AGENT_TEST" ] && : > "$AGENT_TEST/requests.log"; }
+agent_reset() { # the screen as the agent sees it by default: permission granted, unlocked, one display, notice shown
+  local f
+  for f in perm locked notconsole asleep notice front user displays size variant capture-fail capture-delay old \
+           permission-requested; do
+    rm -f "$AGENT_TEST/$f"
+  done
+}
+# agent_pid UID – the pid of the agent the fake launchd runs in that GUI session (empty when it does not run).
+agent_pid() {
+  local p
+  p="$(cat "$WORK/launchd/gui-$1/pid" 2>/dev/null)"
+  case "$(ps -p "${p:-0}" -o command= 2>/dev/null)" in "$WORK/"*" serve") echo "$p" ;; esac
+}
+# agent_bootout UID – that session's agent stopped and unloaded, as after a logout.
+agent_bootout() { "$CTL" exec "launchctl bootout gui/$1/pl.cmcr.manager.screen-agent" 1 >/dev/null 2>&1; }
+# The test install of the agent (CMCR_SETUP_ROOT_PREFIX of fakes.sh).
+AGENT_ROOT="$WORK/setup-root/Library/Application Support/CMCR/ScreenAgent"
+AGENT_EXE="$AGENT_ROOT/CMCR Screen Agent.app/Contents/MacOS/cmcr-screen-agent"
+# agent_ping UID – the installed agent of that session asked from here, by its own client in test mode (as the scripts
+# ask it on the iMac).
+agent_ping() {
+  CMCR_SETUP_ROOT_PREFIX="$WORK/setup-root" CMCR_SCREEN_AGENT_TEST_DIR="$AGENT_TEST" "$AGENT_EXE" client "$1" ping 2>&1
+}
+# agent_restart UID – a fresh agent in that session (kickstart -k, bootstrap when not loaded), back once it answers. It
+# never ends itself after a ping; a capture without the permission in an agent older than 30 s does (to read it anew).
+agent_restart() {
+  local i
+  # As root does before it starts an agent: its own folder run/<uid> (the agent does not start without it).
+  if [ -L "$AGENT_ROOT/run/$1" ] || { [ -e "$AGENT_ROOT/run/$1" ] && [ ! -d "$AGENT_ROOT/run/$1" ]; }; then
+    rm -rf "$AGENT_ROOT/run/$1"
+  fi
+  mkdir -p "$AGENT_ROOT/run/$1" && chmod 700 "$AGENT_ROOT/run/$1"
+  "$CTL" exec "launchctl kickstart -k gui/$1/pl.cmcr.manager.screen-agent" 1 >/dev/null 2>&1 \
+    || "$CTL" exec "launchctl bootstrap gui/$1 '$WORK/setup-root/Library/LaunchAgents/pl.cmcr.manager.screen-agent.plist'" 1 \
+      >/dev/null 2>&1
+  for i in $(seq 1 50); do agent_ping "$1" >/dev/null && return 0; sleep 0.1; done
+  return 1
+}
+# agent_ensure – the agent installed on the fake iMac, again if needed: the setup suites start from an empty
+# $WORK/setup-root and remove it at the end. Every suite that takes a screen preview calls it first.
+agent_ensure() {
+  [ -x "$AGENT_EXE" ] && return 0
+  local out
+  out="$(ctlpw screen-agent install 1)" || fail "usługa podglądu: ponowna instalacja nieudana" "$out"
+}
 
 # ---------------------------------------------------------------- build
 if [ "${CMCR_E2E_NOBUILD:-0}" != 1 ]; then
@@ -59,6 +115,13 @@ fi
 BIN="$(cd "$ROOT" && swift build --show-bin-path 2>/dev/null)"
 CTL="$BIN/cmcrctl"
 [ -x "$CTL" ] || { echo "Brak $CTL"; exit 1; }
+# CMCR Screen Agent as the app ships it (an ad-hoc signed bundle of the debug build, with the DEBUG test seams);
+# the app and cmcrctl upload this one (ScreenAgentLocator honours the variable only in the harness / DEBUG).
+AGENT_BIN="$BIN/cmcr-screen-agent"
+[ -x "$AGENT_BIN" ] || { echo "Brak $AGENT_BIN"; exit 1; }
+"$ROOT/scripts/make-agent-bundle.sh" "$AGENT_BIN" "$WORK/agent-bundle" >/dev/null 2>"$WORK/agent-bundle.err" \
+  || { cat "$WORK/agent-bundle.err"; echo "Nie można zbudować pakietu CMCR Screen Agent"; exit 1; }
+export CMCR_SCREEN_AGENT_APP="$WORK/agent-bundle/CMCR Screen Agent.app"
 
 # ---------------------------------------------------------------- environment
 ME="$(id -un)"
@@ -124,17 +187,26 @@ esac
 
 # ---------------------------------------------------------------- safety guard
 # Every remote bash must see the fake sudo. If not, stop before anything could reach the real sudo.
-guard_out="$("$CTL" exec 'type sudo launchctl shutdown pmset softwareupdate installer 2>&1 | grep -c "is a function"' 1 2>&1)"
+guard_out="$("$CTL" exec 'type sudo launchctl shutdown pmset softwareupdate installer tccutil 2>&1 | grep -c "is a function"' 1 2>&1)"
 guard="$(printf '%s\n' "$guard_out" | tail -1)"
-if [ "$guard" != 6 ]; then
+if [ "$guard" != 7 ]; then
   echo "PRZERWANO: atrapy (fakes.sh) nie są aktywne w zdalnej sesji – testy mogłyby wywołać prawdziwe sudo."
   echo "$guard_out"
   exit 2
 fi
-guard_root="$(CMCR_PASSWORD="$PASSWORD" "$CTL" exec 'type sudo launchctl shutdown 2>&1 | grep -c "is a function"' 1 --root 2>&1 | tail -1)"
-if [ "$guard_root" != 3 ]; then
+guard_root="$(CMCR_PASSWORD="$PASSWORD" "$CTL" exec 'type sudo launchctl shutdown tccutil 2>&1 | grep -c "is a function"' 1 --root 2>&1 | tail -1)"
+if [ "$guard_root" != 4 ]; then
   echo "PRZERWANO: atrapy nie są aktywne w trybie root."
   echo "$guard_root"
+  exit 2
+fi
+
+# The screen agent must only ever run in its test mode, under this run's folder (fakes.sh): never as the real
+# service, never with the system paths.
+agent_env="$("$CTL" exec 'echo "AGENTENV $CMCR_SCREEN_AGENT_TEST_DIR|$CMCR_SETUP_ROOT_PREFIX"' 1 2>&1 | grep '^AGENTENV ')"
+if [ "$agent_env" != "AGENTENV $WORK/agent|$WORK/setup-root" ]; then
+  echo "PRZERWANO: atrapy nie ustawiają trybu testowego usługi podglądu (CMCR_SCREEN_AGENT_TEST_DIR, CMCR_SETUP_ROOT_PREFIX)."
+  echo "$agent_env"
   exit 2
 fi
 
@@ -216,18 +288,33 @@ out="$(ctlpw open-app "Kalkulator Test" 1)"
 expect "open-app: komunikat" "$out" "Uruchomiono"
 expect "open-app: open -a w sesji użytkownika" "$(fakelog)" "gui-exec: /usr/bin/open -a Kalkulator Test"
 
+section "Usługa podglądu ekranu (CMCR Screen Agent)"
+# The preview takes its pictures from the agent, so it is installed first, the way the app does it: the bundle built
+# above (CMCR_SCREEN_AGENT_APP) goes over scp, Scripts.installScreenAgent puts it under CMCR_SETUP_ROOT_PREFIX and the
+# fake launchd starts it in the test user's GUI session (suites/screen-agent.sh tests the installation itself).
+clear_fakelog
+out="$(ctlpw screen-agent install 1)"; code=$?
+expect_code "screen-agent install: kod 0" "$code" 0 "$out"
+expect "screen-agent install: usługa zainstalowana" "$out" "→ imac01: usługa podglądu zainstalowana (wersja"
+out="$(ctlpw exec '"$CMCR_SETUP_ROOT_PREFIX/Library/Application Support/CMCR/ScreenAgent/CMCR Screen Agent.app/Contents/MacOS/cmcr-screen-agent" client "$CONSOLE_UID" ping' 1)"
+expect "screen-agent: usługa odpowiada w sesji zalogowanego użytkownika" "$out" "AGENT " "perm=granted"
+
 section "Podgląd ekranu"
 clear_fakelog
 out="$(ctlpw screenshot 1 "$WORK/shot.jpg")"; code=$?
 expect_code "screenshot: kod 0" "$code" 0 "$out"
 if file "$WORK/shot.jpg" 2>/dev/null | grep -q JPEG; then pass "screenshot: obraz JPEG"; else fail "screenshot: brak JPEG" "$out"; fi
-expect "screenshot: powiadomienie użytkownika o podglądzie" "$(fakelog)" "observe-notice:"
+expect "screenshot: powiadomienie użytkownika o podglądzie (przez usługę)" "$(agentlog)" \
+  "NOTICE-TEXT Podgląd ekranu | Administrator rozpoczął podgląd Twojego ekranu."
+expect "screenshot: zrzut zrobiła usługa" "$(agentlog)" "CMCRA1 CAPTURE 640 "
 python3 - "$WORK/config/settings.json" <<'PY'
 import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["observeAllowedUsers"]="ktos-inny"; json.dump(s,open(p,"w"))
 PY
+clear_fakelog
 out="$(ctlpw screenshot 1 "$WORK/shot2.jpg")"; code=$?
 expect "screenshot: konto spoza listy dozwolonych zablokowane" "$out" "nie jest na liście kont dozwolonych"
 [ ! -f "$WORK/shot2.jpg" ] && pass "screenshot: brak obrazu przy blokadzie" || fail "screenshot: obraz mimo blokady"
+expect_code "screenshot: przy blokadzie usługa nie jest pytana" "$(agent_count 'CMCRA1 (NOTICE|CAPTURE)')" 0 "$(agentlog)"
 python3 - "$WORK/config/settings.json" <<'PY'
 import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["observeAllowedUsers"]=""; s["observeOnlyStandardAccounts"]=True; json.dump(s,open(p,"w"))
 PY

@@ -27,8 +27,10 @@ umask 022
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/libexec:/usr/libexec/ApplicationFirewall"
 export LC_ALL=C
 
-CMCR_SETUP_VERSION="1.1.0"
+CMCR_SETUP_VERSION="1.2.0"
 CMCR_SETUP_SCHEMA=1
+# Wersja usługi podglądu ekranu w tej wersji CMCR Manager (ScreenAgentInfo.version) – tylko do porównania.
+CMCR_SCREEN_AGENT_VERSION="1.0.0"
 NL=$'\n'
 
 # >>> CMCR-DEFAULTS – CMCR Manager podmienia ten blok przy generowaniu skryptu >>>
@@ -222,6 +224,9 @@ SUDOERS="$R/etc/sudoers"
 SUDOERS_DIR="$R/private/etc/sudoers.d"
 SUDOERS_DROPIN="$SUDOERS_DIR/cmcr-manager"
 SU_PLIST="$R/Library/Preferences/com.apple.SoftwareUpdate"
+# Usługa podglądu ekranu (CMCR Screen Agent, docs/screen-agent.md) – instaluje ją CMCR Manager, nie ten skrypt.
+AGENT_APP="$R/Library/Application Support/CMCR/ScreenAgent/CMCR Screen Agent.app"
+AGENT_EXE="$AGENT_APP/Contents/MacOS/cmcr-screen-agent"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/cmcr-setup.XXXXXX")" || { echo "mktemp nie powiódł się" >&2; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
@@ -244,7 +249,7 @@ esac
 # --- Raport --------------------------------------------------------------------------
 STEP_N=0; N_OK=0; N_CHANGED=0; N_PENDING=0; N_WARN=0; N_TODO=0; N_FAIL=0; N_SKIP=0
 TODO_TEXT=""
-KEY_FPS=""; KEY_OK=0; ETH_MACS=""; FDA_REMOTE="unknown"; SC_REMOTE="unknown"; FILEVAULT="unknown"
+KEY_FPS=""; KEY_OK=0; ETH_MACS=""; FDA_REMOTE="unknown"; SC_REMOTE="unknown"; FILEVAULT="unknown"; SCREEN_AGENT="none"
 
 section() { printf '\n── %s\n' "$1"; }
 detail()  { printf '   %s\n' "$*"; }
@@ -360,35 +365,42 @@ tcc_ssh_value() {
   sqlite3 -readonly "$TCC_DB" \
     "SELECT IFNULL(MAX(auth_value),-1) FROM access WHERE service='$1' AND (client LIKE '%sshd-keygen-wrapper' OR client LIKE '%sshd-session');" 2>/dev/null
 }
-# Faktyczne uprawnienie „Nagrywanie ekranu” – to samo sprawdzenie co w tabeli Gotowość w CMCR Manager:
-# CGPreflightScreenCaptureAccess w sesji osoby przy komputerze (launchctl asuser, jak podgląd ekranu). Nie pyta
-# o zgodę. Wypisuje true/false; nic, gdy nikt nie jest zalogowany albo sprawdzenie się nie udało (limit 10 s).
-SC_PROBE='ObjC.import("CoreGraphics"); ObjC.bindFunction("CGPreflightScreenCaptureAccess", ["bool", []]); $.CGPreflightScreenCaptureAccess()'
-screen_preflight() {
-  local p w
-  [ -n "$CONSOLE_UID" ] || return 0
-  if [ "$(id -u)" = "$CONSOLE_UID" ]; then osascript -l JavaScript -e "$SC_PROBE" </dev/null 2>/dev/null & p=$!
-  elif [ "$(id -u)" -eq 0 ]; then launchctl asuser "$CONSOLE_UID" osascript -l JavaScript -e "$SC_PROBE" </dev/null 2>/dev/null & p=$!
-  else return 0; fi
-  ( sleep 10; kill "$p" 2>/dev/null ) </dev/null >/dev/null 2>&1 & w=$!
+# agent_ping UID – odpowiedź usługi podglądu w sesji konta UID: wiersz „AGENT <wersja> perm=… …” albo „ERR …”
+# (limit 15 s). Z innym kontem rozmawia tylko root. Klient ufa tylko procesowi, który launchd uruchomił w tej sesji
+# (--pid z „launchctl print”); usługa załadowana bez procesu albo niezaładowana nie odpowiada.
+agent_ping() {
+  local f="$WORK/agent-ping" p w pid
+  pid="$(launchctl print "gui/$1/pl.cmcr.manager.screen-agent" 2>/dev/null \
+    | awk -F' = ' '$1 == "\tpid" && $2 ~ /^[0-9]+$/ { print $2; exit }')"
+  if [ -z "$pid" ]; then
+    echo "ERR unreachable usługa nie działa w sesji użytkownika (launchd nie podaje jej procesu)"
+    return 0
+  fi
+  "$AGENT_EXE" client "$1" ping --pid "$pid" </dev/null >"$f" 2>&1 & p=$!
+  ( sleep 15; kill "$p" 2>/dev/null ) </dev/null >/dev/null 2>&1 & w=$!
   wait "$p"; kill "$w" 2>/dev/null
+  grep -E '^(AGENT|ERR)( |$)' "$f" 2>/dev/null | head -n 1
 }
 
 # >>> CMCR-REPLAYD – ten blok CMCR Manager wkleja też do podglądu ekranu i do sprawdzania gotowości >>>
-# Od macOS 15 replayd co jakiś czas pokazuje osobie przy komputerze okno, że „sshd-session” chce pominąć
-# systemowy wybór okien i mieć bezpośredni dostęp do ekranu („Continue to Allow” / „Allow For One Month”).
-# Odpowiedź zapamiętuje osobno dla każdego konta w ~/Library/Group Containers/group.com.apple.replayd/
-# ScreenCaptureApprovals.plist, pod ścieżką procesu, któremu macOS przypisuje sesję SSH
-# (/usr/libexec/sshd-keygen-wrapper – także wtedy, gdy okno mówi „sshd-session”). Okno wraca, gdy ostatnie
-# użycie jest starsze niż 30 dni (kScreenCapturePrivacyHintPolicy) albo minęła data przypomnienia
-# (kScreenCapturePrivacyHintDate). Odnowienie zapisuje to, co macOS zapisuje po „Zezwól”: użycie „teraz”,
-# przypomnienie w 2099. W macOS 15.0 wpis był samą datą następnego pytania.
+# Od macOS 15 replayd co jakiś czas pokazuje osobie przy komputerze okno, że usługa podglądu ekranu („CMCR Screen
+# Agent”) chce pominąć systemowy wybór okien i mieć bezpośredni dostęp do ekranu („Continue to Allow” / „Allow For
+# One Month”). Odpowiedź zapamiętuje osobno dla każdego konta w ~/Library/Group Containers/group.com.apple.replayd/
+# ScreenCaptureApprovals.plist – w macOS 15.0 pod ścieżką pliku wykonywalnego, od 15.1 także pod identyfikatorem
+# aplikacji; zapisujemy oba wpisy. Okno wraca, gdy ostatnie użycie jest starsze niż 30 dni
+# (kScreenCapturePrivacyHintPolicy) albo minęła data przypomnienia (kScreenCapturePrivacyHintDate). Odnowienie
+# zapisuje to, co macOS zapisuje po „Zezwól”: użycie „teraz”, przypomnienie w 2099. W macOS 15.0 wpis był samą datą
+# następnego pytania.
 # To nie jest uprawnienie TCC „Nagrywanie ekranu” (to da się włączyć tylko przy komputerze), tylko
 # zapamiętana odpowiedź – zapis nie wymaga wyłączenia SIP ani MDM. Folder jest jednak chroniony: potrzebny jest
 # pełny dostęp do dysku („Daj użytkownikom zdalnym pełny dostęp do dysku” dla sesji SSH). Bez niego okno wyłącza
 # na stałe tylko profil MDM setup/mdm/cmcr-screen-capture-alert.mobileconfig (macOS 15.1+) – ten jednak dla
-# wszystkich aplikacji i kont na Macu, nie tylko dla SSH.
-CMCR_SC_CLIENT=/usr/libexec/sshd-keygen-wrapper
+# wszystkich aplikacji i kont na Macu, nie tylko dla podglądu.
+# Klucze mają kropki i spacje, a plutil dzieli ścieżkę klucza na kropkach – odczyt i zapis idą przez PlistBuddy
+# (separator „:”, klucz w apostrofach). PlistBuddy nie czyta dat w formacie ISO, więc wpisy są wstawiane „Merge”
+# z gotowego XML (po usunięciu starych – istniejących „Merge” nie nadpisuje).
+CMCR_SC_ID=pl.cmcr.manager.screen-agent
+CMCR_SC_EXE='/Library/Application Support/CMCR/ScreenAgent/CMCR Screen Agent.app/Contents/MacOS/cmcr-screen-agent'
 CMCR_SC_HINT=2099-01-01T00:00:00Z
 # cmcr_sc_as KONTO POLECENIE… – jako to konto: root nigdy nie zapisuje sam w cudzym katalogu domowym.
 cmcr_sc_as() {
@@ -397,18 +409,35 @@ cmcr_sc_as() {
   elif [ "$(id -u)" -eq 0 ]; then sudo -u "$u" -- "$@"
   else return 1; fi
 }
-# cmcr_sc_epoch KONTO PLIK KLUCZ – data z pliku w sekundach od 1970 (puste, gdy jej nie ma).
+# cmcr_sc_epoch KONTO PLIK WPIS – data z pliku (WPIS w zapisie PlistBuddy, np. :'klucz':kScreen…) w sekundach od
+# 1970; puste, gdy jej nie ma.
 cmcr_sc_epoch() {
   local s
-  s="$(cmcr_sc_as "$1" plutil -extract "$3" raw -o - "$2" 2>/dev/null)" || return 0
+  s="$(cmcr_sc_as "$1" /usr/libexec/PlistBuddy -x -c "Print $3" "$2" 2>/dev/null | sed -n 's|.*<date>\(.*\)</date>.*|\1|p' | head -n 1)"
+  [ -n "$s" ] || return 0
   date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$s" +%s 2>/dev/null
+}
+# cmcr_sc_valid KONTO PLIK KLUCZ STARY – czy zgoda zapamiętana pod KLUCZEM jest ważna (STARY=1: format macOS 15.0).
+cmcr_sc_valid() {
+  local now lu hd
+  now="$(date -u +%s)"
+  if [ "$4" = 1 ]; then
+    hd="$(cmcr_sc_epoch "$1" "$2" ":'$3'")"
+    [ -n "$hd" ] && [ $((hd - now)) -gt 31536000 ]
+    return
+  fi
+  lu="$(cmcr_sc_epoch "$1" "$2" ":'$3':kScreenCaptureApprovalLastUsed")"
+  hd="$(cmcr_sc_epoch "$1" "$2" ":'$3':kScreenCapturePrivacyHintDate")"
+  # Z zapasem: odnowienie po 20 z 30 dni; przypomnienie musi wypadać dalej niż za rok.
+  [ -n "$lu" ] && [ -n "$hd" ] && [ $((now - lu)) -lt 1728000 ] && [ $((lu - now)) -lt 86400 ] \
+    && [ $((hd - now)) -gt 31536000 ]
 }
 # cmcr_sc_approval KONTO KATALOG_DOMOWY WERSJA_MACOS [check] – sprawdza zgodę i odnawia ją, gdy wygasa (z „check”
 # tylko sprawdza). Wypisuje: ok (ważna), renewed (odnowiono), stale (do odnowienia – tylko z „check”),
 # na (macOS < 15, okna nie ma), nohome (brak katalogu domowego), denied (brak dostępu do pliku – zwykle brak pełnego
 # dostępu do dysku), error (nie da się działać jako to konto).
 cmcr_sc_approval() {
-  local u="$1" h="$2" v="$3" mode="${4:-}" maj min d f now lu hd n uid ts
+  local u="$1" h="$2" v="$3" mode="${4:-}" maj min d f c n uid ts old=0 stale=0 xml=""
   maj="${v%%.*}"; min="${v#*.}"; [ "$min" = "$v" ] && min=0; min="${min%%.*}"
   case "$maj" in ''|*[!0-9]*) maj=0 ;; esac
   case "$min" in ''|*[!0-9]*) min=0 ;; esac
@@ -418,17 +447,11 @@ cmcr_sc_approval() {
   d="$h/Library/Group Containers/group.com.apple.replayd"; f="$d/ScreenCaptureApprovals.plist"
   # Bez pełnego dostępu do dysku macOS nie pokazuje nawet zawartości tego folderu.
   if [ -d "$d" ] && ! cmcr_sc_as "$u" ls "$d" >/dev/null 2>&1; then echo denied; return 0; fi
-  now="$(date -u +%s)"
-  if [ "$maj" -eq 15 ] && [ "$min" -eq 0 ]; then
-    hd="$(cmcr_sc_epoch "$u" "$f" "$CMCR_SC_CLIENT")"
-    if [ -n "$hd" ] && [ $((hd - now)) -gt 31536000 ]; then echo ok; return 0; fi
-  else
-    lu="$(cmcr_sc_epoch "$u" "$f" "$CMCR_SC_CLIENT.kScreenCaptureApprovalLastUsed")"
-    hd="$(cmcr_sc_epoch "$u" "$f" "$CMCR_SC_CLIENT.kScreenCapturePrivacyHintDate")"
-    # Z zapasem: odnowienie po 20 z 30 dni; przypomnienie musi wypadać dalej niż za rok.
-    if [ -n "$lu" ] && [ -n "$hd" ] && [ $((now - lu)) -lt 1728000 ] && [ $((lu - now)) -lt 86400 ] \
-       && [ $((hd - now)) -gt 31536000 ]; then echo ok; return 0; fi
-  fi
+  [ "$maj" -eq 15 ] && [ "$min" -eq 0 ] && old=1
+  for c in "$CMCR_SC_ID" "$CMCR_SC_EXE"; do
+    cmcr_sc_valid "$u" "$f" "$c" $old || stale=1
+  done
+  if [ $stale = 0 ]; then echo ok; return 0; fi
   if [ "$mode" = check ]; then echo stale; return 0; fi
   cmcr_sc_as "$u" mkdir -p "$d" 2>/dev/null
   # Brak pliku albo plik bez słownika (uszkodzony): pusty słownik. Istniejący zostaje – inne aplikacje mają w nim
@@ -437,19 +460,26 @@ cmcr_sc_approval() {
     printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict/></plist>\n' \
       | cmcr_sc_as "$u" tee "$f" >/dev/null 2>&1 || { echo denied; return 0; }
   fi
-  n="$(cmcr_sc_as "$u" plutil -extract "$CMCR_SC_CLIENT.kScreenCaptureAlertableUsageCount" raw -o - "$f" 2>/dev/null)"
-  case "$n" in ''|*[!0-9]*) n=1 ;; esac
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  for c in "$CMCR_SC_ID" "$CMCR_SC_EXE"; do
+    if [ $old = 1 ]; then
+      xml="$xml<key>$c</key><date>$CMCR_SC_HINT</date>"
+    else
+      n="$(cmcr_sc_as "$u" /usr/libexec/PlistBuddy -c "Print :'$c':kScreenCaptureAlertableUsageCount" "$f" 2>/dev/null)"
+      case "$n" in ''|*[!0-9]*) n=1 ;; esac
+      xml="$xml<key>$c</key><dict><key>kScreenCaptureAlertableUsageCount</key><integer>$n</integer><key>kScreenCaptureApprovalLastAlerted</key><date>$ts</date><key>kScreenCaptureApprovalLastUsed</key><date>$ts</date><key>kScreenCapturePrivacyHintDate</key><date>$CMCR_SC_HINT</date><key>kScreenCapturePrivacyHintPolicy</key><integer>2592000</integer></dict>"
+    fi
+  done
   uid="$(id -u "$u" 2>/dev/null)"
   # replayd trzyma zgody w pamięci i nadpisałby odnowienie swoją kopią: zatrzymany przed zapisem i po nim
   # (launchd uruchamia go ponownie przy następnym nagrywaniu ekranu).
   [ -n "$uid" ] && cmcr_sc_as "$u" pkill -KILL -x -U "$uid" replayd >/dev/null 2>&1
-  if [ "$maj" -eq 15 ] && [ "$min" -eq 0 ]; then
-    cmcr_sc_as "$u" plutil -replace "$CMCR_SC_CLIENT" -date "$CMCR_SC_HINT" "$f" >/dev/null 2>&1 || { echo denied; return 0; }
-  else
-    cmcr_sc_as "$u" plutil -replace "$CMCR_SC_CLIENT" -xml "<dict><key>kScreenCaptureAlertableUsageCount</key><integer>$n</integer><key>kScreenCaptureApprovalLastAlerted</key><date>$ts</date><key>kScreenCaptureApprovalLastUsed</key><date>$ts</date><key>kScreenCapturePrivacyHintDate</key><date>$CMCR_SC_HINT</date><key>kScreenCapturePrivacyHintPolicy</key><integer>2592000</integer></dict>" "$f" >/dev/null 2>&1 \
-      || { echo denied; return 0; }
-  fi
+  # Jeden zapis pliku: usunięcie starych wpisów (brakujący to tylko komunikat) i wstawienie nowych.
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>%s</dict></plist>\n' "$xml" \
+    | cmcr_sc_as "$u" /usr/libexec/PlistBuddy -c "Delete :'$CMCR_SC_ID'" -c "Delete :'$CMCR_SC_EXE'" -c "Merge /dev/stdin" "$f" >/dev/null 2>&1
+  for c in "$CMCR_SC_ID" "$CMCR_SC_EXE"; do
+    cmcr_sc_valid "$u" "$f" "$c" $old || { echo denied; return 0; }
+  done
   [ -n "$uid" ] && cmcr_sc_as "$u" pkill -KILL -x -U "$uid" replayd >/dev/null 2>&1
   echo renewed
 }
@@ -1046,29 +1076,15 @@ step_filevault() {
 }
 
 step_tcc() {
-  section "Uprawnienia prywatności (TCC) dla sesji SSH"
-  local fda sc readable=0 probe sc_why=""
+  section "Pełny dostęp do dysku dla sesji SSH i usługa podglądu ekranu"
+  local fda readable=0
   fda="$(tcc_ssh_value kTCCServiceSystemPolicyAllFiles)"
   [ -n "$fda" ] && readable=1
   if [ $readable -eq 1 ]; then
-    sc="$(tcc_ssh_value kTCCServiceScreenCapture)"
     [ "$fda" = 2 ] && FDA_REMOTE=yes || FDA_REMOTE=no
-    [ "$sc" = 2 ] && SC_REMOTE=yes || SC_REMOTE=no
   elif [ $VIA_SSH -eq 1 ]; then
     FDA_REMOTE=no   # przez SSH bez pełnego dostępu do dysku nie da się otworzyć bazy TCC
   fi
-  # Wpis w TCC.db nie musi odpowiadać procesowi, któremu macOS przypisuje sesję SSH (sshd-session od OpenSSH 9.8):
-  # rozstrzyga sprawdzenie w sesji osoby przy komputerze, tak jak w tabeli Gotowość. Uruchomione w Terminalu
-  # sprawdzałoby uprawnienie Terminala, więc tylko przez SSH.
-  probe=""
-  [ $VIA_SSH -eq 1 ] && probe="$(screen_preflight)"
-  case "$probe" in
-    true) SC_REMOTE=yes ;;
-    false) SC_REMOTE=no ;;
-    *) if [ $VIA_SSH -eq 0 ]; then sc_why="skrypt uruchomiono przy komputerze, nie przez SSH"
-       elif [ -z "$CONSOLE_UID" ]; then sc_why="nikt nie jest zalogowany przy komputerze"
-       else sc_why="sprawdzenie w sesji $CONSOLE_USER nie powiodło się"; fi ;;
-  esac
   # Systemowa baza TCC jest chroniona przez SIP – tych uprawnień nie da się nadać skryptem (tylko ręcznie lub przez MDM).
   case "$FDA_REMOTE" in
     yes) record tcc_fda ok "„Daj użytkownikom zdalnym pełny dostęp do dysku”: włączone." ;;
@@ -1078,26 +1094,57 @@ step_tcc() {
            wait_enter
          fi ;;
   esac
-  case "$SC_REMOTE" in
-    yes) if [ -z "$sc_why" ]; then record tcc_screen ok "Nagrywanie ekranu dla sesji SSH: zezwolono (podgląd ekranów działa)."
-         else record tcc_screen ok "Nagrywanie ekranu dla sesji SSH: wpis w TCC zezwala – sprawdź w Gotowości ($sc_why)."; fi ;;
-    *)   record tcc_screen todo "Ustawienia › Prywatność i ochrona › Nagrywanie ekranu$([ "$OS_MAJOR" -ge 15 ] && echo ' i dźwięku systemowego') › „+” › ⌘⇧G › /usr/libexec/sshd-keygen-wrapper › włącz$([ "$OS_MAJOR" -ge 15 ] && echo '; jeśli podgląd nadal pokazuje tylko tapetę, dodaj tak samo /usr/libexec/sshd-session')$([ "$SC_REMOTE" = unknown ] && echo ' (stan pokaże CMCR Manager: Konfiguracja › Przygotowanie iMaców › Sprawdź wszystkie)')."
-         if open_pane "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"; then
-           detail "Otworzyłem Nagrywanie ekranu: „+”, ⌘⇧G, wpisz /usr/libexec/sshd-keygen-wrapper, Otwórz, włącz przełącznik."
-           detail "Jeśli „+” nie przyjmuje narzędzia (macOS 26.1–26.2): przeciągnij plik z Findera (⌘⇧G /usr/libexec/)."
-           wait_enter
-         fi ;;
-  esac
+  step_screen_agent
   step_screen_alert
 }
 
-# Okno macOS 15+ „sshd-session chce pominąć systemowy wybór okien” (blok CMCR-REPLAYD): zgoda zapamiętana tylko
+# Usługa podglądu ekranu (CMCR Screen Agent): zrzut ekranu robi ona, w sesji ucznia, i to jej – nie sesjom SSH –
+# nadaje się uprawnienie „Nagrywanie ekranu”. Plik usługi nie mieści się w tym skrypcie, więc instaluje ją CMCR Manager
+# (Szybkie naprawy › Zainstaluj usługę podglądu albo „Skonfiguruj zaznaczone”); tu tylko sprawdzenie, nigdy błąd.
+step_screen_agent() {
+  local ver line how="w CMCR Manager: Konfiguracja › Przygotowanie iMaców › Szybkie naprawy › Zainstaluj usługę podglądu (albo „Skonfiguruj zaznaczone”)"
+  if [ ! -x "$AGENT_EXE" ]; then
+    SC_REMOTE=no; SCREEN_AGENT=none
+    record screen_agent warn "Usługa podglądu ekranu (CMCR Screen Agent) nie jest zainstalowana – bez niej podgląd ekranów nie działa. Zainstaluj ją $how."
+    return 0
+  fi
+  ver="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$AGENT_APP/Contents/Info.plist" 2>/dev/null)"
+  SCREEN_AGENT="${ver:-?}"
+  if [ -z "$ver" ] || [ "$(printf '%s\n%s\n' "$ver" "$CMCR_SCREEN_AGENT_VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | head -n 1)" != "$CMCR_SCREEN_AGENT_VERSION" ]; then
+    record screen_agent warn "Usługa podglądu ekranu ${ver:-?} jest starsza niż w tej wersji CMCR Manager ($CMCR_SCREEN_AGENT_VERSION) – zaktualizuj ją $how."
+    return 0
+  fi
+  line=""
+  if [ -n "$CONSOLE_UID" ] && { [ $IS_ROOT -eq 1 ] || [ "$(id -u)" = "$CONSOLE_UID" ]; }; then line="$(agent_ping "$CONSOLE_UID")"; fi
+  case "$line" in
+    AGENT\ *perm=granted*)
+      SC_REMOTE=yes
+      record screen_agent ok "Usługa podglądu ekranu $ver działa i ma uprawnienie „Nagrywanie ekranu” (podgląd ekranów działa)." ;;
+    AGENT\ *)
+      SC_REMOTE=no
+      record screen_agent todo "Ustawienia › Prywatność i ochrona › Nagrywanie ekranu$([ "$OS_MAJOR" -ge 15 ] && echo ' i dźwięku systemowego') › włącz „CMCR Screen Agent” (jeśli usługi nie ma na liście: CMCR Manager › Konfiguracja › Przygotowanie iMaców › Poproś o uprawnienie)."
+      if open_pane "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"; then
+        detail "Otworzyłem Nagrywanie ekranu: włącz przełącznik przy „CMCR Screen Agent”."
+        wait_enter
+      fi ;;
+    ERR*)
+      record screen_agent warn "Usługa podglądu ekranu $ver nie odpowiada w sesji $CONSOLE_USER (${line#ERR }) – uruchom ją ponownie $how." ;;
+    *)
+      if [ -z "$CONSOLE_UID" ]; then
+        record screen_agent ok "Usługa podglądu ekranu $ver zainstalowana; uprawnienie „Nagrywanie ekranu” sprawdzi CMCR Manager, gdy ktoś się zaloguje."
+      else
+        record screen_agent ok "Usługa podglądu ekranu $ver zainstalowana; uprawnienie „Nagrywanie ekranu” pokaże CMCR Manager (Konfiguracja › Przygotowanie iMaców › Sprawdź wszystkie)."
+      fi ;;
+  esac
+}
+
+# Okno macOS 15+ „CMCR Screen Agent chce pominąć systemowy wybór okien” (blok CMCR-REPLAYD): zgoda zapamiętana tylko
 # dla konta ucznia. Innych kont skrypt nie dotyka: odnowienie zatrzymuje replayd konta (przerywa jego własne
 # nagrywanie lub udostępnianie ekranu), a kont spoza listy dozwolonych – przy domyślnym „Tylko konta standardowe”
 # także administratorów – podgląd nie obserwuje. Każdemu kontu, które naprawdę obserwuje, podgląd odnawia zgodę
 # sam, tuż przed pierwszym zrzutem.
 step_screen_alert() {
-  local h st mode="" what="Okno macOS o dostępie sesji SSH do ekranu (konto $STUDENT)"
+  local h st mode="" what="Okno macOS o dostępie usługi podglądu do ekranu (konto $STUDENT)"
   [ "$OS_MAJOR" -ge 15 ] || return 0
   [ $CHANGE -eq 1 ] || mode=check
   dscl . -read "/Users/$STUDENT" UniqueID >/dev/null 2>&1 || return 0
@@ -1134,8 +1181,8 @@ write_marker() {
     else sched_fp="$(plist_get "$MARKER" power_schedule_sched)"; fi
     printf '  "power_schedule_sched": "%s",\n' "$(json_esc "$sched_fp")"
     printf '  "key_fingerprints": "%s",\n  "ethernet_mac": "%s",\n' "$(json_esc "$KEY_FPS")" "$(json_esc "$ETH_MACS")"
-    printf '  "via_ssh": %s,\n  "fda_remote": "%s",\n  "screen_capture_remote": "%s",\n  "filevault": "%s",\n' \
-      "$([ $VIA_SSH -eq 1 ] && echo true || echo false)" "$FDA_REMOTE" "$SC_REMOTE" "$FILEVAULT"
+    printf '  "via_ssh": %s,\n  "fda_remote": "%s",\n  "screen_capture_remote": "%s",\n  "screen_agent": "%s",\n  "filevault": "%s",\n' \
+      "$([ $VIA_SSH -eq 1 ] && echo true || echo false)" "$FDA_REMOTE" "$SC_REMOTE" "$(json_esc "$SCREEN_AGENT")" "$FILEVAULT"
     printf '  "result": "%s",\n  "ok_count": %d,\n  "changed_count": %d,\n  "pending_count": %d,\n  "warn_count": %d,\n  "todo_count": %d,\n  "fail_count": %d,\n' \
       "$result" "$N_OK" "$N_CHANGED" "$N_PENDING" "$N_WARN" "$N_TODO" "$N_FAIL"
     printf '  "steps": [\n'

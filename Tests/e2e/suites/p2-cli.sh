@@ -31,7 +31,7 @@ p = sys.argv[1]; s = json.load(open(p))
 s.update(observeAllowedUsers="", observeOnlyStandardAccounts=False, notifyOnObserve=True, screenshotMaxSize=640)
 json.dump(s, open(p, "w"))
 PY
-rm -f "$WORK/console_user" "$WORK/screen_variant"
+rm -f "$WORK/console_user"; agent_reset; agent_ensure
 
 section "P2 cmcrctl – liczebniki w podsumowaniach (AUDIT TXT-22)"
 out="$(p2pw screen-watch 1 "$WORK/p2-watch" --frames 3 --interval 2)"; code=$?
@@ -434,9 +434,9 @@ expect "screen-watch: wpis o podglądzie i powiadomieniu" "$log" \
 [ "$(grep -c 'użytkownik daemon)' "$P2LOG")" = 1 ] && pass "screen-watch: jeden wpis na użytkownika w sesji" \
   || fail "screen-watch: liczba wpisów" "$log"
 rm -f "$P2LOG"
-: > "$WORK/fake-notify-fail"
+echo hidden > "$AGENT_TEST/notice"          # the agent's panel did not appear on the student's screen
 out="$(p2pw screen-watch 1 "$WORK/p2-watch-log2" --frames 1 --interval 2)"; code=$?
-rm -f "$WORK/fake-notify-fail" "$WORK/console_user"
+rm -f "$AGENT_TEST/notice" "$WORK/console_user"
 expect "screen-watch: nieudane powiadomienie w dzienniku" "$(cat "$P2LOG" 2>/dev/null)" \
   "Podgląd ekranu (cmcrctl screen-watch) → imac01: nie udało się powiadomić użytkownika daemon"
 
@@ -473,7 +473,7 @@ out="$(CMCR_CONFIG_DIR="$P2" CMCR_KEYCHAIN_SERVICE="pl.cmcr.manager.p2-zwykle-$$
   "$CTL" screen-watch 1 "$WORK/p2-watch-notified" --frames 1 --interval 2 --notified-user daemon 2>&1)"; code=$?
 expect_code "screen-watch --notified-user poza testami: kod 2" "$code" 2 "$out"
 expect "screen-watch --notified-user poza testami: komunikat" "$out" "--notified-user" "tylko w testach"
-expect_not "screen-watch --notified-user poza testami: nic nie przechwycono" "$(fakelog)" "screencapture"
+expect_not "screen-watch --notified-user poza testami: nic nie przechwycono" "$(agentlog)" "CMCRA1"
 out="$(p2 screen-watch --help)"
 expect_not "screen-watch --help: bez opcji testowej" "$out" "--notified-user"
 # In the harness (screens.sh relies on it): the notice is skipped, the session is still in the actions log.
@@ -481,7 +481,7 @@ rm -f "$P2LOG"
 clear_fakelog
 out="$(p2pw screen-watch 1 "$WORK/p2-watch-notified" --frames 1 --interval 2 --notified-user daemon)"; code=$?
 expect_code "screen-watch --notified-user w testach: kod 0" "$code" 0 "$out"
-expect_not "screen-watch --notified-user w testach: bez ponownego powiadomienia" "$(fakelog)" "observe-notice:"
+expect_not "screen-watch --notified-user w testach: bez ponownego powiadomienia" "$(agentlog)" "CMCRA1 NOTICE"
 expect "screen-watch --notified-user w testach: sesja w dzienniku działań" "$(cat "$P2LOG" 2>/dev/null)" \
   "Podgląd ekranu (cmcrctl screen-watch) → imac01 (użytkownik daemon)"
 rm -f "$WORK/console_user"

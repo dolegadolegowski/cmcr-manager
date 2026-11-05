@@ -13,7 +13,7 @@ public enum ReadinessCheck: String, CaseIterable, Identifiable, Sendable {
         case .folder: return "Folder ucznia"
         case .wol: return "Wake-on-LAN"
         case .vnc: return "Udostępnianie ekranu"
-        case .screen: return "Nagrywanie ekranu"
+        case .screen: return "Podgląd ekranu"
         case .fda: return "Pełny dostęp do dysku"
         case .filevault: return "FileVault"
         case .setup: return "Konfiguracja"
@@ -42,7 +42,7 @@ public enum ReadinessCheck: String, CaseIterable, Identifiable, Sendable {
         case .folder: return "Folder współdzielony ucznia istnieje, należy do konta ucznia i można do niego zapisywać."
         case .wol: return "„Budź przy dostępie do sieci” – pozwala obudzić uśpionego iMaca z aplikacji."
         case .vnc: return "Udostępnianie ekranu (VNC) – opcjonalne, do pełnego zdalnego sterowania."
-        case .screen: return "Uprawnienie „Nagrywanie ekranu” dla /usr/libexec/sshd-keygen-wrapper – bez niego podgląd ekranu pokazuje tylko tapetę. Nadaje się je ręcznie przy komputerze."
+        case .screen: return "Usługa podglądu ekranu (\(ScreenAgentInfo.displayName)) działa w sesji zalogowanego użytkownika i ma uprawnienie „Nagrywanie ekranu” – bez niej podgląd ekranów nie działa. Usługę instaluje aplikacja („Skonfiguruj zaznaczone”), uprawnienie nadaje się raz przy komputerze."
         case .fda: return "„Daj użytkownikom zdalnym pełny dostęp do dysku” – potrzebne do pobierania prac z Biurka i Dokumentów ucznia, czyszczenia folderów i podmiany aplikacji. Włącza się ręcznie przy komputerze."
         case .filevault: return "Z włączonym FileVault iMac po restarcie czeka na odblokowanie przy ekranie i jest niedostępny przez SSH."
         case .setup: return "Wersja skryptu konfiguracyjnego CMCR uruchomionego na tym iMacu."
@@ -105,9 +105,10 @@ public struct ReadinessReport: Sendable {
         items[check] ?? ReadinessItem(.unknown, "?", "Brak danych.")
     }
 
-    /// Problems the setup script fixes remotely („Skonfiguruj zaznaczone”).
+    /// Problems the setup script fixes remotely („Skonfiguruj zaznaczone”; the screen agent is installed by the app
+    /// in the same run).
     public var fixableBySetup: [ReadinessCheck] {
-        [ReadinessCheck.ssh, .folder, .wol, .setup].filter { [.problem, .warning].contains(self[$0].state) }
+        [ReadinessCheck.ssh, .folder, .wol, .screen, .setup].filter { [.problem, .warning].contains(self[$0].state) }
     }
 
     public var needsVisit: [ReadinessCheck] {
@@ -149,11 +150,11 @@ public struct ReadinessReport: Sendable {
         return report
     }
 
-    /// macOS 15+ asks the logged-in user again from time to time whether the remote session may keep
-    /// recording the screen (replayd's "bypass the system private window picker" alert). The app prevents it by
-    /// renewing replayd's remembered consent (`cmcr_sc_approval`) before every preview and in the setup script;
-    /// that needs Full Disk Access for remote users. Only an MDM profile turns the alert off for good.
-    public static let screenCaptureAlertNote = "Od macOS 15 system potrafi co jakiś czas pokazać osobie przy komputerze okno, że „sshd-session” / „sshd-keygen-wrapper” chce mieć dostęp do ekranu z pominięciem systemowego wyboru okien. CMCR Manager zapobiega temu sam: przed każdym podglądem i przy „Skonfiguruj zaznaczone” odnawia zapamiętaną przez macOS zgodę – do tego sesje SSH potrzebują pełnego dostępu do dysku. Gdyby okno mimo to się pojawiło, przy komputerze trzeba zezwolić (po angielsku „Allow For One Month”); po odmowie podgląd pokazuje tylko tapetę. Na Macach w MDM takie okna wyłącza na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig – ale dla wszystkich aplikacji i kont na Macu, nie tylko dla podglądu."
+    /// macOS 15+ asks the logged-in user again from time to time whether the screen agent may keep recording the
+    /// screen (replayd's "bypass the system private window picker" alert). The app prevents it by renewing replayd's
+    /// remembered consent (`cmcr_sc_approval`) before every preview and in the setup script; that needs Full Disk
+    /// Access for remote users. Only an MDM profile turns the alert off for good.
+    public static let screenCaptureAlertNote = "Od macOS 15 system potrafi co jakiś czas pokazać osobie przy komputerze okno, że „\(ScreenAgentInfo.displayName)” chce mieć dostęp do ekranu z pominięciem systemowego wyboru okien. CMCR Manager zapobiega temu sam: przed każdym podglądem i przy „Skonfiguruj zaznaczone” odnawia zapamiętaną przez macOS zgodę – do tego sesje SSH potrzebują pełnego dostępu do dysku. Gdyby okno mimo to się pojawiło, przy komputerze trzeba zezwolić (po angielsku „Allow For One Month”). Na Macach w MDM takie okna wyłącza na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig – ale dla wszystkich aplikacji i kont na Macu, nie tylko dla podglądu."
 
     /// What the readiness check found about the alert (`screen_alert` from `cmcr_sc_approval … check`).
     public static func screenCaptureAlertNote(state: String?, user: String?) -> String {
@@ -162,15 +163,73 @@ public struct ReadinessReport: Sendable {
         let mdm = "Na Macach w MDM takie okna wyłącza na stałe profil setup/mdm/cmcr-screen-capture-alert.mobileconfig – dla wszystkich aplikacji i kont na Macu, nie tylko dla podglądu."
         switch state {
         case "ok"?, "renewed"?:
-            return "Okno macOS o dostępie sesji SSH do ekranu jest wyłączone\(who): zgoda jest zapamiętana, a CMCR Manager odnawia ją przed każdym podglądem."
+            return "Okno macOS o dostępie usługi podglądu do ekranu jest wyłączone\(who): zgoda jest zapamiętana, a CMCR Manager odnawia ją przed każdym podglądem."
         case "stale"?:
-            return "Zapamiętana przez macOS zgoda na dostęp sesji SSH do ekranu\(who) wygasła albo jej nie ma – CMCR Manager odnowi ją sam przed najbliższym podglądem, więc okno o dostępie do ekranu się nie pokaże."
+            return "Zapamiętana przez macOS zgoda na dostęp usługi podglądu do ekranu\(who) wygasła albo jej nie ma – CMCR Manager odnowi ją sam przed najbliższym podglądem, więc okno o dostępie do ekranu się nie pokaże."
         case "nohome"?:
-            return "Konto \(name ?? "ucznia") nie ma jeszcze katalogu domowego – zgodę na dostęp sesji SSH do ekranu zapisze pierwszy podgląd."
+            return "Konto \(name ?? "ucznia") nie ma jeszcze katalogu domowego – zgodę na dostęp usługi podglądu do ekranu zapisze pierwszy podgląd."
         case "denied"?:
-            return "Nie da się odnowić zapamiętanej przez macOS zgody na dostęp sesji SSH do ekranu\(who) – sesje SSH nie mają pełnego dostępu do dysku. Bez tego macOS co jakiś czas (zwykle raz w miesiącu) pyta osobę przy komputerze, czy „sshd-session” może dalej widzieć ekran. Włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Otwórz instrukcję). \(mdm)"
+            return "Nie da się odnowić zapamiętanej przez macOS zgody na dostęp usługi podglądu do ekranu\(who) – sesje SSH nie mają pełnego dostępu do dysku. Bez tego macOS co jakiś czas (zwykle raz w miesiącu) pyta osobę przy komputerze, czy „\(ScreenAgentInfo.displayName)” może dalej widzieć ekran. Włącz „Daj użytkownikom zdalnym pełny dostęp do dysku” (Otwórz instrukcję). \(mdm)"
         default:
             return screenCaptureAlertNote
+        }
+    }
+
+    /// The „Podgląd ekranu” cell (docs/screen-agent.md): the agent installed and current, answering in the session at
+    /// the screen, and with the Screen Recording permission.
+    static func screenItem(_ v: [String: String], sudoWorks: Bool) -> ReadinessItem {
+        let agent = ScreenAgentStatus.parse(v)
+        let name = ScreenAgentInfo.displayName
+        let fix = "Napraw: „Skonfiguruj zaznaczone” (instaluje i uruchamia usługę) albo Szybkie naprawy › Zainstaluj usługę podglądu."
+        let osMajor = Int((v["os"] ?? "").split(separator: ".").first ?? "") ?? 0
+        let alertNote = osMajor >= 15
+            ? " " + ReadinessReport.screenCaptureAlertNote(state: v["screen_alert"], user: v["screen_alert_user"]) : ""
+        guard v["agent_installed"] != nil else {
+            return ReadinessItem(.unknown, "?", "Nie udało się sprawdzić usługi podglądu ekranu.")
+        }
+        guard let version = agent.installedVersion else {
+            return ReadinessItem(.problem, "brak usługi",
+                "Na tym iMacu nie ma usługi podglądu ekranu (\(name)) – bez niej podgląd ekranów nie działa. \(fix)")
+        }
+        let order = SetupScript.compareVersions(version, ScreenAgentInfo.version)
+        if order == .orderedAscending || version == "?" {
+            return ReadinessItem(.warning, "v\(version)",
+                "Zainstalowana usługa podglądu ekranu (\(version)) jest starsza niż w tej wersji aplikacji (\(ScreenAgentInfo.version)). \(fix) Z podpisem ad-hoc nowa wersja wymaga ponownego nadania uprawnienia „Nagrywanie ekranu” przy komputerze.")
+        }
+        let newer = order == .orderedDescending
+            ? " Usługa jest nowsza niż w tej aplikacji (\(ScreenAgentInfo.version)) – uaktualnij CMCR Manager." : ""
+        if (v["console"] ?? "").isEmpty {
+            return ReadinessItem(.unknown, "nikt nie zalogowany",
+                "Usługa podglądu ekranu \(version) jest zainstalowana. Nikt nie jest zalogowany przy komputerze – działanie i uprawnienie sprawdzę, gdy ktoś się zaloguje.\(newer)")
+        }
+        if let error = agent.error {
+            let loaded = v["agent_loaded"] == "0" ? " launchd nie ma jej w sesji zalogowanego użytkownika." : ""
+            if agent.errorCode == "untrusted" {
+                return ReadinessItem(.warning, "niezaufana",
+                    "Na gnieździe usługi podglądu odpowiada inny program niż zainstalowana usługa (\(error)) – podgląd nie pobiera od niego obrazu. \(fix)")
+            }
+            return ReadinessItem(.warning, "nie odpowiada",
+                "Usługa podglądu ekranu \(version) nie odpowiada w sesji \(agent.consoleUser ?? "zalogowanego użytkownika") (\(error)).\(loaded) \(fix)")
+        }
+        switch agent.permission {
+        case .denied:
+            return ReadinessItem(.manual, "nadaj uprawnienie",
+                "Usługa podglądu ekranu działa, ale nie ma uprawnienia „Nagrywanie ekranu i dźwięku systemowego”, więc podgląd nie pokazuje obrazu. Nadaje się je raz przy komputerze (dla wszystkich kont): Ustawienia systemowe › Prywatność i ochrona › Nagrywanie ekranu i dźwięku systemowego › włącz „\(name)”. „Poproś o uprawnienie” dopisuje usługę do tej listy i pokazuje okno macOS przy komputerze (Otwórz instrukcję).\(newer)\(alertNote)")
+        case .granted:
+            var state = ""
+            if agent.locked { state += " Ekran jest teraz zablokowany – obraz pojawi się po odblokowaniu." }
+            if agent.asleep { state += " Ekran jest teraz uśpiony." }
+            if !agent.onConsole { state += " Sesja \(agent.consoleUser ?? "") nie jest teraz na pierwszym planie." }
+            return ReadinessItem(.ok, "gotowy",
+                "Usługa podglądu ekranu \(version) działa i ma uprawnienie „Nagrywanie ekranu” – podgląd ekranu działa.\(state)\(newer)\(alertNote)")
+        case .unknown:
+            let why: String
+            if !sudoWorks && v["agent_ping"] == nil {
+                why = "Do sprawdzenia, czy działa i ma uprawnienie, potrzebne jest działające sudo (zapisane hasło administratora)."
+            } else {
+                why = "Nie udało się sprawdzić, czy działa i ma uprawnienie."
+            }
+            return ReadinessItem(.unknown, "?", "Usługa podglądu ekranu \(version) jest zainstalowana. \(why)\(newer)")
         }
     }
 
@@ -192,7 +251,7 @@ public struct ReadinessReport: Sendable {
         case "root", "ok": items[.sudo] = ReadinessItem(.ok, "OK", "sudo działa z zapisanym hasłem administratora.")
         case "nopasswd": items[.sudo] = ReadinessItem(.ok, "bez hasła", "sudo działa bez hasła (reguła NOPASSWD na tym iMacu).")
         case "nopassword": items[.sudo] = ReadinessItem(.unknown, "brak hasła",
-            "Nie zapisano hasła administratora – zapisz je w Konfiguracji › Dostęp i hasła. Bez sudo nie da się sprawdzić uprawnień nagrywania ekranu ani skonfigurować iMaca.")
+            "Nie zapisano hasła administratora – zapisz je w Konfiguracji › Dostęp i hasła. Bez sudo nie da się sprawdzić usługi podglądu ekranu ani skonfigurować iMaca.")
         case "notadmin": items[.sudo] = ReadinessItem(.problem, "nie admin",
             "Konto \(v["admin"] ?? "SSH") nie jest administratorem tego iMaca – aplikacja potrzebuje konta z uprawnieniami administratora.")
         case "badpassword": items[.sudo] = ReadinessItem(.problem, "złe hasło",
@@ -233,36 +292,7 @@ public struct ReadinessReport: Sendable {
         }
 
         let tccReadable = v["tcc"] == "readable"
-        // The preflight runs through the same process chain as the preview (launchctl asuser from the SSH
-        // session), so it is right whichever SSH binary macOS holds responsible (sshd-keygen-wrapper, or
-        // sshd-session since OpenSSH 9.8). The TCC.db rows are only the fallback.
-        let screenGranted: Bool?
-        if let p = v["screen_preflight"], p == "true" || p == "false" {
-            screenGranted = p == "true"
-        } else if tccReadable, let t = v["tcc_screen"], !t.isEmpty {
-            screenGranted = t == "2"
-        } else {
-            screenGranted = nil
-        }
-        let osMajor = Int((v["os"] ?? "").split(separator: ".").first ?? "") ?? 0
-        let alertNote = osMajor >= 15
-            ? " " + ReadinessReport.screenCaptureAlertNote(state: v["screen_alert"], user: v["screen_alert_user"]) : ""
-        switch screenGranted {
-        case true?: items[.screen] = ReadinessItem(.ok, "zezwolono",
-            "Sesje SSH mają uprawnienie „Nagrywanie ekranu” – podgląd ekranu działa.\(alertNote)")
-        case false?: items[.screen] = ReadinessItem(.manual, "ręcznie",
-            "Sesje SSH nie mają uprawnienia „Nagrywanie ekranu” (/usr/libexec/sshd-keygen-wrapper, w nowszych macOS także /usr/libexec/sshd-session) – podgląd pokaże tylko tapetę. Trzeba je nadać przy komputerze (Otwórz instrukcję).\(alertNote)")
-        case nil:
-            let why: String
-            if !sudoWorks && v["console"].map({ $0 != v["admin"] }) ?? true {
-                why = "Do sprawdzenia potrzebne jest działające sudo (zapisane hasło administratora)."
-            } else if (v["console"] ?? "").isEmpty {
-                why = "Nikt nie jest zalogowany przy komputerze – sprawdzę, gdy ktoś się zaloguje."
-            } else {
-                why = "Nie udało się sprawdzić uprawnienia."
-            }
-            items[.screen] = ReadinessItem(.unknown, "?", why)
-        }
+        items[.screen] = screenItem(v, sudoWorks: sudoWorks)
 
         let fdaGranted = v["fda"] == "yes" || v["fda_root"] == "yes" || (tccReadable && v["tcc_fda"] == "2")
         items[.fda] = fdaGranted
@@ -348,8 +378,9 @@ public extension Scripts {
     /// Cheap read-only readiness check (key=value lines for `ReadinessReport.parse`).
     ///
     /// Runs as the admin user; a single sudo call (only when a password or NOPASSWD rule exists) adds the
-    /// checks that need root. Nothing here triggers a privacy prompt: Screen Recording is read with
-    /// CGPreflightScreenCaptureAccess (or from TCC.db when Full Disk Access allows reading it).
+    /// checks that need root. Nothing here triggers a privacy prompt: the screen preview is checked by asking the
+    /// screen agent in the console user's session (`ping`: its version, its Screen Recording permission, the lock
+    /// state) – macOS 27 no longer lets anyone read TCC.db for it.
     static func readiness(student: String, sharedFolder: String, publicKey: String?) -> RemoteScript {
         let keyBlob = publicKey.flatMap { key -> String? in
             let parts = key.split(separator: " ")
@@ -359,13 +390,8 @@ public extension Scripts {
         R="${CMCR_SETUP_ROOT_PREFIX:-}"
         STUDENT=\#(shQuote(student)); SHARED=\#(shQuote(sharedFolder)); KEYBLOB=\#(shQuote(keyBlob))
         kv() { printf '%s=%s\n' "$1" "$2"; }
-        # CGPreflightScreenCaptureAccess reports the Screen Recording grant without asking for it.
-        JXA='ObjC.import("CoreGraphics"); ObjC.bindFunction("CGPreflightScreenCaptureAccess", ["bool", []]); $.CGPreflightScreenCaptureAccess()'
-        preflight() {
-          osascript -l JavaScript -e "$JXA" </dev/null 2>/dev/null & local p=$!
-          ( sleep 10; kill "$p" 2>/dev/null ) </dev/null >/dev/null 2>&1 & local w=$!
-          wait "$p"; kill "$w" 2>/dev/null
-        }
+        \#(screenAgentShellPaths)
+        \#(screenAgentShellFunctions)
         \#(screenCaptureApprovalShell)
         OSV="$(sw_vers -productVersion 2>/dev/null)"
         kv os "$OSV"
@@ -417,7 +443,11 @@ public extension Scripts {
           kv setup none
         fi
 
-        if [ -n "$CONSOLE_UID" ] && [ "$(id -u)" = "$CONSOLE_UID" ]; then kv screen_preflight "$(preflight)"; fi
+        AV="$(cmcr_agent_version)"
+        if [ -n "$AV" ]; then kv agent_installed 1; kv agent_version "$AV"; else kv agent_installed 0; fi
+        # The agent of the session at the screen: the admin's own one directly, anyone else's only as root (below).
+        AGENT_DONE=0
+        if [ -n "$CONSOLE_UID" ] && [ "$(id -u)" = "$CONSOLE_UID" ]; then cmcr_agent_probe "$CONSOLE_UID"; AGENT_DONE=1; fi
 
         if [ "$(id -u)" -eq 0 ]; then SUDO=root
         elif ! is_admin_user "$(id -un)"; then SUDO=notadmin
@@ -428,29 +458,27 @@ public extension Scripts {
           kv sudo "$SUDO"
           exit 0
         fi
-        { declare -f folder_state cmcr_sc_as cmcr_sc_epoch cmcr_sc_approval; declare -p CMCR_SC_CLIENT CMCR_SC_HINT
+        { declare -f folder_state cmcr_sc_as cmcr_sc_epoch cmcr_sc_valid cmcr_sc_approval
+          declare -p CMCR_SC_ID CMCR_SC_EXE CMCR_SC_HINT
+          \#(screenAgentShellExport)
           cat <<'CMCR_READINESS_ROOT'
         R="$1"; SHOME="$2"; CUID="$3"
         echo "root=ok"
         echo "folder=$(folder_state "$5" "$6")"
         DB="$R/Library/Application Support/com.apple.TCC/TCC.db"
-        # The SSH session's grant: sshd-keygen-wrapper, or sshd-session (path or bundle id) since OpenSSH 9.8.
+        # Full Disk Access of the SSH session: sshd-keygen-wrapper, or sshd-session (path or bundle id) since OpenSSH
+        # 9.8. Readable only with that access, and on macOS 27 not at all – the Desktop check below decides then.
         tcc() { sqlite3 -readonly "$DB" "SELECT IFNULL(MAX(auth_value),-1) FROM access WHERE service='$1' AND (client LIKE '%sshd-keygen-wrapper' OR client LIKE '%sshd-session');" 2>/dev/null; }
         F="$(tcc kTCCServiceSystemPolicyAllFiles)"
         if [ -n "$F" ]; then
-          echo "tcc=readable"; echo "tcc_fda=$F"; echo "tcc_screen=$(tcc kTCCServiceScreenCapture)"
+          echo "tcc=readable"; echo "tcc_fda=$F"
         fi
         if [ -n "$SHOME" ] && [ -d "$R$SHOME/Desktop" ]; then
           if ls "$R$SHOME/Desktop" >/dev/null 2>&1; then echo "fda_root=yes"; else echo "fda_root=no"; fi
         fi
-        if [ -n "$CUID" ]; then
-          # Same responsible process as the screen preview (launchctl asuser from the SSH session); never prompts.
-          SP="$(launchctl asuser "$CUID" osascript -l JavaScript -e "$4" </dev/null 2>/dev/null & p=$!
-                ( sleep 10; kill "$p" 2>/dev/null ) </dev/null >/dev/null 2>&1 & w=$!
-                wait "$p"; kill "$w" 2>/dev/null)"
-          echo "screen_preflight=$SP"
-        fi
-        # replayd's remembered consent for the SSH session (macOS 15+, read only) of the student account – the one the
+        # The screen agent in the session at the screen (never prompts: ping only reads its state).
+        if [ -n "$CUID" ] && [ "$4" != 1 ]; then cmcr_agent_probe "$CUID"; fi
+        # replayd's remembered consent for the screen agent (macOS 15+, read only) of the student account – the one the
         # setup script manages. Whoever else is at the screen is not reported: the preview renews the consent of
         # every account it observes by itself, and never touches the others (outside the allowed list, or admins
         # while "only standard accounts" is on – the default).
@@ -458,7 +486,7 @@ public extension Scripts {
         echo "screen_alert=$(cmcr_sc_approval "$5" "${SHOME:+$R$SHOME}" "$7" check </dev/null 2>/dev/null)"
         CMCR_READINESS_ROOT
         } > "$CMCR_TMP/readiness-root.sh"
-        ROOTOUT="$(asroot /bin/bash --noprofile --norc "$CMCR_TMP/readiness-root.sh" "$R" "$SHOME" "$CONSOLE_UID" "$JXA" \
+        ROOTOUT="$(asroot /bin/bash --noprofile --norc "$CMCR_TMP/readiness-root.sh" "$R" "$SHOME" "$CONSOLE_UID" "$AGENT_DONE" \
           "$STUDENT" "$R$SHARED" "$OSV" 2>"$CMCR_TMP/readiness.err")"
         if printf '%s\n' "$ROOTOUT" | grep -qx 'root=ok'; then
           kv sudo "$SUDO"
