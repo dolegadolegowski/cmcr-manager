@@ -7,7 +7,8 @@ import Foundation
 
 extension AppModel {
     /// The app's own copy of CMCR Screen Agent.app, which is uploaded to the iMacs; nil in a build without it
-    /// (`swift run`). A variable so the model tests do not depend on what is installed on the developer's Mac.
+    /// (`swift run`), unless /Applications/CMCR Manager.app carries an agent of exactly this version
+    /// (`ScreenAgentLocator`). A variable so the model tests do not depend on what is installed on the developer's Mac.
     static var bundledScreenAgent: () -> URL? = { ScreenAgentLocator.bundledAgent() }
 
     static let screenAgentMissingText = "Ta kopia CMCR Manager nie zawiera usługi podglądu ekranu (\(ScreenAgentInfo.displayName)) "
@@ -87,11 +88,16 @@ extension AppModel {
 }
 
 /// What `Operations.installScreenAgent` reported in its machine-readable lines (docs/screen-agent.md › Instalacja):
-/// `CMCR:AGENT <installed|updated|unchanged> <wersja>` and, per graphical session,
+/// `CMCR:AGENT <installed|updated|unchanged|newer> <wersja>` and, per graphical session,
 /// `CMCR:AGENT-SESSION <konto> <uid> <wiersz ping albo ERR …>`. Lines it does not know are ignored, missing ones leave
 /// the fields empty, so the summary says only what is known.
 struct ScreenAgentInstallReport: Equatable {
-    enum Change: String { case installed, updated, unchanged }
+    enum Change: String {
+        case installed, updated, unchanged
+        /// A newer agent is installed on the iMac (another teacher's newer CMCR Manager): left as it is, the version is
+        /// the installed one. This app should be updated.
+        case newer
+    }
 
     struct Session: Equatable {
         enum State: Equatable {
@@ -166,6 +172,7 @@ struct ScreenAgentInstallReport: Equatable {
         case .installed?: what = "zainstalowana (\(v))"
         case .updated?: what = "zaktualizowana do \(v)"
         case .unchanged?: what = "bez zmian (\(v))"
+        case .newer?: what = "na iMacu jest nowsza (\(v)) – zaktualizuj CMCR Manager"
         case nil: what = "zainstalowana"
         }
         return "Usługa podglądu: \(what)\(needsPermission ? " – bez uprawnienia nagrywania ekranu" : "")."
@@ -180,6 +187,11 @@ struct ScreenAgentInstallReport: Equatable {
         case .installed?: last = "Usługa podglądu zainstalowana (wersja \(v))."
         case .updated?: last = "Usługa podglądu zaktualizowana do wersji \(v)."
         case .unchanged?: last = "Usługa podglądu bez zmian – wersja \(v) była już zainstalowana."
+        case .newer?:
+            // Nothing on the iMac was touched, so no sessions were asked either.
+            out.append("Na iMacu jest nowsza usługa podglądu (\(v)) niż w tej kopii CMCR Manager (\(ScreenAgentInfo.version)) – "
+                + "zostaje bez zmian, razem z uprawnieniem nagrywania ekranu. Zaktualizuj CMCR Manager.")
+            return out
         case nil: last = "Usługa podglądu zainstalowana."
         }
         if sessions.isEmpty {

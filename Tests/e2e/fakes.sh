@@ -78,7 +78,9 @@ tccutil() { _e2e_log "tccutil $*"; return 0; }
 # CMCR_SCREEN_AGENT_TEST_UID=<uid> (the socket of that session), CMCR_SETUP_ROOT_PREFIX (the files of the test install).
 # bootout sends SIGTERM (the agent removes its socket) and waits for it to end. Unlike launchd it never restarts an
 # agent that ended by itself (KeepAlive): `print` then reports "not running" and the scripts have to revive it
-# (kickstart -k), which is what the tests check. Calls about anything else return 200 to the caller.
+# (kickstart -k), which is what the tests check. `print` reports the pid of the agent process itself (the client is
+# given it with --pid). With $CMCR_E2E_WORK/agent-nostart the agent never starts (loaded, but no process – like a
+# program that ends at once). Calls about anything else return 200 to the caller.
 _e2e_agent_dir() { printf '%s/launchd/gui-%s' "${CMCR_E2E_WORK:-/nonexistent}" "$1"; }
 # _e2e_agent_pid UID – prints the pid of that session's agent while it runs (a process of this test in serve mode).
 _e2e_agent_pid() {
@@ -103,6 +105,7 @@ _e2e_agent_start() { # _e2e_agent_start UID
   esac
   # A LaunchAgent whose program is missing just does not run (launchd keeps trying).
   [ -x "$exe" ] || { _e2e_log "launchd: brak pliku usługi $exe"; return 0; }
+  [ -e "$w/agent-nostart" ] && { _e2e_log "launchd: gui/$1/pl.cmcr.manager.screen-agent nie uruchamia się (test)"; return 0; }
   mkdir -p "$w/agent"
   # $! is the agent itself: env and perl exec it in the same process.
   ( cd / || exit 1

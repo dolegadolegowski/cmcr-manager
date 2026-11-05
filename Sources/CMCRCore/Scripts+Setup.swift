@@ -458,9 +458,9 @@ public extension Scripts {
           kv sudo "$SUDO"
           exit 0
         fi
-        { declare -f folder_state cmcr_sc_as cmcr_sc_epoch cmcr_sc_valid cmcr_sc_approval \
-            cmcr_agent_loaded cmcr_agent_timed cmcr_agent_probe
-          declare -p CMCR_SC_ID CMCR_SC_EXE CMCR_SC_HINT CMCR_AGENT_EXE CMCR_AGENT_LABEL CMCR_AGENT_RUN
+        { declare -f folder_state cmcr_sc_as cmcr_sc_epoch cmcr_sc_valid cmcr_sc_approval
+          declare -p CMCR_SC_ID CMCR_SC_EXE CMCR_SC_HINT
+          \#(screenAgentShellExport)
           cat <<'CMCR_READINESS_ROOT'
         R="$1"; SHOME="$2"; CUID="$3"
         echo "root=ok"

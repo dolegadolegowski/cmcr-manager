@@ -339,8 +339,9 @@ public extension Scripts {
     /// The picture comes from CMCR Screen Agent (docs/screen-agent.md), which runs in the user's GUI session and is
     /// the process macOS gives the Screen Recording permission to; this script only asks it (`cmcr-screen-agent client
     /// <uid> notice|capture …`) and streams the file it saved. It runs unprivileged when the SSH account is the one
-    /// logged in at the screen; otherwise the loop is re-executed once as root (only root may talk to another account's
-    /// agent and restart it), so a whole stream costs a single sudo. The console user is re-read on every cycle; a user
+    /// logged in at the screen (and its agent's folder `run/<uid>` exists); otherwise the loop is re-executed once as
+    /// root (only root may talk to another account's agent, restart it and make its folder), so a whole stream costs a
+    /// single sudo. The console user is re-read on every cycle; a user
     /// who has not been told yet in this login session is notified once before the first capture.
     static func screenCapture(_ o: ScreenCaptureOptions) -> RemoteScript {
         RemoteScript(#"""
@@ -400,13 +401,14 @@ public extension Scripts {
           return 0
         }
         # One command for the agent in the console user's session (`client <uid> …`): its answer is in
-        # $SCR_DIR/agent.out, the exit code in SCR_AGENT_RC and its own words in SCR_AGENT_ERR. An agent that does not
-        # answer (code 10: no socket, refused, 10 s without an answer) is loaded or restarted by launchd and asked once
-        # more; it keeps the screen untouched until it is asked.
+        # $SCR_DIR/agent.out, the exit code in SCR_AGENT_RC and its own words in SCR_AGENT_ERR. The client talks only to
+        # the process launchd runs for that session (--pid). An agent that does not answer (code 10: not running, no
+        # socket, refused, no answer in time) is loaded or restarted by launchd and asked once more; it keeps the screen
+        # untouched until it is asked.
         scr_agent() {
           local again=0
           while :; do
-            "$CMCR_AGENT_EXE" client "$CONSOLE_UID" "$@" </dev/null >"$SCR_DIR/agent.out" 2>"$SCR_DIR/agent.err"
+            cmcr_agent_client "$CONSOLE_UID" "$@" </dev/null >"$SCR_DIR/agent.out" 2>"$SCR_DIR/agent.err"
             SCR_AGENT_RC=$?
             [ "$SCR_AGENT_RC" = \#(ScreenAgentInfo.ClientCode.unreachable) ] && [ $again = 0 ] || break
             again=1
@@ -603,7 +605,10 @@ public extension Scripts {
                 SCR_RC=\#(ScriptCode.agentUnavailable); SCR_FAILS=$((SCR_FAILS + 1))
               else
                 # Someone else is logged in: from now on the agent is asked as root (the caller re-executes the loop).
-                if [ "${CMCR_SCREEN_ROLE:-}" != root ] && [ "$SCR_ME" != 0 ] && [ "$CONSOLE_UID" != "$SCR_ME" ]; then return 7; fi
+                # So too when the agent's own folder is missing or not as it should be (an account that logged in after
+                # the install, something left at its name): only root can make it, and the agent cannot start without it.
+                if [ "${CMCR_SCREEN_ROLE:-}" != root ] && [ "$SCR_ME" != 0 ] \
+                   && { [ "$CONSOLE_UID" != "$SCR_ME" ] || ! cmcr_agent_rundir_ok "$CONSOLE_UID"; }; then return 7; fi
                 if scr_notify; then
                   if scr_capture; then SCR_FAILS=0; else SCR_FAILS=$((SCR_FAILS + 1)); fi
                 else

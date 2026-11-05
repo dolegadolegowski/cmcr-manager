@@ -51,8 +51,9 @@ public extension Operations {
     /// installed version (`permission` stays `.unknown`).
     static func screenAgentStatus(on host: Machine, password: String?, settings: SSHSettings,
                                   handle: ProcessHandle? = nil) async -> (ScreenAgentStatus?, CommandResult) {
+        // Room for sudo, a ping, and – without the permission – a restart of the agent and a second ping.
         let r = await SSH.run(Scripts.screenAgentStatus(), on: host, password: password, settings: settings,
-                              timeout: 45, handle: handle)
+                              timeout: 60, handle: handle)
         let values = Parsers.keyValues(r.stdoutText)
         return (values["agent_installed"] == nil ? nil : ScreenAgentStatus.parse(values), r)
     }
@@ -62,7 +63,9 @@ public extension Operations {
 public struct ScreenAgentStatus: Equatable, Sendable {
     public enum Permission: String, Sendable { case granted, denied, unknown }
     public var installedVersion: String?
-    public var loaded: Bool
+    /// launchd has the agent in the console user's session; `nil` when that part was not reported (no sudo for
+    /// another account's session, or nobody logged in).
+    public var loaded: Bool?
     public var consoleUser: String?
     public var permission: Permission
     public var locked: Bool
@@ -77,7 +80,7 @@ public struct ScreenAgentStatus: Equatable, Sendable {
     public var onConsole = true
     public var asleep = false
 
-    public init(installedVersion: String?, loaded: Bool, consoleUser: String?, permission: Permission,
+    public init(installedVersion: String?, loaded: Bool?, consoleUser: String?, permission: Permission,
                 locked: Bool, error: String?) {
         self.installedVersion = installedVersion
         self.loaded = loaded
@@ -88,6 +91,8 @@ public struct ScreenAgentStatus: Equatable, Sendable {
     }
 
     public var isInstalled: Bool { installedVersion != nil }
+    /// The session at the screen was asked (as root or as that user): `agent_loaded`/`agent_ping` were reported.
+    public var sessionChecked: Bool { loaded != nil }
     public var isCurrent: Bool { installedVersion == ScreenAgentInfo.version }
 
     /// Parses the `agent_*` lines shared by `Scripts.screenAgentStatus` and `Scripts.readiness`:
@@ -97,7 +102,8 @@ public struct ScreenAgentStatus: Equatable, Sendable {
         let installed = v["agent_installed"] == "1"
         let version = v["agent_version"].flatMap { $0.isEmpty ? nil : $0 } ?? "?"
         let console = v["console"].flatMap { $0.isEmpty ? nil : $0 }
-        var status = ScreenAgentStatus(installedVersion: installed ? version : nil, loaded: v["agent_loaded"] == "1",
+        let loaded = v["agent_loaded"].flatMap { $0 == "1" ? true : $0 == "0" ? false : nil }
+        var status = ScreenAgentStatus(installedVersion: installed ? version : nil, loaded: loaded,
                                        consoleUser: console, permission: .unknown, locked: false, error: nil)
         guard let ping = v["agent_ping"].flatMap({ $0.isEmpty ? nil : $0 }) else { return status }
         let rc = v["agent_ping_rc"].flatMap { Int32($0) }

@@ -21,9 +21,18 @@ public enum ScreenAgentInfo {
     public static let installDir = "/Library/Application Support/CMCR/ScreenAgent"
     public static let appPath = "\(installDir)/\(appName)"
     public static let executablePath = "\(appPath)/Contents/MacOS/\(executableName)"
+    /// root:wheel 0755. Root makes `run/<uid>/` (owner <uid>, 0700) before it starts that account's agent, so no
+    /// account can take another one's socket name.
     public static let runDir = "\(installDir)/run"
+    /// The agent's socket inside its own `run/<uid>/` (`AgentInfo.socketName` in the agent; a test keeps them equal).
+    public static let socketName = "agent.sock"
     public static let shotsDir = "\(installDir)/shots"
     public static let plistPath = "/Library/LaunchAgents/\(label).plist"
+
+    /// `run/<uid>`, the folder of that account's agent.
+    public static func socketDir(uid: String) -> String { "\(runDir)/\(uid)" }
+    /// `run/<uid>/agent.sock`.
+    public static func socketPath(uid: String) -> String { "\(socketDir(uid: uid))/\(socketName)" }
 
     /// Exit codes of `cmcr-screen-agent client …`.
     public enum ClientCode {
