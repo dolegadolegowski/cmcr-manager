@@ -282,8 +282,14 @@ json_esc() {
   printf '%s' "$s"
 }
 # plist_get PLIK KLUCZ – wartość klucza z pliku plist/JSON albo nic. Liczy się tylko udane wywołanie plutil:
-# w macOS 15 brak klucza daje „Could not extract value…” na stdout (kod 1), od macOS 26 na stderr.
-plist_get() { local v; v="$(plutil -extract "$2" raw -o - "$1" 2>/dev/null)" || return 0; printf '%s' "$v"; }
+# w macOS 15 brak klucza daje „Could not extract value…” na stdout (kod 1), od macOS 26 na stderr. Wcześniejsze
+# wydania skryptu zapisywały na macOS 15 taki komunikat w znaczniku jako harmonogram – on też liczy się jako brak,
+# więc następne uruchomienie czyści znacznik.
+plist_get() {
+  local v; v="$(plutil -extract "$2" raw -o - "$1" 2>/dev/null)" || return 0
+  case "$v" in *"Could not extract value"*|*"couldn"*"t be opened"*) return 0 ;; esac
+  printf '%s' "$v"
+}
 home_of() {
   local h; h="$(dscl . -read "/Users/$1" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p' | head -n 1)"
   [ -n "$h" ] && printf '%s%s' "$R" "$h"

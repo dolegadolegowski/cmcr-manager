@@ -137,7 +137,7 @@ import Testing
     /// The setup script reads its marker (the power schedule it set) through plist_get.
     @Test func setupScriptReadsItsMarkerThroughPlistGet() throws {
         let t = SetupScriptTemplate.text
-        let def = try #require(t.split(separator: "\n").first { $0.hasPrefix("plist_get() {") }.map(String.init))
+        let def = try Self.fragment(t, from: "plist_get() {", to: "\n}\n")
         let dir = try Self.scratch()
         defer { try? FileManager.default.removeItem(at: dir) }
         let f = dir.appendingPathComponent("setup.json")
@@ -148,9 +148,22 @@ import Testing
         printf 'nofile=[%s]\n' "$(plist_get "$F.missing" power_schedule_sched)"
         """#, env: ["F": f.path])
         #expect(r.out == "version=[1.0.0]\npower_schedule=[]\nnofile=[]\n", "\(r.out)")
+        // Earlier releases stored plutil's error on macOS 15 as the schedule: it counts as missing, so the next run
+        // writes an empty schedule instead of carrying the error forward. A real schedule is kept.
+        let mk = "/Library/Application Support/CMCR/setup.json"
+        let stored = try JSONSerialization.data(withJSONObject: [
+            "version": "1.1.0",
+            "power_schedule": "\(mk): Could not extract value, error: No value at that key path or invalid key path: power_schedule",
+            "power_schedule_sched": "\(mk): (The file “setup.json” couldn’t be opened because there is no such file.)",
+            "kept": "MTWRF 07:30 17:00 shutdown"])
+        try stored.write(to: f)
+        let old = try Self.bash(def + "\n" + #"""
+        for k in power_schedule power_schedule_sched kept; do printf '%s=[%s]\n' "$k" "$(plist_get "$F" "$k")"; done
+        """#, env: ["F": f.path])
+        #expect(old.out == "power_schedule=[]\npower_schedule_sched=[]\nkept=[MTWRF 07:30 17:00 shutdown]\n", "\(old.out)")
         // Every other plutil -extract in the script belongs to the screen-capture consent block (cmcr_sc_*).
         let others = t.split(separator: "\n").filter { $0.contains("plutil -extract") && !$0.contains("cmcr_sc_as") }
-        #expect(others == [Substring(def)], "\(others)")
+        #expect(others.count == 1 && others.allSatisfy { def.contains($0) }, "\(others)")
         for key in ["power_schedule", "power_schedule_sched"] {
             #expect(t.contains("\"$(plist_get \"$MARKER\" \(key))\""))
         }

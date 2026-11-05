@@ -143,6 +143,12 @@ expect_code "macOS 15 (plutil): setup bez --power-schedule – kod 0" "$code" 0 
 marker="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("plan=[%s] sched=[%s]" % (d["power_schedule"], d["power_schedule_sched"]))' "$MARK" 2>&1)"
 expect "macOS 15 (plutil): znacznik bez komunikatu błędu plutil" "$marker" "plan=[] sched=[]"
 expect_not "macOS 15 (plutil): raport bez komunikatu błędu plutil" "$out" "Could not extract"
+# Earlier releases stored that error in the marker as the schedule: the next run counts it as missing and clears it.
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["power_schedule"] = sys.argv[1] + ": Could not extract value, error: No value at that key path or invalid key path: power_schedule"; d["power_schedule_sched"] = sys.argv[1] + ": Could not extract value, error: No value at that key path or invalid key path: power_schedule_sched"; json.dump(d, open(sys.argv[1], "w"))' "$MARK"
+out="$(sctl setup 1 --no-ssh-acl --no-sleep --sudo-nopasswd)"; code=$?
+expect_code "macOS 15 (plutil): znacznik z zapisanym błędem plutil – kod 0" "$code" 0 "$out"
+marker="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("plan=[%s] sched=[%s]" % (d["power_schedule"], d["power_schedule_sched"]))' "$MARK" 2>&1)"
+expect "macOS 15 (plutil): zapisany błąd plutil usunięty ze znacznika" "$marker" "plan=[] sched=[]"
 out="$(setup_run)"; code=$?
 expect "macOS 15 (plutil): harmonogram z opcji ustawiony ponownie" "$out" "Harmonogram ustawiony: pn wt śr cz pt"
 out="$(setup_run --verify)"
