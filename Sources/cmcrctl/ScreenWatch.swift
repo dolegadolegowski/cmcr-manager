@@ -141,8 +141,10 @@ private final class WatchState: @unchecked Sendable {
                 log(": nie udało się powiadomić użytkownika \(user) (\(detail)) – obraz nie jest pobierany")
             }
             if !i.isIdle || issue == nil { issue = i }
+            // A cycle that brought no image ends with this state; the stream goes on (frames 0), so an agent problem
+            // has to count too, or --frames would never be reached and the command would wait for its time limit.
             switch i {
-            case .captureFailed, .notifyFailed: cycles += 1
+            case .captureFailed, .notifyFailed, .agentMissing, .agentDown, .agentUntrusted, .agentPermission: cycles += 1
             default: if i.isIdle { cycles += 1 }
             }
             return "⚠︎ \(i.message)"
