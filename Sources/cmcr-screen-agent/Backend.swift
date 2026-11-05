@@ -47,11 +47,14 @@ protocol AgentBackend: AnyObject {
     func received(_ request: AgentRequest, line: String)
     /// The test backend can pretend the process is old (`RestartPolicy`).
     var pretendsOldProcess: Bool { get }
+    /// How long a notice panel stays on screen (the test backend can shorten it).
+    var noticeSeconds: TimeInterval { get }
 }
 
 extension AgentBackend {
     func received(_ request: AgentRequest, line: String) {}
     var pretendsOldProcess: Bool { false }
+    var noticeSeconds: TimeInterval { AgentInfo.noticeSeconds }
 }
 
 /// A value handed from one thread to another (a semaphore orders the accesses; the lock keeps it safe anyway).

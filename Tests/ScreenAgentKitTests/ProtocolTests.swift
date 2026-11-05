@@ -18,6 +18,8 @@ import Testing
     #expect(AgentInfo.appPath == ScreenAgentInfo.appPath)
     #expect(AgentInfo.executablePath == ScreenAgentInfo.executablePath)
     #expect(AgentInfo.runDir == ScreenAgentInfo.runDir)
+    // TODO(scalenie z częścią C2): `#expect(AgentInfo.socketName == ScreenAgentInfo.socketName)`, gdy CMCRCore ma tę stałą.
+    #expect(AgentInfo.socketName == "agent.sock")
     #expect(AgentInfo.shotsDir == ScreenAgentInfo.shotsDir)
     #expect(AgentInfo.plistPath == ScreenAgentInfo.plistPath)
     typealias A = AgentInfo.ClientCode
@@ -37,7 +39,8 @@ import Testing
 
 @Test func agentPathsApplyThePrefix() {
     let plain = AgentPaths()
-    #expect(plain.socketPath(uid: 501) == "/Library/Application Support/CMCR/ScreenAgent/run/501.sock")
+    #expect(plain.socketDir(uid: 501) == "/Library/Application Support/CMCR/ScreenAgent/run/501")
+    #expect(plain.socketPath(uid: 501) == "/Library/Application Support/CMCR/ScreenAgent/run/501/agent.sock")
     #expect(plain.shotsDir(uid: 502) == "/Library/Application Support/CMCR/ScreenAgent/shots/502")
     #expect(plain.executablePath == ScreenAgentInfo.executablePath)
     let test = AgentPaths(prefix: "/tmp/x/setup-root//")
@@ -231,12 +234,43 @@ private func size(_ t: (width: Int, height: Int)) -> [Int] { [t.width, t.height]
 }
 
 @Test func restartPolicyAfterMissingPermission() {
-    #expect(!RestartPolicy.shouldExitAfterDenied(processAge: 5, sincePermissionRequest: nil))
-    #expect(!RestartPolicy.shouldExitAfterDenied(processAge: 30, sincePermissionRequest: nil))
-    #expect(RestartPolicy.shouldExitAfterDenied(processAge: 31, sincePermissionRequest: nil))
+    typealias P = RestartPolicy
+    #expect(P.afterDeniedCapture(processAge: 5, sincePermissionRequest: nil) == .stay)
+    #expect(P.afterDeniedCapture(processAge: 30, sincePermissionRequest: nil) == .stay)
+    #expect(P.afterDeniedCapture(processAge: 31, sincePermissionRequest: nil) == .exit)
     // The dialog the admin asked for may still be on screen.
-    #expect(!RestartPolicy.shouldExitAfterDenied(processAge: 600, sincePermissionRequest: 10))
-    #expect(RestartPolicy.shouldExitAfterDenied(processAge: 600, sincePermissionRequest: 121))
+    #expect(P.afterDeniedCapture(processAge: 600, sincePermissionRequest: 10) == .stay)
+    #expect(P.afterDeniedCapture(processAge: 600, sincePermissionRequest: 121) == .exit)
+    // The notice panel stays until it has gone; a young process or a recent dialog keeps the agent anyway.
+    #expect(P.afterDeniedCapture(processAge: 600, sincePermissionRequest: nil, noticeRemaining: 6.5) == .later(6.5))
+    #expect(P.afterDeniedCapture(processAge: 600, sincePermissionRequest: nil, noticeRemaining: -1) == .exit)
+    #expect(P.afterDeniedCapture(processAge: 5, sincePermissionRequest: nil, noticeRemaining: 6) == .stay)
+    #expect(P.afterDeniedCapture(processAge: 600, sincePermissionRequest: 10, noticeRemaining: 6) == .stay)
+}
+
+@Test func uidsUpToTenDigits() {
+    #expect(strictUID("0") == 0)
+    #expect(strictUID("501") == 501)
+    // Active Directory and mobile accounts.
+    #expect(strictUID("1580234567") == 1_580_234_567)
+    #expect(strictUID("4294967294") == 4_294_967_294)
+    // (uid_t)-1 means "no uid"; more than 10 digits, signs, spaces and empty strings are refused.
+    for bad in ["4294967295", "4294967296", "9999999999", "00000000001", "-1", "+5", " 5", "5 ", "", "1e3", "٣"] {
+        #expect(strictUID(bad) == nil, "\(bad)")
+    }
+}
+
+@Test func namesAreLimitedBeforeSending() {
+    #expect(limitedName("Safari") == "Safari")
+    #expect(limitedName("") == "")
+    let long = String(repeating: "Ż", count: 7000)
+    #expect(limitedName(long).count == AgentInfo.maxNameLength)
+    // Even an app name made of one huge character cluster stays small on the wire.
+    let cluster = "a" + String(repeating: "\u{0301}", count: 10_000)
+    #expect(limitedName(cluster).utf8.count <= AgentInfo.maxNameLength * 4)
+    // A capture reply with the longest name fits the client's line limit by far.
+    let line = AgentReply.capture(count: 1, frontApp: limitedName(String(repeating: "😀", count: 5000))).line
+    #expect(line.utf8.count < 2048)
 }
 
 // MARK: - JPEG
@@ -318,6 +352,104 @@ private func socketPair() throws -> (Int32, Int32) {
     let long = SocketStream(fd: d, inactivity: 1, total: 2)
     _ = String(repeating: "x", count: 5000).withCString { Darwin.write(c, $0, 5000) }
     #expect((#expect(throws: IOFailure.self) { try long.readLine(maxLength: 4096) })?.kind == .tooLong)
+    // A line that is not UTF-8 is malformed (a protocol error for the client, not a dead agent).
+    let (e, f) = try socketPair()
+    defer { close(e); close(f) }
+    let bytes: [UInt8] = [0x4F, 0x4B, 0xFF, 0xFE, 0x0A]
+    _ = bytes.withUnsafeBytes { Darwin.write(e, $0.baseAddress, $0.count) }
+    #expect((#expect(throws: IOFailure.self) { try SocketStream(fd: f, inactivity: 1, total: 2).readLine() })?.kind == .invalid)
+}
+
+@Test func connectRetriesARefusedSocketAFewTimes() throws {
+    let dir = try makeTempDir(in: "/tmp")
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    // A socket file nobody listens on: refused at once, tried again 3 times 0.2 s apart.
+    let path = dir + "/s"
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    var addr = try UnixSocket.address(path)
+    _ = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
+    close(fd)
+    let started = Date()
+    let e = #expect(throws: IOFailure.self) { try UnixSocket.connect(to: path, timeout: 1, attempts: 3, retryDelay: 0.2) }
+    #expect(e?.errno == ECONNREFUSED)
+    let took = Date().timeIntervalSince(started)
+    #expect(took >= 0.35 && took < 3)
+}
+
+@Test func suspendedProcessesAreNoAgents() throws {
+    #expect(PeerIdentity.suspendedState(of: getpid()) == nil)
+    #expect(PeerIdentity.suspendedState(of: 999_999) != nil)
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    p.arguments = ["30"]
+    try p.run()
+    defer { kill(p.processIdentifier, SIGKILL); p.waitUntilExit() }
+    #expect(PeerIdentity.suspendedState(of: p.processIdentifier) == nil)
+    kill(p.processIdentifier, SIGSTOP)
+    var state: String?
+    for _ in 0..<100 {
+        state = PeerIdentity.suspendedState(of: p.processIdentifier)
+        if state != nil { break }
+        usleep(10_000)
+    }
+    #expect(state?.contains("zatrzymany") == true)
+    kill(p.processIdentifier, SIGCONT)
+    usleep(50_000)
+    #expect(PeerIdentity.suspendedState(of: p.processIdentifier) == nil)
+}
+
+@Test func socketLocationRefusesForeignOrLooseFolders() throws {
+    let tmp = try makeTempDir(in: "/tmp")
+    defer { try? FileManager.default.removeItem(atPath: tmp) }
+    let paths = AgentPaths(prefix: tmp)
+    let me = getuid(), uid: uid_t = me == 4242 ? 4243 : 4242
+    let fm = FileManager.default
+    func client(_ owners: Set<uid_t> = [me], runOwners: Set<uid_t> = [0, me]) -> SocketLocation.Problem? {
+        do { try SocketLocation.checkForClient(paths: paths, uid: uid, owners: owners, runDirOwners: runOwners); return nil } catch { return error }
+    }
+    func isMissing(_ p: SocketLocation.Problem?) -> Bool { if case .missing = p { return true }; return false }
+    func isUntrusted(_ p: SocketLocation.Problem?) -> Bool { if case .untrusted = p { return true }; return false }
+
+    #expect(isMissing(client()))
+    try fm.createDirectory(atPath: paths.runDir, withIntermediateDirectories: true)
+    chmod(paths.runDir, 0o755)
+    #expect(isMissing(client()))
+    // The old world-writable run (1733) is not trusted any more, nor one of another user.
+    chmod(paths.runDir, 0o1733)
+    #expect(isUntrusted(client()))
+    chmod(paths.runDir, 0o775)
+    #expect(isUntrusted(client()))
+    chmod(paths.runDir, 0o755)
+    #expect(isUntrusted(client(runOwners: [0])))
+
+    let dir = paths.socketDir(uid: uid)
+    try fm.createDirectory(atPath: dir, withIntermediateDirectories: false)
+    chmod(dir, 0o700)
+    #expect(isMissing(client()))
+    // run/<uid> of somebody else than <uid> (here: the developer's folder for user 4242).
+    #expect(isUntrusted(client([uid])))
+    do { try SocketLocation.checkForAgent(directory: dir, owner: uid); Issue.record("obcy katalog przyjęty") }
+    catch { #expect(isUntrusted(error)) }
+    chmod(dir, 0o755)
+    #expect(isUntrusted(client()))
+    do { try SocketLocation.checkForAgent(directory: dir, owner: me); Issue.record("0755 przyjęte") } catch {}
+    chmod(dir, 0o700)
+    try SocketLocation.checkForAgent(directory: dir, owner: me)
+
+    // A link instead of the folder, or a plain file at the socket path.
+    try fm.removeItem(atPath: dir)
+    try fm.createDirectory(atPath: tmp + "/elsewhere", withIntermediateDirectories: false)
+    chmod(tmp + "/elsewhere", 0o700)
+    try fm.createSymbolicLink(atPath: dir, withDestinationPath: tmp + "/elsewhere")
+    #expect(isUntrusted(client()))
+    do { try SocketLocation.checkForAgent(directory: dir, owner: me); Issue.record("dowiązanie przyjęte") } catch {}
+    try fm.removeItem(atPath: dir)
+    try fm.createDirectory(atPath: dir, withIntermediateDirectories: false)
+    chmod(dir, 0o700)
+    fm.createFile(atPath: paths.socketPath(uid: uid), contents: Data())
+    #expect(isUntrusted(client()))
+    do { try SocketLocation.checkForAgent(directory: tmp + "/none", owner: me); Issue.record("brak katalogu przyjęty") }
+    catch { #expect(isMissing(error)) }
 }
 
 @Test func peerIdentityOfASocketPair() throws {
@@ -337,8 +469,8 @@ private func socketPair() throws -> (Int32, Int32) {
 
 // MARK: - Saved screenshots
 
-private func makeTempDir() throws -> String {
-    var template = Array((FileManager.default.temporaryDirectory.path + "/cmcr-shots.XXXXXX").utf8CString)
+private func makeTempDir(in parent: String = FileManager.default.temporaryDirectory.path) throws -> String {
+    var template = Array((parent + "/cmcr-shots.XXXXXX").utf8CString)
     guard template.withUnsafeMutableBufferPointer({ mkdtemp($0.baseAddress!) }) != nil else { throw IOFailure.system("mkdtemp") }
     return String(cString: template)
 }
@@ -370,6 +502,10 @@ private func mode(_ path: String) -> mode_t {
     FileManager.default.createFile(atPath: freshTemp, contents: Data())
     try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -600)], ofItemAtPath: oldTemp)
     FileManager.default.createFile(atPath: "\(store.directory)/notes.txt", contents: Data())
+    // A capture of one display leaves the other displays' images alone (another preview may be using them).
+    try store.removeOthers(keeping: nil)
+    #expect(FileManager.default.fileExists(atPath: "\(store.directory)/screen-2.jpg"))
+    #expect(!FileManager.default.fileExists(atPath: oldTemp))
     try store.removeOthers(keeping: [1])
     let left = Set(try FileManager.default.contentsOfDirectory(atPath: store.directory))
     #expect(left == ["screen-1.jpg", ".screen-2.ghijkl", "notes.txt"])
