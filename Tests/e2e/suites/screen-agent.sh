@@ -425,7 +425,12 @@ echo 2 > "$AGENT_TEST/displays"
 out="$(ctlpw screen-watch 1 "$WORK/sa-all" --frames 1 --interval 2 --display all)"
 expect_code "zrzuty: wszystkie ekrany – plik na każdy" "$(ls -A "$SA_SHOTS" | tr '\n' ' ')" "screen-1.jpg screen-2.jpg " "$out"
 out="$(ctlpw screen-watch 1 "$WORK/sa-main" --frames 1 --interval 2 --display main)"
-expect_code "zrzuty: potem tylko główny – plik drugiego ekranu usunięty" "$(ls -A "$SA_SHOTS" | tr '\n' ' ')" "screen-1.jpg " "$out"
+# Only a capture of all displays removes the files of displays it did not get: a capture of the main one leaves
+# screen-2.jpg alone, because another preview of the same account may have just written and reported it.
+expect_code "zrzuty: potem tylko główny – plik drugiego ekranu zostaje" "$(ls -A "$SA_SHOTS" | tr '\n' ' ')" "screen-1.jpg screen-2.jpg " "$out"
+echo 1 > "$AGENT_TEST/displays"
+out="$(ctlpw screen-watch 1 "$WORK/sa-all1" --frames 1 --interval 2 --display all)"
+expect_code "zrzuty: wszystkie ekrany, gdy został jeden – plik drugiego usunięty" "$(ls -A "$SA_SHOTS" | tr '\n' ' ')" "screen-1.jpg " "$out"
 
 agent_reset
 agent_ensure

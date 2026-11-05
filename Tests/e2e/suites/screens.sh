@@ -300,26 +300,27 @@ order="$(awk '/^CMCRA1 NOTICE / {n++} /^CMCRA1 CAPTURE / {print (n >= 2 ? "ok" :
 [ "$order" = ok ] && pass "na żywo: pierwsza klatka dopiero po potwierdzonym powiadomieniu" \
   || fail "na żywo: zrzut przed powiadomieniem (${order:-brak})" "$(agentlog)"
 
-# The agent hangs (stopped: the connection is accepted, no answer ever comes). The client gives up after 10 s, the
-# preview restarts the agent (kickstart -k: the hung one is killed) and the notice and the picture come from the new one.
+# A stopped agent (SIGSTOP – what a student would do to answer the socket with their own program) is not trusted:
+# the preview refuses it without asking it anything and without restarting it (that would hide the tampering), and
+# the next preview after SIGCONT works again. A genuinely hung agent (timeout → revive) is covered by the unit tests.
 scr_pid_before="$(agent_pid 1)"
 if [ -n "$scr_pid_before" ]; then
+  : > "$AGENT_TEST/requests.log"
   kill -STOP "$scr_pid_before"
   clear_fakelog
   out="$(ctlpw screenshot 1 "$WORK/scr-hung.jpg")"; code=$?
-  expect_code "zawieszona usługa: uruchomiona ponownie, potem powiadomienie i obraz – kod 0" "$code" 0 "$out"
-  expect "zawieszona usługa: kickstart -k" "$(fakelog)" "launchctl kickstart -k gui/1/pl.cmcr.manager.screen-agent"
-  expect "zawieszona usługa: powiadomienie od nowej usługi przed obrazem" "$(agentlog)" "CMCRA1 NOTICE " "CMCRA1 CAPTURE "
-  scr_pid_after="$(agent_pid 1)"
-  if [ -n "$scr_pid_after" ] && [ "$scr_pid_after" != "$scr_pid_before" ] && ! kill -0 "$scr_pid_before" 2>/dev/null; then
-    pass "zawieszona usługa: zakończona, działa nowa"
-  else
-    fail "zawieszona usługa: przed $scr_pid_before, po ${scr_pid_after:-brak}" "$(ps -p "$scr_pid_before" -o pid,stat,command 2>&1)"
-    kill -KILL "$scr_pid_before" 2>/dev/null
-  fi
-  scr_sessions_gone && pass "zawieszona usługa: sesja zamknięta" || fail "zawieszona usługa: zostały procesy sesji" "$(pgrep -lP "$SSHD_PID")"
+  kill -CONT "$scr_pid_before"
+  expect_code "zatrzymana usługa: odrzucona – kod 1 (screenshot)" "$code" 1 "$out"
+  expect "zatrzymana usługa: komunikat" "$out" "odpowiada inny program niż zainstalowana usługa" "jest zatrzymany"
+  expect_not "zatrzymana usługa: bez ponownego uruchomienia" "$(fakelog)" "launchctl kickstart"
+  expect_code "zatrzymana usługa: nic do niej nie wysłano" "$(agent_count '^CMCRA1 ')" 0 "$(agentlog)"
+  [ ! -e "$WORK/scr-hung.jpg" ] && pass "zatrzymana usługa: brak obrazu" || fail "zatrzymana usługa: zapisano obraz"
+  out="$(ctlpw screenshot 1 "$WORK/scr-hung.jpg")"; code=$?
+  expect_code "zatrzymana usługa: po wznowieniu obraz – kod 0" "$code" 0 "$out"
+  expect_code "zatrzymana usługa: ta sama usługa" "$(agent_pid 1)" "$scr_pid_before" ""
+  scr_sessions_gone && pass "zatrzymana usługa: sesja zamknięta" || fail "zatrzymana usługa: zostały procesy sesji" "$(pgrep -lP "$SSHD_PID")"
 else
-  fail "zawieszona usługa: usługa w sesji ucznia nie działa" "$(cat "$WORK/launchd/gui-1/pid" 2>&1)"
+  fail "zatrzymana usługa: usługa w sesji ucznia nie działa" "$(cat "$WORK/launchd/gui-1/pid" 2>&1)"
 fi
 
 # Own session of the SSH account (no sudo): the same rule.
