@@ -18,8 +18,7 @@ import Testing
     #expect(AgentInfo.appPath == ScreenAgentInfo.appPath)
     #expect(AgentInfo.executablePath == ScreenAgentInfo.executablePath)
     #expect(AgentInfo.runDir == ScreenAgentInfo.runDir)
-    // TODO(scalenie z częścią C2): `#expect(AgentInfo.socketName == ScreenAgentInfo.socketName)`, gdy CMCRCore ma tę stałą.
-    #expect(AgentInfo.socketName == "agent.sock")
+    #expect(AgentInfo.socketName == ScreenAgentInfo.socketName)
     #expect(AgentInfo.shotsDir == ScreenAgentInfo.shotsDir)
     #expect(AgentInfo.plistPath == ScreenAgentInfo.plistPath)
     typealias A = AgentInfo.ClientCode
