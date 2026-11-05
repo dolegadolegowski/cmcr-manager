@@ -151,6 +151,22 @@ import Testing
         }
     }
 
+    @Test func linkedAppsAreNotOfferedAndLaunchdItemsAreExplained() throws {
+        let link = AppInventory.parse("CMCR:APP\tlink\tapp\t/Users/Shared/Tool.app\tpl.test.tool\t1.0\t10\t").apps[0]
+        #expect(!link.isRemovable && link.reasonNotRemovable?.contains("dowiązanie") == true && link.locationLabel == "Dowiązanie")
+        let text = UninstallReport.render([
+            "CMCR:UN\tplan\tdaemon\t/Library/LaunchDaemons/a.plist\tcom.firma.a\tinside",
+            "CMCR:UN\tplan\tdaemon\t/Library/LaunchDaemons/b.plist\tcom.firma.b\tpkg",
+            "CMCR:UN\tkept\tdaemon\t/Library/LaunchDaemons/c.plist\tetykieta pasuje",
+            "CMCR:UN\tnote\tcopies\t/Applications/X.app\tNa komputerze jest inna kopia",
+        ].joined(separator: "\n"))
+        // Intentional difference from the other implementation: the warning sits on each system-wide service's own line
+        // (systemWarning) instead of a separate "systemwide" note.
+        #expect(text.contains("(najpierw zatrzymana): /Library/LaunchDaemons/a.plist ⚠︎ uwaga: usługa systemowa"))
+        #expect(text.contains("Usuwana, bo to plik pakietu usuwanego razem z aplikacją"))
+        #expect(text.contains("↷ Zostaje usługa systemowa (LaunchDaemon): /Library/LaunchDaemons/c.plist – etykieta pasuje"))
+    }
+
     // MARK: - Versions on several Macs
 
     static let lab = (1...11).map { String(format: "imac%02d", $0) }

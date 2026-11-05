@@ -316,6 +316,10 @@ extension Scripts {
                 if [ -z "$why" ] && [ "$kind" = daemon ] && [ "$prog" = "$CMCR_FS/Library/PrivilegedHelperTools/$label" ] \
                    && printf '%s\n' "$sm" | grep -qxF -- "$label"; then why=smjob; fi
               fi
+              # A system-wide service named only after the bundle id is not removed – but the report says it stays.
+              if [ -z "$why" ] && [ $idok = 1 ] && [ $other = 0 ]; then
+                case "$kind" in daemon|agent) case "$label" in "$bid"|"$bid".*) why=kept ;; esac ;; esac
+              fi
               [ -n "$why" ] || continue
               printf '%s\t%s\t%s\t%s\t%s\n' "$kind" "$f" "$(cmcr_clean "$label")" "$(cmcr_clean "${prog:--}")" "$why"
             done
@@ -517,7 +521,16 @@ extension Scripts {
           PROCS="$(cmcr_app_procs "$ITEM" "$PARENT/$NAME" "$TNAME")"
           PIDS="$(printf '%s\n' "$PROCS" | awk 'NF {print $1}' | paste -sd' ' -)"
           USERS_RUNNING="$(printf '%s\n' "$PROCS" | awk 'NF && !s[$2]++ {printf "%s%s", (n++ ? ", " : ""), $2}')"
-          LD="$CMCR_TMP/launchd.$SEQ"; cmcr_launchd_find "$ITEM" "$PARENT/$NAME" "$BID" "$LOC" "$OWNER" "$B" > "$LD"
+          LD="$CMCR_TMP/launchd.$SEQ"; cmcr_launchd_find "$ITEM" "$PARENT/$NAME" "$BID" "$LOC" "$OWNER" "$B" > "$LD.all"
+          awk -F'\t' '$5 != "kept"' "$LD.all" > "$LD"
+          if cmcr_bid_ok "$BID" && cmcr_bid_elsewhere "$BID" "$ITEM"; then
+            cmcr_rec note copies "$ITEM" "Na komputerze jest inna kopia aplikacji o tym samym identyfikatorze – usługi rozpoznawane tylko po identyfikatorze zostają."
+          fi
+          while IFS="$CMCR_T" read -r kind f label prog why; do
+            [ -n "$f" ] || continue
+            case "$kind" in daemon) what=daemon ;; *) what=agent ;; esac
+            cmcr_rec kept "$what" "$f" "etykieta $label pasuje do identyfikatora aplikacji, ale usług z /Library CMCR nie usuwa po samej etykiecie (tylko gdy ich program leży w aplikacji albo pochodzą z jej pakietu) – jeśli należą do tej aplikacji, usuń je ręcznie"
+          done < <(awk -F'\t' '$5 == "kept"' "$LD.all")
           # bash 3.2 cannot parse a case pattern inside $( ): the scope is set first.
           SYS=""; case "$LOC" in apps|utilities|folder) SYS=system ;; esac
           RS="$(cmcr_app_receipts "$ITEM" "$PARENT/$NAME" "$SYS")"

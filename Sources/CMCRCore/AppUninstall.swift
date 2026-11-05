@@ -213,6 +213,8 @@ public struct UninstallReport: Sendable {
                 return "  ↷ Zostaje \(Polish.count(n, "plik", "pliki", "plików")) pakietu poza aplikacją (np. \(examples)). "
                     + "Aby je usunąć: „Usuń także pliki pakietu” (cmcrctl: --with-package-files)."
             case "receipt": return "  ↷ Zostaje pakiet \(r.path) – \(r.detail)"
+            case "daemon": return "  ↷ Zostaje usługa systemowa (LaunchDaemon): \(r.path) – \(r.detail)"
+            case "agent", "uagent": return "  ↷ Zostaje agent (LaunchAgent): \(r.path) – \(r.detail)"
             default: return "  ↷ Zostaje \(noun(r.what)): \(r.path) – \(r.detail)"
             }
         case .refused:
