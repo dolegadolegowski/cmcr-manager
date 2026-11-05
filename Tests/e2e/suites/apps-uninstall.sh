@@ -11,7 +11,7 @@ AP_RC="$WORK/receipts"
 mkdir -p "$AP_APPS/Utilities" "$AP_HOME/Applications" "$AP_HOME/Library/LaunchAgents" "$AP_FS/Library/LaunchDaemons" \
   "$AP_FS/Library/LaunchAgents" "$AP_FS/Library/PrivilegedHelperTools" "$AP_RC"
 
-ap_mkapp() { # ap_mkapp FOLDER NAME BUNDLE-ID [VERSION] – a bundle signed ad hoc that runs a copy of /bin/sleep
+ap_mkapp() { # ap_mkapp FOLDER NAME BUNDLE-ID [VERSION] [EXTRA-PLIST-XML] – a bundle signed ad hoc that runs a copy of /bin/sleep
   local a="$1/$2.app"
   mkdir -p "$a/Contents/MacOS"
   cat > "$a/Contents/Info.plist" <<EOF
@@ -21,6 +21,7 @@ ap_mkapp() { # ap_mkapp FOLDER NAME BUNDLE-ID [VERSION] – a bundle signed ad h
 <key>CFBundleIdentifier</key><string>$3</string>
 <key>CFBundleShortVersionString</key><string>${4:-1.0}</string>
 <key>CFBundleExecutable</key><string>$2</string>
+${5:-}
 </dict></plist>
 EOF
   cp /bin/sleep "$a/Contents/MacOS/$2"
@@ -44,7 +45,9 @@ ap_json() { # ap_json JSON PYTHON-EXPRESSION – prints the expression over the 
 
 # The calculator comes from a package (installed to /) that also put a launch daemon with its helper and data files in
 # /Library; a second package shares one of those files.
-ap_mkapp "$AP_APPS" "Kalkulator Testowy" pl.test.kalk 1.2.3
+# Its helper is one the bundle declares (SMPrivilegedExecutables): only such a helper goes with the app.
+ap_mkapp "$AP_APPS" "Kalkulator Testowy" pl.test.kalk 1.2.3 \
+  '<key>SMPrivilegedExecutables</key><dict><key>pl.test.kalk.helper</key><string>anchor apple generic</string></dict>'
 ap_plist "$AP_FS/Library/LaunchDaemons/pl.test.kalk.helper.plist" pl.test.kalk.helper "$AP_FS/Library/PrivilegedHelperTools/pl.test.kalk.helper"
 printf '#!/bin/sh\n' > "$AP_FS/Library/PrivilegedHelperTools/pl.test.kalk.helper"
 mkdir -p "$AP_FS/Library/Application Support/KalkTest/sub"
@@ -219,6 +222,105 @@ expect "App Store i MDM: wyjaśnienia" "$out" "Aplikacja z App Store" "zarządza
 out="$(ctl uninstall --help)"
 expect "uninstall --help" "$out" "--dry-run" "--with-package-files"
 rm -rf "$WORK/Users/inny" "$WORK/in/podmiana" "$AP_HOME/Applications/Podmiana"
+
+section "Odinstalowanie – usługi tylko tej aplikacji (identyfikator ucznia nic nie znaczy)"
+# Services of other software, system-wide: MDM, an updater, a vendor's agent and helper.
+AP_TOOLS="$AP_FS/Library/PrivilegedHelperTools"
+ap_plist "$AP_FS/Library/LaunchDaemons/com.jamf.management.daemon.plist" com.jamf.management.daemon "$AP_TOOLS/com.jamf.management.daemon"
+printf '#!/bin/sh\n' > "$AP_TOOLS/com.jamf.management.daemon"
+ap_plist "$AP_FS/Library/LaunchAgents/com.jamf.management.agent.plist" com.jamf.management.agent "/Library/JamfManagement/agent"
+ap_plist "$AP_FS/Library/LaunchDaemons/com.google.keystone.daemon.plist" com.google.keystone.daemon "/Library/Google/keystone"
+ap_untouched() { # ap_untouched NAME – the services of other software are all still there
+  [ -f "$AP_FS/Library/LaunchDaemons/com.jamf.management.daemon.plist" ] && [ -f "$AP_TOOLS/com.jamf.management.daemon" ] \
+    && [ -f "$AP_FS/Library/LaunchAgents/com.jamf.management.agent.plist" ] && [ -f "$AP_FS/Library/LaunchDaemons/com.google.keystone.daemon.plist" ] \
+    && pass "$1: usługi innego oprogramowania nietknięte" || fail "$1: usunięto cudzą usługę" "$(ls "$AP_FS/Library/LaunchDaemons" "$AP_FS/Library/LaunchAgents" "$AP_TOOLS")"
+}
+for bid in com com.jamf com.jamf.management; do
+  ap_mkapp "$AP_HOME/Applications" "Zla Gra" "$bid" 1.0
+  clear_fakelog
+  out="$(ctlpw uninstall "Zla Gra" 1 --dry-run)"; code=$?
+  expect_code "złośliwy identyfikator $bid: podgląd – kod 0" "$code" 0 "$out"
+  expect_not "złośliwy identyfikator $bid: podgląd bez usług systemowych" "$out" "usługę systemową"
+  expect_not "złośliwy identyfikator $bid: podgląd bez agenta systemowego" "$out" "LaunchAgent) com.jamf.management.agent"
+  out="$(ctlpw uninstall "Zla Gra" 1 --yes)"; code=$?
+  expect_code "złośliwy identyfikator $bid: usunięcie – kod 0" "$code" 0 "$out"
+  [ ! -e "$AP_HOME/Applications/Zla Gra.app" ] && pass "złośliwy identyfikator $bid: aplikacja ucznia usunięta" || fail "złośliwy identyfikator $bid: aplikacja została" "$out"
+  expect_not "złośliwy identyfikator $bid: żadnego bootout systemu" "$(fakelog)" "bootout system"
+  ap_untouched "złośliwy identyfikator $bid"
+done
+# The same for an app in /Applications: a short id is no reason to touch other software's services.
+ap_mkapp "$AP_APPS" "Krotka" com 1.0
+out="$(ctlpw uninstall "Krotka" 1 --yes)"
+expect_not "krótki identyfikator w /Applications: żadnego bootout systemu" "$(fakelog)" "bootout system"
+ap_untouched "krótki identyfikator w /Applications"
+
+# A real vendor service: its Program is inside the bundle (under another label); an unrelated one with the same label prefix stays.
+ap_mkapp "$AP_APPS" "Producent" pl.test.producent 2.0
+ap_plist "$AP_FS/Library/LaunchDaemons/pl.firma.producent.plist" pl.firma.producent "$AP_APPS/Producent.app/Contents/MacOS/Producent"
+ap_plist "$AP_FS/Library/LaunchDaemons/pl.test.producent.inny.plist" pl.test.producent.inny "/Library/Inny/dziala"
+clear_fakelog
+out="$(ctlpw uninstall "Producent" 1 --dry-run)"
+expect "usługa producenta: podgląd z ostrzeżeniem" "$out" "usługę systemową (LaunchDaemon) pl.firma.producent" "uwaga: usługa systemowa" "jej program leży w usuwanej aplikacji"
+expect_not "usługa producenta: podgląd nie obejmuje cudzej usługi o podobnej etykiecie" "$out" "pl.test.producent.inny"
+out="$(ctlpw uninstall "Producent" 1 --yes)"; code=$?
+expect_code "usługa producenta: kod 0" "$code" 0 "$out"
+[ ! -e "$AP_APPS/Producent.app" ] && [ ! -e "$AP_FS/Library/LaunchDaemons/pl.firma.producent.plist" ] \
+  && pass "usługa producenta: aplikacja i usługa usunięte" || fail "usługa producenta: została" "$out"
+[ -f "$AP_FS/Library/LaunchDaemons/pl.test.producent.inny.plist" ] && pass "usługa producenta: usługa o tej samej etykiecie bez programu w aplikacji została" \
+  || fail "usługa producenta: usunięto cudzą usługę"
+expect "usługa producenta: zatrzymana przed usunięciem" "$(fakelog)" "launchctl bootout system $AP_FS/Library/LaunchDaemons/pl.firma.producent.plist"
+expect_not "usługa producenta: cudza usługa nie zatrzymana" "$(fakelog)" "pl.test.producent.inny"
+rm -f "$AP_FS/Library/LaunchDaemons/pl.test.producent.inny.plist"
+ap_untouched "usługa producenta"
+
+section "Odinstalowanie – kopia uruchomiona z AppTranslocation i pliki usług pakietu"
+ap_mkapp "$AP_APPS" "Translokowana" pl.test.translokowana 1.0
+mkdir -p "$WORK/AppTranslocation/UUID/d"
+cp -R "$AP_APPS/Translokowana.app" "$WORK/AppTranslocation/UUID/d/Translokowana.app"
+TR_PID="$(ap_start "$WORK/AppTranslocation/UUID/d/Translokowana.app/Contents/MacOS/Translokowana")"
+sleep 0.3
+out="$(ctlpw uninstall "Translokowana" 1 --dry-run)"
+expect "translokacja: podgląd widzi uruchomioną kopię" "$out" "Aplikacja jest uruchomiona – konto: $ME"
+out="$(ctlpw uninstall "Translokowana" 1 --yes)"; code=$?
+expect_code "translokacja: kod 0" "$code" 0 "$out"
+sleep 0.3
+if kill -0 "$TR_PID" 2>/dev/null; then fail "translokacja: kopia z AppTranslocation nadal działa" "$out"; kill "$TR_PID" 2>/dev/null
+else pass "translokacja: kopia z AppTranslocation zamknięta"; fi
+rm -rf "$WORK/AppTranslocation"
+
+# The package installed an app, a launch daemon under a label that has nothing to do with the app's id, and its helper.
+ap_mkapp "$AP_APPS" "Z Pakietu" pl.test.zpakietu 1.0
+printf '#!/bin/sh\n' > "$AP_TOOLS/pl.firma.aktualizator"
+ap_plist "$AP_FS/Library/LaunchDaemons/pl.firma.aktualizator.plist" pl.firma.aktualizator "$AP_TOOLS/pl.firma.aktualizator"
+mkdir -p "$AP_RC/pl.test.zpakietu.pkg"
+printf 'version: 1.0\nlocation: /\ninstall-time: 1767225600\n' > "$AP_RC/pl.test.zpakietu.pkg/info"
+printf '%s\n' "$R/Applications/Z Pakietu.app/Contents/Info.plist" "$R/Applications/Z Pakietu.app/Contents/MacOS/Z Pakietu" \
+  "$R/fsroot/Library/LaunchDaemons/pl.firma.aktualizator.plist" "$R/fsroot/Library/PrivilegedHelperTools/pl.firma.aktualizator" \
+  > "$AP_RC/pl.test.zpakietu.pkg/files"
+printf '%s\n' "$R/Applications" "$R/Applications/Z Pakietu.app" > "$AP_RC/pl.test.zpakietu.pkg/dirs"
+clear_fakelog
+out="$(ctlpw uninstall "Z Pakietu" 1 --dry-run)"
+expect_not "usługa pakietu bez --with-package-files: nie jest planowana" "$out" "pl.firma.aktualizator (najpierw"
+out="$(ctlpw uninstall "Z Pakietu" 1 --dry-run --with-package-files)"
+expect "usługa pakietu: podgląd jako usługa, nie plik" "$out" "usługę systemową (LaunchDaemon) pl.firma.aktualizator" "uwaga: usługa systemowa" "plik pakietu usuwanego razem z aplikacją"
+expect_not "usługa pakietu: plist nie jest zwykłym plikiem pakietu" "$out" "plik pakietu: $AP_FS/Library/LaunchDaemons/pl.firma.aktualizator.plist"
+out="$(ctlpw uninstall "Z Pakietu" 1 --with-package-files --yes)"; code=$?
+expect_code "usługa pakietu: kod 0" "$code" 0 "$out"
+expect "usługa pakietu: zatrzymana przed usunięciem" "$(fakelog)" "launchctl bootout system $AP_FS/Library/LaunchDaemons/pl.firma.aktualizator.plist"
+[ ! -e "$AP_FS/Library/LaunchDaemons/pl.firma.aktualizator.plist" ] && [ ! -e "$AP_TOOLS/pl.firma.aktualizator" ] \
+  && pass "usługa pakietu: plik usługi i program usunięte" || fail "usługa pakietu: została" "$out"
+ap_untouched "usługa pakietu"
+
+section "Odinstalowanie – dowiązanie w /Applications na zewnątrz"
+mkdir -p "$WORK/Shared"
+ap_mkapp "$WORK/Shared" Narzedzie2 pl.test.narzedzie2
+ln -s "$WORK/Shared/Narzedzie2.app" "$AP_APPS/Narzedzie2.app"
+out="$(ctl apps installed 1 --json)"
+expect "dowiązanie na zewnątrz: lista nie oferuje usunięcia" "$(ap_json "$out" "apps['Narzedzie2']['location'], apps['Narzedzie2']['removable']")" "link" "False"
+out="$(ctlpw uninstall "$AP_APPS/Narzedzie2.app" 1 --yes)"
+expect "dowiązanie na zewnątrz: odmowa z tym samym powodem" "$out" "Odmowa:" "dowiązanie"
+[ -d "$WORK/Shared/Narzedzie2.app" ] && pass "dowiązanie na zewnątrz: cel nietknięty" || fail "dowiązanie na zewnątrz: cel usunięty"
+rm -rf "$AP_APPS/Narzedzie2.app" "$WORK/Shared"
 
 section "Wersje aplikacji na dwóch komputerach"
 # A second test iMac (imac03): another sshd of this run, the same fakes, its own Applications folder.

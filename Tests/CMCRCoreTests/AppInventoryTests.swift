@@ -201,7 +201,8 @@ import Testing
 
         init() throws {
             dir = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("cmcr-apps-\(UUID().uuidString)")
-            for sub in ["Applications/Utilities", "Users/\(Lab.me)/Applications", "fsroot/Library/LaunchDaemons"] {
+            for sub in ["Applications/Utilities", "Users/\(Lab.me)/Applications", "Users/\(Lab.me)/Library/LaunchAgents",
+                        "fsroot/Library/LaunchDaemons", "fsroot/Library/LaunchAgents", "fsroot/Library/PrivilegedHelperTools"] {
                 try FileManager.default.createDirectory(at: dir.appendingPathComponent(sub), withIntermediateDirectories: true)
             }
             let fakes = #"""
@@ -217,9 +218,11 @@ import Testing
             profiles() { printf 'MDM enrollment: No\n'; }
             launchctl() { _lab_log "launchctl $*"; return 0; }
             kill() { _lab_log "kill $*"; return 0; }
+            # LAB_RM_FAIL: rm -rf fails (macOS protects part of the bundle), as without Full Disk Access.
+            rm() { if [ -n "${LAB_RM_FAIL:-}" ] && [ "$1" = -rf ]; then echo "Operation not permitted" >&2; return 1; fi; command rm "$@"; }
             # As on macOS 15: plutil prints „Could not extract value…” on stdout (macOS 26 and later: on stderr).
             plutil() { command plutil "$@" 2>&1; }
-            export -f _lab_log sudo pkgutil profiles launchctl kill plutil
+            export -f _lab_log sudo pkgutil profiles launchctl kill rm plutil
             """#
             try fakes.write(to: dir.appendingPathComponent("fakes.sh"), atomically: true, encoding: .utf8)
         }
@@ -230,19 +233,34 @@ import Testing
         }
 
         /// `version` is CFBundleShortVersionString and `build` CFBundleVersion; nil leaves the key out.
-        func makeApp(_ folder: URL, _ name: String, bundleID: String, version: String? = "1.0", build: String? = nil) throws {
+        func makeApp(_ folder: URL, _ name: String, bundleID: String, version: String? = "1.0", build: String? = nil,
+                     extra: [String: Any] = [:]) throws {
             let contents = folder.appendingPathComponent("\(name).app/Contents")
             try FileManager.default.createDirectory(at: contents.appendingPathComponent("MacOS"), withIntermediateDirectories: true)
             var plist: [String: Any] = ["CFBundleIdentifier": bundleID]
             if let version { plist["CFBundleShortVersionString"] = version }
             if let build { plist["CFBundleVersion"] = build }
+            plist.merge(extra) { a, _ in a }
             try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
                 .write(to: contents.appendingPathComponent("Info.plist"))
             try Data(count: 4096).write(to: contents.appendingPathComponent("MacOS/\(name)"))
         }
 
-        func run(_ script: RemoteScript) async -> CommandResult {
-            await ProcessRunner.run("/bin/sh", ["-c", script.remoteCommand()], environment: environment,
+        var fs: URL { dir.appendingPathComponent("fsroot") }
+
+        /// A launchd plist (Label, Program) in `folder`; returns its path. A helper file is made when `program` is one.
+        @discardableResult
+        func launchdItem(_ folder: URL, _ label: String, program: String, createProgram: Bool = true) throws -> URL {
+            let f = folder.appendingPathComponent("\(label).plist")
+            try PropertyListSerialization.data(fromPropertyList: ["Label": label, "Program": program], format: .xml, options: 0).write(to: f)
+            if createProgram && program.hasPrefix(fs.path) { try Data("#!/bin/sh\n".utf8).write(to: URL(fileURLWithPath: program)) }
+            return f
+        }
+
+        func exists(_ u: URL) -> Bool { FileManager.default.fileExists(atPath: u.path) }
+
+        func run(_ script: RemoteScript, extraEnvironment: [String: String] = [:]) async -> CommandResult {
+            await ProcessRunner.run("/bin/sh", ["-c", script.remoteCommand()], environment: environment.merging(extraEnvironment) { $1 },
                                     stdin: Data("haslo\n".utf8), timeout: 120)
         }
 
@@ -337,5 +355,127 @@ import Testing
         #expect(FileManager.default.fileExists(atPath: lab.apps.appendingPathComponent("Apple Test.app").path))
         #expect(FileManager.default.fileExists(atPath: outside.appendingPathComponent("Obca.app").path))
         #expect(!lab.log().contains("kill"))
+    }
+
+    // MARK: - launchd items: only what really belongs to the app
+
+    /// A student controls the bundle id of an app in ~/Applications ("com", "com.jamf.management"): root must not boot
+    /// out or delete the system-wide daemons, agents and helpers of other software because of it.
+    @Test func aStudentsBundleIDCannotRemoveSystemServices() async throws {
+        for (bid, name) in [("com", "Krotki"), ("com.jamf", "Dwa"), ("com.jamf.management", "Jamf")] {
+            let lab = try Lab()
+            defer { lab.remove() }
+            try #require(await lab.guardFakes())
+            let helper = lab.fs.appendingPathComponent("Library/PrivilegedHelperTools/com.jamf.management.daemon").path
+            let daemon = try lab.launchdItem(lab.fs.appendingPathComponent("Library/LaunchDaemons"), "com.jamf.management.daemon", program: helper)
+            let agent = try lab.launchdItem(lab.fs.appendingPathComponent("Library/LaunchAgents"), "com.jamf.management.agent",
+                                            program: "/Library/JamfManagement/agent")
+            let google = try lab.launchdItem(lab.fs.appendingPathComponent("Library/LaunchDaemons"), "com.google.keystone.daemon",
+                                             program: "/Library/Google/keystone")
+            let games = lab.home.appendingPathComponent("Applications")
+            try lab.makeApp(games, name, bundleID: bid)
+            let mine = try lab.launchdItem(lab.home.appendingPathComponent("Library/LaunchAgents"), "\(bid).moj", program: "/nie/ma/tego")
+            let own = try lab.launchdItem(lab.home.appendingPathComponent("Library/LaunchAgents"), "pl.test.\(name).agent",
+                                          program: games.appendingPathComponent("\(name).app/Contents/MacOS/\(name)").path)
+            let app = games.appendingPathComponent("\(name).app").path
+            let dry = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me, dryRun: true))
+            #expect(dry.exitCode == 0, "\(dry.stdoutText)\(dry.stderrText)")
+            let plan = UninstallReport.parse(dry.stdoutText)
+            #expect(!plan.planned.contains { $0.what == "daemon" || $0.what == "agent" || $0.what == "helper" }, "\(bid): \(dry.stdoutText)")
+            #expect(plan.planned.contains { $0.what == "uagent" && $0.path == own.path })
+            let real = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me))
+            #expect(real.exitCode == 0, "\(real.stdoutText)\(real.stderrText)")
+            for f in [daemon, agent, google, URL(fileURLWithPath: helper)] { #expect(lab.exists(f), "\(bid): \(f.lastPathComponent) usunięty") }
+            #expect(!lab.exists(URL(fileURLWithPath: app)) && !lab.exists(own))
+            #expect(!lab.log().contains("bootout system"), "\(bid): \(lab.log())")
+            // The student's own agent is looked at by its label only with a real id (three components).
+            #expect(lab.exists(mine) == !(bid == "com.jamf.management"), "\(bid): agent konta")
+        }
+    }
+
+    /// An app in /Applications: a daemon whose Program is inside the bundle goes (with a warning in the preview), the
+    /// helper only when the bundle itself names it; a daemon of the same vendor that only shares the label prefix stays.
+    @Test func vendorServicesOfAnAppInApplicationsGoWithWarnings() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        try lab.makeApp(lab.apps, "Vendor", bundleID: "pl.test.vendor.app",
+                        extra: ["SMPrivilegedExecutables": ["pl.test.vendor.app.helper": "anchor apple generic"]])
+        let tools = lab.fs.appendingPathComponent("Library/PrivilegedHelperTools")
+        let daemons = lab.fs.appendingPathComponent("Library/LaunchDaemons")
+        let inside = try lab.launchdItem(daemons, "pl.inny.nazwa", program: lab.apps.path + "/Vendor.app/Contents/MacOS/Vendor")
+        let blessed = try lab.launchdItem(daemons, "pl.test.vendor.app.helper", program: tools.path + "/pl.test.vendor.app.helper")
+        let prefixOnly = try lab.launchdItem(daemons, "pl.test.vendor.app.updater", program: tools.path + "/pl.test.vendor.app.updater")
+        let unrelated = try lab.launchdItem(daemons, "pl.test.vendor.app.helper2", program: "/Library/Inny/dziala")
+        let app = lab.apps.appendingPathComponent("Vendor.app").path
+        let dry = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me, dryRun: true))
+        #expect(dry.exitCode == 0, "\(dry.stdoutText)\(dry.stderrText)")
+        let text = UninstallReport.render(dry.stdoutText)
+        let plan = UninstallReport.parse(dry.stdoutText).planned
+        #expect(Set(plan.filter { $0.what == "daemon" }.map(\.path)) == [inside.path, blessed.path], "\(text)")
+        #expect(plan.contains { $0.what == "helper" && $0.path.hasSuffix("pl.test.vendor.app.helper") })
+        let warnings = text.split(separator: "\n").filter { $0.contains("Do usunięcia – usługę systemową") || $0.contains("program pomocniczy") }
+        #expect(warnings.count == 3 && warnings.allSatisfy { $0.contains("uwaga: usługa systemowa") }, "\(text)")
+        let real = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me))
+        #expect(real.exitCode == 0, "\(real.stdoutText)\(real.stderrText)")
+        #expect(!lab.exists(inside) && !lab.exists(blessed) && !lab.exists(tools.appendingPathComponent("pl.test.vendor.app.helper")))
+        #expect(lab.exists(prefixOnly) && lab.exists(unrelated) && lab.exists(tools.appendingPathComponent("pl.test.vendor.app.updater")))
+        #expect(lab.log().contains("launchctl bootout system \(inside.path)") && lab.log().contains("launchctl bootout system \(blessed.path)"))
+        #expect(!lab.log().contains(prefixOnly.path) && !lab.log().contains(unrelated.path))
+    }
+
+    /// A bundle id shared with another copy of the app: the services the other copy needs stay.
+    @Test func servicesOfAnotherCopyStay() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        let ext: [String: Any] = ["SMPrivilegedExecutables": ["pl.test.dwa.app.helper": "x"]]
+        try lab.makeApp(lab.apps, "Dwa", bundleID: "pl.test.dwa.app", extra: ext)
+        try lab.makeApp(lab.apps.appendingPathComponent("Stare"), "Dwa", bundleID: "pl.test.dwa.app", extra: ext)
+        let tools = lab.fs.appendingPathComponent("Library/PrivilegedHelperTools")
+        let blessed = try lab.launchdItem(lab.fs.appendingPathComponent("Library/LaunchDaemons"), "pl.test.dwa.app.helper",
+                                          program: tools.path + "/pl.test.dwa.app.helper")
+        let r = await lab.run(Scripts.uninstallApps([lab.apps.path + "/Stare/Dwa.app"], studentUser: Lab.me))
+        #expect(r.exitCode == 0, "\(r.stdoutText)\(r.stderrText)")
+        #expect(lab.exists(blessed) && lab.exists(tools.appendingPathComponent("pl.test.dwa.app.helper")))
+        #expect(!lab.exists(lab.apps.appendingPathComponent("Stare/Dwa.app")))
+    }
+
+    /// The removal fails (macOS protects part of the bundle): the bundle comes back and so do its stopped services.
+    @Test func failedRemovalStartsTheServicesAgain() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        try lab.makeApp(lab.apps, "Chroniona", bundleID: "pl.test.chroniona")
+        let daemon = try lab.launchdItem(lab.fs.appendingPathComponent("Library/LaunchDaemons"), "pl.test.chroniona.d",
+                                         program: lab.apps.path + "/Chroniona.app/Contents/MacOS/Chroniona")
+        let r = await lab.run(Scripts.uninstallApps(["Chroniona"], studentUser: Lab.me), extraEnvironment: ["LAB_RM_FAIL": "1"])
+        #expect(r.exitCode == 1, "\(r.stdoutText)\(r.stderrText)")
+        #expect(lab.exists(lab.apps.appendingPathComponent("Chroniona.app")) && lab.exists(daemon))
+        let log = lab.log()
+        let out = try #require(log.range(of: "launchctl bootout system \(daemon.path)"))
+        let back = try #require(log.range(of: "launchctl bootstrap system \(daemon.path)"))
+        #expect(out.lowerBound < back.lowerBound)
+        #expect(UninstallReport.render(r.stdoutText).contains("uruchomiono ponownie"))
+    }
+
+    /// A link in /Applications to an app elsewhere is listed as a link that cannot be removed – and the uninstaller
+    /// refuses it with the same reason; one into the system stays listed where the app really is.
+    @Test func aLinkOutsideIsNotOfferedAsRemovable() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        let elsewhere = lab.dir.appendingPathComponent("Shared")
+        try lab.makeApp(elsewhere, "Tool", bundleID: "pl.test.tool")
+        let link = lab.apps.appendingPathComponent("Tool.app")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: elsewhere.appendingPathComponent("Tool.app"))
+        let inv = await lab.run(Scripts.appInventory(studentUser: Lab.me))
+        let apps = AppInventory.parse(inv.stdoutText).apps
+        let tool = try #require(apps.first { $0.name == "Tool" })
+        #expect(tool.location == "link" && tool.path == link.path && !tool.isRemovable && tool.reasonNotRemovable != nil)
+        let r = await lab.run(Scripts.uninstallApps([tool.removalPath], studentUser: Lab.me))
+        #expect(r.exitCode == 2, "\(r.stdoutText)")
+        #expect(UninstallReport.parse(r.stdoutText).refusals.first?.detail.contains("dowiązanie") == true)
+        #expect(lab.exists(elsewhere.appendingPathComponent("Tool.app")))
     }
 }

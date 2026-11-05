@@ -153,6 +153,26 @@ public struct UninstallReport: Sendable {
         }
     }
 
+    /// Why a launchd job or its helper goes with the app (the script's „why”, the first extra field of a plan record).
+    static func launchdReason(_ why: String) -> String {
+        switch why {
+        case "inside": return "jej program leży w usuwanej aplikacji"
+        case "smjob": return "aplikacja deklaruje ją jako swój program pomocniczy (SMPrivilegedExecutables)"
+        case "assoc": return "wskazuje tę aplikację (AssociatedBundleIdentifiers)"
+        case "label": return "jej etykieta to identyfikator aplikacji"
+        case "pkg": return "to plik pakietu usuwanego razem z aplikacją"
+        default: return "należy do aplikacji"
+        }
+    }
+
+    /// The preview's warning for what lives outside the app and works for the whole Mac: /Library services and helpers.
+    /// An agent of an account (uagent) is the user's own file and has none.
+    static func systemWarning(_ r: UninstallRecord) -> String {
+        guard r.what != "uagent" else { return "" }
+        let why = r.extra.first.map { " Usuwana, bo \(launchdReason($0))." } ?? ""
+        return " ⚠︎ uwaga: usługa systemowa – działa poza aplikacją, dla całego komputera.\(why)"
+    }
+
     /// One record for people; nil for records that only carry data.
     public static func line(_ r: UninstallRecord) -> String? {
         let sizeSuffix = size(r.kb).map { " (\($0))" } ?? ""
@@ -166,7 +186,9 @@ public struct UninstallReport: Sendable {
             switch r.what {
             case "app", "unity": return "  • Do usunięcia – \(noun(r.what)): \(r.path)\(sizeSuffix)"
             case "daemon", "agent", "uagent":
-                return "  • Do usunięcia – \(noun(r.what)) \(r.detail) (najpierw zatrzymana): \(r.path)"
+                return "  • Do usunięcia – \(noun(r.what)) \(r.detail) (najpierw zatrzymana): \(r.path)\(systemWarning(r))"
+            case "helper":
+                return "  • Do usunięcia – \(noun(r.what)): \(r.path)\(systemWarning(r))"
             case "receipt": return "  • Do wyrejestrowania – pakiet \(r.path) (pkgutil --forget)"
             default: return "  • Do usunięcia – \(noun(r.what)): \(r.path)"
             }

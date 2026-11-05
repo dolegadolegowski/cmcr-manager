@@ -105,12 +105,14 @@ extension Scripts {
         cmcr_receipt_index
         OUT="$CMCR_TMP/apps.out"; : > "$OUT"
         cmcr_inv_app() { # LOCATION PATH
-          local loc="$1" a="$2" kind=app bid ver size rc="" sys=""
+          local loc="$1" a="$2" kind=app bid ver size rc="" sys="" real
           case "$a" in *"$CMCR_T"*|*$'\n'*|*$'\r'*) return 0 ;; esac
           if [ -L "$a" ]; then
-            a="$(cmcr_realdir "$a")"
-            [ -n "$a" ] || return 0
-            case "$a" in /System/*) loc=system ;; esac
+            # Into the system (Safari): listed where the app really is. Elsewhere: listed as the link, not removable –
+            # the uninstaller refuses links, so the list must not offer it.
+            real="$(cmcr_realdir "$a")"
+            [ -n "$real" ] || return 0
+            case "$real" in /System/*) a="$real"; loc=system ;; *) loc=link ;; esac
           fi
           case "$loc" in system) kind=system ;; unity) kind=unity ;; esac
           bid="$(cmcr_plist "$a/Contents/Info.plist" CFBundleIdentifier)"
@@ -175,8 +177,13 @@ extension Scripts {
     ///
     /// Per app: the bundle (moved aside first – the same permission as deleting it, which macOS refuses without Full
     /// Disk Access – so an app that cannot go is never quit for nothing), its running processes (every user: TERM, then
-    /// KILL after 5 s), its launch daemons and agents (Program inside the bundle, or Label = bundle id / bundle id + "."):
-    /// booted out and removed, with their helper in /Library/PrivilegedHelperTools, and the receipts of the packages that
+    /// KILL after 5 s – found again after the move, also translocated copies), its launch daemons and agents: those
+    /// whose Program/ProgramArguments[0] lies inside the bundle, the helper the bundle names in SMPrivilegedExecutables
+    /// (with its file in /Library/PrivilegedHelperTools), a daemon that lists the bundle id in AssociatedBundleIdentifiers
+    /// and, in an account's ~/Library/LaunchAgents, an agent labelled with the bundle id (at least three components).
+    /// An app in a user's ~/Applications touches only that user's agents – never the system-wide
+    /// /Library/LaunchDaemons and /Library/LaunchAgents, and never anything on a label alone there. The jobs are booted
+    /// out (and started again if the removal fails) and removed, and the receipts of the packages that
     /// installed it (`pkgutil --forget`) unless the package also installed another app that stays. The package's other
     /// files stay unless `packageFiles`; then those under /Library, /usr/local and /opt that no other package owns go too
     /// (never anything Apple's or CMCR's, never kernel or system extensions), with the folders they leave empty. A whole
@@ -207,35 +214,116 @@ extension Scripts {
         MDM="$(cmcr_mdm_enrolled)"
         cmcr_receipt_index
         # Processes running from the bundle (every user): "pid user" per line. ps lists precomposed names (cmcr_ps),
-        # the path on disk may be decomposed (AUDIT REV-09), so the paths are converted the same way.
-        cmcr_app_procs() { # PATH PHYSICAL
-          local a b
+        # the path on disk may be decomposed (AUDIT REV-09), so the paths are converted the same way. The bundle may
+        # also run translocated (Gatekeeper: .../AppTranslocation/<uuid>/d/<Name>.app/Contents/...), and after the
+        # move aside it runs from the new path (4th argument).
+        cmcr_app_procs() { # PATH PHYSICAL [BUNDLE-NAME.app for translocated copies] [MOVED-PATH]
+          local a b m t
           a="$(printf '%s' "$1" | iconv -c -f UTF-8-MAC -t UTF-8)"; b="$(printf '%s' "$2" | iconv -c -f UTF-8-MAC -t UTF-8)"
-          cmcr_ps -axww -o pid=,user=,comm= 2>/dev/null | A="${a:-$1}/" B="${b:-$2}/" C="/System/Volumes/Data${b:-$2}/" awk '
+          m="$(printf '%s' "${4:-$2}" | iconv -c -f UTF-8-MAC -t UTF-8)"
+          t=""; [ -n "${3:-}" ] && t="/$(printf '%s' "$3" | iconv -c -f UTF-8-MAC -t UTF-8)/Contents/"
+          cmcr_ps -axww -o pid=,user=,comm= 2>/dev/null | A="${a:-$1}/" B="${b:-$2}/" C="/System/Volumes/Data${b:-$2}/" \
+            D="${m:-${4:-$2}}/" T="$t" awk '
             { l = $0; sub(/^ *[0-9]+ +[^ ]+ +/, "", l) }
-            index(l, ENVIRON["A"]) == 1 || index(l, ENVIRON["B"]) == 1 || index(l, ENVIRON["C"]) == 1 { print $1, $2 }'
+            index(l, ENVIRON["A"]) == 1 || index(l, ENVIRON["B"]) == 1 || index(l, ENVIRON["C"]) == 1 || index(l, ENVIRON["D"]) == 1 \
+              || (ENVIRON["T"] != "" && index(l, "/AppTranslocation/") > 0 && index(l, ENVIRON["T"]) > 0) { print $1, $2 }'
+          # A translocated copy that ps shows under another name: Launch Services knows it by bundle id and path.
+          if [ -n "${CMCR_LS_BID:-}" ] && [ -n "$t" ] && command -v lsappinfo >/dev/null 2>&1; then
+            lsappinfo list 2>/dev/null | BID="$CMCR_LS_BID" N="/$3" awk '
+              function flush() { if (pid != "" && bid == ENVIRON["BID"] && index(path, "/AppTranslocation/") > 0 \
+                  && length(path) >= length(ENVIRON["N"]) && substr(path, length(path) - length(ENVIRON["N"]) + 1) == ENVIRON["N"]) print pid }
+              /^ *[0-9]+\) / { flush(); pid = ""; bid = ""; path = "" }
+              /^ *bundleID="/ { bid = $0; sub(/^ *bundleID="/, "", bid); sub(/".*/, "", bid) }
+              /^ *bundle path="/ { path = $0; sub(/^ *bundle path="/, "", path); sub(/".*/, "", path) }
+              /^ *pid = / { pid = $3 }
+              END { flush() }' | while IFS= read -r p; do
+                case "$p" in ""|*[!0-9]*) continue ;; esac
+                printf '%s %s\n' "$p" "$(cmcr_ps -o user= -p "$p" 2>/dev/null | tr -d ' ')"
+              done
+          fi
         }
-        # Launch daemons and agents of the app: "kind<TAB>plist<TAB>label<TAB>program" (kind: daemon, agent, uagent:USER).
-        cmcr_launchd_find() { # PATH PHYSICAL BUNDLE-ID
-          local item="$1" phys="$2" bid="$3" spec kind dir f label prog m u
+        # A bundle id usable for matching launchd labels: at least three dot-separated components, no odd characters
+        # (the id comes from the app's own Info.plist – a student controls it for an app in ~/Applications).
+        cmcr_bid_ok() {
+          case "$1" in ""|.*|*.|*..*|*[!A-Za-z0-9._-]*) return 1 ;; *.*.*) return 0 ;; esac
+          return 1
+        }
+        # Another copy of an app with this bundle id (outside ITEM) in /Applications or an allowed ~/Applications: its
+        # services must stay.
+        cmcr_bid_elsewhere() { # BUNDLE-ID ITEM
+          local d a u
+          for d in "$CMCR_APPS" "$CMCR_APPS"/*/ ; do
+            for a in "${d%/}"/*.app; do
+              [ -d "$a" ] && [ "$a" != "$2" ] && [ "$(cmcr_plist "$a/Contents/Info.plist" CFBundleIdentifier)" = "$1" ] && return 0
+            done
+          done
+          while IFS= read -r u; do
+            for a in "$CMCR_USERS/$u/Applications"/*.app "$CMCR_USERS/$u/Applications"/*/*.app; do
+              [ -d "$a" ] && [ "$a" != "$2" ] && [ "$(cmcr_plist "$a/Contents/Info.plist" CFBundleIdentifier)" = "$1" ] && return 0
+            done
+          done < <(cmcr_app_users)
+          return 1
+        }
+        # PROGRAM lies inside the bundle being removed (absolute, no „..”).
+        cmcr_inside() { # PROGRAM ITEM PHYSICAL
+          case "$1" in /*) ;; *) return 1 ;; esac
+          case "$1" in */../*|*/./*|*/..|*/.) return 1 ;; esac
+          case "$1" in "$2"/*|"$3"/*) return 0 ;; esac
+          return 1
+        }
+        # Launch daemons and agents of the app: "kind<TAB>plist<TAB>label<TAB>program<TAB>why". Kind: daemon, agent,
+        # uagent:USER. Why: inside (Program/ProgramArguments[0] lies in the bundle), smjob (the helper the bundle
+        # declares in SMPrivilegedExecutables: exact label, program /Library/PrivilegedHelperTools/<label>), assoc
+        # (AssociatedBundleIdentifiers names the bundle id), label (an agent of an account: label = bundle id or
+        # bundle id + "."). An app in a user's ~/Applications – its bundle id is the student's to choose – touches only
+        # that user's ~/Library/LaunchAgents; the system-wide /Library/LaunchDaemons and /Library/LaunchAgents are
+        # never matched by label alone. Program "-" means none.
+        cmcr_launchd_find() { # PATH PHYSICAL BUNDLE-ID LOCATION OWNER BUNDLE
+          local item="$1" phys="$2" bid="$3" loc="$4" owner="$5" bundle="$6" kind dir f label prog why u sm="" idok=0 other=0
+          cmcr_bid_ok "$bid" && idok=1
+          [ $idok = 1 ] && cmcr_bid_elsewhere "$bid" "$item" && other=1
+          case "$loc" in
+            apps|utilities|folder) sm="$(plutil -extract SMPrivilegedExecutables xml1 -o - "$bundle/Contents/Info.plist" 2>/dev/null \
+                                      | sed -n 's/^[[:space:]]*<key>\(.*\)<\/key>[[:space:]]*$/\1/p')" ;;
+          esac
           {
-            printf 'daemon\t%s\n' "$CMCR_FS/Library/LaunchDaemons"
-            printf 'agent\t%s\n' "$CMCR_FS/Library/LaunchAgents"
-            while IFS= read -r u; do printf 'uagent:%s\t%s\n' "$u" "$CMCR_USERS/$u/Library/LaunchAgents"; done < <(cmcr_app_users)
+            case "$loc" in
+              user:*) printf 'uagent:%s\t%s\n' "$owner" "$CMCR_USERS/$owner/Library/LaunchAgents" ;;
+              *)
+                printf 'daemon\t%s\n' "$CMCR_FS/Library/LaunchDaemons"
+                printf 'agent\t%s\n' "$CMCR_FS/Library/LaunchAgents"
+                while IFS= read -r u; do printf 'uagent:%s\t%s\n' "$u" "$CMCR_USERS/$u/Library/LaunchAgents"; done < <(cmcr_app_users) ;;
+            esac
           } | while IFS="$CMCR_T" read -r kind dir; do
             [ -d "$dir" ] && [ ! -L "$dir" ] || continue
             for f in "$dir"/*.plist; do
               [ -f "$f" ] && [ ! -L "$f" ] || continue
               label="$(cmcr_plist "$f" Label)"
               prog="$(cmcr_plist "$f" Program)"; [ -n "$prog" ] || prog="$(cmcr_plist "$f" ProgramArguments.0)"
-              m=0
-              case "$prog" in "$item"/*|"$phys"/*) m=1 ;; esac
-              if [ -n "$bid" ]; then case "$label" in "$bid"|"$bid".*) m=1 ;; esac; fi
-              [ $m = 1 ] || continue
-              case "$label" in com.apple.*|com.openssh.*|pl.cmcr.*) continue ;; esac
-              printf '%s\t%s\t%s\t%s\n' "$kind" "$f" "$(cmcr_clean "$label")" "$(cmcr_clean "$prog")"
+              case "$label" in ""|com.apple.*|com.openssh.*|pl.cmcr.*) continue ;; esac
+              why=""
+              if cmcr_inside "$prog" "$item" "$phys"; then why=inside
+              elif [ $other = 0 ]; then
+                case "$prog" in *.app/*) continue ;; esac     # it belongs to another bundle
+                case "$kind" in
+                  uagent:*) if [ $idok = 1 ]; then case "$label" in "$bid"|"$bid".*) why=label ;; esac; fi ;;
+                esac
+                if [ -z "$why" ] && [ $idok = 1 ]; then
+                  case "$kind" in
+                    daemon|agent) cmcr_plist_lists "$f" AssociatedBundleIdentifiers "$bid" && why=assoc ;;
+                  esac
+                fi
+                if [ -z "$why" ] && [ "$kind" = daemon ] && [ "$prog" = "$CMCR_FS/Library/PrivilegedHelperTools/$label" ] \
+                   && printf '%s\n' "$sm" | grep -qxF -- "$label"; then why=smjob; fi
+              fi
+              [ -n "$why" ] || continue
+              printf '%s\t%s\t%s\t%s\t%s\n' "$kind" "$f" "$(cmcr_clean "$label")" "$(cmcr_clean "${prog:--}")" "$why"
             done
           done
+        }
+        # Does the array (or string) KEY of the plist contain exactly this string?
+        cmcr_plist_lists() { # PLIST KEY STRING
+          plutil -extract "$2" xml1 -o - "$1" 2>/dev/null | sed 's/^[[:space:]]*//' | grep -qxF -- "<string>$3</string>"
         }
         # Package files that may go (with "file") and folders that may go once empty (with "dir").
         cmcr_pkg_safe() { # PATH file|dir
@@ -294,7 +382,7 @@ extension Scripts {
 
         cmcr_un_path() {
           local APP="$1" ITEM KIND=app DIR NAME LOC="" OWNER="" PARENT ROOTP B BID VER TITLE AUTH KB PROCS PIDS USERS_RUNNING
-          local LD PF RS OURS SYS u chk r loc others f rel rest GONE err ok i
+          local LD PF RS OURS SYS u chk r loc others f rel rest GONE err ok i TNAME dom
           SEQ=$((SEQ + 1))
           while [ "${APP%/}" != "$APP" ]; do APP="${APP%/}"; done
           case "$APP/" in */../*|*/./*|*//*) cmcr_rec refused app "$APP" "niepoprawna ścieżka (.., . lub //)"; return 0 ;; esac
@@ -335,7 +423,10 @@ extension Scripts {
           fi
           if [ ! -e "$ITEM" ] && [ ! -L "$ITEM" ]; then cmcr_rec missing "$KIND" "$ITEM" "nic do usunięcia"; return 0; fi
           if [ -L "$ITEM" ]; then
-            cmcr_rec refused "$KIND" "$ITEM" "to tylko dowiązanie do „$(readlink "$ITEM")” (tak macOS umieszcza w folderze Aplikacje np. Safari) – nie odinstalowuję; aplikacji systemowych nie można odinstalować"
+            case "$(cmcr_realdir "$ITEM")" in
+              /System/*) cmcr_rec refused "$KIND" "$ITEM" "to tylko dowiązanie do „$(readlink "$ITEM")” (tak macOS umieszcza w folderze Aplikacje np. Safari) – nie odinstalowuję; aplikacji systemowych nie można odinstalować" ;;
+              *) cmcr_rec refused "$KIND" "$ITEM" "to dowiązanie do „$(readlink "$ITEM")” – CMCR nie usuwa dowiązań ani niczego przez nie; usuń aplikację w miejscu, na które wskazuje, albo samo dowiązanie przy komputerze" ;;
+            esac
             return 0
           fi
           [ -d "$ITEM" ] || { cmcr_rec refused "$KIND" "$ITEM" "to nie jest pakiet aplikacji (folder .app)"; return 0; }
@@ -403,10 +494,12 @@ extension Scripts {
             cmcr_rec note unity "$ITEM" "Wersję edytora zainstalowaną przez Unity Hub usuwa się razem z modułami (np. Android) – cały folder, tak jak robi to Hub (Hub nie ma polecenia odinstalowania bez okna). Uruchomiony Unity Hub może ją pokazywać do ponownego otwarcia."
           fi
 
-          PROCS="$(cmcr_app_procs "$ITEM" "$PARENT/$NAME")"
+          TNAME=""; CMCR_LS_BID=""
+          if [ $KIND = app ]; then TNAME="$NAME"; CMCR_LS_BID="$BID"; fi
+          PROCS="$(cmcr_app_procs "$ITEM" "$PARENT/$NAME" "$TNAME")"
           PIDS="$(printf '%s\n' "$PROCS" | awk 'NF {print $1}' | paste -sd' ' -)"
           USERS_RUNNING="$(printf '%s\n' "$PROCS" | awk 'NF && !s[$2]++ {printf "%s%s", (n++ ? ", " : ""), $2}')"
-          LD="$CMCR_TMP/launchd.$SEQ"; cmcr_launchd_find "$ITEM" "$PARENT/$NAME" "$BID" > "$LD"
+          LD="$CMCR_TMP/launchd.$SEQ"; cmcr_launchd_find "$ITEM" "$PARENT/$NAME" "$BID" "$LOC" "$OWNER" "$B" > "$LD"
           # bash 3.2 cannot parse a case pattern inside $( ): the scope is set first.
           SYS=""; case "$LOC" in apps|utilities|folder) SYS=system ;; esac
           RS="$(cmcr_app_receipts "$ITEM" "$PARENT/$NAME" "$SYS")"
@@ -433,7 +526,7 @@ extension Scripts {
               | while IFS= read -r f; do
                   { [ -e "$f" ] || [ -L "$f" ]; } && [ ! -d "$f" ] || continue
                   awk -F'\t' '{print $2}' "$LD" | grep -qxF -- "$f" && continue
-                  awk -F'\t' '{print $4}' "$LD" | grep -qxF -- "$f" && continue
+                  awk -F'\t' '$5 == "smjob" {print $4}' "$LD" | grep -qxF -- "$f" && continue
                   printf '%s\t%s\n' "$r" "$f"
                 done >> "$PF"
           done
@@ -448,18 +541,43 @@ extension Scripts {
             done > "$PF.others"
           fi
 
+          # With the package's files its other launchd jobs go too – booted out first (step 2), then removed (step 5) –
+          # and are planned as services, not as plain files. Not Apple's, CMCR's, and not files another package owns.
+          if [ "$PKGFILES" = 1 ] && [ -s "$PF" ]; then
+            : > "$PF.keep"
+            while IFS="$CMCR_T" read -r r f; do
+              kind=""; chk=""
+              case "$f" in
+                "$CMCR_FS"/Library/LaunchDaemons/*.plist) kind=daemon; chk="$CMCR_FS/Library/LaunchDaemons" ;;
+                "$CMCR_FS"/Library/LaunchAgents/*.plist) kind=agent; chk="$CMCR_FS/Library/LaunchAgents" ;;
+              esac
+              if [ -n "$kind" ] && [ "$(dirname "$f")" = "$chk" ] \
+                 && [ -f "$f" ] && [ ! -L "$f" ] && cmcr_pkg_safe "$f" file && ! grep -qxF -- "$f" "$PF.others" \
+                 && ! awk -F'\t' '{print $2}' "$LD" | grep -qxF -- "$f" \
+                 && ! pkgutil --file-info "$f" 2>/dev/null | R="$r" awk '/^pkgid: / && $2 != ENVIRON["R"] {f = 1} END {exit !f}'; then
+                label="$(cmcr_plist "$f" Label)"
+                prog="$(cmcr_plist "$f" Program)"; [ -n "$prog" ] || prog="$(cmcr_plist "$f" ProgramArguments.0)"
+                case "$label" in ""|com.apple.*|com.openssh.*|pl.cmcr.*) ;; *)
+                  printf '%s\t%s\t%s\t%s\t%s\n' "$kind" "$f" "$(cmcr_clean "$label")" "$(cmcr_clean "${prog:--}")" pkg >> "$LD"
+                  continue ;;
+                esac
+              fi
+              printf '%s\t%s\n' "$r" "$f" >> "$PF.keep"
+            done < "$PF"
+            mv -f "$PF.keep" "$PF"
+          fi
+
           # The plan.
           if [ -n "$PIDS" ] && [ "$DRY" = 1 ]; then cmcr_rec running process "$ITEM" "$USERS_RUNNING" "$PIDS"; fi
           [ "$DRY" = 1 ] && cmcr_rec plan "$KIND" "$ITEM" "${KB:-}"
           PLAN_KB=$((PLAN_KB + ${KB:-0}))
-          while IFS="$CMCR_T" read -r kind f label prog; do
+          while IFS="$CMCR_T" read -r kind f label prog why; do
             [ -n "$f" ] || continue
             case "$kind" in daemon) what=daemon ;; agent) what=agent ;; *) what=uagent ;; esac
-            [ "$DRY" = 1 ] && cmcr_rec plan "$what" "$f" "$label"
-            case "$prog" in
-              "$CMCR_FS"/Library/PrivilegedHelperTools/*)
-                if [ "$kind" = daemon ] && [ -f "$prog" ] && [ ! -L "$prog" ] && [ "$DRY" = 1 ]; then cmcr_rec plan helper "$prog" "$label"; fi ;;
-            esac
+            [ "$DRY" = 1 ] && cmcr_rec plan "$what" "$f" "$label" "$why"
+            # A helper in PrivilegedHelperTools goes only when the bundle itself names it (SMPrivilegedExecutables).
+            if [ "$why" = smjob ] && [ "$kind" = daemon ] && [ "$prog" = "$CMCR_FS/Library/PrivilegedHelperTools/$label" ] \
+               && [ -f "$prog" ] && [ ! -L "$prog" ] && [ "$DRY" = 1 ]; then cmcr_rec plan helper "$prog" "$label" "$why"; fi
           done < "$LD"
           : > "$PF.go"
           if [ -s "$PF" ]; then
@@ -494,12 +612,23 @@ extension Scripts {
             cmcr_rec failed "$KIND" "$ITEM" "${err:-brak uprawnień} – aplikacji nie zamknięto. $FDA"
             return 0
           }
-          # 2. Its launchd jobs stopped, so nothing restarts it.
-          while IFS="$CMCR_T" read -r kind f label prog; do
+          # The processes again, now: something may have started since the plan, and the bundle runs from its new place.
+          PROCS="$(cmcr_app_procs "$ITEM" "$PARENT/$NAME" "$TNAME" "$PARENT/${GONE#./}/$NAME")"
+          PIDS="$(printf '%s\n' "$PROCS" | awk 'NF && !s[$1]++ {print $1}' | paste -sd' ' -)"
+          USERS_RUNNING="$(printf '%s\n' "$PROCS" | awk 'NF && !s[$2]++ {printf "%s%s", (n++ ? ", " : ""), $2}')"
+          # 2. Its launchd jobs stopped, so nothing restarts it. The jobs that were loaded are noted: should the removal
+          # fail, they are started again.
+          : > "$LD.booted"
+          while IFS="$CMCR_T" read -r kind f label prog why; do
             [ -n "$f" ] || continue
             case "$kind" in
-              daemon) launchctl bootout system "$f" >/dev/null 2>&1 ;;
-              *) for u in $(cmcr_gui_sessions | awk '{print $1}'); do launchctl bootout "gui/$u" "$f" >/dev/null 2>&1; done ;;
+              daemon)
+                if launchctl print "system/$label" >/dev/null 2>&1 </dev/null; then printf 'system\t%s\n' "$f" >> "$LD.booted"; fi
+                launchctl bootout system "$f" >/dev/null 2>&1 ;;
+              *) for u in $(cmcr_gui_sessions | awk '{print $1}'); do
+                   if launchctl print "gui/$u/$label" >/dev/null 2>&1 </dev/null; then printf 'gui/%s\t%s\n' "$u" "$f" >> "$LD.booted"; fi
+                   launchctl bootout "gui/$u" "$f" >/dev/null 2>&1
+                 done ;;
             esac
           done < "$LD"
           # 3. Its processes quit (every user), then killed.
@@ -522,23 +651,28 @@ extension Scripts {
             err="$(head -n 1 "$CMCR_TMP/rm.err")"
             # Back in place, so the list still shows it and the next attempt finds it.
             if [ ! -e "./$NAME" ] && [ -e "./$GONE/$NAME" ]; then /bin/mv -- "./$GONE/$NAME" "./$NAME" 2>/dev/null && rmdir -- "./$GONE" 2>/dev/null; fi
+            # ... and its services started again: the app stays as it was (the processes that were quit stay quit).
+            if [ -e "./$NAME" ] && [ -s "$LD.booted" ]; then
+              while IFS="$CMCR_T" read -r dom f; do
+                [ -n "$f" ] && [ -f "$f" ] && launchctl bootstrap "$dom" "$f" >/dev/null 2>&1 </dev/null
+              done < "$LD.booted"
+              cmcr_rec note launchd "$ITEM" "Zatrzymane usługi aplikacji uruchomiono ponownie – aplikacja zostaje na miejscu."
+            fi
             cd /
             cmcr_rec failed "$KIND" "$ITEM" "${err:-nie udało się usunąć} $FDA"
             return 0
           fi
           # 5. Launch daemons, agents and their helpers.
-          while IFS="$CMCR_T" read -r kind f label prog; do
+          while IFS="$CMCR_T" read -r kind f label prog why; do
             [ -n "$f" ] || continue
             case "$kind" in daemon) what=daemon ;; agent) what=agent ;; *) what=uagent ;; esac
             if err="$(cmcr_rm_in "$(dirname "$f")" "$(basename "$f")")"; then cmcr_rec removed "$what" "$f" "$label"
             else cmcr_rec failed "$what" "$f" "$err"; fi
-            case "$prog" in
-              "$CMCR_FS"/Library/PrivilegedHelperTools/*)
-                if [ "$kind" = daemon ] && [ -f "$prog" ] && [ ! -L "$prog" ]; then
-                  if err="$(cmcr_rm_in "$(dirname "$prog")" "$(basename "$prog")")"; then cmcr_rec removed helper "$prog" "$label"
-                  else cmcr_rec failed helper "$prog" "$err"; fi
-                fi ;;
-            esac
+            if [ "$why" = smjob ] && [ "$kind" = daemon ] && [ "$prog" = "$CMCR_FS/Library/PrivilegedHelperTools/$label" ] \
+               && [ -f "$prog" ] && [ ! -L "$prog" ]; then
+              if err="$(cmcr_rm_in "$(dirname "$prog")" "$(basename "$prog")")"; then cmcr_rec removed helper "$prog" "$label"
+              else cmcr_rec failed helper "$prog" "$err"; fi
+            fi
           done < "$LD"
           # 6. Package files (only with packageFiles), then the package folders they left empty, deepest first.
           while IFS= read -r f; do
