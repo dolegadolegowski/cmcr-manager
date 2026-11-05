@@ -166,11 +166,52 @@ clear_fakelog
 # {student} becomes the account from the settings; the real /Users is not an allowed folder in this test.
 out="$(ctlpw uninstall "/Users/{student}/Applications/Gra Ucznia.app" 1 --yes)"
 expect "uninstall {student}: konto ucznia wstawione do ścieżki" "$out" "/Users/$ME/Applications/Gra Ucznia.app" "Odinstalowywać można tylko"
+# The owner (and, as after "Switch User", another account) have a GUI session: the agent is touched only in the owner's.
+ME_UID="$(id -u)"; OTHER_UID=$((ME_UID + 4000))
+printf '%s %s\n%s inny\n' "$ME_UID" "$ME" "$OTHER_UID" > "$WORK/ps.sessions"
+out="$(ctlpw uninstall "Gra Ucznia" 1 --dry-run)"
+expect "uninstall --dry-run: usługa ucznia z domeną" "$out" "gui/$ME_UID"
+expect_not "uninstall --dry-run: bez cudzej domeny" "$out" "gui/$OTHER_UID"
+clear_fakelog
 out="$(ctlpw uninstall "Gra Ucznia" 1 --yes)"; code=$?
 expect_code "uninstall: aplikacja ucznia – kod 0" "$code" 0 "$out"
+expect "uninstall: agent ucznia zatrzymany w domenie właściciela" "$(fakelog)" "launchctl bootout gui/$ME_UID $AP_HOME/Library/LaunchAgents/pl.test.gra.agent.plist"
+expect_not "uninstall: agent ucznia nie ruszony w cudzej domenie" "$(fakelog)" "gui/$OTHER_UID"
+rm -f "$WORK/ps.sessions"
 [ ! -e "$AP_HOME/Applications/Gra Ucznia.app" ] && [ ! -e "$AP_HOME/Library/LaunchAgents/pl.test.gra.agent.plist" ] \
   && pass "uninstall: aplikacja ucznia i jej agent usunięte" || fail "uninstall: aplikacja ucznia została" "$out"
 expect "uninstall: agent konta zatrzymany" "$(fakelog)" "launchctl bootout gui/"
+
+section "Odinstalowanie – agent ucznia nie wychodzi poza domenę właściciela (cross-user)"
+# Evil.app in the student's ~/Applications with an agent; a second account has a GUI session too; the removal fails
+# (a read-only folder with a file in the bundle). The agent may be stopped and started again only in the owner's domain.
+ap_mkapp "$AP_HOME/Applications" "Evil" pl.test.evil 1.0
+ap_plist "$AP_HOME/Library/LaunchAgents/pl.test.evil.agent.plist" pl.test.evil.agent "$AP_HOME/Applications/Evil.app/Contents/MacOS/Evil"
+ap_plist "$AP_HOME/Library/LaunchAgents/com.vendor.cudzy.plist" com.vendor.cudzy "$AP_HOME/Applications/Evil.app/Contents/MacOS/Evil"
+mkdir -p "$AP_HOME/Applications/Evil.app/Contents/Zablokowany"; echo x > "$AP_HOME/Applications/Evil.app/Contents/Zablokowany/plik"
+chflags uchg "$AP_HOME/Applications/Evil.app/Contents/Zablokowany/plik" 2>/dev/null
+chmod 500 "$AP_HOME/Applications/Evil.app/Contents/Zablokowany"
+printf '%s %s\n%s inny\n' "$ME_UID" "$ME" "$OTHER_UID" > "$WORK/ps.sessions"
+clear_fakelog
+out="$(ctlpw uninstall "$AP_HOME/Applications/Evil.app" 1 --yes)"; code=$?
+expect_code "cross-user: nieudane usunięcie – kod 1" "$code" 1 "$out"
+[ -d "$AP_HOME/Applications/Evil.app" ] && pass "cross-user: aplikacja wróciła na miejsce" || fail "cross-user: aplikacji nie ma" "$out"
+expect "cross-user: bootout w domenie właściciela" "$(fakelog)" "launchctl bootout gui/$ME_UID $AP_HOME/Library/LaunchAgents/pl.test.evil.agent.plist"
+expect "cross-user: ponowne uruchomienie w domenie właściciela" "$(fakelog)" "launchctl bootstrap gui/$ME_UID $AP_HOME/Library/LaunchAgents/pl.test.evil.agent.plist"
+expect_not "cross-user: żadnej akcji w cudzej domenie" "$(fakelog)" "gui/$OTHER_UID"
+expect_not "cross-user: cudza etykieta nie zatrzymana" "$(fakelog)" "com.vendor.cudzy"
+rm -f "$WORK/ps.sessions"
+chmod -R u+w "$AP_HOME/Applications/Evil.app" 2>/dev/null
+chflags -R nouchg "$AP_HOME/Applications/Evil.app" 2>/dev/null
+# uchg alone no longer stops the removal.
+ap_mkapp "$AP_HOME/Applications" "Zamek" pl.test.zamek 1.0
+echo x > "$AP_HOME/Applications/Zamek.app/Contents/Resources/zamek.txt"; chflags uchg "$AP_HOME/Applications/Zamek.app/Contents/Resources/zamek.txt" 2>/dev/null
+out="$(ctlpw uninstall "$AP_HOME/Applications/Zamek.app" 1 --yes)"; code=$?
+expect_code "uchg: kod 0" "$code" 0 "$out"
+[ ! -e "$AP_HOME/Applications/Zamek.app" ] && pass "uchg: aplikacja z zablokowanym plikiem usunięta" || fail "uchg: aplikacja została" "$out"
+rm -rf "$AP_HOME/Applications/Evil.app" "$AP_HOME/Library/LaunchAgents/pl.test.evil.agent.plist" "$AP_HOME/Library/LaunchAgents/com.vendor.cudzy.plist"
+clear_fakelog
+
 out="$(ctlpw uninstall "Program Firmy" 1 --dry-run)"
 expect "uninstall: deinstalator producenta wskazany" "$out" "deinstalator producenta" "Uninstall Program Firmy.app"
 out="$(ctlpw uninstall "$AP_APPS/Jedyny Folder/Jedyna.app" 1 --yes)"; code=$?

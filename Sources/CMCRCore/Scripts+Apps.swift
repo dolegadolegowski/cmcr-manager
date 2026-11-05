@@ -321,6 +321,24 @@ extension Scripts {
             done
           done
         }
+        # A launch agent in an account's ~/Library/LaunchAgents may be stopped and started again only in THAT account's
+        # GUI domain, and only when the file really is the account's own agent of this app: a regular file (no link)
+        # owned by the account, whose Label is the bundle id (or starts with "bundle id.") AND whose
+        # Program/ProgramArguments[0] lies inside the bundle. The account's folder is the student's to fill, so
+        # neither a plist of another vendor nor a program elsewhere may make root act on it. Prints the uid.
+        cmcr_uagent_ok() { # USER PLIST ITEM PHYSICAL BUNDLE-ID
+          local u="$1" f="$2" ou label prog
+          case "$u" in ""|*[!A-Za-z0-9._-]*) return 1 ;; esac
+          ou="$(id -u "$u" 2>/dev/null)"
+          case "$ou" in ""|0|*[!0-9]*) return 1 ;; esac
+          [ -f "$f" ] && [ ! -L "$f" ] && [ "$(stat -f %u "$f" 2>/dev/null)" = "$ou" ] || return 1
+          cmcr_bid_ok "$5" || return 1
+          label="$(cmcr_plist "$f" Label)"
+          case "$label" in "$5"|"$5".*) ;; *) return 1 ;; esac
+          prog="$(cmcr_plist "$f" Program)"; [ -n "$prog" ] || prog="$(cmcr_plist "$f" ProgramArguments.0)"
+          cmcr_inside "$prog" "$3" "$4" || return 1
+          printf '%s\n' "$ou"
+        }
         # Does the array (or string) KEY of the plist contain exactly this string?
         cmcr_plist_lists() { # PLIST KEY STRING
           plutil -extract "$2" xml1 -o - "$1" 2>/dev/null | sed 's/^[[:space:]]*//' | grep -qxF -- "<string>$3</string>"
@@ -381,7 +399,7 @@ extension Scripts {
         }
 
         cmcr_un_path() {
-          local APP="$1" ITEM KIND=app DIR NAME LOC="" OWNER="" PARENT ROOTP B BID VER TITLE AUTH KB PROCS PIDS USERS_RUNNING
+          local APP="$1" ITEM KIND=app DIR NAME LOC="" OWNER="" PARENT ROOTP B BID VER TITLE AUTH KB PROCS PIDS USERS_RUNNING ou dom who
           local LD PF RS OURS SYS u chk r loc others f rel rest GONE err ok i TNAME dom
           SEQ=$((SEQ + 1))
           while [ "${APP%/}" != "$APP" ]; do APP="${APP%/}"; done
@@ -574,7 +592,13 @@ extension Scripts {
           while IFS="$CMCR_T" read -r kind f label prog why; do
             [ -n "$f" ] || continue
             case "$kind" in daemon) what=daemon ;; agent) what=agent ;; *) what=uagent ;; esac
-            [ "$DRY" = 1 ] && cmcr_rec plan "$what" "$f" "$label" "$why"
+            if [ "$DRY" = 1 ]; then
+              case "$kind" in
+                uagent:*) dom="$(cmcr_uagent_ok "${kind#uagent:}" "$f" "$ITEM" "$PARENT/$NAME" "$BID")" && dom="gui/$dom" || dom="bez zatrzymywania usługi"
+                          cmcr_rec plan "$what" "$f" "$label ($dom)" "$why" ;;
+                *) cmcr_rec plan "$what" "$f" "$label" "$why" ;;
+              esac
+            fi
             # A helper in PrivilegedHelperTools goes only when the bundle itself names it (SMPrivilegedExecutables).
             if [ "$why" = smjob ] && [ "$kind" = daemon ] && [ "$prog" = "$CMCR_FS/Library/PrivilegedHelperTools/$label" ] \
                && [ -f "$prog" ] && [ ! -L "$prog" ] && [ "$DRY" = 1 ]; then cmcr_rec plan helper "$prog" "$label" "$why"; fi
@@ -625,6 +649,13 @@ extension Scripts {
               daemon)
                 if launchctl print "system/$label" >/dev/null 2>&1 </dev/null; then printf 'system\t%s\n' "$f" >> "$LD.booted"; fi
                 launchctl bootout system "$f" >/dev/null 2>&1 ;;
+              uagent:*)
+                # Only the owner's own domain, only a verified agent of this app (see cmcr_uagent_ok); with no GUI session
+                # of the owner nothing is loaded, so nothing is stopped.
+                ou="$(cmcr_uagent_ok "${kind#uagent:}" "$f" "$ITEM" "$PARENT/$NAME" "$BID")" || continue
+                cmcr_gui_sessions | awk '{print $1}' | grep -qx -- "$ou" || continue
+                if launchctl print "gui/$ou/$label" >/dev/null 2>&1 </dev/null; then printf 'gui/%s\t%s\t%s\n' "$ou" "$f" "${kind#uagent:}" >> "$LD.booted"; fi
+                launchctl bootout "gui/$ou" "$f" >/dev/null 2>&1 </dev/null ;;
               *) for u in $(cmcr_gui_sessions | awk '{print $1}'); do
                    if launchctl print "gui/$u/$label" >/dev/null 2>&1 </dev/null; then printf 'gui/%s\t%s\n' "$u" "$f" >> "$LD.booted"; fi
                    launchctl bootout "gui/$u" "$f" >/dev/null 2>&1
@@ -643,6 +674,9 @@ extension Scripts {
             cmcr_rec quit process "$ITEM" "$USERS_RUNNING" "$PIDS"
           fi
           # 4. Removed.
+          # A flag „uchg” set by the account on a file of its bundle would stop rm: cleared first (the failure path
+          # below is only a rollback, harmless thanks to cmcr_uagent_ok).
+          chflags -R nouchg -- "./$GONE" 2>/dev/null
           if rm -rf -- "./$GONE" 2>"$CMCR_TMP/rm.err" && [ ! -e "./$GONE" ]; then
             cd /
             cmcr_rec removed "$KIND" "$ITEM" "${KB:-}"
@@ -653,8 +687,13 @@ extension Scripts {
             if [ ! -e "./$NAME" ] && [ -e "./$GONE/$NAME" ]; then /bin/mv -- "./$GONE/$NAME" "./$NAME" 2>/dev/null && rmdir -- "./$GONE" 2>/dev/null; fi
             # ... and its services started again: the app stays as it was (the processes that were quit stay quit).
             if [ -e "./$NAME" ] && [ -s "$LD.booted" ]; then
-              while IFS="$CMCR_T" read -r dom f; do
-                [ -n "$f" ] && [ -f "$f" ] && launchctl bootstrap "$dom" "$f" >/dev/null 2>&1 </dev/null
+              while IFS="$CMCR_T" read -r dom f who; do
+                [ -n "$f" ] && [ -f "$f" ] || continue
+                if [ -n "$who" ]; then
+                  # An account's agent: checked again now, started only in its owner's own domain.
+                  ou="$(cmcr_uagent_ok "$who" "$f" "$ITEM" "$PARENT/$NAME" "$BID")" && [ "$dom" = "gui/$ou" ] || continue
+                fi
+                launchctl bootstrap "$dom" "$f" >/dev/null 2>&1 </dev/null
               done < "$LD.booted"
               cmcr_rec note launchd "$ITEM" "Zatrzymane usługi aplikacji uruchomiono ponownie – aplikacja zostaje na miejscu."
             fi

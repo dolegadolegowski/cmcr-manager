@@ -222,7 +222,17 @@ import Testing
             rm() { if [ -n "${LAB_RM_FAIL:-}" ] && [ "$1" = -rf ]; then echo "Operation not permitted" >&2; return 1; fi; command rm "$@"; }
             # As on macOS 15: plutil prints „Could not extract value…” on stdout (macOS 26 and later: on stderr).
             plutil() { command plutil "$@" 2>&1; }
-            export -f _lab_log sudo pkgutil profiles launchctl kill rm plutil
+            # LAB_SESSIONS ("uid account" per line): GUI sessions (loginwindow processes) added to the output of ps.
+            # LAB_SESSIONS_ONLY: the real sessions of this Mac are not listed (the owner is then not logged in).
+            ps() {
+              local rc=0
+              if [ "$*" = "-axo uid=,user=,comm=" ] && [ -n "${LAB_SESSIONS_ONLY:-}" ]; then :; else command ps "$@"; rc=$?; fi
+              if [ "$*" = "-axo uid=,user=,comm=" ] && [ -n "${LAB_SESSIONS:-}" ]; then
+                printf '%s\n' "$LAB_SESSIONS" | awk '{printf "%5d %-16s /System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow\n", $1, $2}'
+              fi
+              return $rc
+            }
+            export -f _lab_log sudo pkgutil profiles launchctl kill rm plutil ps
             """#
             try fakes.write(to: dir.appendingPathComponent("fakes.sh"), atomically: true, encoding: .utf8)
         }
@@ -457,6 +467,57 @@ import Testing
         let back = try #require(log.range(of: "launchctl bootstrap system \(daemon.path)"))
         #expect(out.lowerBound < back.lowerBound)
         #expect(UninstallReport.render(r.stdoutText).contains("uruchomiono ponownie"))
+    }
+
+    /// A student's agent in ~/Applications is stopped and (when the removal fails) started again ONLY in its owner's
+    /// own GUI domain – never in a teacher's or another student's session – and only when its Label is the bundle's
+    /// and its program lies inside the bundle.
+    @Test func aStudentsAgentIsOnlyTouchedInItsOwnersDomain() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        let me = getuid()
+        let other = me + 4000
+        let games = lab.home.appendingPathComponent("Applications")
+        try lab.makeApp(games, "Evil", bundleID: "pl.test.evil")
+        let prog = games.appendingPathComponent("Evil.app/Contents/MacOS/Evil").path
+        let agents = lab.home.appendingPathComponent("Library/LaunchAgents")
+        let own = try lab.launchdItem(agents, "pl.test.evil.agent", program: prog)
+        // Another vendor's label with a program inside the bundle, and the bundle's label with a program outside it.
+        let foreign = try lab.launchdItem(agents, "com.vendor.other", program: prog)
+        let outside = try lab.launchdItem(agents, "pl.test.evil.dwa", program: "/usr/bin/true")
+        let app = games.appendingPathComponent("Evil.app").path
+        let sessions = ["LAB_SESSIONS": "\(me) \(Lab.me)\n\(other) inny"]
+        let dry = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me, dryRun: true), extraEnvironment: sessions)
+        #expect(dry.exitCode == 0, "\(dry.stdoutText)\(dry.stderrText)")
+        #expect(dry.stdoutText.contains("gui/\(me)"), "\(dry.stdoutText)")
+        #expect(!dry.stdoutText.contains("gui/\(other)"))
+        // The removal fails: the rollback starts the agent again – in the owner's domain only.
+        let r = await lab.run(Scripts.uninstallApps([app], studentUser: Lab.me), extraEnvironment: sessions.merging(["LAB_RM_FAIL": "1"]) { $1 })
+        #expect(r.exitCode == 1, "\(r.stdoutText)\(r.stderrText)")
+        let log = lab.log()
+        #expect(!log.contains("gui/\(other)"), Comment(rawValue: log))
+        #expect(!log.contains(foreign.path) && !log.contains(outside.path), Comment(rawValue: log))
+        let out = try #require(log.range(of: "launchctl bootout gui/\(me) \(own.path)"))
+        let back = try #require(log.range(of: "launchctl bootstrap gui/\(me) \(own.path)"))
+        #expect(out.lowerBound < back.lowerBound)
+        #expect(lab.exists(games.appendingPathComponent("Evil.app")) && lab.exists(own))
+    }
+
+    /// The owner has no GUI session: nothing of the agent is loaded, so nothing is stopped – in anybody's domain.
+    @Test func aStudentsAgentWithoutASessionIsNotStoppedAnywhere() async throws {
+        let lab = try Lab()
+        defer { lab.remove() }
+        try #require(await lab.guardFakes())
+        let games = lab.home.appendingPathComponent("Applications")
+        try lab.makeApp(games, "Evil", bundleID: "pl.test.evil")
+        let own = try lab.launchdItem(lab.home.appendingPathComponent("Library/LaunchAgents"), "pl.test.evil.agent",
+                                      program: games.appendingPathComponent("Evil.app/Contents/MacOS/Evil").path)
+        let r = await lab.run(Scripts.uninstallApps([games.appendingPathComponent("Evil.app").path], studentUser: Lab.me),
+                              extraEnvironment: ["LAB_SESSIONS": "\(getuid() + 4000) inny", "LAB_SESSIONS_ONLY": "1"])
+        #expect(r.exitCode == 0, "\(r.stdoutText)\(r.stderrText)")
+        #expect(!lab.log().contains("bootout") && !lab.log().contains("bootstrap"), Comment(rawValue: lab.log()))
+        #expect(!lab.exists(own))
     }
 
     /// A link in /Applications to an app elsewhere is listed as a link that cannot be removed – and the uninstaller
