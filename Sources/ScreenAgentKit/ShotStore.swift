@@ -4,7 +4,7 @@ import Foundation
 /// The folder the client saves screenshots in: `shots/<uid>/screen-<n>.jpg` (docs/screen-agent.md › Ścieżki).
 /// Each file is written to a temporary file in the same folder and renamed over the previous one, so a reader
 /// (the preview script's `md5`/`cat`) always sees a whole image; images of displays that were not part of the last
-/// capture are removed.
+/// capture of all displays are removed.
 public struct ShotStore: Sendable {
     /// `shots` (created 0700 when missing).
     public let root: String
@@ -75,9 +75,10 @@ public struct ShotStore: Sendable {
         return final
     }
 
-    /// Removes `screen-<n>.jpg` of every display not in `keep`, and temporary files a killed client left behind
-    /// (only old ones: a second client may be writing its own right now).
-    public func removeOthers(keeping keep: Set<Int>) throws {
+    /// Removes `screen-<n>.jpg` of every display not in `keep` (nothing of the kind when `keep` is nil: only a
+    /// capture of all displays knows which are gone), and temporary files a killed client left behind (only old ones:
+    /// a second client may be writing its own right now).
+    public func removeOthers(keeping keep: Set<Int>?) throws {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else {
             throw IOFailure.system("odczyt katalogu \(directory)")
         }
@@ -90,7 +91,7 @@ public struct ShotStore: Sendable {
                 }
                 continue
             }
-            guard name.hasPrefix("screen-"), name.hasSuffix(".jpg") else { continue }
+            guard let keep, name.hasPrefix("screen-"), name.hasSuffix(".jpg") else { continue }
             let middle = name.dropFirst("screen-".count).dropLast(".jpg".count)
             guard let n = strictInt(String(middle)), !keep.contains(n) else { continue }
             if unlink("\(directory)/\(name)") != 0 && errno != ENOENT {

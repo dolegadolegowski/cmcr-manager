@@ -17,7 +17,10 @@ public enum AgentInfo {
     public static let installDir = "/Library/Application Support/CMCR/ScreenAgent"
     public static let appPath = "\(installDir)/\(appName)"
     public static let executablePath = "\(appPath)/Contents/MacOS/\(executableName)"
+    /// root:wheel 0755; root creates `run/<uid>/` (owned by <uid>, 0700) before it starts that user's agent.
     public static let runDir = "\(installDir)/run"
+    /// The agent's socket inside its own `run/<uid>/` (the same value as `ScreenAgentInfo.socketName`).
+    public static let socketName = "agent.sock"
     public static let shotsDir = "\(installDir)/shots"
     public static let plistPath = "/Library/LaunchAgents/\(label).plist"
 
@@ -37,11 +40,23 @@ public enum AgentInfo {
     }
 
     /// The client gives up on connecting, and on a peer that stays silent, after this long.
-    public static let clientTimeout: TimeInterval = 10
+    public static let clientTimeout: TimeInterval = 15
     /// Upper bound for a whole client exchange, so a peer that trickles bytes cannot hold the preview script.
     public static let clientTotalTimeout: TimeInterval = 30
     /// The agent answers a capture within this time (ERR failed otherwise), well inside the client's timeout.
     public static let captureTimeout: TimeInterval = 8
+    /// The frontmost app is looked up while the capture runs and given at most this long (an empty name otherwise),
+    /// so it never pushes the answer past `captureTimeout`.
+    public static let frontAppTimeout: TimeInterval = 2
+    /// App and account names are cut to this many characters before they are sent, so an app with a huge name
+    /// cannot make the reply line longer than the client accepts.
+    public static let maxNameLength = 200
+    /// Pending connections the agent's socket holds (a full queue refuses at once on Darwin).
+    public static let listenBacklog: Int32 = 64
+    /// The client tries to connect this many times when the agent refuses (busy) …
+    public static let connectAttempts = 3
+    /// … waiting this long between the attempts.
+    public static let connectRetryDelay: TimeInterval = 0.2
     /// How long the observation notice stays on screen.
     public static let noticeSeconds: TimeInterval = 8
     /// macOS keeps the Screen Recording decision for the lifetime of a process: an agent older than this that finds
@@ -85,18 +100,50 @@ public struct AgentPaths: Equatable, Sendable {
     public var runDir: String { prefix + AgentInfo.runDir }
     public var shotsDir: String { prefix + AgentInfo.shotsDir }
 
-    public func socketPath(uid: uid_t) -> String { "\(runDir)/\(uid).sock" }
+    /// `run/<uid>`: created by root for user <uid> (owner <uid>, 0700) before that user's agent starts.
+    public func socketDir(uid: uid_t) -> String { "\(runDir)/\(uid)" }
+    public func socketPath(uid: uid_t) -> String { "\(socketDir(uid: uid))/\(AgentInfo.socketName)" }
     public func shotsDir(uid: uid_t) -> String { "\(shotsDir)/\(uid)" }
 }
 
-/// When an agent that has no Screen Recording permission should exit (see `AgentInfo.deniedRestartAge`).
+/// When an agent whose CAPTURE found no Screen Recording permission should exit (see `AgentInfo.deniedRestartAge`).
+/// Only a capture counts: a PING (readiness, status, install) never ends the agent – the root scripts that need a
+/// fresh permission state restart it themselves (`kickstart -k`).
 public enum RestartPolicy {
+    public enum Decision: Equatable, Sendable {
+        /// Keep running.
+        case stay
+        /// Exit now (launchd starts a fresh process).
+        case exit
+        /// Exit, but only after the notice panel this agent shows has gone (seconds from now); decide again then.
+        case later(TimeInterval)
+    }
+
     /// - Parameters:
     ///   - processAge: seconds since the agent started.
     ///   - sincePermissionRequest: seconds since this process last showed the permission dialog, if ever.
-    public static func shouldExitAfterDenied(processAge: TimeInterval, sincePermissionRequest: TimeInterval?) -> Bool {
-        guard processAge > AgentInfo.deniedRestartAge else { return false }
-        if let s = sincePermissionRequest, s < AgentInfo.permissionRequestHold { return false }
-        return true
+    ///   - noticeRemaining: seconds the notice panel it showed stays on screen (0 or less: none is up).
+    public static func afterDeniedCapture(processAge: TimeInterval, sincePermissionRequest: TimeInterval?,
+                                          noticeRemaining: TimeInterval = 0) -> Decision {
+        guard processAge > AgentInfo.deniedRestartAge else { return .stay }
+        if let s = sincePermissionRequest, s < AgentInfo.permissionRequestHold { return .stay }
+        return noticeRemaining > 0 ? .later(noticeRemaining) : .exit
     }
+}
+
+/// An app or account name as the agent sends it: at most `AgentInfo.maxNameLength` characters (and never more than
+/// four bytes of UTF-8 per character, whatever the characters are made of).
+public func limitedName(_ name: String) -> String {
+    var s = String(name.prefix(AgentInfo.maxNameLength))
+    if s.utf8.count > AgentInfo.maxNameLength * 4 {
+        s = String(String.UnicodeScalarView(s.unicodeScalars.prefix(AgentInfo.maxNameLength)))
+    }
+    return s
+}
+
+/// A uid on the command line: decimal digits only, at most 10 of them, below `UInt32.max` ((uid_t)-1 means "none").
+public func strictUID(_ s: String) -> uid_t? {
+    guard !s.isEmpty, s.count <= 10, s.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }), let n = UInt64(s),
+          n < UInt64(UInt32.max) else { return nil }
+    return uid_t(n)
 }

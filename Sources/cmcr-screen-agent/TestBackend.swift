@@ -18,7 +18,8 @@ import ScreenAgentKit
 ///   variant            exists → the generated picture has other colours (a "changed screen")
 ///   capture-fail       exists → ERR failed with the file's text
 ///   capture-delay      seconds to wait before answering a capture
-///   old                exists → the process counts as older than 30 s (it exits after ERR noperm / perm=denied)
+///   old                exists → the process counts as older than 30 s (it exits after a capture's ERR noperm)
+///   notice-seconds     how long a shown notice counts as on screen (default 8; the exit after ERR noperm waits)
 ///
 /// It writes: requests.log (every request line; NOTICE also decoded as `NOTICE-TEXT <title> | <text>`) and
 /// permission-requested (touched by REQUEST-PERMISSION).
@@ -39,6 +40,8 @@ final class TestBackend: AgentBackend {
     private var permissionGranted: Bool { text("perm") != "denied" }
 
     var pretendsOldProcess: Bool { exists("old") }
+
+    var noticeSeconds: TimeInterval { text("notice-seconds").flatMap(Double.init) ?? AgentInfo.noticeSeconds }
 
     func received(_ request: AgentRequest, line: String) {
         var entry = line + "\n"

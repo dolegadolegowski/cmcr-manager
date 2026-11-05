@@ -54,17 +54,27 @@ final class SystemBackend: AgentBackend {
         guard session.onConsole else { return .failure(.notConsole) }
         guard !session.locked else { return .failure(.locked) }
         guard !SessionState.mainDisplayAsleep else { return .failure(.asleep) }
-        let front = frontApp()
+        let started = DispatchTime.now()
+        // The frontmost app is asked for on the main thread while the capture runs, with its own short budget: a
+        // busy main thread (a display change, a notice being built) must not push the answer past the client's
+        // timeout. Without it in time the name is empty.
+        let front = Box<String>()
+        let frontDone = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async {
+            front.value = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+            frontDone.signal()
+        }
         let box = Box<Result<[CapturedImage], AgentFailure>>()
         let done = DispatchSemaphore(value: 0)
         Task.detached(priority: .userInitiated) {
             box.value = await Self.captureImages(maxSide: maxSide, quality: quality, display: display)
             done.signal()
         }
-        guard done.wait(timeout: .now() + AgentInfo.captureTimeout) == .success, let result = box.value else {
+        guard done.wait(timeout: started + AgentInfo.captureTimeout) == .success, let result = box.value else {
             return .failure(AgentFailure(.failed, "zrzut ekranu nie zakończył się w ciągu \(Int(AgentInfo.captureTimeout)) s"))
         }
-        return result.map { CaptureOutput(frontApp: front, images: $0) }
+        let frontName = frontDone.wait(timeout: started + AgentInfo.frontAppTimeout) == .success ? (front.value ?? "") : ""
+        return result.map { CaptureOutput(frontApp: frontName, images: $0) }
     }
 
     func notice(title: String, text: String) -> NoticeResult {
@@ -72,7 +82,7 @@ final class SystemBackend: AgentBackend {
     }
 
     func frontApp() -> String {
-        onMain(timeout: 3) { NSWorkspace.shared.frontmostApplication?.localizedName ?? "" } ?? ""
+        onMain(timeout: AgentInfo.frontAppTimeout) { NSWorkspace.shared.frontmostApplication?.localizedName ?? "" } ?? ""
     }
 
     func requestPermission() -> Bool {

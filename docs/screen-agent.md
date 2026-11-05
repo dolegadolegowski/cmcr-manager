@@ -46,12 +46,20 @@ CMCR Manager ──ssh──► skrypt podglądu (root, jedna sesja na strumień
 
 Wszystkie stałe są w `Sources/CMCRCore/ScreenAgentInfo.swift` (i powtórzone w agencie – test pilnuje zgodności).
 
+Katalog `run/<uid>` tworzy root (instalacja, wznawianie usługi w skrypcie podglądu, gotowość i prośba o uprawnienie,
+gdy uruchamiają usługę) przed każdym `bootstrap`/`kickstart` usługi tego użytkownika: właściciel `<uid>` (grupa
+`staff` albo główna grupa użytkownika), prawa 0700. Obcy albo nie-katalog pod `run/<uid>` najpierw usuwa
+(`stat -f` na samej ścieżce i `rm -rf` wpisu, nigdy celu dowiązania). Nikt poza rootem i `<uid>` nie może więc nic
+utworzyć pod ścieżką gniazda innego konta (wcześniejszy `run` 1733 pozwalał każdemu zająć `run/<inny uid>.sock`).
+
 | Co | Ścieżka | Właściciel / prawa |
 |---|---|---|
 | Aplikacja usługi | `/Library/Application Support/CMCR/ScreenAgent/CMCR Screen Agent.app` | root:wheel, 755 |
 | Plik wykonywalny | `…/CMCR Screen Agent.app/Contents/MacOS/cmcr-screen-agent` | |
 | LaunchAgent | `/Library/LaunchAgents/pl.cmcr.manager.screen-agent.plist` | root:wheel, 644 |
-| Gniazda | `/Library/Application Support/CMCR/ScreenAgent/run/<uid>.sock` | katalog root:wheel 1733, gniazdo 0600 (użytkownik) |
+| Katalog gniazd | `/Library/Application Support/CMCR/ScreenAgent/run` | root:wheel 755 |
+| Katalog gniazda użytkownika | `…/ScreenAgent/run/<uid>` | `<uid>`, 700 – tworzy go root przed każdym uruchomieniem usługi tego użytkownika |
+| Gniazdo | `…/ScreenAgent/run/<uid>/agent.sock` (`socketName`) | użytkownik, 0600 |
 | Zrzuty | `/Library/Application Support/CMCR/ScreenAgent/shots/<uid>/screen-<n>.jpg` | katalogi root:wheel 700, pliki 600 |
 
 W kompilacjach DEBUG (testy e2e) wszystkie ścieżki systemowe są poprzedzone `$CMCR_SETUP_ROOT_PREFIX`,
@@ -82,11 +90,17 @@ Kod wspólny dla usługi i klienta (protokół, ścieżki, skalowanie, JPEG, zap
 Zasady usługi:
 - przed każdym zrzutem `CGPreflightScreenCaptureAccess()`; bez uprawnienia `ERR noperm` – nigdy nie wywołuje
   okna z prośbą poza `REQUEST-PERMISSION` (uczeń nie może go zatwierdzić);
-- po `ERR noperm` w procesie starszym niż 30 s kończy się po odpowiedzi (launchd uruchamia go ponownie), bo
-  macOS zapamiętuje stan uprawnienia na czas życia procesu – nadane uprawnienie działa wtedy bez restartu Maca;
-  tak samo po `OK PING … perm=denied` (sprawdzanie gotowości widzi wtedy przy następnym razie świeży stan),
-  ale nie przez 120 s po `REQUEST-PERMISSION` (okno macOS może być jeszcze na ekranie);
-- zrzut, który nie skończy się w 8 s, kończy się `ERR failed` (klient czeka 10 s);
+- tylko po `CAPTURE` z odpowiedzią `ERR noperm` w procesie starszym niż 30 s kończy się po odpowiedzi (launchd
+  uruchamia go ponownie), bo macOS zapamiętuje stan uprawnienia na czas życia procesu – nadane uprawnienie działa
+  wtedy bez restartu Maca. Nigdy po `PING` (sprawdzanie gotowości, stan, instalacja i prośba o uprawnienie same
+  robią `kickstart -k` i jeszcze jeden `ping`, gdy potrzebują świeżego stanu i dostały `perm=denied`), nie przez
+  120 s po `REQUEST-PERMISSION` (okno macOS może być jeszcze na ekranie) i nie, póki widać panel `NOTICE`, który
+  usługa pokazała – wtedy koniec czeka, aż panel zniknie (8 s + chwila), i decyzja zapada ponownie
+  (`RestartPolicy.afterDeniedCapture`);
+- zrzut, który nie skończy się w 8 s, kończy się `ERR failed` (klient czeka 15 s); aplikację na pierwszym planie
+  usługa ustala w tym samym czasie co zrzut, najwyżej 2 s (potem pusta nazwa), więc nie wydłuża odpowiedzi;
+- nazwy aplikacji i konta skraca do 200 znaków przed wysłaniem (wiersz odpowiedzi zawsze mieści się w limicie
+  klienta);
 - ekran zablokowany (`CGSessionCopyCurrentDictionary`, `CGSSessionScreenIsLocked`) → `ERR locked`, sesja nie
   na pierwszym planie (szybkie przełączanie użytkowników) → `ERR notconsole`, uśpiony ekran → `ERR asleep`;
 - zrzut przez `SCScreenshotManager.captureImage` (macOS 14+), skalowany tak, by dłuższy bok ≤ maxpx,
@@ -94,9 +108,10 @@ Zasady usługi:
   (1 = główny, potem kolejne z `CGGetActiveDisplayList`);
 - `NOTICE` w sesji, która nie jest na ekranie (szybkie przełączanie użytkowników), odpowiada `hidden`;
 - przyjmuje połączenia tylko od roota (uid 0) albo od tego samego użytkownika (`getpeereid`);
-- gniazdo tworzy po usunięciu starego wpisu, który jest jego własnym gniazdem; z obcym plikiem kończy się błędem;
-  bez katalogu `run` kończy się z komunikatem na stderr (i w os_log), ścieżka dłuższa niż `sun_path` (103 bajty)
-  też jest błędem; gniazdo powstaje od razu z prawami 0600 (umask);
+- wymaga, by `run/<uid>` był prawdziwym katalogiem (nie dowiązaniem) tego użytkownika z prawami 0700; bez niego
+  (albo z innym) kończy się z komunikatem na stderr (i w os_log) – launchd próbuje ponownie, a root tworzy katalog
+  przy wznawianiu usługi. Stary wpis `agent.sock` w swoim katalogu usuwa (katalogu – nie); ścieżka dłuższa niż
+  `sun_path` (103 bajty) też jest błędem; gniazdo powstaje od razu z prawami 0600 (umask), kolejka połączeń 64;
 - co 5 s sprawdza, czy gniazdo wciąż jest jego (to samo i-węzło); usunięte albo zastąpione przez drugą kopię
   (np. „Zakończ i otwórz ponownie” w Ustawieniach systemowych) – kończy się, launchd zostawia jedną;
 - `SIGTERM` (`launchctl bootout`) usuwa jego gniazdo; dziennik tylko w os_log (`pl.cmcr.manager.screen-agent`),
@@ -105,15 +120,33 @@ Zasady usługi:
 Podpis usługi ma włączony hardened runtime (`codesign --options runtime`), więc `launchctl setenv
 DYLD_INSERT_LIBRARIES …` w sesji ucznia nie wstrzyknie biblioteki do procesu, któremu ufa klient.
 
-## Klient (`cmcr-screen-agent client <uid> <polecenie> …`)
+## Klient (`cmcr-screen-agent client <uid> [--pid N] <polecenie> …`)
 
-Uruchamia go root (albo sam zalogowany użytkownik). Przed wysłaniem polecenia sprawdza:
-`lstat` gniazda (gniazdo, nie dowiązanie, właściciel = uid), `LOCAL_PEERCRED` (uid = docelowy uid) i
-`LOCAL_PEERPID` → `proc_pidpath` = zainstalowany plik wykonywalny usługi (ta sama ścieżka po `realpath` albo
-ten sam plik – urządzenie i i-węzeł), a ten proces działa w trybie `serve` (argumenty z `kern.procargs2`:
-`LOCAL_PEERPID` wskazuje proces, który utworzył gniazdo nasłuchujące – obcy program mógłby je przekazać
-potomkowi i uruchomić przez `exec` prawdziwą usługę w krótkim trybie, np. `client`). Inaczej `ERR untrusted`. Katalog `run` musi być prawdziwym katalogiem
-roota (albo samego klienta). Uruchomiony przez innego użytkownika niż root i `<uid>` kończy się kodem 2.
+Uruchamia go root (albo sam zalogowany użytkownik). `--pid N` to pid usługi według launchd (wiersz `pid = N` z
+`launchctl print gui/<uid>/pl.cmcr.manager.screen-agent`; usługa załadowana bez pid-u = nie działa, czyli ścieżka
+wznawiania). Skrypty podają go zawsze, zaraz po `<uid>`; klient przyjmuje go też jako dwa ostatnie argumenty
+(po argumentach polecenia). `<uid>` – do 10 cyfr, najwyżej 4294967294 (konta Active Directory i mobilne).
+
+Przed wysłaniem polecenia sprawdza:
+- `run` – prawdziwy katalog roota (albo samego klienta), do którego nikt inny nie może pisać (bez praw zapisu dla
+  grupy i innych – stary `run` 1733 jest niezaufany);
+- `run/<uid>` – prawdziwy katalog (nie dowiązanie) użytkownika `<uid>` z prawami 0700;
+- gniazdo – `lstat`: gniazdo użytkownika `<uid>`;
+- po połączeniu: `LOCAL_PEERCRED` (uid = docelowy uid), `LOCAL_PEERPID` = `--pid` (gdy podany), ten proces nie jest
+  zatrzymany ani śledzony (`proc_pidinfo` `PROC_PIDTBSDINFO`: `pbi_status` ≠ `SSTOP`, bez `PROC_FLAG_TRACED` i
+  `PROC_FLAG_INEXIT`), `proc_pidpath` = zainstalowany plik wykonywalny usługi (ta sama ścieżka po `realpath` albo ten
+  sam plik – urządzenie i i-węzeł) i działa w trybie `serve` (argumenty z `kern.procargs2`);
+- po odebraniu odpowiedzi jeszcze raz, że ten proces nie jest zatrzymany ani śledzony.
+
+Inaczej `ERR untrusted` (11); brak `run`, `run/<uid>` albo gniazda to `ERR unreachable` (10). Dlaczego tyle:
+`LOCAL_PEERPID` wskazuje proces, który utworzył gniazdo nasłuchujące, a nie ten, który odpowiada. Program ucznia mógłby
+utworzyć gniazdo, przekazać je potomkowi, a sam przez `exec` stać się prawdziwą usługą w trybie `serve` i zostać
+zatrzymany (`SIGSTOP`), albo zakończyć się i poczekać, aż usługa uruchomiona przez launchd dostanie ten sam pid, i ją
+zatrzymać – ścieżka i argumenty by się zgadzały. Pid z launchd wyklucza pierwszy wariant, odrzucenie zatrzymanego albo
+śledzonego procesu – oba (niezatrzymana usługa sama kończy się w ciągu 5 s, gdy jej gniazdo zostanie podmienione).
+Porównanie `pidversion` z `LOCAL_PEERTOKEN` niczego tu nie dodaje: jądro wypełnia token bieżącym procesem o tym pid-zie.
+Połączenie odrzucone od razu (`ECONNREFUSED`/`EAGAIN` – pełna kolejka) klient ponawia do 3 razy co 200 ms.
+Uruchomiony przez innego użytkownika niż root i `<uid>` kończy się kodem 2.
 
 | Polecenie | Wyjście (stdout, wiersze) | Kod wyjścia |
 |---|---|---|
@@ -124,19 +157,21 @@ roota (albo samego klienta). Uruchomiony przez innego użytkownika niż root i `
 | `request-permission` | `PERMISSION granted\|denied` | 0 |
 | błąd | `ERR <kod> <opis zwykłym tekstem>` | patrz niżej |
 
-Kody wyjścia: 0 sukces, 2 błędne użycie, 10 usługa nie odpowiada (brak gniazda, odmowa, limit czasu 10 s),
+Kody wyjścia: 0 sukces, 2 błędne użycie, 10 usługa nie odpowiada (brak gniazda, odmowa, limit czasu 15 s),
 11 usługa niezaufana, 12 `noperm`, 13 `locked`, 14 `notconsole`/`asleep`/`nodisplay`, 15 `failed`,
 16 błąd protokołu lub zapisu, 1 inne.
 
 `<kod>` w `ERR` klienta: kody usługi jak wyżej oraz `usage` (2), `unreachable` (10), `untrusted` (11),
-`write` (16, zapis zrzutu), `protocol` (16), `error` (1); nieznany kod nowszej usługi daje 1. Nazwy aplikacji,
+`write` (16, zapis zrzutu), `protocol` (16 – także za długi albo nie-UTF-8 wiersz odpowiedzi: coś odpowiedziało,
+więc to nie martwa usługa i skrypt jej nie restartuje), `error` (1); nieznany kod nowszej usługi daje 1. Nazwy aplikacji,
 konta i opisy są w jednym wierszu (znaki sterujące, np. nowe wiersze, zamienione na spacje), więc nie mogą udawać
-wierszy `SHOT`. Pusta nazwa aplikacji to wiersz `FRONT ` (ze spacją). Limit czasu: 10 s na połączenie i na
+wierszy `SHOT`. Pusta nazwa aplikacji to wiersz `FRONT ` (ze spacją). Limit czasu: 15 s na połączenie i na
 każdą ciszę, najwyżej 30 s na całą wymianę.
 
 `capture` zapisuje każdy ekran do `shots/<uid>/screen-<n>.jpg` przez plik tymczasowy w tym samym katalogu i
-`rename` (więc kolejny zrzut atomowo zastępuje poprzedni) i usuwa `screen-<m>.jpg` ekranów, których w tym
-zrzucie nie było. Katalogi `shots` i `shots/<uid>` tworzy jako 700 (istniejące muszą być prawdziwymi
+`rename` (więc kolejny zrzut atomowo zastępuje poprzedni). Tylko po zrzucie `all` usuwa `screen-<m>.jpg` ekranów,
+których w nim nie było – zrzut jednego ekranu (`main`, `2`…) nie rusza plików innych ekranów, bo drugi podgląd tego
+samego konta może je właśnie wysyłać. Katalogi `shots` i `shots/<uid>` tworzy jako 700 (istniejące muszą być prawdziwymi
 katalogami tego, kto uruchamia klienta, nie dowiązaniami; szersze prawa zawęża). Przyjmuje tylko dane zaczynające
 się jak JPEG. Zalogowany użytkownik uruchamiający klienta dla własnej sesji (skrypt podglądu bez sudo) nie może
 pisać w `shots` roota – zapisuje wtedy do `$TMPDIR/cmcr-screen-agent/<uid>/`; wiersze `SHOT` zawsze podają
@@ -268,17 +303,21 @@ błąd użycia zamiast `debug`):
   `asleep` (istnieje = tak), `notice` (`shown`/`hidden`/`locked`, domyślnie `shown`), `front` (domyślnie
   „Finder”), `user`, `displays` (domyślnie 1), `size` (np. `1920x1080`, domyślnie `1440x900`), `variant` (istnieje =
   inne kolory obrazu, więc inna suma md5), `capture-fail` (`ERR failed` z treścią pliku), `capture-delay`
-  (sekundy), `old` (proces liczy się jako starszy niż 30 s); zapisuje `requests.log` (każde polecenie, `NOTICE`
+  (sekundy), `old` (proces liczy się jako starszy niż 30 s), `notice-seconds` (jak długo pokazany komunikat liczy
+  się jako widoczny, domyślnie 8); zapisuje `requests.log` (każde polecenie, `NOTICE`
   także odkodowany: `NOTICE-TEXT <tytuł> | <tekst>`) i `permission-requested`. Obraz testowy to jednolite tło
   z kilkoma prostokątami w rozmiarze po skalowaniu do `maxpx`, kodowane z podaną jakością. W trybie `client`
   zmienna sprawia, że klient ufa usłudze działającej jako ten sam użytkownik, nawet dla innego `<uid>` (testy e2e
   nie mają roota ani drugiego konta) – sprawdzenie ścieżki pliku wykonywalnego zostaje;
-- `CMCR_SCREEN_AGENT_TEST_UID=<n>` – `serve` tworzy `<n>.sock` zamiast gniazda własnego uid.
+- `CMCR_SCREEN_AGENT_TEST_UID=<n>` – `serve` tworzy `run/<n>/agent.sock` zamiast gniazda własnego uid (katalog
+  `run/<n>` musi należeć do uruchamiającego, 0700 – w e2e tworzy go atrapa `launchctl`, jak root przed startem).
 
 `Tests/ScreenAgentKitTests` sprawdzają protokół, skalowanie, numerację ekranów, base64, zapis zrzutów, zgodność
 stałych z `ScreenAgentInfo` i uruchamiają prawdziwy plik wykonywalny (debug) w trybie testowym w katalogu
-tymczasowym: `ping`/`capture`/`notice`/`front`, podmiana i usuwanie plików, kody `noperm`/`locked`/…, odmowa
-obcemu programowi na gnieździe. `Tests/e2e/run.sh` buduje pakiet usługi z kompilacji debug do
+tymczasowym: `ping`/`capture`/`notice`/`front`, podmiana i usuwanie plików (`main` zostawia `screen-2.jpg`), kody
+`noperm`/`locked`/…, koniec po odmowie tylko po `CAPTURE` i dopiero po zniknięciu komunikatu, odmowa obcemu programowi
+na gnieździe, `--pid` innego procesu i zatrzymana (`SIGSTOP`) usługa → 11, obcy, zbyt szeroki albo dowiązany
+`run/<uid>`, nazwa aplikacji 7000 znaków, uid 10-cyfrowy. `Tests/e2e/run.sh` buduje pakiet usługi z kompilacji debug do
 `$WORK/agent-bundle` i eksportuje `CMCR_SCREEN_AGENT_APP` (uwzględniane tylko w kompilacji DEBUG albo w środowisku
 testów e2e).
 

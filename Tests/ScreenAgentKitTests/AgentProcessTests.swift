@@ -97,7 +97,7 @@ private final class FakeIMac {
         let fm = FileManager.default
         try fm.createDirectory(atPath: testDir, withIntermediateDirectories: true)
         try fm.createDirectory(atPath: paths.runDir, withIntermediateDirectories: true)
-        chmod(paths.runDir, 0o1733)
+        chmod(paths.runDir, 0o755)
         try fm.createDirectory(atPath: (paths.executablePath as NSString).deletingLastPathComponent,
                                withIntermediateDirectories: true)
         try fm.copyItem(atPath: binary.path, toPath: paths.executablePath)
@@ -105,9 +105,19 @@ private final class FakeIMac {
 
     var env: [String: String] { ["CMCR_SETUP_ROOT_PREFIX": paths.prefix, "CMCR_SCREEN_AGENT_TEST_DIR": testDir] }
 
-    /// Starts `serve` from `executable` (default: the installed copy) and waits for its socket.
+    /// Creates `run/<uid>` (0700) the way root does before it starts that user's agent.
+    func prepareSocketDir(uid: uid_t) throws {
+        let dir = paths.socketDir(uid: uid)
+        var st = stat()
+        if lstat(dir, &st) != 0 { try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: false) }
+        chmod(dir, 0o700)
+    }
+
+    /// Starts `serve` from `executable` (default: the installed copy) and waits for its socket; `run/<uid>` is
+    /// created first unless `prepare` is false.
     @discardableResult
-    func serve(uid: uid_t?, executable: String? = nil, testDir dir: String? = nil) throws -> Process {
+    func serve(uid: uid_t?, executable: String? = nil, testDir dir: String? = nil, prepare: Bool = true) throws -> Process {
+        if prepare { try prepareSocketDir(uid: uid ?? getuid()) }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: executable ?? paths.executablePath)
         p.arguments = ["serve"]
@@ -117,14 +127,18 @@ private final class FakeIMac {
         p.environment = e
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
+        let err = Pipe()
+        p.standardError = err
         try p.run()
         servers.append(p)
         // Ready once it accepts a connection (a stale socket file may be there before the agent replaces it).
         let socket = paths.socketPath(uid: uid ?? getuid())
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline {
-            if !p.isRunning { throw IOFailure(.closed, "serve zakończył się kodem \(p.terminationStatus)") }
+            if !p.isRunning {
+                let message = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                throw IOFailure(.closed, "serve zakończył się kodem \(p.terminationStatus): \(message)")
+            }
             if let fd = try? UnixSocket.connect(to: socket, timeout: 1) {
                 close(fd)
                 return p
@@ -206,11 +220,18 @@ func agentServesPingCaptureNoticeAndFront() throws {
         == ["SHOT 1 1920 1080", "SHOT 2 1920 1080"])
     let shot2 = mac.paths.shotsDir(uid: studentUID) + "/screen-2.jpg"
     #expect(FileManager.default.fileExists(atPath: shot2))
+    // A capture of the main display leaves the second display's image alone (another preview of this account may
+    // be sending it right now); only a capture of all displays removes the images of displays that are gone.
     r = try mac.client([uid, "capture", "1000", "50", "main"])
     #expect(r.code == 0)
     #expect(r.lines.last?.hasPrefix("SHOT 1 1000 563 ") == true)
+    #expect(FileManager.default.fileExists(atPath: shot2))
+    mac.set("displays", "1")
+    r = try mac.client([uid, "capture", "1000", "50", "all"])
+    #expect(r.code == 0)
     #expect(!FileManager.default.fileExists(atPath: shot2))
     #expect(try FileManager.default.contentsOfDirectory(atPath: mac.paths.shotsDir(uid: studentUID)) == ["screen-1.jpg"])
+    mac.set("displays", "2")
 
     // A display that is not there.
     r = try mac.client([uid, "capture", "640", "70", "3"])
@@ -232,6 +253,14 @@ func agentServesPingCaptureNoticeAndFront() throws {
     r = try mac.client([uid, "request-permission"])
     #expect(r.code == 0 && r.out == "PERMISSION granted")
     #expect(FileManager.default.fileExists(atPath: mac.testDir + "/permission-requested"))
+
+    // An app with a huge name: cut to 200 characters by the agent, still a valid answer.
+    mac.set("front", String(repeating: "Ż", count: 7000))
+    r = try mac.client([uid, "capture", "320", "60", "main"])
+    #expect(r.code == 0, "\(r.out)")
+    #expect(r.lines.first == "FRONT " + String(repeating: "Ż", count: AgentInfo.maxNameLength))
+    r = try mac.client([uid, "front"])
+    #expect(r.code == 0 && r.out.count == "FRONT ".count + AgentInfo.maxNameLength)
 }
 
 @Test(.enabled(if: AgentBinary.url != nil, AgentBinary.missingReason), .timeLimit(.minutes(1)))
@@ -275,7 +304,9 @@ func agentReportsPermissionLockAndFailures() throws {
 
     // Usage errors never reach the agent.
     for args in [[uid], [uid, "capture", "640", "70"], [uid, "capture", "640", "5", "main"], [uid, "capture", "640", "70", "x"],
-                 [uid, "notice", "%%%", "YQ=="], [uid, "shutdown"], ["abc", "ping"], ["-1", "ping"]] {
+                 [uid, "notice", "%%%", "YQ=="], [uid, "shutdown"], ["abc", "ping"], ["-1", "ping"],
+                 ["4294967295", "ping"], ["12345678901", "ping"], [uid, "--pid"], [uid, "--pid", "x", "ping"],
+                 [uid, "--pid", "0", "ping"], [uid, "ping", "--pid"], [uid, "--pid", "1", "ping", "--pid", "1"]] {
         r = try mac.client(args)
         #expect(r.code == AgentInfo.ClientCode.usage, "\(args)")
         #expect(r.out.hasPrefix("ERR usage "), "\(args)")
@@ -298,13 +329,23 @@ func agentReportsPermissionLockAndFailures() throws {
     #expect(!FileManager.default.fileExists(atPath: mac.paths.socketPath(uid: otherUID)))
     r = try mac.client([other, "ping"])
     #expect(r.code == AgentInfo.ClientCode.unreachable && r.out.hasPrefix("ERR unreachable "))
-    // A PING that finds no permission restarts an old agent the same way (the readiness check then sees a fresh
-    // decision next time).
+    // A PING never ends the agent (readiness, status and install ping it; they restart it themselves when needed).
     let pinged = try mac.serve(uid: otherUID)
     #expect(try mac.client([other, "ping"]).out.contains(" perm=denied "))
-    let deadline2 = Date().addingTimeInterval(5)
-    while pinged.isRunning && Date() < deadline2 { usleep(20_000) }
+    usleep(500_000)
+    #expect(pinged.isRunning)
+    #expect(try mac.client([other, "ping"]).code == 0)
+    // A denied capture right after a notice: the agent stays until the notice panel has gone, then exits.
+    mac.set("notice-seconds", "1")
+    #expect(try mac.client([other, "notice", "YQ==", "Yg=="]).out == "NOTICE shown")
+    #expect(try mac.client([other, "capture", "640", "70", "main"]).code == AgentInfo.ClientCode.noPermission)
+    usleep(1_000_000)
+    #expect(pinged.isRunning)
+    #expect(try mac.client([other, "ping"]).code == 0)
+    let deadline3 = Date().addingTimeInterval(6)
+    while pinged.isRunning && Date() < deadline3 { usleep(20_000) }
     #expect(!pinged.isRunning)
+    #expect(!FileManager.default.fileExists(atPath: mac.paths.socketPath(uid: otherUID)))
 }
 
 @Test(.enabled(if: AgentBinary.url != nil, AgentBinary.missingReason), .timeLimit(.minutes(1)))
@@ -329,13 +370,72 @@ func clientRefusesAnythingButTheInstalledAgent() throws {
     #expect(r.code == AgentInfo.ClientCode.untrusted)
     #expect(!FileManager.default.fileExists(atPath: mac.paths.shotsDir(uid: studentUID)))
 
-    // Something that is not a socket at the socket path.
-    let otherUID = studentUID + 1
+    // Something that is not a socket at the socket path: not trusted; the agent replaces it (only this user and
+    // root can put anything into run/<uid>).
+    let otherUID = studentUID + 1, other = String(otherUID)
+    try mac.prepareSocketDir(uid: otherUID)
     FileManager.default.createFile(atPath: mac.paths.socketPath(uid: otherUID), contents: Data())
-    #expect(try mac.client([String(otherUID), "ping"]).code == AgentInfo.ClientCode.untrusted)
-    // …which the agent refuses to remove.
-    #expect(throws: (any Error).self) { try mac.serve(uid: otherUID) }
-    #expect(FileManager.default.fileExists(atPath: mac.paths.socketPath(uid: otherUID)))
+    #expect(try mac.client([other, "ping"]).code == AgentInfo.ClientCode.untrusted)
+    try mac.serve(uid: otherUID)
+    #expect(try mac.client([other, "ping"]).code == 0)
+
+    // Without its folder the agent does not start (root creates it before every start); the client finds nothing.
+    let thirdUID = studentUID + 2, third = String(thirdUID)
+    #expect(throws: (any Error).self) { try mac.serve(uid: thirdUID, prepare: false) }
+    r = try mac.client([third, "ping"])
+    #expect(r.code == AgentInfo.ClientCode.unreachable && r.out.contains("brak katalogu"), "\(r.out)")
+    // A folder anybody else could read or enter, or a link instead of the folder: refused on both sides.
+    try FileManager.default.createDirectory(atPath: mac.paths.socketDir(uid: thirdUID), withIntermediateDirectories: false)
+    chmod(mac.paths.socketDir(uid: thirdUID), 0o755)
+    #expect(throws: (any Error).self) { try mac.serve(uid: thirdUID, prepare: false) }
+    #expect(try mac.client([third, "ping"]).code == AgentInfo.ClientCode.untrusted)
+    try FileManager.default.removeItem(atPath: mac.paths.socketDir(uid: thirdUID))
+    let elsewhere = mac.root + "/elsewhere"
+    try FileManager.default.createDirectory(atPath: elsewhere, withIntermediateDirectories: false)
+    chmod(elsewhere, 0o700)
+    try FileManager.default.createSymbolicLink(atPath: mac.paths.socketDir(uid: thirdUID), withDestinationPath: elsewhere)
+    r = try mac.client([third, "ping"])
+    #expect(r.code == AgentInfo.ClientCode.untrusted && r.out.contains("dowiązanie"), "\(r.out)")
+    #expect(throws: (any Error).self) { try mac.serve(uid: thirdUID, prepare: false) }
+    #expect(try FileManager.default.contentsOfDirectory(atPath: elsewhere).isEmpty)
+    // The old world-writable run folder (1733) is not trusted.
+    chmod(mac.paths.runDir, 0o1733)
+    #expect(try mac.client([other, "ping"]).code == AgentInfo.ClientCode.untrusted)
+    chmod(mac.paths.runDir, 0o755)
+}
+
+@Test(.enabled(if: AgentBinary.url != nil, AgentBinary.missingReason), .timeLimit(.minutes(1)))
+func clientChecksLaunchdPidAndRefusesAStoppedAgent() throws {
+    let mac = try FakeIMac(binary: try #require(AgentBinary.url))
+    defer { mac.cleanUp() }
+    let server = try mac.serve(uid: studentUID)
+    let uid = String(studentUID), pid = String(server.processIdentifier)
+
+    // The pid launchd reports, before the command or after its arguments.
+    var r = try mac.client([uid, "--pid", pid, "ping"])
+    #expect(r.code == 0, "\(r.out)")
+    r = try mac.client([uid, "capture", "320", "60", "main", "--pid", pid])
+    #expect(r.code == 0, "\(r.out)")
+    // Another pid than the one that made the socket: whoever answers is not launchd's agent.
+    r = try mac.client([uid, "--pid", String(server.processIdentifier + 1), "ping"])
+    #expect(r.code == AgentInfo.ClientCode.untrusted && r.out.hasPrefix("ERR untrusted "), "\(r.out)")
+    r = try mac.client([uid, "capture", "320", "60", "main", "--pid", "1"])
+    #expect(r.code == AgentInfo.ClientCode.untrusted)
+
+    // A stopped agent keeps its pid, executable and arguments, but it is not the one answering: refused (even
+    // though the kernel still completes the connection).
+    kill(server.processIdentifier, SIGSTOP)
+    r = try mac.client([uid, "--pid", pid, "ping"])
+    #expect(r.code == AgentInfo.ClientCode.untrusted && r.out.contains("zatrzymany"), "\(r.out)")
+    r = try mac.client([uid, "ping"])
+    #expect(r.code == AgentInfo.ClientCode.untrusted)
+    kill(server.processIdentifier, SIGCONT)
+    usleep(100_000)
+    #expect(try mac.client([uid, "--pid", pid, "ping"]).code == 0)
+
+    // A 10-digit uid (Active Directory) is a valid uid: no agent there, so unreachable, not a usage error.
+    r = try mac.client(["4294967294", "ping"])
+    #expect(r.code == AgentInfo.ClientCode.unreachable, "\(r.out)")
 }
 
 @Test(.enabled(if: AgentBinary.url != nil, AgentBinary.missingReason), .timeLimit(.minutes(1)))

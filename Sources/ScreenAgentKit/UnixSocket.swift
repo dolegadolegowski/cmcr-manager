@@ -3,7 +3,8 @@ import Foundation
 
 /// A failed socket or file operation, with a Polish description for `ERR … <opis>`.
 public struct IOFailure: Error, Equatable, CustomStringConvertible, Sendable {
-    public enum Kind: Equatable, Sendable { case timeout, closed, tooLong, system }
+    /// `tooLong` and `invalid` mean the peer sent something malformed (a protocol error, not a dead peer).
+    public enum Kind: Equatable, Sendable { case timeout, closed, tooLong, invalid, system }
     public var kind: Kind
     public var message: String
     public var errno: Int32
@@ -58,7 +59,24 @@ public enum UnixSocket {
         _ = fcntl(fd, F_SETFL, on ? flags | O_NONBLOCK : flags & ~O_NONBLOCK)
     }
 
-    /// Connects to `path`, waiting at most `timeout` (a full listen queue makes connect wait).
+    /// Connects to `path`, waiting at most `timeout`. On Darwin a full listen queue refuses at once (ECONNREFUSED or
+    /// EAGAIN) instead of making connect wait: such a refusal is tried again up to `attempts` times, `retryDelay`
+    /// apart (a socket nobody listens on any more is refused the same way, so it costs those few retries too).
+    public static func connect(to path: String, timeout: TimeInterval, attempts: Int,
+                               retryDelay: TimeInterval) throws -> Int32 {
+        var attempt = 1
+        while true {
+            do {
+                return try connect(to: path, timeout: timeout)
+            } catch let e as IOFailure where e.kind == .system && (e.errno == ECONNREFUSED || e.errno == EAGAIN) {
+                guard attempt < attempts else { throw e }
+                attempt += 1
+                usleep(useconds_t(max(0, retryDelay) * 1_000_000))
+            }
+        }
+    }
+
+    /// Connects to `path` once, waiting at most `timeout`.
     public static func connect(to path: String, timeout: TimeInterval) throws -> Int32 {
         var addr = try address(path)
         let fd = try makeSocket()
@@ -68,7 +86,7 @@ public enum UnixSocket {
         }
         if r != 0 {
             let code = errno
-            guard code == EINPROGRESS || code == EAGAIN || code == EINTR else {
+            guard code == EINPROGRESS || code == EINTR else {
                 close(fd)
                 throw IOFailure.system("połączenie z \(path)", code)
             }
@@ -141,7 +159,7 @@ public final class SocketStream {
                 var bytes = Array(buffer[start..<nl])
                 start = nl + 1
                 if bytes.last == 0x0D { bytes.removeLast() }
-                guard let s = String(bytes: bytes, encoding: .utf8) else { throw IOFailure(.system, "wiersz nie jest w UTF-8") }
+                guard let s = String(bytes: bytes, encoding: .utf8) else { throw IOFailure(.invalid, "wiersz nie jest w UTF-8") }
                 return s
             }
             if buffer.count - start > maxLength { throw IOFailure(.tooLong, "za długi wiersz") }
@@ -231,6 +249,21 @@ public enum PeerIdentity {
         return args.count == argc ? args : nil
     }
 
+    /// Why a process cannot be trusted to answer for itself right now, or `nil` when it runs normally.
+    ///
+    /// A process that is stopped (SIGSTOP) or traced keeps its pid, its executable and its arguments, while another
+    /// process of the same user could answer on a socket it once created: such a peer is never the agent.
+    public static func suspendedState(of pid: pid_t) -> String? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return "proces \(pid) nie istnieje" }
+        // SSTOP (sys/proc.h) and PROC_FLAG_TRACED / PROC_FLAG_INEXIT (sys/proc_info.h).
+        if info.pbi_status == 4 { return "proces \(pid) jest zatrzymany" }
+        if info.pbi_flags & 2 != 0 { return "proces \(pid) jest śledzony (debuger)" }
+        if info.pbi_flags & 4 != 0 { return "proces \(pid) właśnie się kończy" }
+        return nil
+    }
+
     /// Whether two paths name the same file: the same resolved path, or the same file system object (firmlinks such
     /// as /Library ↔ /System/Volumes/Data/Library resolve to different strings).
     public static func sameFile(_ a: String, _ b: String) -> Bool {
@@ -244,5 +277,69 @@ public enum PeerIdentity {
         guard let r = realpath(path, nil) else { return nil }
         defer { free(r) }
         return String(cString: r)
+    }
+}
+
+/// Where an agent's socket lives: `run/<uid>/agent.sock` (docs/screen-agent.md › Ścieżki). Root keeps `run` (0755) and
+/// creates `run/<uid>` (owner <uid>, 0700) before it starts that user's agent, so no other account can put anything
+/// at another user's socket path.
+public enum SocketLocation {
+    /// A problem with the socket's location.
+    public enum Problem: Error, Equatable, Sendable {
+        /// Something is not there (yet): the agent is not installed or not running.
+        case missing(String)
+        /// Something is there that must not be trusted.
+        case untrusted(String)
+    }
+
+    /// What the client requires before it connects: `run` a real directory of one of `runDirOwners` that nobody
+    /// else may write to, `run/<uid>` a real directory (not a link) of one of `owners` with mode 0700, and the
+    /// socket a socket of one of `owners`.
+    public static func checkForClient(paths: AgentPaths, uid: uid_t, owners: Set<uid_t>,
+                                      runDirOwners: Set<uid_t>) throws(Problem) {
+        var st = stat()
+        let run = paths.runDir
+        guard lstat(run, &st) == 0 else { throw .missing("brak katalogu \(run) – usługa nie jest zainstalowana") }
+        guard (st.st_mode & S_IFMT) == S_IFDIR, runDirOwners.contains(st.st_uid) else {
+            throw .untrusted("\(run) nie jest katalogiem roota")
+        }
+        guard st.st_mode & 0o022 == 0 else {
+            throw .untrusted("do katalogu \(run) mogą pisać inni użytkownicy (prawa \(String(st.st_mode & 0o7777, radix: 8)))")
+        }
+        let dir = paths.socketDir(uid: uid)
+        guard lstat(dir, &st) == 0 else {
+            throw .missing("brak katalogu \(dir) – usługa nie została uruchomiona w sesji użytkownika")
+        }
+        try checkOwnDirectory(dir, st, owners: owners)
+        let socketPath = paths.socketPath(uid: uid)
+        guard lstat(socketPath, &st) == 0 else {
+            throw .missing("brak gniazda usługi \(socketPath) – usługa nie działa w sesji użytkownika")
+        }
+        guard (st.st_mode & S_IFMT) == S_IFSOCK else { throw .untrusted("\(socketPath) nie jest gniazdem") }
+        guard owners.contains(st.st_uid) else {
+            throw .untrusted("gniazdo \(socketPath) należy do uid \(st.st_uid), a nie \(uid)")
+        }
+    }
+
+    /// What the agent requires before it binds: its `run/<uid>` is a real directory of `owner` with mode 0700.
+    public static func checkForAgent(directory: String, owner: uid_t) throws(Problem) {
+        var st = stat()
+        guard lstat(directory, &st) == 0 else {
+            throw .missing("brak katalogu \(directory) – tworzy go CMCR Manager przed uruchomieniem usługi " +
+                           "(launchd spróbuje ponownie)")
+        }
+        try checkOwnDirectory(directory, st, owners: [owner])
+    }
+
+    private static func checkOwnDirectory(_ dir: String, _ st: stat, owners: Set<uid_t>) throws(Problem) {
+        guard (st.st_mode & S_IFMT) == S_IFDIR else {
+            throw .untrusted("\(dir) nie jest katalogiem (np. dowiązanie symboliczne)")
+        }
+        guard owners.contains(st.st_uid) else {
+            throw .untrusted("katalog \(dir) należy do uid \(st.st_uid)")
+        }
+        guard st.st_mode & 0o7777 == 0o700 else {
+            throw .untrusted("katalog \(dir) ma prawa \(String(st.st_mode & 0o7777, radix: 8)) zamiast 700")
+        }
     }
 }

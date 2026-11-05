@@ -6,6 +6,9 @@ import ScreenAgentKit
 /// (or by the logged-in user). Before anything is sent it makes sure the socket belongs to user <uid> and that the
 /// process behind it is the installed agent: a student cannot put a program of their own there to show the teacher
 /// a fake screen. Prints result lines on stdout; every failure is one `ERR <code> <text>` line and an exit code.
+///
+/// `--pid N` (right after `<uid>`, or as the last two arguments) names the pid launchd reports for the agent
+/// (`launchctl print gui/<uid>/pl.cmcr.manager.screen-agent`); the scripts always pass it.
 enum Client {
     private typealias Code = AgentInfo.ClientCode
 
@@ -28,10 +31,18 @@ enum Client {
         static func write(_ m: String) -> Failure { Failure("write", m, Code.protocolError) }
     }
 
+    /// A parsed command line.
+    struct Invocation: Equatable {
+        var uid: uid_t
+        var request: AgentRequest
+        /// The agent's pid as launchd reports it (`--pid`).
+        var pid: pid_t?
+    }
+
     static func run(_ args: [String]) -> Int32 {
         do {
-            let (uid, request) = try parse(args)
-            try execute(uid: uid, request: request)
+            let invocation = try parse(args)
+            try execute(invocation)
             return Code.ok
         } catch let f as Failure {
             print(ClientOutput.error(f.code, f.message))
@@ -42,11 +53,25 @@ enum Client {
         }
     }
 
-    static func parse(_ args: [String]) throws -> (uid_t, AgentRequest) {
-        guard args.count >= 2, let n = strictInt(args[0]), n <= Int(Int32.max) else {
-            throw Failure.usage("użycie: cmcr-screen-agent client <uid> ping|capture|notice|front|request-permission …")
+    static func parse(_ arguments: [String]) throws -> Invocation {
+        let usage = "użycie: cmcr-screen-agent client <uid> [--pid N] ping|capture|notice|front|request-permission …"
+        guard let first = arguments.first, let uid = strictUID(first) else { throw Failure.usage(usage) }
+        // --pid N: before the command or after its arguments (no argument of a command can be "--pid").
+        var args = arguments
+        var pid: pid_t?
+        func takePid(at i: Int) throws {
+            guard i + 1 < args.count, let n = strictInt(args[i + 1]), n > 0, n <= Int(Int32.max) else {
+                throw Failure.usage("--pid wymaga numeru procesu")
+            }
+            pid = pid_t(n)
+            args.removeSubrange(i...(i + 1))
         }
-        let uid = uid_t(n)
+        if args.count > 1 && args[1] == "--pid" {
+            try takePid(at: 1)
+        } else if args.count > 2 && args[args.count - 2] == "--pid" {
+            try takePid(at: args.count - 2)
+        }
+        guard args.count >= 2, !args.contains("--pid") else { throw Failure.usage(usage) }
         let rest = Array(args.dropFirst(2))
         func count(_ k: Int) throws {
             guard rest.count == k else { throw Failure.usage("nieprawidłowa liczba argumentów polecenia \(args[1])") }
@@ -54,13 +79,13 @@ enum Client {
         switch args[1] {
         case "ping":
             try count(0)
-            return (uid, .ping)
+            return Invocation(uid: uid, request: .ping, pid: pid)
         case "front":
             try count(0)
-            return (uid, .front)
+            return Invocation(uid: uid, request: .front, pid: pid)
         case "request-permission":
             try count(0)
-            return (uid, .requestPermission)
+            return Invocation(uid: uid, request: .requestPermission, pid: pid)
         case "capture":
             try count(3)
             guard let maxSide = strictInt(rest[0]), AgentInfo.maxSideRange.contains(maxSide) else {
@@ -72,13 +97,13 @@ enum Client {
             guard let display = DisplaySelection(token: rest[2]) else {
                 throw Failure.usage("nieprawidłowy ekran: \(rest[2]) (main, all albo 1–9)")
             }
-            return (uid, .capture(maxSide: maxSide, quality: quality, display: display))
+            return Invocation(uid: uid, request: .capture(maxSide: maxSide, quality: quality, display: display), pid: pid)
         case "notice":
             try count(2)
             guard let title = Base64Field.decode(rest[0]), let text = Base64Field.decode(rest[1]) else {
                 throw Failure.usage("tytuł i tekst komunikatu muszą być w base64 (UTF-8)")
             }
-            return (uid, .notice(title: title, text: text))
+            return Invocation(uid: uid, request: .notice(title: title, text: text), pid: pid)
         default:
             throw Failure.usage("nieznane polecenie: \(args[1])")
         }
@@ -86,7 +111,8 @@ enum Client {
 
     // MARK: - Exchange
 
-    private static func execute(uid: uid_t, request: AgentRequest) throws {
+    private static func execute(_ invocation: Invocation) throws {
+        let uid = invocation.uid, request = invocation.request
         let env = ProcessInfo.processInfo.environment
         let paths = AgentPaths.current(environment: env)
         var testMode = false
@@ -102,7 +128,8 @@ enum Client {
         var owners: Set<uid_t> = [uid]
         if testMode { owners.insert(getuid()) }
 
-        let fd = try connect(paths: paths, uid: uid, owners: owners, runDirOwners: [0, me])
+        let (fd, peer) = try connect(paths: paths, uid: uid, owners: owners, runDirOwners: [0, me],
+                                     expectedPID: invocation.pid)
         defer { close(fd) }
         let stream = SocketStream(fd: fd, inactivity: AgentInfo.clientTimeout, total: AgentInfo.clientTotalTimeout)
         do {
@@ -114,9 +141,18 @@ enum Client {
         do {
             reply = try AgentReply.parse(stream.readLine())
         } catch let e as IOFailure {
-            throw Failure.unreachable(e.kind == .closed ? "usługa zamknęła połączenie bez odpowiedzi" : "usługa nie odpowiada: \(e.message)")
+            switch e.kind {
+            case .closed: throw Failure.unreachable("usługa zamknęła połączenie bez odpowiedzi")
+            // Something answered, but not with a valid line: not a dead agent (no restart for it).
+            case .tooLong, .invalid: throw Failure.protocolError("nieprawidłowa odpowiedź usługi: \(e.message)")
+            case .timeout, .system: throw Failure.unreachable("usługa nie odpowiada: \(e.message)")
+            }
         } catch let e as ProtocolError {
             throw Failure.protocolError(e.message)
+        }
+        // The process must still be running normally now that it has answered (not stopped meanwhile).
+        if let why = PeerIdentity.suspendedState(of: peer) {
+            throw Failure.untrusted("usługa po drugiej stronie gniazda nie działa: \(why)")
         }
         if case let .error(code, message) = reply {
             throw Failure(code, message.isEmpty ? code : message, AgentErrorCode.clientExitCode(for: code))
@@ -131,7 +167,9 @@ enum Client {
         case (.requestPermission, .permission(let granted)):
             print(ClientOutput.permission(granted: granted))
         case (.capture, .capture(let count, let front)):
-            let lines = try receiveShots(count: count, stream: stream, store: try shotStore(paths: paths, uid: uid))
+            guard case let .capture(_, _, display) = request else { fatalError("unreachable") }
+            let lines = try receiveShots(count: count, stream: stream, store: try shotStore(paths: paths, uid: uid),
+                                         removeOthers: display == .all)
             print(ClientOutput.front(front))
             for line in lines { print(line) }
         default:
@@ -139,54 +177,66 @@ enum Client {
         }
     }
 
-    /// Checks the socket of user `uid`, connects and checks who answered.
-    private static func connect(paths: AgentPaths, uid: uid_t, owners: Set<uid_t>, runDirOwners: Set<uid_t>) throws -> Int32 {
-        var st = stat()
-        // The run folder is root's (1733): a real folder, not a link to somewhere a student controls. (The client
-        // itself may own it too: as root that is the same, and in the harness the developer created it.)
-        guard lstat(paths.runDir, &st) == 0 else {
-            throw Failure.unreachable("brak katalogu \(paths.runDir) – usługa nie jest zainstalowana")
-        }
-        guard (st.st_mode & S_IFMT) == S_IFDIR, runDirOwners.contains(st.st_uid) else {
-            throw Failure.untrusted("\(paths.runDir) nie jest katalogiem roota")
+    /// Checks the socket of user `uid`, connects and checks who answered; returns the socket and the agent's pid.
+    private static func connect(paths: AgentPaths, uid: uid_t, owners: Set<uid_t>, runDirOwners: Set<uid_t>,
+                                expectedPID: pid_t?) throws -> (Int32, pid_t) {
+        // run: root's, nobody else may write to it; run/<uid>: user <uid>'s own 0700 folder (root creates it), not a
+        // link; the socket in it: a socket of user <uid>. (The client itself may own run too: as root that is the
+        // same, and in the harness the developer created it.)
+        do {
+            try SocketLocation.checkForClient(paths: paths, uid: uid, owners: owners, runDirOwners: runDirOwners)
+        } catch {
+            switch error {
+            case .missing(let m): throw Failure.unreachable(m)
+            case .untrusted(let m): throw Failure.untrusted(m)
+            }
         }
         let socketPath = paths.socketPath(uid: uid)
-        guard lstat(socketPath, &st) == 0 else {
-            throw Failure.unreachable("brak gniazda usługi \(socketPath) – usługa nie działa w sesji użytkownika")
-        }
-        guard (st.st_mode & S_IFMT) == S_IFSOCK else {
-            throw Failure.untrusted("\(socketPath) nie jest gniazdem")
-        }
-        guard owners.contains(st.st_uid) else {
-            throw Failure.untrusted("gniazdo \(socketPath) należy do uid \(st.st_uid), a nie \(uid)")
-        }
         let fd: Int32
         do {
-            fd = try UnixSocket.connect(to: socketPath, timeout: AgentInfo.clientTimeout)
+            fd = try UnixSocket.connect(to: socketPath, timeout: AgentInfo.clientTimeout,
+                                        attempts: AgentInfo.connectAttempts, retryDelay: AgentInfo.connectRetryDelay)
         } catch let e as IOFailure {
             throw Failure.unreachable("usługa nie odpowiada: \(e.message)")
         }
-        guard let peerUID = PeerIdentity.uid(of: fd), owners.contains(peerUID) else {
+        do {
+            return (fd, try checkPeer(fd, owners: owners, expected: paths.executablePath, expectedPID: expectedPID))
+        } catch {
             close(fd)
+            throw error
+        }
+    }
+
+    /// Who answered: a process of user <uid>, the pid launchd reports for the agent (`--pid`), running normally
+    /// (not stopped or traced), the installed executable, in serve mode.
+    private static func checkPeer(_ fd: Int32, owners: Set<uid_t>, expected: String, expectedPID: pid_t?) throws -> pid_t {
+        guard let peerUID = PeerIdentity.uid(of: fd), owners.contains(peerUID) else {
             throw Failure.untrusted("po drugiej stronie gniazda jest proces innego użytkownika")
         }
-        let expected = paths.executablePath
-        guard let pid = PeerIdentity.pid(of: fd), let exe = PeerIdentity.executablePath(of: pid) else {
-            close(fd)
+        // LOCAL_PEERPID names the process that created the listening socket – not necessarily the one answering:
+        // that process could have handed the socket to another one and then become (exec) the installed agent, or
+        // have ended so that the agent started later got its pid. launchd's pid of the agent rules out the first,
+        // and a stopped or traced process is never the one answering (it is how the second would be kept quiet).
+        guard let pid = PeerIdentity.pid(of: fd) else {
+            throw Failure.untrusted("nie można ustalić procesu po drugiej stronie gniazda")
+        }
+        if let expectedPID, pid != expectedPID {
+            throw Failure.untrusted("gniazdo utworzył proces \(pid), a launchd uruchomił usługę jako proces \(expectedPID)")
+        }
+        if let why = PeerIdentity.suspendedState(of: pid) {
+            throw Failure.untrusted("usługa po drugiej stronie gniazda nie działa: \(why)")
+        }
+        guard let exe = PeerIdentity.executablePath(of: pid) else {
             throw Failure.untrusted("nie można ustalić procesu po drugiej stronie gniazda")
         }
         guard PeerIdentity.sameFile(exe, expected) else {
-            close(fd)
             throw Failure.untrusted("gniazdo obsługuje \(exe) (PID \(pid)), a nie zainstalowana usługa \(expected)")
         }
-        // LOCAL_PEERPID names the process that created the listening socket. Some other program could create it,
-        // pass it to a child and then exec the installed agent in a short-lived mode (e.g. `client`) to borrow its
-        // path; the agent in `serve` mode would have replaced that socket with its own.
+        // The installed agent started in a short-lived mode (e.g. `client`) would not keep the socket either.
         guard let args = PeerIdentity.arguments(of: pid), args.count == 2, args[1] == "serve" else {
-            close(fd)
             throw Failure.untrusted("proces \(pid) po drugiej stronie gniazda nie jest usługą w trybie serve")
         }
-        return fd
+        return pid
     }
 
     /// Where the screenshots go: `shots/<uid>` (root:wheel 700). The logged-in user running the client for their
@@ -211,8 +261,11 @@ enum Client {
         }
     }
 
-    /// Reads `count` images, saves each over the previous one and removes images of displays not in this capture.
-    private static func receiveShots(count: Int, stream: SocketStream, store: ShotStore) throws -> [String] {
+    /// Reads `count` images and saves each over the previous one. After a capture of all displays the images of
+    /// displays that are gone are removed; a capture of one display leaves the others alone (another preview of the
+    /// same account may be showing them right now).
+    private static func receiveShots(count: Int, stream: SocketStream, store: ShotStore,
+                                     removeOthers: Bool) throws -> [String] {
         var lines: [String] = []
         var seen = Set<Int>()
         for _ in 0..<count {
@@ -241,7 +294,7 @@ enum Client {
             }
         }
         do {
-            try store.removeOthers(keeping: seen)
+            try store.removeOthers(keeping: removeOthers ? seen : nil)
         } catch let e as IOFailure {
             throw Failure.write(e.message)
         }
