@@ -993,17 +993,28 @@ struct ConnectionSettings: View {
 struct ScreenPreviewSettings: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
+    @ViewState private var confirmNoticeOff: ConfirmRequest?
+    private var noticeOn: Bool { model.settings.observeNotifyStudent }
 
     var body: some View {
         Section {
-            // Not a setting: the student is always told (README, AUDIT KON-06).
-            LabeledContent {
-                Text("zawsze").foregroundStyle(.secondary)
-            } label: {
-                SettingLabel(title: "Powiadomienie ucznia o podglądzie",
-                             caption: "Osoba przy komputerze zawsze widzi komunikat „Administrator rozpoczął podgląd Twojego ekranu” – raz na sesję podglądu i ponownie po każdym zalogowaniu",
-                             icon: "bell.badge.fill", color: .red)
-            }
+            // On by default (README, AUDIT KON-06); switching it off asks first and leaves a note in the actions log.
+            OptionToggle(title: "Powiadomienie ucznia o podglądzie", icon: "bell.badge.fill", color: .red,
+                         detail: noticeOn
+                             ? "Osoba przy komputerze widzi komunikat „Administrator rozpoczął podgląd Twojego ekranu” – raz na sesję podglądu i ponownie po każdym zalogowaniu"
+                             : "Wyłączone: uczeń nie zobaczy komunikatu o podglądzie jego ekranu",
+                         isOn: Binding(get: { model.settings.observeNotifyStudent },
+                                       set: { on in
+                                           if on { model.settings.observeNotifyStudent = true } else {
+                                               confirmNoticeOff = ConfirmRequest(
+                                                   title: "Wyłączyć powiadomienie ucznia o podglądzie?",
+                                                   message: "Uczniowie nie dowiedzą się, że ich ekran jest podglądany. Upewnij się, że zasady szkoły i przepisy na to pozwalają, a uczniowie i rodzice są o podglądzie poinformowani w inny sposób. W dzienniku działań zostanie zapis o podglądzie bez powiadomienia.",
+                                                   button: "Wyłącz powiadomienie", targets: []) {
+                                                       model.settings.observeNotifyStudent = false
+                                                   }
+                                           }
+                                       }))
+            .confirmation($confirmNoticeOff)
             OptionToggle(title: "Tylko konta standardowe", icon: "person.badge.shield.checkmark.fill", color: .blue,
                          detail: "Ekrany kont administratorów nie są pokazywane",
                          isOn: $model.settings.observeOnlyStandardAccounts)

@@ -177,9 +177,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var screenshotInterval = 10
     public var screenshotMaxSize = 1280
     public var screenshotQuality = 60
-    /// The observed student is always told that the preview started (README); there is no setting to turn it off
-    /// (AUDIT KON-06). An old settings file that still has `notifyOnObserve: false` is read, but changes nothing.
-    public var notifyOnObserve: Bool { true }
+    /// Whether the observed student is told that the preview started (on by default, README, AUDIT KON-06). It can be
+    /// turned off in Settings › Podgląd ekranów. Stored under its own key on purpose: an old settings file that still
+    /// has `notifyOnObserve: false` (from before the notice was made mandatory) is ignored, so it can never switch
+    /// the notice off by surprise.
+    public var observeNotifyStudent = true
+    /// Same as `observeNotifyStudent` (the name the preview code has always used).
+    public var notifyOnObserve: Bool { observeNotifyStudent }
     /// Refuse to capture sessions of administrator accounts (preview only restricted/standard accounts).
     public var observeOnlyStandardAccounts = true
     /// Comma separated list of accounts that may be observed; empty means any (subject to the rule above).
@@ -204,6 +208,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         screenshotMaxSize = try c.decodeIfPresent(Int.self, forKey: .screenshotMaxSize) ?? d.screenshotMaxSize
         screenshotQuality = try c.decodeIfPresent(Int.self, forKey: .screenshotQuality) ?? d.screenshotQuality
         observeOnlyStandardAccounts = try c.decodeIfPresent(Bool.self, forKey: .observeOnlyStandardAccounts) ?? d.observeOnlyStandardAccounts
+        observeNotifyStudent = (try? c.decodeIfPresent(Bool.self, forKey: .observeNotifyStudent)) ?? d.observeNotifyStudent
         observeAllowedUsers = try c.decodeIfPresent(String.self, forKey: .observeAllowedUsers) ?? d.observeAllowedUsers
         snippets = try c.decodeIfPresent([Snippet].self, forKey: .snippets) ?? d.snippets
         reuseConnections = (try? c.decodeIfPresent(Bool.self, forKey: .reuseConnections)) ?? d.reuseConnections

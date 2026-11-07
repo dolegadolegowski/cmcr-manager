@@ -90,5 +90,32 @@ expect "tryb uwagi: komunikat poczeka na odblokowanie" "$out" "zablokowany w try
 expect_code "tryb uwagi: bez próby komunikatu" "$(agent_count '^CMCRA1 NOTICE ')" 0 "$(agentlog)"
 expect_code "tryb uwagi: obraz nie jest pobierany" "$(agent_count '^CMCRA1 CAPTURE ')" 0 "$(agentlog)"
 
+# The notice can be switched off in the settings (observeNotifyStudent, default on): no notice is requested, the
+# picture is taken at once, and the actions log says that the preview ran without telling the student.
+nt_reset
+nt_console daemon
+python3 - "$WORK/config/settings.json" <<'PY'
+import json, sys
+p = sys.argv[1]; s = json.load(open(p)); s.update(observeNotifyStudent=False); json.dump(s, open(p, "w"))
+PY
+clear_fakelog
+out="$(ctlpw screen-watch 1 "$WORK/nt-off" --frames 1 --interval 2)"; code=$?
+expect_code "powiadomienie wyłączone: kod 0" "$code" 0 "$out"
+expect_code "powiadomienie wyłączone: bez prośby o komunikat" "$(agent_count '^CMCRA1 NOTICE ')" 0 "$(agentlog)"
+expect_code "powiadomienie wyłączone: obraz pobrany od razu" "$(agent_count '^CMCRA1 CAPTURE ')" 1 "$(agentlog)"
+expect "powiadomienie wyłączone: wpis w dzienniku działań" "$(cat "$WORK/config/actions.log" 2>/dev/null)" "bez powiadomienia ucznia (wyłączone w ustawieniach)"
+expect_not "powiadomienie wyłączone: brak wpisu o powiadomieniu" "$out" "Powiadomiono użytkownika"
+# Switched on again (and the old key false next to it changes nothing): the notice is back.
+python3 - "$WORK/config/settings.json" <<'PY'
+import json, sys
+p = sys.argv[1]; s = json.load(open(p)); s.update(observeNotifyStudent=True, notifyOnObserve=False); json.dump(s, open(p, "w"))
+PY
+nt_reset
+nt_console daemon
+clear_fakelog
+out="$(ctlpw screen-watch 1 "$WORK/nt-on" --frames 1 --interval 2)"
+expect "powiadomienie włączone ponownie: uczeń powiadomiony" "$out" "Powiadomiono użytkownika daemon"
+expect_code "powiadomienie włączone ponownie: jedno powiadomienie" "$(agent_count '^CMCRA1 NOTICE ')" 1 "$(agentlog)"
+
 nt_reset
 printf '%s' "$nt_settings_backup" > "$WORK/config/settings.json"

@@ -12,8 +12,8 @@ func screenWatchCommand(_ arguments: [String]) async -> Int32 {
     let a = ModuleArguments.parse("screen-watch", arguments, screenWatchSpec)
     let use = "Użycie: cmcrctl screen-watch nr katalog [--frames N] [--interval S] [--size PX] [--display main|all|N]"
     if a.value("--notified-user") != nil, !inTestHarness {
-        moduleUsageError(a.command, "Opcja --notified-user działa tylko w testach (Tests/e2e) – uczeń zawsze dostaje "
-                         + "powiadomienie o podglądzie.")
+        moduleUsageError(a.command, "Opcja --notified-user działa tylko w testach (Tests/e2e); powiadomienie ucznia "
+                         + "włącza się w ustawieniach (Podgląd ekranów).")
     }
     guard a.positional.count == 2 else { moduleUsageError(a.command, use) }
     let frames = a.int("--frames", in: 0...100_000) ?? 3
@@ -39,7 +39,7 @@ func screenWatchCommand(_ arguments: [String]) async -> Int32 {
     let options = ScreenCaptureOptions(settings: settings, maxSize: size, interval: interval,
                                        alreadyNotifiedUser: notified, display: display, frames: 0)
     let stream = ScreenStream(host: host, options: options)
-    let watch = WatchState(limit: max(1, frames), host: host.name)
+    let watch = WatchState(limit: max(1, frames), host: host.name, notice: options.notify)
     Console.out("Podgląd \(host.name): co \(ScreenCaptureOptions.clampedInterval(interval)) s, ≤ \(ScreenCaptureOptions.clampedSize(size)) px, \(display.label.lowercased())")
 
     let result: CommandResult = await withCheckedContinuation { cont in
@@ -90,12 +90,18 @@ private final class WatchState: @unchecked Sendable {
     private var loggedUsers: Set<String> = []
     private var loggedFailure: ScreenIssue?
 
-    init(limit: Int, host: String) {
+    private let notice: Bool
+
+    init(limit: Int, host: String, notice: Bool = true) {
         self.limit = limit
         self.host = host
+        self.notice = notice
     }
 
-    private func log(_ text: String) { ConfigStore.log("Podgląd ekranu (cmcrctl screen-watch) → \(host)\(text)") }
+    private func log(_ text: String) {
+        ConfigStore.log("Podgląd ekranu (cmcrctl screen-watch) → \(host)\(text)"
+                        + (notice || !text.hasPrefix(" (użytkownik") ? "" : " – bez powiadomienia ucznia (wyłączone w ustawieniach)"))
+    }
 
     var done: Bool {
         lock.lock()
