@@ -100,13 +100,15 @@ extension AppModel {
         SSHKeys.currentPrivateKey(settings: settings).flatMap { SSHKeys.publicKey(for: $0) }
     }
 
-    /// Runs setup/cmcr-imac-setup.sh as root on the targets, then re-checks their readiness. With
-    /// `options.screenAgent` an applying run first installs or updates CMCR Screen Agent on each Mac, in the same
-    /// job: the agent ships inside the app, so the script cannot carry it. „Tylko sprawdź” installs nothing.
+    /// Runs setup/cmcr-imac-setup.sh as root on the targets, then re-checks their readiness. An applying run first
+    /// installs or updates CMCR Screen Agent on each Mac, in the same job (the agent ships inside the app, so the
+    /// script cannot carry it), and where the agent has no Screen Recording permission yet it asks for it right
+    /// away (macOS shows its dialog at the iMac). „Tylko sprawdź” installs and asks for nothing.
     func runSetupScript(_ options: SetupOptions, mode: SetupScript.Mode, on targets: [Machine]) {
         let key = managerPublicKey
         let settings = self.settings
-        let withAgent = options.screenAgent && mode == .apply
+        // The preview service is always part of an applying run (no switch): that is the whole point of „Skonfiguruj".
+        let withAgent = mode == .apply
         // Looked up once for the whole batch: every Mac gets the same copy.
         let agent = withAgent ? Self.bundledScreenAgent() : nil
         let title = mode == .apply
@@ -120,7 +122,21 @@ extension AppModel {
                     job.note("Usługa podglądu ekranu (\(ScreenAgentInfo.displayName) \(ScreenAgentInfo.version)) – instalacja lub aktualizacja…")
                     let a = await self.installScreenAgent(agent, on: m, job: job)
                     if a.succeeded {
-                        agentNote = " " + ScreenAgentInstallReport.parse(a.stdoutText).short
+                        let report = ScreenAgentInstallReport.parse(a.stdoutText)
+                        agentNote = " " + report.short
+                        if report.needsPermission {
+                            // Best effort: a refused request leaves a note, the rest of the setup goes on.
+                            job.note("Usługa podglądu nie ma uprawnienia nagrywania ekranu – proszę o nie (na iMacu pojawi się okno macOS)…")
+                            let p = await Operations.requestScreenAgentPermission(
+                                on: m, password: self.password(for: m), settings: self.sshSettings, handle: job.handle,
+                                onOutput: AgentLineFilter(OutputSink(job).callback).callback)
+                            job.flushIncoming()
+                            if p.succeeded {
+                                job.note(Self.permissionNote(p.stdoutText))
+                            } else if !(p.cancelled || job.handle.isCancelled) {
+                                job.note("Nie udało się poprosić o uprawnienie: \(SSH.diagnose(p).1) Zrobisz to później: Szybkie naprawy › Poproś o uprawnienie nagrywania ekranu.")
+                            }
+                        }
                     } else {
                         let (reach, message) = SSH.diagnose(a)
                         // Stopped, or the Mac was not reached at all (off, password refused, host key not trusted):

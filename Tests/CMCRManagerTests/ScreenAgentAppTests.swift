@@ -206,22 +206,25 @@ struct ScreenAgentModelTests {
         #expect(!job.output.contains("instalacja lub aktualizacja…"))
     }
 
-    @Test func verifyAndSwitchedOffInstallNothing() async throws {
+    @Test func verifyInstallsNothingButAnApplyingRunAlwaysInstallsTheAgent() async throws {
         let m = AppTestEnvironment.closedHost("imac01")
         let model = AppTestEnvironment.makeModel([m])
         let agent = fakeAgent
         defer { try? FileManager.default.removeItem(at: agent.deletingLastPathComponent()) }
+        // The app has no switch for the service any more: even options from the command line side that turn it off
+        // (SetupOptions.screenAgent = false, cmcrctl --no-screen-agent) do not take it out of an applying run.
         var off = options
         off.screenAgent = false
         await withAgent(agent) {
             model.runSetupScript(options, mode: .verify, on: [m])
             model.runSetupScript(off, mode: .apply, on: [m])
         }
-        #expect(model.batches.map(\.title) == ["Konfiguracja iMaców (skrypt \(SetupScript.version))",
+        #expect(model.batches.map(\.title) == ["Konfiguracja iMaców (skrypt \(SetupScript.version), usługa podglądu \(ScreenAgentInfo.version))",
                                                "Sprawdzenie konfiguracji iMaców (bez zmian)"])
         #expect(await AppTestEnvironment.wait { model.batches.allSatisfy(\.finished) })
-        for job in model.batches.flatMap(\.jobs) {
-            #expect(!job.output.contains("Usługa podglądu"), "\(job.output)")
-        }
+        let verify = try #require(model.batches.last?.jobs.first)
+        #expect(!verify.output.contains("Usługa podglądu"), "\(verify.output)")
+        let apply = try #require(model.batches.first?.jobs.first)
+        #expect(apply.output.contains("instalacja lub aktualizacja…"), "\(apply.output)")
     }
 }

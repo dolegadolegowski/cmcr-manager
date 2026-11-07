@@ -56,6 +56,16 @@ enum ScreenAgentCLI {
     }
 
     /// One line in words from the operation's `CMCR:AGENT` lines (docs/screen-agent.md › Instalacja).
+    /// Whether the install report says that some session's agent has no Screen Recording permission yet.
+    nonisolated static func needsPermission(_ output: String) -> Bool {
+        for raw in output.split(whereSeparator: \.isNewline) {
+            let words = raw.split(separator: " ").map(String.init)
+            guard words.first == "CMCR:AGENT-SESSION", words.count >= 3 else { continue }
+            if words.contains("perm=denied") || (words.count > 4 && words[3] == "ERR" && words[4] == "noperm") { return true }
+        }
+        return false
+    }
+
     nonisolated static func installSummary(_ output: String, host: Machine) -> String {
         var change = "", version = ScreenAgentInfo.version
         var sessions = 0, withoutPermission: [String] = []

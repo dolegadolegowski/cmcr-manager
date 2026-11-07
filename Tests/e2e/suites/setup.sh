@@ -354,6 +354,20 @@ expect "setup: usługa zainstalowana przed skryptem i działa" "$out" \
 [ -x "$AGENT_EXE" ] && [ -f "$SA_PLIST" ] && pass "setup: pliki usługi zainstalowane" || fail "setup: brak plików usługi" "$out"
 expect "setup: usługa uruchomiona w sesji użytkownika" "$(fakelog)" "launchctl bootstrap gui/$SA_ME_UID $SA_PLIST"
 expect "setup: usługa odpowiada" "$(agent_ping "$SA_ME_UID")" "AGENT 1.0.0 perm=granted"
+
+# The permission is still missing after the install: setup asks for it right away (the macOS window appears at the
+# iMac) instead of leaving it to a separate click; with the permission already granted it asks for nothing.
+expect_not "setup: uprawnienie już jest – bez prośby" "$out" "proszę o uprawnienie"
+sctl screen-agent remove 1 --yes >/dev/null
+echo denied > "$AGENT_TEST/perm"; rm -f "$AGENT_TEST/permission-requested"
+clear_fakelog
+out="$(setup_run)"
+expect "setup: brak uprawnienia – prośba od razu po instalacji usługi" "$out" \
+  "→ imac01: usługa podglądu zainstalowana (wersja 1.0.0)" \
+  "→ imac01: proszę o uprawnienie nagrywania ekranu (na iMacu pojawi się okno macOS)…"
+[ -e "$AGENT_TEST/permission-requested" ] && pass "setup: usługa poprosiła macOS o uprawnienie" \
+  || fail "setup: usługa nie poprosiła o uprawnienie" "$(agentlog)"
+rm -f "$AGENT_TEST/perm" "$AGENT_TEST/permission-requested"
 rm -rf "$TCCDIR"
 out="$(CMCR_CONFIG_DIR="$SCONF" CMCR_PASSWORD="zle-haslo" "$CTL" readiness 1 2>&1)"
 expect "readiness: błędne hasło sudo" "$out" "złe hasło"
