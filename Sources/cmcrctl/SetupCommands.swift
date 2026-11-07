@@ -120,6 +120,16 @@ enum SetupCommands {
                     }
                     if a.succeeded {
                         print("→ \(h.name): \(ScreenAgentCLI.installSummary(a.stdoutText, host: h))")
+                        if ScreenAgentCLI.needsPermission(a.stdoutText) {
+                            print("→ \(h.name): proszę o uprawnienie nagrywania ekranu (na iMacu pojawi się okno macOS)…")
+                            let p = await Interruption.shared.job(on: h) { handle in
+                                await Operations.requestScreenAgentPermission(on: h, password: Keychain.password(for: h),
+                                                                              settings: ssh, handle: handle, onOutput: printer)
+                            }
+                            if !p.succeeded && !p.cancelled {
+                                err("  Nie udało się poprosić o uprawnienie: \(SSH.diagnose(p).1) Później: cmcrctl screen-agent permission \(h.name)")
+                            }
+                        }
                     } else {
                         let (reach, message) = SSH.diagnose(a)
                         err("✘ \(h.name): usługa podglądu: \(message)")

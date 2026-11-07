@@ -78,7 +78,7 @@ struct SetupOptionsSheet: View {
                     .font(.title2.weight(.semibold))
                 Text(isSave
                      ? "Plik do jednorazowego uruchomienia przy iMacu (sudo bash), np. z pendrive’a. Jeden plik pasuje do wszystkich iMaców – konto administratora i nazwa są wykrywane na miejscu."
-                     : "Skrypt konfiguracyjny \(SetupScript.version) zostanie uruchomiony z uprawnieniami administratora (root) na: \(targetNames).\(o.screenAgent ? " Najpierw aplikacja zainstaluje lub zaktualizuje usługę podglądu ekranu." : "") Można go bezpiecznie uruchamiać wielokrotnie – zmienia tylko to, co trzeba.")
+                     : "Skrypt konfiguracyjny \(SetupScript.version) zostanie uruchomiony z uprawnieniami administratora (root) na: \(targetNames).\(isSave ? "" : " Najpierw aplikacja zainstaluje lub zaktualizuje usługę podglądu ekranu i poprosi o jej uprawnienie nagrywania ekranu.") Można go bezpiecznie uruchamiać wielokrotnie – zmienia tylko to, co trzeba.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -162,7 +162,7 @@ struct SetupOptionsSheet: View {
         if o.installKey && model.managerPublicKey == nil {
             out.append("Na tym Macu nie ma jeszcze klucza logowania – utwórz go w zakładce Dostęp i hasła, inaczej skrypt go nie zainstaluje.")
         }
-        if !isSave && o.screenAgent && !hasBundledAgent {
+        if !isSave && !hasBundledAgent {
             out.append("Ta kopia aplikacji nie zawiera usługi podglądu ekranu (\(ScreenAgentInfo.displayName)) – zostanie pominięta, reszta konfiguracji się wykona.")
         }
         if !isSave && !model.hasSharedPassword && targets.contains(where: { $0.usesSharedPassword }) {
@@ -275,17 +275,22 @@ struct SetupOptionsSheet: View {
     /// the standalone copy cannot (SetupOptions.screenAgent never reaches the script).
     @ViewBuilder var screenAgentSection: some View {
         Section {
-            OptionToggle(title: "Usługa podglądu ekranu (\(ScreenAgentInfo.displayName))", icon: "puzzlepiece.extension.fill", color: .red,
-                         detail: "Instaluje lub aktualizuje (wersja \(ScreenAgentInfo.version)) usługę, która robi zrzut ekranu tylko na żądanie podglądu. Tę samą wersję zostawia bez zmian, więc nadane uprawnienie nagrywania ekranu nie przepada.",
-                         isOn: isSave ? .constant(false) : $o.screenAgent)
-                .disabled(isSave)
+            LabeledContent {
+                Text(isSave ? "nie dotyczy pliku" : "zawsze").foregroundStyle(.secondary)
+            } label: {
+                SettingLabel(title: "Usługa podglądu ekranu (\(ScreenAgentInfo.displayName))",
+                             caption: isSave
+                                 ? "Skrypt zapisany do pliku nie instaluje usługi podglądu – jest ona częścią aplikacji."
+                                 : "Instaluje lub aktualizuje (wersja \(ScreenAgentInfo.version)) usługę, która robi zrzut ekranu tylko na żądanie podglądu, i prosi o jej uprawnienie nagrywania ekranu. Tę samą wersję zostawia bez zmian, więc nadane uprawnienie nie przepada.",
+                             icon: "puzzlepiece.extension.fill", color: .red)
+            }
         } header: {
             Text("Podgląd ekranów")
         } footer: {
             if isSave {
-                FormFooter("Skrypt zapisany do pliku nie instaluje usługi podglądu – jest ona częścią aplikacji. Gdy iMac będzie już dostępny zdalnie: Szybkie naprawy › Zainstaluj lub zaktualizuj usługę podglądu ekranu (albo cmcrctl screen-agent install).")
+                FormFooter("Gdy iMac będzie już dostępny zdalnie: Szybkie naprawy › Zainstaluj lub zaktualizuj usługę podglądu ekranu (albo cmcrctl screen-agent install).")
             } else {
-                FormFooter("Uprawnienie nagrywania ekranu nadaje się usłudze raz przy każdym iMacu – tabela gotowości pokaże, gdzie go brakuje. „Tylko sprawdź” niczego nie instaluje.")
+                FormFooter("Uprawnienie nagrywania ekranu nadaje się usłudze raz przy każdym iMacu (okno macOS pojawia się przy komputerze, włącza je administrator) – tabela gotowości pokaże, gdzie go brakuje. „Tylko sprawdź” niczego nie instaluje.")
             }
         }
     }
