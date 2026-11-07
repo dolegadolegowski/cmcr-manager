@@ -9,7 +9,7 @@ sa_settings_backup="$(cat "$WORK/config/settings.json")"
 python3 - "$WORK/config/settings.json" <<'PY'
 import json, sys
 p = sys.argv[1]; s = json.load(open(p))
-s.update(observeAllowedUsers="", observeOnlyStandardAccounts=False, notifyOnObserve=True, screenshotMaxSize=640)
+s.update(observeAllowedUsers="", observeOnlyStandardAccounts=False, observeNotifyStudent=True, screenshotMaxSize=640)
 json.dump(s, open(p, "w"))
 PY
 SA_UID="$(id -u)"

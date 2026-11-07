@@ -588,15 +588,40 @@ private final class QuitProgress: @unchecked Sendable {
     var isDone: Bool { lock.withLock { done } }
 }
 
+/// How the last `applicationShouldTerminate` ended – `NSApp.terminate(nil)` returns to its caller both when quitting
+/// was cancelled and when it was only put off (running work is stopped first, the app then quits by itself), and the
+/// update installer must tell the two apart: after a cancellation it takes its helper back, after a delay it waits.
+enum TerminateOutcome: Equatable {
+    case none, cancelled, deferred
+    /// Set by the delegate, read by whoever called `terminate` once it returns.
+    @MainActor static var last: TerminateOutcome = .none
+}
+
+/// What quitting does first (a pure decision, so it can be tested without quitting).
+enum QuitPlan: Equatable {
+    case quitNow
+    /// Stop the work on the iMacs, then quit (the update restart: it was confirmed in the update sheet already).
+    case stopWorkThenQuit
+    case ask
+    static func decide(updating: Bool, hasRunningWork: Bool, hasQuestion: Bool) -> QuitPlan {
+        if hasQuestion { return .ask }
+        return updating && hasRunningWork ? .stopWorkThenQuit : .quitNow
+    }
+}
+
 extension AppDelegate {
     @MainActor @objc
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        TerminateOutcome.last = .none
         guard let model = AppModel.shared else { return .terminateNow }
         let updating = Updater.shared.isQuittingForUpdate
-        guard let question = model.quitQuestion(quittingForUpdate: updating) else {
-            guard updating, model.hasRunningWork else { return .terminateNow }
-            return Self.quitAfterStopping(model)
+        let question = model.quitQuestion(quittingForUpdate: updating)
+        switch QuitPlan.decide(updating: updating, hasRunningWork: model.hasRunningWork, hasQuestion: question != nil) {
+        case .quitNow: return .terminateNow
+        case .stopWorkThenQuit: return Self.quitAfterStopping(model)
+        case .ask: break
         }
+        guard let question else { return .terminateNow }
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = question.title
@@ -604,13 +629,17 @@ extension AppDelegate {
         alert.addButton(withTitle: "Nie kończ")
         let quit = alert.addButton(withTitle: question.quitButton)
         quit.hasDestructiveAction = true
-        guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+        guard alert.runModal() == .alertSecondButtonReturn else {
+            TerminateOutcome.last = .cancelled
+            return .terminateCancel
+        }
         return Self.quitAfterStopping(model)
     }
 
     /// Quits once the iMacs were told to stop and the history is saved (at most `AppModel.quitWaitLimit`).
     @MainActor
     private static func quitAfterStopping(_ model: AppModel) -> NSApplication.TerminateReply {
+        TerminateOutcome.last = .deferred
         Task { @MainActor in
             await model.stopAllWorkBeforeQuitting()
             NSApp.reply(toApplicationShouldTerminate: true)

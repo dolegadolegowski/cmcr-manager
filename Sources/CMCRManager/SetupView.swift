@@ -998,11 +998,11 @@ struct ScreenPreviewSettings: View {
 
     var body: some View {
         Section {
-            // On by default (README, AUDIT KON-06); switching it off asks first and leaves a note in the actions log.
+            // Off by default; switching it off (after it was on) asks first, and while it is off the actions log notes it.
             OptionToggle(title: "Powiadomienie ucznia o podglądzie", icon: "bell.badge.fill", color: .red,
                          detail: noticeOn
                              ? "Osoba przy komputerze widzi komunikat „Administrator rozpoczął podgląd Twojego ekranu” – raz na sesję podglądu i ponownie po każdym zalogowaniu"
-                             : "Wyłączone: uczeń nie zobaczy komunikatu o podglądzie jego ekranu",
+                             : "Wyłączone (domyślnie): uczeń nie zobaczy komunikatu o podglądzie jego ekranu. Włącz, jeśli zasady szkoły lub przepisy wymagają informowania uczniów",
                          isOn: Binding(get: { model.settings.observeNotifyStudent },
                                        set: { on in
                                            if on { model.settings.observeNotifyStudent = true } else {
