@@ -177,11 +177,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var screenshotInterval = 10
     public var screenshotMaxSize = 1280
     public var screenshotQuality = 60
-    /// Whether the observed student is told that the preview started (on by default, README, AUDIT KON-06). It can be
-    /// turned off in Settings › Podgląd ekranów. Stored under its own key on purpose: an old settings file that still
-    /// has `notifyOnObserve: false` (from before the notice was made mandatory) is ignored, so it can never switch
-    /// the notice off by surprise.
-    public var observeNotifyStudent = true
+    /// Whether the observed student is told that the preview started. Off by default (the teacher switches it on in
+    /// Settings › Podgląd ekranów); a saved value, either way, is always respected. Stored under its own key on
+    /// purpose: the old `notifyOnObserve` key (from before the notice was mandatory) is ignored, so it can never
+    /// switch the notice on or off by surprise.
+    public var observeNotifyStudent = false
     /// Same as `observeNotifyStudent` (the name the preview code has always used).
     public var notifyOnObserve: Bool { observeNotifyStudent }
     /// Refuse to capture sessions of administrator accounts (preview only restricted/standard accounts).

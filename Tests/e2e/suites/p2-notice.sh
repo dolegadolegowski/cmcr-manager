@@ -6,8 +6,9 @@ nt_settings_backup="$(cat "$WORK/config/settings.json")"
 python3 - "$WORK/config/settings.json" <<'PY'
 import json, sys
 p = sys.argv[1]; s = json.load(open(p))
-# KON-06: an old settings file that switched the notice off – it must not matter any more.
-s.update(observeAllowedUsers="", observeOnlyStandardAccounts=False, notifyOnObserve=False, screenshotMaxSize=640)
+# The notice is off by default; these tests switch it on (the old notifyOnObserve key is ignored either way).
+s.update(observeAllowedUsers="", observeOnlyStandardAccounts=False, observeNotifyStudent=True, notifyOnObserve=False,
+         screenshotMaxSize=640)
 json.dump(s, open(p, "w"))
 PY
 nt_reset() { rm -f "$WORK/console_user"; agent_reset; }
@@ -20,12 +21,12 @@ nt_wait_for() { # nt_wait_for FILE NEEDLE [seconds] – polls a growing file
 nt_reset
 agent_ensure
 
-section "Komunikat o podglądzie – zawsze, także przy starym ustawieniu wyłączającym (AUDIT KON-06)"
+section "Komunikat o podglądzie – gdy włączony w ustawieniach, także przy starym kluczu notifyOnObserve=false (AUDIT KON-06)"
 nt_console daemon
 clear_fakelog
 out="$(ctlpw screen-watch 1 "$WORK/nt-always" --frames 1 --interval 2)"; code=$?
 expect_code "podgląd: kod 0" "$code" 0 "$out"
-expect "podgląd: uczeń powiadomiony mimo notifyOnObserve=false" "$out" "Powiadomiono użytkownika daemon"
+expect "podgląd: uczeń powiadomiony (stary klucz notifyOnObserve=false nie ma znaczenia)" "$out" "Powiadomiono użytkownika daemon"
 expect_code "podgląd: jedno powiadomienie" "$(agent_count '^CMCRA1 NOTICE ')" 1 "$(agentlog)"
 expect "podgląd: treść powiadomienia" "$(agentlog)" "NOTICE-TEXT Podgląd ekranu | Administrator rozpoczął podgląd Twojego ekranu."
 
@@ -90,13 +91,14 @@ expect "tryb uwagi: komunikat poczeka na odblokowanie" "$out" "zablokowany w try
 expect_code "tryb uwagi: bez próby komunikatu" "$(agent_count '^CMCRA1 NOTICE ')" 0 "$(agentlog)"
 expect_code "tryb uwagi: obraz nie jest pobierany" "$(agent_count '^CMCRA1 CAPTURE ')" 0 "$(agentlog)"
 
-# The notice can be switched off in the settings (observeNotifyStudent, default on): no notice is requested, the
-# picture is taken at once, and the actions log says that the preview ran without telling the student.
+# The notice is off by default (no observeNotifyStudent in the settings file) and when switched off explicitly: no
+# notice is requested, the picture is taken at once, and the actions log says that the preview ran without telling
+# the student.
 nt_reset
 nt_console daemon
 python3 - "$WORK/config/settings.json" <<'PY'
 import json, sys
-p = sys.argv[1]; s = json.load(open(p)); s.update(observeNotifyStudent=False); json.dump(s, open(p, "w"))
+p = sys.argv[1]; s = json.load(open(p)); s.pop("observeNotifyStudent", None); s.update(notifyOnObserve=True); json.dump(s, open(p, "w"))
 PY
 clear_fakelog
 out="$(ctlpw screen-watch 1 "$WORK/nt-off" --frames 1 --interval 2)"; code=$?
@@ -105,7 +107,18 @@ expect_code "powiadomienie wyłączone: bez prośby o komunikat" "$(agent_count 
 expect_code "powiadomienie wyłączone: obraz pobrany od razu" "$(agent_count '^CMCRA1 CAPTURE ')" 1 "$(agentlog)"
 expect "powiadomienie wyłączone: wpis w dzienniku działań" "$(cat "$WORK/config/actions.log" 2>/dev/null)" "bez powiadomienia ucznia (wyłączone w ustawieniach)"
 expect_not "powiadomienie wyłączone: brak wpisu o powiadomieniu" "$out" "Powiadomiono użytkownika"
-# Switched on again (and the old key false next to it changes nothing): the notice is back.
+# The same with the value saved explicitly.
+python3 - "$WORK/config/settings.json" <<'PY'
+import json, sys
+p = sys.argv[1]; s = json.load(open(p)); s.update(observeNotifyStudent=False); json.dump(s, open(p, "w"))
+PY
+nt_reset
+nt_console daemon
+clear_fakelog
+out="$(ctlpw screen-watch 1 "$WORK/nt-off2" --frames 1 --interval 2)"
+expect_code "powiadomienie wyłączone jawnie: bez prośby o komunikat" "$(agent_count '^CMCRA1 NOTICE ')" 0 "$(agentlog)"
+expect_not "powiadomienie wyłączone jawnie: brak wpisu o powiadomieniu" "$out" "Powiadomiono użytkownika"
+# Switched on in the settings (and the old key false next to it changes nothing): the notice is back.
 python3 - "$WORK/config/settings.json" <<'PY'
 import json, sys
 p = sys.argv[1]; s = json.load(open(p)); s.update(observeNotifyStudent=True, notifyOnObserve=False); json.dump(s, open(p, "w"))

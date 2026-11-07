@@ -421,8 +421,16 @@ final class Updater: ObservableObject {
                     throw UpdateError.notInstallable(why)
                 }
                 isQuittingForUpdate = true
+                TerminateOutcome.last = .none
                 NSApp.terminate(nil)             // the helper waits for this process to exit
-                // Reached only when quitting was cancelled after all.
+                // `terminate` also returns when quitting was only put off: running work is stopped first (up to
+                // `AppModel.quitWaitLimit`), then the app quits by itself and the helper carries on. Taking the
+                // helper back then would leave the update uninstalled and the app running.
+                let wait = Self.waitAfterTerminate(TerminateOutcome.last)
+                if wait > 0 { ConfigStore.log("Uaktualnienie aplikacji: zamknięcie z opóźnieniem – zadania na iMacach są zatrzymywane, potem aplikacja zamknie się sama i zainstaluje wersję") }
+                let deadline = Date().addingTimeInterval(wait)
+                while Date() < deadline { try? await Task.sleep(nanoseconds: 100_000_000) }
+                // Reached only when the app did not quit after all.
                 quitForUpdateCancelled()
             } catch UpdateError.cancelled {
                 confirmedWork = nil
@@ -433,6 +441,13 @@ final class Updater: ObservableObject {
                 phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    /// How long to wait for the app to quit by itself after `NSApp.terminate` came back: not at all after a
+    /// cancellation (or when the delegate was not asked), the stopping of the work plus a margin after a delay. The
+    /// helper waits 60 s for this process to exit, so the margin stays inside that.
+    nonisolated static func waitAfterTerminate(_ outcome: TerminateOutcome) -> TimeInterval {
+        outcome == .deferred ? AppModel.quitWaitLimit + 20 : 0
     }
 
     /// The app did not quit after the installer had started: stop that installer when possible and forget the
