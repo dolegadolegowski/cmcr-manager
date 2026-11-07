@@ -163,7 +163,7 @@ cat > "$WORK/config/hosts.json" <<EOF
 EOF
 cat > "$WORK/config/settings.json" <<EOF
 {"identityFile":"$WORK/client","extraSSHOptions":"UserKnownHostsFile=$WORK/known_hosts","sharedFolder":"$WORK/remote/Public/cmcr",
- "localFolder":"$WORK/local","studentUser":"$ME","connectTimeout":3,"observeOnlyStandardAccounts":false,"notifyOnObserve":true,
+ "localFolder":"$WORK/local","studentUser":"$ME","connectTimeout":3,"observeOnlyStandardAccounts":false,"observeNotifyStudent":true,
  "screenshotMaxSize":640}
 EOF
 export CMCR_CONFIG_DIR="$WORK/config"

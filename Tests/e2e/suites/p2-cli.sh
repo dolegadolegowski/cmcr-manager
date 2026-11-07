@@ -28,7 +28,7 @@ expect "p2: lista komputerów" "$out" "imac01" "imac02"
 python3 - "$P2/settings.json" <<'PY'
 import json, sys
 p = sys.argv[1]; s = json.load(open(p))
-s.update(observeAllowedUsers="", observeOnlyStandardAccounts=False, notifyOnObserve=True, screenshotMaxSize=640)
+s.update(observeAllowedUsers="", observeOnlyStandardAccounts=False, observeNotifyStudent=True, screenshotMaxSize=640)
 json.dump(s, open(p, "w"))
 PY
 rm -f "$WORK/console_user"; agent_reset; agent_ensure
