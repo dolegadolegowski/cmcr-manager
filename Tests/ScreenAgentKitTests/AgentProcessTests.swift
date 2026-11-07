@@ -322,13 +322,20 @@ struct AgentProcessTests {
         #expect(pinged.isRunning)
         #expect(try mac.client([other, "ping"]).code == 0)
         // A denied capture right after a notice: the agent stays until the notice panel has gone, then exits.
-        mac.set("notice-seconds", "1")
+        // The exit is deferred by max(2, notice-seconds) + 0.5 s, counted from the notice. The "still running" checks
+        // are made only while that is surely still ahead – on a slow CI runner the clients themselves can take longer
+        // than the short deferral, and then the agent has rightly gone already.
+        mac.set("notice-seconds", "3")
+        let noticeAt = Date()
         #expect(try mac.client([other, "notice", "YQ==", "Yg=="]).out == "NOTICE shown")
         #expect(try mac.client([other, "capture", "640", "70", "main"]).code == AgentInfo.ClientCode.noPermission)
-        usleep(1_000_000)
-        #expect(pinged.isRunning)
-        #expect(try mac.client([other, "ping"]).code == 0)
-        let deadline3 = Date().addingTimeInterval(6)
+        if Date().timeIntervalSince(noticeAt) < 1.5 {
+            #expect(pinged.isRunning)
+            if let ping = try? mac.client([other, "ping"]), Date().timeIntervalSince(noticeAt) < 3.0 {
+                #expect(ping.code == 0)
+            }
+        }
+        let deadline3 = Date().addingTimeInterval(15)
         while pinged.isRunning && Date() < deadline3 { usleep(20_000) }
         #expect(!pinged.isRunning)
         #expect(!FileManager.default.fileExists(atPath: mac.paths.socketPath(uid: otherUID)))

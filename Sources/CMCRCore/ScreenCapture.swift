@@ -80,7 +80,7 @@ public struct ScreenCaptureOptions: Sendable, Equatable {
     public init(settings: AppSettings, maxSize: Int? = nil, interval: Int? = nil, notify: Bool? = nil,
                 alreadyNotifiedUser: String? = nil, display: ScreenDisplay = .main, frames: Int = 1) {
         self.init(maxSize: maxSize ?? settings.screenshotMaxSize, quality: settings.screenshotQuality,
-                  interval: interval ?? settings.screenshotInterval, notify: notify ?? true,
+                  interval: interval ?? settings.screenshotInterval, notify: notify ?? settings.notifyOnObserve,
                   alreadyNotifiedUser: alreadyNotifiedUser, onlyStandardAccounts: settings.observeOnlyStandardAccounts,
                   allowedUsers: settings.observeAllowedUserList, display: display, frames: frames)
     }

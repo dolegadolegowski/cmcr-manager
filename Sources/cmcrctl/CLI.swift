@@ -593,7 +593,8 @@ struct CLI: Sendable {
         }
         if let user = shot.notifiedUser { ConfigStore.log("\(logPrefix): powiadomiono użytkownika \(user)") }
         guard let data = shot.imageData else { fail(shot.message ?? "Błąd") }
-        ConfigStore.log("\(logPrefix) (użytkownik \(shot.user ?? "?"))")
+        ConfigStore.log("\(logPrefix) (użytkownik \(shot.user ?? "?"))"
+                        + (settings.notifyOnObserve ? "" : " – bez powiadomienia ucznia (wyłączone w ustawieniach)"))
         do {
             try data.write(to: URL(fileURLWithPath: expandTilde(file)))
         } catch {

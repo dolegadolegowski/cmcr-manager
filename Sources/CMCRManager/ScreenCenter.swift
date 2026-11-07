@@ -526,7 +526,8 @@ final class ScreenCenter: ObservableObject {
                 s.retryAt = nil
                 s.exitIssue = nil
                 if let user = feed.user, let name = model?.machine(host)?.name, ledger.shouldLog(host, user: user) {
-                    ConfigStore.log("Podgląd ekranu → \(name) (użytkownik \(user))")
+                    ConfigStore.log("Podgląd ekranu → \(name) (użytkownik \(user))"
+                                    + (model?.settings.notifyOnObserve == false ? " – bez powiadomienia ucznia (wyłączone w ustawieniach)" : ""))
                 }
             }
         case .event(let event):

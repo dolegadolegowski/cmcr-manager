@@ -121,11 +121,29 @@ import Testing
         let s = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
         #expect(s.studentUser == "uczen")
         #expect(s.maxParallel == 3)
-        // AUDIT KON-06: an old file that turned the notice off no longer does – the student is always told.
+        // AUDIT KON-06: the old key (from before the notice was mandatory) is ignored: the notice stays on.
         #expect(s.notifyOnObserve)
         #expect(ScreenCaptureOptions(settings: s).notify)
         #expect(s.screenshotQuality == AppSettings().screenshotQuality)
         #expect(s.sharedFolder == AppSettings().sharedFolder)
+    }
+
+    @Test func studentNoticeCanBeSwitchedOffOnlyWithItsOwnKey() throws {
+        #expect(AppSettings().observeNotifyStudent)
+        let off = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"observeNotifyStudent":false}"#.utf8))
+        #expect(!off.observeNotifyStudent)
+        #expect(!off.notifyOnObserve)
+        #expect(!ScreenCaptureOptions(settings: off).notify)
+        // An explicit argument still wins (cmcrctl screenshot passes the setting itself).
+        #expect(ScreenCaptureOptions(settings: off, notify: true).notify)
+        // Survives a save and load, and a damaged value falls back to "on" (the safe default).
+        let back = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(off))
+        #expect(!back.observeNotifyStudent)
+        let broken = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"observeNotifyStudent":"nie"}"#.utf8))
+        #expect(broken.observeNotifyStudent)
+        // The old key does not switch it off even next to other new settings.
+        let both = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"notifyOnObserve":false,"observeOnlyStandardAccounts":false}"#.utf8))
+        #expect(both.observeNotifyStudent)
     }
 
     @Test func roundTrip() throws {
